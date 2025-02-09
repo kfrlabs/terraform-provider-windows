@@ -8,7 +8,7 @@ import (
 func Provider() *schema.Provider {
 	return &schema.Provider{
 		ResourcesMap: map[string]*schema.Resource{
-			"windowsfeature": windows.ResourceWindowsFeature(),
+			"tf-windows_feature": windows.ResourceWindowsFeature(),
 		},
 	}
 }

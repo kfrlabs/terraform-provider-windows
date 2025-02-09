@@ -1,7 +1,9 @@
 package windows
 
 import (
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/FranckSallet/tf-windows/internal/powershell"
 	"github.com/FranckSallet/tf-windows/internal/ssh"
@@ -16,10 +18,11 @@ func ResourceWindowsFeature() *schema.Resource {
 		Delete: resourceWindowsFeatureDelete,
 
 		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:        schema.TypeString,
+			"features": {
+				Type:        schema.TypeList,
 				Required:    true,
-				Description: "The name of the Windows feature to install or remove.",
+				Elem:        &schema.Schema{Type: schema.TypeString},
+				Description: "A list of Windows features to install or remove.",
 			},
 			"host": {
 				Type:        schema.TypeString,
@@ -33,9 +36,17 @@ func ResourceWindowsFeature() *schema.Resource {
 			},
 			"password": {
 				Type:        schema.TypeString,
-				Required:    true,
+				Optional:    true,
 				Sensitive:   true,
-				Description: "The password for SSH authentication.",
+				Description: "The password for SSH authentication. Required if use_ssh_agent is false.",
+				ValidateFunc: func(val interface{}, key string) (warns []string, errs []error) {
+					log.Printf("[DEBUG] Validating password for key: %s", key)
+					useSSHAgent := val.(bool)
+					if !useSSHAgent && val.(string) == "" {
+						errs = append(errs, fmt.Errorf("password is required when use_ssh_agent is false"))
+					}
+					return
+				},
 			},
 			"key_path": {
 				Type:        schema.TypeString,
@@ -58,7 +69,7 @@ func ResourceWindowsFeature() *schema.Resource {
 }
 
 func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
-	name := d.Get("name").(string)
+	features := d.Get("features").([]interface{})
 	host := d.Get("host").(string)
 	username := d.Get("username").(string)
 	password := d.Get("password").(string)
@@ -73,7 +84,12 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 	}
 	defer sshClient.Close()
 
-	command := "Install-WindowsFeature -Name " + name
+	featuresList := make([]string, len(features))
+	for i, feature := range features {
+		featuresList[i] = feature.(string)
+	}
+	command := "Install-WindowsFeature -Name " + strings.Join(featuresList, ",")
+
 	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
 	output, err := powershell.ExecutePowerShellCommand(sshClient, command)
 	if err != nil {
@@ -81,13 +97,14 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
-	d.SetId(name)
+	log.Printf("[DEBUG] Command output: %s", output)
+	d.SetId(strings.Join(featuresList, ","))
 	d.Set("output", output)
 	return nil
 }
 
 func resourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
-	name := d.Get("name").(string)
+	features := d.Get("features").([]interface{})
 	host := d.Get("host").(string)
 	username := d.Get("username").(string)
 	password := d.Get("password").(string)
@@ -102,7 +119,12 @@ func resourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
 	}
 	defer sshClient.Close()
 
-	command := "Get-WindowsFeature -Name " + name
+	featuresList := make([]string, len(features))
+	for i, feature := range features {
+		featuresList[i] = feature.(string)
+	}
+	command := "Get-WindowsFeature -Name " + strings.Join(featuresList, ",")
+
 	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
 	output, err := powershell.ExecutePowerShellCommand(sshClient, command)
 	if err != nil {
@@ -110,18 +132,58 @@ func resourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
+	log.Printf("[DEBUG] Command output: %s", output)
 	d.Set("output", output)
 	return nil
 }
 
 func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
-	// Implement update logic if needed
-	// For example, you might want to handle changes to the feature configuration
+	if d.HasChange("features") {
+		oldFeatures, newFeatures := d.GetChange("features")
+		oldFeaturesSet := make(map[string]struct{})
+		newFeaturesSet := make(map[string]struct{})
+
+		for _, feature := range oldFeatures.([]interface{}) {
+			oldFeaturesSet[feature.(string)] = struct{}{}
+		}
+
+		for _, feature := range newFeatures.([]interface{}) {
+			newFeaturesSet[feature.(string)] = struct{}{}
+		}
+
+		// Determine features to remove
+		toRemove := []string{}
+		for feature := range oldFeaturesSet {
+			if _, found := newFeaturesSet[feature]; !found {
+				toRemove = append(toRemove, feature)
+			}
+		}
+
+		// Determine features to add
+		toAdd := []string{}
+		for feature := range newFeaturesSet {
+			if _, found := oldFeaturesSet[feature]; !found {
+				toAdd = append(toAdd, feature)
+			}
+		}
+
+		if len(toRemove) > 0 {
+			err := removeFeatures(d, toRemove)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(toAdd) > 0 {
+			d.Set("features", newFeatures)
+			return resourceWindowsFeatureCreate(d, m)
+		}
+	}
+
 	return nil
 }
 
-func resourceWindowsFeatureDelete(d *schema.ResourceData, m interface{}) error {
-	name := d.Get("name").(string)
+func removeFeatures(d *schema.ResourceData, featuresToRemove []string) error {
 	host := d.Get("host").(string)
 	username := d.Get("username").(string)
 	password := d.Get("password").(string)
@@ -136,7 +198,41 @@ func resourceWindowsFeatureDelete(d *schema.ResourceData, m interface{}) error {
 	}
 	defer sshClient.Close()
 
-	command := "Remove-WindowsFeature -Name " + name
+	for _, feature := range featuresToRemove {
+		command := "Remove-WindowsFeature -Name " + feature
+		log.Printf("[DEBUG] Executing PowerShell command: %s", command)
+		_, err = powershell.ExecutePowerShellCommand(sshClient, command)
+		if err != nil {
+			log.Printf("[ERROR] Failed to execute PowerShell command: %v", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func resourceWindowsFeatureDelete(d *schema.ResourceData, m interface{}) error {
+	features := d.Get("features").([]interface{})
+	host := d.Get("host").(string)
+	username := d.Get("username").(string)
+	password := d.Get("password").(string)
+	keyPath := d.Get("key_path").(string)
+	useSSHAgent := d.Get("use_ssh_agent").(bool)
+
+	log.Printf("[DEBUG] Creating SSH client for host: %s", host)
+	sshClient, err := ssh.CreateSSHClient(host, username, password, keyPath, useSSHAgent)
+	if err != nil {
+		log.Printf("[ERROR] Failed to create SSH client: %v", err)
+		return err
+	}
+	defer sshClient.Close()
+
+	featuresList := make([]string, len(features))
+	for i, feature := range features {
+		featuresList[i] = feature.(string)
+	}
+	command := "Remove-WindowsFeature -Name " + strings.Join(featuresList, ",")
+
 	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
 	_, err = powershell.ExecutePowerShellCommand(sshClient, command)
 	if err != nil {
