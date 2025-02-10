@@ -6,11 +6,15 @@ terraform {
   }
 }
 
-provider "tf-windows" {}
-
-resource "tf-windows_feature" "powershell" {
+provider "tf-windows" {
   host          = "172.18.190.4"
   username      = "adminlocalecritel"
   use_ssh_agent = true
-  features      = ["PowerShellRoot", "Powershell"]
+}
+
+resource "tf-windows_feature" "powershell" {
+  features                 = ["PowerShellRoot", "Powershell"]
+  restart                  = true
+  include_all_sub_features = true
+  include_management_tools = true
 }
