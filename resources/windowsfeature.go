@@ -4,7 +4,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/FranckSallet/tf-windows/tf-windows/internal/powershell"
+	"github.com/FranckSallet/tf-windows/resources/internal/powershell"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"golang.org/x/crypto/ssh"
 )
