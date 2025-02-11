@@ -2,7 +2,7 @@ module github.com/FranckSallet/tf-windows
 
 go 1.22.0
 
-toolchain go1.22.12
+toolchain go1.23.6
 
 require (
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.36.0

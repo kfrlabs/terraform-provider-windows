@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/FranckSallet/tf-windows/internal/ssh"
-	"github.com/FranckSallet/tf-windows/internal/windows"
+	windows "github.com/FranckSallet/tf-windows/tf-windows"
+	"github.com/FranckSallet/tf-windows/tf-windows/internal/ssh"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
