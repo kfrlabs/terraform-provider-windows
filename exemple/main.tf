@@ -14,7 +14,7 @@ provider "tf-windows" {
 
 resource "tf-windows_feature" "powershell" {
   features                 = ["PowerShellRoot", "Powershell"]
-  restart                  = true
-  include_all_sub_features = true
-  include_management_tools = true
+  restart                  = false
+  include_all_sub_features = false
+  include_management_tools = false
 }

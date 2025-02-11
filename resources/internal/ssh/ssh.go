@@ -2,7 +2,6 @@ package ssh
 
 import (
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"time"
@@ -11,54 +10,85 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-func CreateSSHClient(host, username, password, keyPath string, useSSHAgent bool) (*ssh.Client, error) {
+// Client encapsule la connexion SSH
+type Client struct {
+	*ssh.Client
+}
+
+// Config contient les paramètres de connexion SSH
+type Config struct {
+	Host        string
+	Username    string
+	Password    string
+	KeyPath     string
+	UseSSHAgent bool
+	ConnTimeout time.Duration
+}
+
+// NewClient crée une nouvelle connexion SSH avec les paramètres fournis
+func NewClient(config Config) (*Client, error) {
 	var authMethods []ssh.AuthMethod
 
-	if useSSHAgent {
-		log.Printf("[DEBUG] Attempting to connect to SSH agent")
-		if sshAgent, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK")); err == nil {
-			authMethods = append(authMethods, ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers))
-			log.Printf("[DEBUG] Successfully connected to SSH agent")
-		} else {
-			log.Printf("[WARN] Failed to connect to SSH agent: %v", err)
+	if config.UseSSHAgent {
+		if agentAuth, err := sshAgentAuth(); err == nil {
+			authMethods = append(authMethods, agentAuth)
 		}
 	}
 
-	if keyPath != "" {
-		log.Printf("[DEBUG] Reading private key from path: %s", keyPath)
-		key, err := ioutil.ReadFile(keyPath)
-		if err != nil {
-			log.Printf("[ERROR] Failed to read private key: %v", err)
-			return nil, err
+	if config.KeyPath != "" {
+		if keyAuth, err := publicKeyAuth(config.KeyPath); err == nil {
+			authMethods = append(authMethods, keyAuth)
 		}
-
-		log.Printf("[DEBUG] Parsing private key")
-		signer, err := ssh.ParsePrivateKey(key)
-		if err != nil {
-			log.Printf("[ERROR] Failed to parse private key: %v", err)
-			return nil, err
-		}
-
-		authMethods = append(authMethods, ssh.PublicKeys(signer))
-	} else {
-		log.Printf("[DEBUG] Using password authentication")
-		authMethods = append(authMethods, ssh.Password(password))
+	} else if config.Password != "" {
+		authMethods = append(authMethods, ssh.Password(config.Password))
 	}
 
-	config := &ssh.ClientConfig{
-		User:            username,
+	sshConfig := &ssh.ClientConfig{
+		User:            config.Username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // À remplacer par une méthode sécurisée en production
-		Timeout:         30 * time.Second,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         config.ConnTimeout,
 	}
 
-	log.Printf("[DEBUG] Dialing SSH server at host: %s", host)
-	conn, err := ssh.Dial("tcp", net.JoinHostPort(host, "22"), config)
+	client, err := ssh.Dial("tcp", net.JoinHostPort(config.Host, "22"), sshConfig)
 	if err != nil {
-		log.Printf("[ERROR] Failed to dial SSH: %v", err)
 		return nil, err
 	}
 
-	log.Printf("[DEBUG] Successfully created SSH client")
-	return conn, nil
+	return &Client{client}, nil
+}
+
+// NewSession crée une nouvelle session SSH
+func (c *Client) NewSession() (*ssh.Session, error) {
+	return c.Client.NewSession()
+}
+
+// Close ferme la connexion SSH
+func (c *Client) Close() error {
+	return c.Client.Close()
+}
+
+func sshAgentAuth() (ssh.AuthMethod, error) {
+	socket := os.Getenv("SSH_AUTH_SOCK")
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		return nil, err
+	}
+
+	agentClient := agent.NewClient(conn)
+	return ssh.PublicKeysCallback(agentClient.Signers), nil
+}
+
+func publicKeyAuth(keyPath string) (ssh.AuthMethod, error) {
+	key, err := ioutil.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+
+	return ssh.PublicKeys(signer), nil
 }

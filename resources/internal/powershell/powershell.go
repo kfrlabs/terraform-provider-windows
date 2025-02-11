@@ -2,30 +2,84 @@ package powershell
 
 import (
 	"bytes"
-	"log"
+	"context"
+	"fmt"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 )
 
-func ExecutePowerShellCommand(client *ssh.Client, command string) (string, error) {
-	log.Printf("[DEBUG] Creating new SSH session")
-	session, err := client.NewSession()
-	if err != nil {
-		log.Printf("[ERROR] Failed to create SSH session: %v", err)
-		return "", err
-	}
-	defer session.Close()
+// Executor gère l'exécution des commandes PowerShell
+type Executor struct {
+	session *ssh.Session
+	opts    *Options
+}
 
-	var b bytes.Buffer
-	session.Stdout = &b
-	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
-	err = session.Run("powershell -Command " + command)
-	if err != nil {
-		log.Printf("[ERROR] Failed to run PowerShell command: %v", err)
-		return "", err
+// Options définit les options d'exécution PowerShell
+type Options struct {
+	NoProfile       bool
+	NonInteractive  bool
+	ExecutionPolicy string
+}
+
+// DefaultOptions retourne les options par défaut
+func DefaultOptions() *Options {
+	return &Options{
+		NoProfile:       true,
+		NonInteractive:  true,
+		ExecutionPolicy: "Bypass",
+	}
+}
+
+// NewExecutor crée un nouvel exécuteur PowerShell
+func NewExecutor(session *ssh.Session, opts *Options) *Executor {
+	if opts == nil {
+		opts = DefaultOptions()
+	}
+	return &Executor{
+		session: session,
+		opts:    opts,
+	}
+}
+
+// Execute exécute une commande PowerShell
+func (e *Executor) Execute(ctx context.Context, command string) (string, string, error) {
+	var stdoutBuf, stderrBuf bytes.Buffer
+	e.session.Stdout = &stdoutBuf
+	e.session.Stderr = &stderrBuf
+
+	psCommand := e.buildCommand(command)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- e.session.Run(psCommand)
+	}()
+
+	select {
+	case <-ctx.Done():
+		e.session.Signal(ssh.SIGTERM)
+		return "", "", ctx.Err()
+	case err := <-errCh:
+		return stdoutBuf.String(), stderrBuf.String(), err
+	}
+}
+
+func (e *Executor) buildCommand(command string) string {
+	var cmdBuilder strings.Builder
+	cmdBuilder.WriteString("pwsh")
+
+	if e.opts.NoProfile {
+		cmdBuilder.WriteString(" -NoProfile")
+	}
+	if e.opts.NonInteractive {
+		cmdBuilder.WriteString(" -NonInteractive")
+	}
+	if e.opts.ExecutionPolicy != "" {
+		cmdBuilder.WriteString(fmt.Sprintf(" -ExecutionPolicy %s", e.opts.ExecutionPolicy))
 	}
 
-	output := b.String()
-	log.Printf("[DEBUG] Command output: %s", output)
-	return output, nil
+	escapedCommand := strings.ReplaceAll(command, `"`, `\"`)
+	cmdBuilder.WriteString(fmt.Sprintf(` -Command "%s"`, escapedCommand))
+
+	return cmdBuilder.String()
 }

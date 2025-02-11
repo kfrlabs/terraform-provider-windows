@@ -1,7 +1,6 @@
-package main
+package resources
 
 import (
-	windows "github.com/FranckSallet/tf-windows/resources"
 	"github.com/FranckSallet/tf-windows/resources/internal/ssh"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
@@ -38,7 +37,7 @@ func Provider() *schema.Provider {
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"tf-windows_feature": windows.ResourceWindowsFeature(),
+			"tf-windows_feature": ResourceWindowsFeature(),
 		},
 		ConfigureFunc: providerConfigure,
 	}
