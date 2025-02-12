@@ -1,15 +1,12 @@
 package resources
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
-	"github.com/FranckSallet/tf-windows/resources/internal/powershell"
+	"github.com/FranckSallet/tf-windows/resources/internal/ssh"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"golang.org/x/crypto/ssh"
 )
 
 func ResourceWindowsFeature() *schema.Resource {
@@ -50,38 +47,8 @@ func ResourceWindowsFeature() *schema.Resource {
 				Default:     300,
 				Description: "Timeout in seconds for PowerShell commands.",
 			},
-			"output": {
-				Type:        schema.TypeString,
-				Computed:    true,
-				Description: "The output of the PowerShell command.",
-			},
-			"error_output": {
-				Type:        schema.TypeString,
-				Computed:    true,
-				Description: "The error output of the PowerShell command, if any.",
-			},
 		},
 	}
-}
-
-func executeCommand(client *ssh.Client, command string, timeout int) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
-
-	opts := &powershell.CommandOptions{
-		Timeout: time.Duration(timeout) * time.Second,
-	}
-
-	stdout, stderr, err := powershell.ExecutePowerShellCommand(ctx, client, command, opts)
-	if err != nil {
-		return "", fmt.Errorf("command error: %v\nStderr: %s", err, stderr)
-	}
-
-	if stderr != "" {
-		log.Printf("[WARN] Command produced stderr output: %s", stderr)
-	}
-
-	return stdout, nil
 }
 
 func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
@@ -109,14 +76,11 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
-	output, err := executeCommand(sshClient, command, timeout)
-	if err != nil {
-		d.Set("error_output", err.Error())
+	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
 		return fmt.Errorf("failed to install Windows features: %v", err)
 	}
 
 	d.SetId(strings.Join(featuresList, ","))
-	d.Set("output", output)
 	return nil
 }
 
@@ -132,13 +96,10 @@ func resourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
 
 	command := "Get-WindowsFeature -Name " + strings.Join(featuresList, ",")
 
-	output, err := executeCommand(sshClient, command, timeout)
-	if err != nil {
-		d.Set("error_output", err.Error())
+	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
 		return fmt.Errorf("failed to read Windows features: %v", err)
 	}
 
-	d.Set("output", output)
 	return nil
 }
 
@@ -178,8 +139,7 @@ func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 		}
 
 		if len(toRemove) > 0 {
-			err := removeFeatures(sshClient, toRemove, timeout)
-			if err != nil {
+			if err := removeFeatures(sshClient, toRemove, timeout); err != nil {
 				return err
 			}
 		}
@@ -197,8 +157,7 @@ func removeFeatures(sshClient *ssh.Client, featuresToRemove []string, timeout in
 	for _, feature := range featuresToRemove {
 		command := "Remove-WindowsFeature -Name " + feature
 
-		_, err := executeCommand(sshClient, command, timeout)
-		if err != nil {
+		if err := sshClient.ExecuteCommand(command, timeout); err != nil {
 			return fmt.Errorf("failed to remove Windows feature %s: %v", feature, err)
 		}
 	}
@@ -218,9 +177,7 @@ func resourceWindowsFeatureDelete(d *schema.ResourceData, m interface{}) error {
 
 	command := "Remove-WindowsFeature -Name " + strings.Join(featuresList, ",")
 
-	_, err := executeCommand(sshClient, command, timeout)
-	if err != nil {
-		d.Set("error_output", err.Error())
+	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
 		return fmt.Errorf("failed to remove Windows features: %v", err)
 	}
 

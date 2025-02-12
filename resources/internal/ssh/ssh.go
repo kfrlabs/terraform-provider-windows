@@ -1,19 +1,17 @@
 package ssh
 
 import (
+	"context"
+	"fmt"
 	"io/ioutil"
 	"net"
 	"os"
 	"time"
 
+	"github.com/FranckSallet/tf-windows/resources/internal/powershell"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
-
-// Client encapsule la connexion SSH
-type Client struct {
-	*ssh.Client
-}
 
 // Config contient les paramètres de connexion SSH
 type Config struct {
@@ -23,6 +21,11 @@ type Config struct {
 	KeyPath     string
 	UseSSHAgent bool
 	ConnTimeout time.Duration
+}
+
+// Client encapsule la connexion SSH
+type Client struct {
+	*ssh.Client
 }
 
 // NewClient crée une nouvelle connexion SSH avec les paramètres fournis
@@ -91,4 +94,23 @@ func publicKeyAuth(keyPath string) (ssh.AuthMethod, error) {
 	}
 
 	return ssh.PublicKeys(signer), nil
+}
+
+func (c *Client) ExecuteCommand(command string, timeout int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	session, err := c.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to create SSH session: %v", err)
+	}
+	defer session.Close()
+
+	executor := powershell.NewExecutor(session, nil)
+	_, _, err = executor.Execute(ctx, command)
+	if err != nil {
+		return fmt.Errorf("command error: %v", err)
+	}
+
+	return nil
 }

@@ -1,6 +1,9 @@
 package resources
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/FranckSallet/tf-windows/resources/internal/ssh"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
@@ -35,24 +38,34 @@ func Provider() *schema.Provider {
 				Default:     false,
 				Description: "Whether to use the SSH agent for authentication.",
 			},
+			"conn_timeout": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     30,
+				Description: "Timeout in seconds for SSH connection.",
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"tf-windows_feature": ResourceWindowsFeature(),
+			"tf-windows_feature":  ResourceWindowsFeature(),
+			"tf-windows_registry": ResourceWindowsRegistry(),
 		},
 		ConfigureFunc: providerConfigure,
 	}
 }
 
 func providerConfigure(d *schema.ResourceData) (interface{}, error) {
-	host := d.Get("host").(string)
-	username := d.Get("username").(string)
-	password := d.Get("password").(string)
-	keyPath := d.Get("key_path").(string)
-	useSSHAgent := d.Get("use_ssh_agent").(bool)
+	config := ssh.Config{
+		Host:        d.Get("host").(string),
+		Username:    d.Get("username").(string),
+		Password:    d.Get("password").(string),
+		KeyPath:     d.Get("key_path").(string),
+		UseSSHAgent: d.Get("use_ssh_agent").(bool),
+		ConnTimeout: time.Duration(d.Get("conn_timeout").(int)) * time.Second,
+	}
 
-	sshClient, err := ssh.CreateSSHClient(host, username, password, keyPath, useSSHAgent)
+	sshClient, err := ssh.NewClient(config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create SSH client: %v", err)
 	}
 
 	return sshClient, nil
