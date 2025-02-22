@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/FranckSallet/tf-windows/resources/internal/ssh"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/k9fr4n/tf-windows/resources/internal/ssh"
 )
 
 func Provider() *schema.Provider {

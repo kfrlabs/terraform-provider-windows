@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     tf-windows = {
-      source = "local/FranckSallet/tf-windows"
+      source = "local/k9fr4n/tf-windows"
     }
   }
 }
@@ -46,6 +46,10 @@ resource "tf-windows_registry" "target_group_enabled" {
   name  = "TargetGroupEnabled"
   type  = "DWord"
   value = "1"
+}
+
+resource "tf-windows_registry" "test" {
+  path  = "HKLM:\\Software\\Policies\\Microsoft\\Windows\\WindowsUpdate\\TEST"
 }
 
 resource "tf-windows_registry" "use_wsus" {
