@@ -2,7 +2,6 @@ package resources
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/k9fr4n/tf-windows/resources/internal/ssh"
@@ -14,6 +13,9 @@ func ResourceWindowsRegistry() *schema.Resource {
 		Read:   resourceWindowsRegistryRead,
 		Update: resourceWindowsRegistryUpdate,
 		Delete: resourceWindowsRegistryDelete,
+		Importer: &schema.ResourceImporter{
+			StateContext: schema.ImportStatePassthroughContext,
+		},
 
 		Schema: map[string]*schema.Schema{
 			"path": {
@@ -62,20 +64,18 @@ func resourceWindowsRegistryCreate(d *schema.ResourceData, m interface{}) error 
 	force := d.Get("force").(bool)
 	timeout := d.Get("command_timeout").(int)
 
-	// Construire la commande PowerShell pour créer la clé ou la valeur
-	command := fmt.Sprintf("New-Item -Path '%s' -Force:$%t", path, force)
+	command := ""
 	if name != "" {
-		command += fmt.Sprintf("; Set-ItemProperty -Path '%s' -Name '%s' -Value '%s' -Type '%s'", path, name, value, valueType)
+		command = fmt.Sprintf("New-Item -Path '%s' -Name '%s' -Value '%s' -Type '%s' %s", path, name, value, valueType, map[bool]string{true: "-Force", false: ""}[force])
+	} else {
+		command = fmt.Sprintf("New-Item -Path '%s' %s", path, map[bool]string{true: "-Force", false: ""}[force])
 	}
-
-	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
 	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
-		return fmt.Errorf("failed to create registry key or value: %v", err)
+		return fmt.Errorf("failed to create registry key: %w", err)
 	}
 
-	// Définir l'ID de la ressource comme le chemin de la clé
 	d.SetId(path)
-	return nil
+	return resourceWindowsRegistryRead(d, m)
 }
 
 func resourceWindowsRegistryRead(d *schema.ResourceData, m interface{}) error {
@@ -84,20 +84,22 @@ func resourceWindowsRegistryRead(d *schema.ResourceData, m interface{}) error {
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	// Construire la commande PowerShell pour vérifier si la clé ou la valeur existe
+	// Vérifier si la clé existe
 	command := fmt.Sprintf("Test-Path -Path '%s'", path)
-	if name != "" {
-		command += fmt.Sprintf("; Get-ItemProperty -Path '%s' -Name '%s' -ErrorAction SilentlyContinue", path, name)
-	}
-
-	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
 	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
-		// Si la commande échoue, la clé ou la valeur n'existe pas
 		d.SetId("")
 		return nil
 	}
 
-	// Si la commande réussit, la clé ou la valeur existe
+	// Si un nom de valeur est spécifié, vérifier la valeur
+	if name != "" {
+		command = fmt.Sprintf("Get-ItemProperty -Path '%s' -Name '%s' -ErrorAction SilentlyContinue", path, name)
+		if err := sshClient.ExecuteCommand(command, timeout); err != nil {
+			d.SetId("")
+			return nil
+		}
+	}
+
 	return nil
 }
 
@@ -109,15 +111,14 @@ func resourceWindowsRegistryUpdate(d *schema.ResourceData, m interface{}) error 
 	valueType := d.Get("type").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	// Construire la commande PowerShell pour mettre à jour la valeur
-	command := fmt.Sprintf("Set-ItemProperty -Path '%s' -Name '%s' -Value '%s' -Type '%s'", path, name, value, valueType)
-
-	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
-	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
-		return fmt.Errorf("failed to update registry value: %v", err)
+	if name != "" {
+		command := fmt.Sprintf("Set-ItemProperty -Path '%s' -Name '%s' -Value '%s' -Type '%s'", path, name, value, valueType)
+		if err := sshClient.ExecuteCommand(command, timeout); err != nil {
+			return fmt.Errorf("failed to update registry value: %w", err)
+		}
 	}
 
-	return nil
+	return resourceWindowsRegistryRead(d, m)
 }
 
 func resourceWindowsRegistryDelete(d *schema.ResourceData, m interface{}) error {
@@ -126,18 +127,19 @@ func resourceWindowsRegistryDelete(d *schema.ResourceData, m interface{}) error 
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	// Construire la commande PowerShell pour supprimer la clé ou la valeur
-	command := fmt.Sprintf("Remove-ItemProperty -Path '%s'", path)
-	if name != "" {
-		command += fmt.Sprintf(" -Name '%s'", name)
+	var command string
+	if name == "" {
+		// Supprimer la clé de registre
+		command = fmt.Sprintf("Remove-Item -Path '%s' -Recurse -Force", path)
+	} else {
+		// Supprimer une valeur spécifique
+		command = fmt.Sprintf("Remove-ItemProperty -Path '%s' -Name '%s' -Force", path, name)
 	}
 
-	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
 	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
-		return fmt.Errorf("failed to delete registry key or value: %v", err)
+		return fmt.Errorf("failed to delete registry key/value: %w", err)
 	}
 
-	// Supprimer l'ID de la ressource
 	d.SetId("")
 	return nil
 }

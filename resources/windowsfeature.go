@@ -15,7 +15,6 @@ func ResourceWindowsFeature() *schema.Resource {
 		Read:   resourceWindowsFeatureRead,
 		Update: resourceWindowsFeatureUpdate,
 		Delete: resourceWindowsFeatureDelete,
-
 		Schema: map[string]*schema.Schema{
 			"features": {
 				Type:        schema.TypeList,
@@ -58,8 +57,8 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 	includeAllSubFeatures := d.Get("include_all_sub_features").(bool)
 	includeManagementTools := d.Get("include_management_tools").(bool)
 	timeout := d.Get("command_timeout").(int)
-
 	featuresList := make([]string, len(features))
+
 	for i, feature := range features {
 		featuresList[i] = feature.(string)
 	}
@@ -75,29 +74,31 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 		command += " -IncludeManagementTools"
 	}
 
-	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
+	log.Printf("[DEBUG] Installing Windows features: %v", featuresList)
 	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
-		return fmt.Errorf("failed to install Windows features: %v", err)
+		return fmt.Errorf("failed to install Windows features: %w", err)
 	}
 
 	d.SetId(strings.Join(featuresList, ","))
-	return nil
+	return resourceWindowsFeatureRead(d, m)
 }
 
 func resourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
 	sshClient := m.(*ssh.Client)
 	features := d.Get("features").([]interface{})
 	timeout := d.Get("command_timeout").(int)
-
 	featuresList := make([]string, len(features))
+
 	for i, feature := range features {
 		featuresList[i] = feature.(string)
 	}
 
 	command := "Get-WindowsFeature -Name " + strings.Join(featuresList, ",")
+	log.Printf("[DEBUG] Checking Windows features status: %v", featuresList)
 
 	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
-		return fmt.Errorf("failed to read Windows features: %v", err)
+		d.SetId("")
+		return nil
 	}
 
 	return nil
@@ -109,8 +110,8 @@ func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 
 	if d.HasChange("features") || d.HasChange("restart") ||
 		d.HasChange("include_all_sub_features") || d.HasChange("include_management_tools") {
-
 		oldFeatures, newFeatures := d.GetChange("features")
+
 		oldFeaturesSet := make(map[string]struct{})
 		newFeaturesSet := make(map[string]struct{})
 
@@ -138,28 +139,29 @@ func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 			}
 		}
 
+		// Remove features first
 		if len(toRemove) > 0 {
 			if err := removeFeatures(sshClient, toRemove, timeout); err != nil {
-				return err
+				return fmt.Errorf("failed to remove Windows features: %w", err)
 			}
 		}
 
+		// Then add new features
 		if len(toAdd) > 0 {
 			d.Set("features", newFeatures)
 			return resourceWindowsFeatureCreate(d, m)
 		}
 	}
 
-	return nil
+	return resourceWindowsFeatureRead(d, m)
 }
 
 func removeFeatures(sshClient *ssh.Client, featuresToRemove []string, timeout int) error {
-	for _, feature := range featuresToRemove {
-		command := "Remove-WindowsFeature -Name " + feature
+	command := "Remove-WindowsFeature -Name " + strings.Join(featuresToRemove, ",")
+	log.Printf("[DEBUG] Removing Windows features: %v", featuresToRemove)
 
-		if err := sshClient.ExecuteCommand(command, timeout); err != nil {
-			return fmt.Errorf("failed to remove Windows feature %s: %v", feature, err)
-		}
+	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
+		return fmt.Errorf("failed to remove Windows features: %w", err)
 	}
 
 	return nil
@@ -169,16 +171,17 @@ func resourceWindowsFeatureDelete(d *schema.ResourceData, m interface{}) error {
 	sshClient := m.(*ssh.Client)
 	features := d.Get("features").([]interface{})
 	timeout := d.Get("command_timeout").(int)
-
 	featuresList := make([]string, len(features))
+
 	for i, feature := range features {
 		featuresList[i] = feature.(string)
 	}
 
 	command := "Remove-WindowsFeature -Name " + strings.Join(featuresList, ",")
+	log.Printf("[DEBUG] Removing Windows features: %v", featuresList)
 
 	if err := sshClient.ExecuteCommand(command, timeout); err != nil {
-		return fmt.Errorf("failed to remove Windows features: %v", err)
+		return fmt.Errorf("failed to remove Windows features: %w", err)
 	}
 
 	d.SetId("")

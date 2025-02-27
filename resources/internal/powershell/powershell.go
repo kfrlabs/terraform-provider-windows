@@ -60,7 +60,7 @@ func (e *Executor) Execute(ctx context.Context, command string) (string, string,
 		e.session.Signal(ssh.SIGTERM)
 		return "", "", ctx.Err()
 	case err := <-errCh:
-		return stdoutBuf.String(), stderrBuf.String(), err
+		return strings.TrimRight(stdoutBuf.String(), "\r\n"), strings.TrimRight(stderrBuf.String(), "\r\n"), err
 	}
 }
 
@@ -79,7 +79,7 @@ func (e *Executor) buildCommand(command string) string {
 	}
 
 	escapedCommand := strings.ReplaceAll(command, `"`, `\"`)
-	cmdBuilder.WriteString(fmt.Sprintf(` -Command "%s"`, escapedCommand))
+	cmdBuilder.WriteString(fmt.Sprintf(` -Command "%s -Verbose -ErrorAction Stop"`, escapedCommand))
 
 	return cmdBuilder.String()
 }

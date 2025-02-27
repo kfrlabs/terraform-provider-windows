@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"time"
@@ -31,7 +32,6 @@ type Client struct {
 // NewClient crée une nouvelle connexion SSH avec les paramètres fournis
 func NewClient(config Config) (*Client, error) {
 	var authMethods []ssh.AuthMethod
-
 	if config.UseSSHAgent {
 		if agentAuth, err := sshAgentAuth(); err == nil {
 			authMethods = append(authMethods, agentAuth)
@@ -96,6 +96,8 @@ func publicKeyAuth(keyPath string) (ssh.AuthMethod, error) {
 	return ssh.PublicKeys(signer), nil
 }
 
+// Dans ssh.go
+
 func (c *Client) ExecuteCommand(command string, timeout int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -107,9 +109,30 @@ func (c *Client) ExecuteCommand(command string, timeout int) error {
 	defer session.Close()
 
 	executor := powershell.NewExecutor(session, nil)
-	_, _, err = executor.Execute(ctx, command)
+	log.Printf("[DEBUG] Executing PowerShell command: %s", command)
+	stdout, stderr, err := executor.Execute(ctx, command)
+
 	if err != nil {
-		return fmt.Errorf("command error: %v", err)
+
+		errMsg := ""
+		if exitErr, ok := err.(*ssh.ExitError); ok {
+			errMsg = fmt.Sprintf("command failed with exit code %d", exitErr.ExitStatus())
+		} else if ctx.Err() == context.DeadlineExceeded {
+			errMsg = fmt.Sprintf("command execution timed out after %d seconds", timeout)
+		} else {
+			errMsg = "command execution failed"
+		}
+
+		fullError := fmt.Sprintf("%s", errMsg)
+		fullError += fmt.Sprintf("\nCommand: %s", command)
+		if stdout != "" {
+			fullError += fmt.Sprintf("\nStdout: %s", stdout)
+		}
+		if stderr != "" {
+			fullError += fmt.Sprintf("\nStderr: %s", stderr)
+		}
+
+		return fmt.Errorf("%s", fullError)
 	}
 
 	return nil
