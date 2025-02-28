@@ -98,13 +98,13 @@ func publicKeyAuth(keyPath string) (ssh.AuthMethod, error) {
 
 // Dans ssh.go
 
-func (c *Client) ExecuteCommand(command string, timeout int) error {
+func (c *Client) ExecuteCommand(command string, timeout int) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	session, err := c.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create SSH session: %v", err)
+		return "", "", fmt.Errorf("failed to create SSH session: %v", err)
 	}
 	defer session.Close()
 
@@ -113,7 +113,6 @@ func (c *Client) ExecuteCommand(command string, timeout int) error {
 	stdout, stderr, err := executor.Execute(ctx, command)
 
 	if err != nil {
-
 		errMsg := ""
 		if exitErr, ok := err.(*ssh.ExitError); ok {
 			errMsg = fmt.Sprintf("command failed with exit code %d", exitErr.ExitStatus())
@@ -132,8 +131,8 @@ func (c *Client) ExecuteCommand(command string, timeout int) error {
 			fullError += fmt.Sprintf("\nStderr: %s", stderr)
 		}
 
-		return fmt.Errorf("%s", fullError)
+		return stdout, stderr, fmt.Errorf("%s", fullError)
 	}
 
-	return nil
+	return stdout, stderr, nil
 }

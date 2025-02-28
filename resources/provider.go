@@ -46,8 +46,9 @@ func Provider() *schema.Provider {
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"tf-windows_feature":  ResourceWindowsFeature(),
-			"tf-windows_registry": ResourceWindowsRegistry(),
+			"tf-windows_feature":        ResourceWindowsFeature(),
+			"tf-windows_registry_key":   ResourceWindowsRegistryKey(),
+			"tf-windows_registry_value": ResourceWindowsRegistryValue(),
 		},
 		ConfigureFunc: providerConfigure,
 	}

@@ -78,8 +78,8 @@ func (e *Executor) buildCommand(command string) string {
 		cmdBuilder.WriteString(fmt.Sprintf(" -ExecutionPolicy %s", e.opts.ExecutionPolicy))
 	}
 
-	escapedCommand := strings.ReplaceAll(command, `"`, `\"`)
-	cmdBuilder.WriteString(fmt.Sprintf(` -Command "%s -Verbose -ErrorAction Stop"`, escapedCommand))
+	// escapedCommand := strings.ReplaceAll(command, `"`, `\"`)
+	cmdBuilder.WriteString(fmt.Sprintf(` -Command "%s -Verbose -ErrorAction Stop"`, command))
 
 	return cmdBuilder.String()
 }
