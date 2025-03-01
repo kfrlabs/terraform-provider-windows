@@ -31,7 +31,7 @@ resource "tf-windows_registry_key" "windows_update_au" {
   depends_on = [tf-windows_registry_key.windows_update]
 }
 resource "tf-windows_registry_key" "test" {
-  path = "HKLM:\\Software\\Policies\\Microsoft\\Windows\\WindowsUpdate\\TOTO"
+  path = "HKLM:\\Software\\Policies\\Microsoft\\Windows\\WindowsUpdate\\TUTU"
   depends_on = [tf-windows_registry_key.windows_update]
 }
 
