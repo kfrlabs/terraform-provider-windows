@@ -23,11 +23,13 @@ func ResourceWindowsRegistryValue() *schema.Resource {
 				Type:        schema.TypeString,
 				Required:    true,
 				Description: "The path to the registry key (e.g., 'HKLM:\\Software\\MyApp').",
+				ForceNew:    true,
 			},
 			"name": {
 				Type:        schema.TypeString,
 				Optional:    true,
 				Description: "The name of the registry value (optional).",
+				ForceNew:    true,
 			},
 			"type": {
 				Type:         schema.TypeString,
@@ -35,6 +37,7 @@ func ResourceWindowsRegistryValue() *schema.Resource {
 				Default:      "String",
 				Description:  "The type of the registry value (e.g., 'String', 'DWord', 'Binary').",
 				ValidateFunc: validation.StringInSlice([]string{"String", "ExpandString", "Binary", "DWord", "MultiString", "Qword", "Unknown"}, false),
+				ForceNew:     true,
 			},
 			"value": {
 				Type:        schema.TypeString,
