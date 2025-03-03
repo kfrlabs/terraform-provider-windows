@@ -1,9 +1,9 @@
 # Build
 go mod init github.com/k9fr4n/terraform-provider-windows
 go get github.com/hashicorp/terraform-plugin-sdk/v2@v2.36.0
-go get golang.org/x/crypto@v0.14.0
+go get golang.org/x/crypto@v0.32.0
 go mod tidy
-go build -o ~/.terraform.d/plugins/local/k9fr4n/terraform-provider-windows/1.0.0/linux_amd64/terraform-provider-windows
+go build -o ~/.terraform.d/plugins/local/k9fr4n/windows/1.0.0/linux_amd64/terraform-provider-windows
 
 # struct
 terraform-provider-windows/
