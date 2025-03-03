@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/k9fr4n/tf-windows/resources/internal/ssh"
+	"github.com/k9fr4n/tf-windows/windows/internal/ssh"
 )
 
 func Provider() *schema.Provider {
@@ -46,9 +46,9 @@ func Provider() *schema.Provider {
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"tf-windows_feature":        ResourceWindowsFeature(),
-			"tf-windows_registry_key":   ResourceWindowsRegistryKey(),
-			"tf-windows_registry_value": ResourceWindowsRegistryValue(),
+			"windows_feature": ResourceWindowsFeature(),
+			"registry_key":    ResourceWindowsRegistryKey(),
+			"registry_value":  ResourceWindowsRegistryValue(),
 		},
 		ConfigureFunc: providerConfigure,
 	}

@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/k9fr4n/tf-windows/resources/internal/ssh"
+	"github.com/k9fr4n/terraform-provider-windows/windows/internal/ssh"
 )
 
 func ResourceWindowsFeature() *schema.Resource {

@@ -3,7 +3,7 @@
 ## Example Usage
 
 ```hcl
-provider "tf-windows" {
+provider "terraform-provider-windows" {
   host          = "192.168.1.1"
   username      = "admin"
   password      = "password"
@@ -24,6 +24,6 @@ provider "tf-windows" {
 
 ## Resources
 
-- **tf-windows_feature** - Manages Windows features.
-- **tf-windows_registry_key** - Manages Windows registry keys.
-- **tf-windows_registry_value** - Manages Windows registry values. 
+- **terraform-provider-windows_feature** - Manages Windows features.
+- **terraform-provider-windows_registry_key** - Manages Windows registry keys.
+- **terraform-provider-windows_registry_value** - Manages Windows registry values. 

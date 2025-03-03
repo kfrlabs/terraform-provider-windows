@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/k9fr4n/tf-windows/resources/internal/powershell"
+	"github.com/k9fr4n/terraform-provider-windows/windows/internal/powershell"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )

@@ -3,7 +3,7 @@ package main
 import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/plugin"
-	"github.com/k9fr4n/tf-windows/resources"
+	resources "github.com/k9fr4n/tf-windows/windows"
 )
 
 func main() {

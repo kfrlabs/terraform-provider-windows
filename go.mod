@@ -6,6 +6,7 @@ toolchain go1.23.6
 
 require (
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.36.0
+	github.com/k9fr4n/tf-windows v0.0.0-20250301195353-207a94f5d28b
 	golang.org/x/crypto v0.33.0
 )
 
