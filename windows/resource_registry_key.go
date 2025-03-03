@@ -46,7 +46,7 @@ func resourceWindowsRegistryKeyCreate(d *schema.ResourceData, m interface{}) err
 	force := d.Get("force").(bool)
 	timeout := d.Get("command_timeout").(int)
 
-	command := fmt.Sprintf("New-Item -Path '%s' %s", path, map[bool]string{true: "-Force", false: ""}[force])
+	command := fmt.Sprintf("New-Item -Path '%s' %s -ErrorAction Stop", path, map[bool]string{true: "-Force", false: ""}[force])
 	_, _, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to create registry key: %w", err)
@@ -59,10 +59,15 @@ func resourceWindowsRegistryKeyCreate(d *schema.ResourceData, m interface{}) err
 func resourceWindowsRegistryKeyRead(d *schema.ResourceData, m interface{}) error {
 	sshClient := m.(*ssh.Client)
 	path := d.Get("path").(string)
-	timeout := d.Get("command_timeout").(int)
 
-	command := fmt.Sprintf("Test-Path -Path '%s'", path)
-	_, _, err := sshClient.ExecuteCommand(command, timeout)
+	// Récupérer le timeout du schéma si non défini
+	timeout, ok := d.GetOk("command_timeout")
+	if !ok {
+		timeout = 300 // Valeur par défaut définie dans le schéma
+	}
+
+	command := fmt.Sprintf("Test-Path -Path '%s' -ErrorAction Stop", path)
+	_, _, err := sshClient.ExecuteCommand(command, timeout.(int))
 	if err != nil {
 		d.SetId("")
 		return nil
@@ -81,7 +86,7 @@ func resourceWindowsRegistryKeyDelete(d *schema.ResourceData, m interface{}) err
 	path := d.Get("path").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	command := fmt.Sprintf("Remove-Item -Path '%s' -Recurse -Force", path)
+	command := fmt.Sprintf("Remove-Item -Path '%s' -Recurse -Force -ErrorAction Stop", path)
 	_, _, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to delete registry key: %w", err)

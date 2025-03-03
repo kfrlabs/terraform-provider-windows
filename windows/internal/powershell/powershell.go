@@ -3,8 +3,11 @@ package powershell
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"strings"
+	"unicode/utf16"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -66,6 +69,7 @@ func (e *Executor) Execute(ctx context.Context, command string) (string, string,
 
 func (e *Executor) buildCommand(command string) string {
 	var cmdBuilder strings.Builder
+
 	cmdBuilder.WriteString("pwsh")
 
 	if e.opts.NoProfile {
@@ -78,8 +82,17 @@ func (e *Executor) buildCommand(command string) string {
 		cmdBuilder.WriteString(fmt.Sprintf(" -ExecutionPolicy %s", e.opts.ExecutionPolicy))
 	}
 
-	// escapedCommand := strings.ReplaceAll(command, `"`, `\"`)
-	cmdBuilder.WriteString(fmt.Sprintf(` -Command "%s -Verbose -ErrorAction Stop"`, command))
+	// Convertir la commande en UTF-16LE (requis par PowerShell) avant l'encodage Base64
+	utf16Command := utf16.Encode([]rune(command))
+	utf16Bytes := make([]byte, len(utf16Command)*2)
+	for i, r := range utf16Command {
+		binary.LittleEndian.PutUint16(utf16Bytes[i*2:], r)
+	}
+
+	// Encoder en Base64
+	encodedCommand := base64.StdEncoding.EncodeToString(utf16Bytes)
+	cmdBuilder.WriteString(" -EncodedCommand ")
+	cmdBuilder.WriteString(encodedCommand)
 
 	return cmdBuilder.String()
 }

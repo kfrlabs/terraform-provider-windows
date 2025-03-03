@@ -63,14 +63,14 @@ func resourceWindowsRegistryValueCreate(d *schema.ResourceData, m interface{}) e
 	timeout := d.Get("command_timeout").(int)
 
 	// Check if the registry key exists
-	command := fmt.Sprintf("Get-Item -Path '%s'", path)
+	command := fmt.Sprintf("Get-Item -Path '%s' -ErrorAction Stop", path)
 	_, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to check registry key: %w\nStderr: %s", err, stderr)
 	}
 
 	// Create the registry value
-	command = fmt.Sprintf("New-ItemProperty -Path '%s' -Name '%s' -Value '%s' -PropertyType '%s'", path, name, value, valueType)
+	command = fmt.Sprintf("New-ItemProperty -Path '%s' -Name '%s' -Value '%s' -PropertyType '%s' -ErrorAction Stop", path, name, value, valueType)
 	_, stderr, err = sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to create registry value: %w\nStderr: %s", err, stderr)
@@ -84,11 +84,16 @@ func resourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) err
 	sshClient := m.(*ssh.Client)
 	path := d.Get("path").(string)
 	name := d.Get("name").(string)
-	timeout := d.Get("command_timeout").(int)
+
+	// Récupérer le timeout du schéma si non défini
+	timeout, ok := d.GetOk("command_timeout")
+	if !ok {
+		timeout = 300 // Valeur par défaut définie dans le schéma
+	}
 
 	// Commande pour obtenir la valeur actuelle du registre
-	command := fmt.Sprintf("Get-ItemPropertyValue -Path '%s' -Name '%s'", path, name)
-	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	command := fmt.Sprintf("Get-ItemPropertyValue -Path '%s' -Name '%s' -ErrorAction Stop", path, name)
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout.(int))
 	if err != nil {
 		d.SetId("")
 		return fmt.Errorf("failed to read registry value: %w\nStderr: %s", err, stderr)
@@ -109,7 +114,7 @@ func resourceWindowsRegistryValueUpdate(d *schema.ResourceData, m interface{}) e
 	value := d.Get("value").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	command := fmt.Sprintf("Set-ItemProperty -Path '%s' -Name '%s' -Value '%s'", path, name, value)
+	command := fmt.Sprintf("Set-ItemProperty -Path '%s' -Name '%s' -Value '%s' -ErrorAction Stop", path, name, value)
 	_, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to update registry value: %w\nStderr: %s", err, stderr)
@@ -124,7 +129,7 @@ func resourceWindowsRegistryValueDelete(d *schema.ResourceData, m interface{}) e
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	command := fmt.Sprintf("Remove-ItemProperty -Path '%s' -Name '%s' -Force", path, name)
+	command := fmt.Sprintf("Remove-ItemProperty -Path '%s' -Name '%s' -Force -ErrorAction Stop", path, name)
 	_, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to delete registry value: %w\nStderr: %s", err, stderr)
