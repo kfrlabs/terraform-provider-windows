@@ -3,12 +3,14 @@ name: Release
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "v*.*.*" # déclenche sur un tag de version
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    env:
+      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -18,22 +20,9 @@ jobs:
         with:
           go-version: "1.22"
 
-      - name: Import GPG key
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        run: |
-          # Crée un dossier temporaire pour GNUPGHOME
-          GPG_HOME=$(mktemp -d)
-          chmod 700 "$GPG_HOME"
-          export GNUPGHOME="$GPG_HOME"
-
-          # Import de la clé privée
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-          gpg --list-secret-keys
-
       - name: Set provider name
         run: |
-          PROVIDER_NAME=${GITHUB_REPOSITORY##*/}  # Extrait juste "terraform-provider-windows"
+          PROVIDER_NAME=${GITHUB_REPOSITORY##*/}  # extrait juste le nom du repo
           echo "PROVIDER_NAME=$PROVIDER_NAME" >> $GITHUB_ENV
 
       - name: Build binaries
@@ -51,11 +40,18 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum * > SHA256SUMS
+          sha256sum *.zip > SHA256SUMS
+          sha256sum SHA256SUMS >> SHA256SUMS
+
+      - name: Import GPG key
+        run: |
+          GPG_HOME=$(mktemp -d)
+          chmod 700 "$GPG_HOME"
+          export GNUPGHOME="$GPG_HOME"
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-secret-keys
 
       - name: Sign artifacts
-        env:
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           export GNUPGHOME="$GPG_HOME"
           cd dist
