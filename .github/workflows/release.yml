@@ -22,15 +22,18 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
+          # Crée un dossier temporaire pour GNUPGHOME
           GPG_HOME=$(mktemp -d)
           chmod 700 "$GPG_HOME"
           export GNUPGHOME="$GPG_HOME"
+
+          # Import de la clé privée
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           gpg --list-secret-keys
 
       - name: Set provider name
         run: |
-          PROVIDER_NAME=${GITHUB_REPOSITORY#terraform-}  # supprime "terraform-" si présent
+          PROVIDER_NAME=${GITHUB_REPOSITORY##*/}  # Extrait juste "terraform-provider-windows"
           echo "PROVIDER_NAME=$PROVIDER_NAME" >> $GITHUB_ENV
 
       - name: Build binaries
