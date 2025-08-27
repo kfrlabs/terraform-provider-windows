@@ -34,7 +34,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
 | Provider Version | Terraform Version | Go Version |
 |------------------|------------------|------------|
-| 0.0.2            | >= 1.0           | >= 1.18    |
+| 0.0.3            | >= 1.0           | >= 1.18    |
 
 ## Support
 
