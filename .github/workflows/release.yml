@@ -8,8 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      GPG_HOME: ${{ runner.temp }}/gnupg
 
     steps:
       - name: Checkout code
@@ -24,7 +22,7 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
-          mkdir -p "$GPG_HOME"
+          GPG_HOME=$(mktemp -d)
           chmod 700 "$GPG_HOME"
           export GNUPGHOME="$GPG_HOME"
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
