@@ -27,6 +27,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}  # supprime le 'v' du début du tag
           echo "PROVIDER_NAME=$PROVIDER_NAME" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Provider: $PROVIDER_NAME, Version: $VERSION"
 
       - name: Build binaries
         run: |
@@ -64,12 +65,12 @@ jobs:
         run: |
           export GNUPGHOME="$GPG_HOME"
           cd dist
-          # Signer les fichiers zip
+          # Signer les fichiers zip (signature binaire, pas ASCII armored)
           for file in *.zip; do
-            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign --armor "$file"
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign "$file"
           done
-          # Signer le fichier SHASUMS
-          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign --armor "${PROVIDER_NAME}_${VERSION}_SHA256SUMS"
+          # Signer le fichier SHASUMS (signature binaire, pas ASCII armored)
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign "${PROVIDER_NAME}_${VERSION}_SHA256SUMS"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
