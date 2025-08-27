@@ -1,1 +1,2 @@
-exemple/
+exemples/.terraform
+exemples/.terraform.lock.hcl
