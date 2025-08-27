@@ -3,11 +3,14 @@ name: Release
 on:
   push:
     tags:
-      - "v*.*.*" # déclenche sur un tag de version
+      - "v*.*.*"
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GPG_HOME: ${{ runner.temp }}/gnupg
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -17,37 +20,46 @@ jobs:
         with:
           go-version: "1.22"
 
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          mkdir -p "$GPG_HOME"
+          chmod 700 "$GPG_HOME"
+          export GNUPGHOME="$GPG_HOME"
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-secret-keys
+
+      - name: Set provider name
+        run: |
+          PROVIDER_NAME=${GITHUB_REPOSITORY#terraform-}  # supprime "terraform-" si présent
+          echo "PROVIDER_NAME=$PROVIDER_NAME" >> $GITHUB_ENV
+
       - name: Build binaries
         run: |
           mkdir -p dist
           for os in linux darwin windows; do
             for arch in amd64 arm64; do
               echo "Building for $os/$arch"
-              GOOS=$os GOARCH=$arch go build -o dist/terraform-provider-windows_${os}_${arch}
-              zip dist/terraform-provider-windows_${os}_${arch}.zip dist/terraform-provider-windows_${os}_${arch}*
-              rm dist/terraform-provider-windows_${os}_${arch}
+              GOOS=$os GOARCH=$arch go build -o dist/${PROVIDER_NAME}_${os}_${arch}
+              zip dist/${PROVIDER_NAME}_${os}_${arch}.zip dist/${PROVIDER_NAME}_${os}_${arch}*
+              rm dist/${PROVIDER_NAME}_${os}_${arch}
             done
           done
 
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum *.zip > SHA256SUMS
+          sha256sum * > SHA256SUMS
 
-      - name: Import GPG key
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: |
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --yes --passphrase-fd 0 --import
-
-      - name: Sign binaries
+      - name: Sign artifacts
         env:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
+          export GNUPGHOME="$GPG_HOME"
           cd dist
-          for f in *.zip; do
-            gpg --batch --yes --detach-sign --armor --passphrase "$GPG_PASSPHRASE" "$f"
+          for file in *.zip SHA256SUMS; do
+            gpg --batch --yes --passphrase "$GPG_PASSPHRASE" --detach-sign --armor "$file"
           done
 
       - name: Create GitHub Release
