@@ -38,7 +38,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
 ## Support
 
-For issues, questions, or feature requests, please open an issue on [GitHub Issues](https://github.com/k9fr4n/terraform-provider-windows/issues).
+For issues, questions, or feature requests, please open an issue on [GitHub Issues](https://github.com/kfrlabs/terraform-provider-windows/issues).
 
 For commercial support, contact the maintainer directly.
 

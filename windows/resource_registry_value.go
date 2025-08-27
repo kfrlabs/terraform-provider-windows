@@ -5,7 +5,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	"github.com/k9fr4n/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 )
 
 func ResourceWindowsRegistryValue() *schema.Resource {

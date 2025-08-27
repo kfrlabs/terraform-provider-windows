@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/k9fr4n/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 )
 
 func Provider() *schema.Provider {
