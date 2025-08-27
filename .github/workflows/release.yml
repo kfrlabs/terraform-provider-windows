@@ -11,6 +11,7 @@ jobs:
     env:
       GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      GPG_HOME: /tmp/gpg-home
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -43,10 +44,13 @@ jobs:
           sha256sum *.zip > SHA256SUMS
           sha256sum SHA256SUMS >> SHA256SUMS
 
+      - name: Setup GPG directory
+        run: |
+          mkdir -p "$GPG_HOME"
+          chmod 700 "$GPG_HOME"
+
       - name: Import GPG key
         run: |
-          GPG_HOME=$(mktemp -d)
-          chmod 700 "$GPG_HOME"
           export GNUPGHOME="$GPG_HOME"
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           gpg --list-secret-keys
