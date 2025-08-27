@@ -60,7 +60,7 @@ jobs:
           export GNUPGHOME="$GPG_HOME"
           cd dist
           for file in *.zip SHA256SUMS; do
-            gpg --batch --yes --passphrase "$GPG_PASSPHRASE" --detach-sign --armor "$file"
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign --armor "$file"
           done
 
       - name: Create GitHub Release
