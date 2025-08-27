@@ -41,8 +41,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum *.zip > SHA256SUMS
-          sha256sum SHA256SUMS >> SHA256SUMS
+          sha256sum *.zip > ${PROVIDER_NAME}_${GITHUB_REF_NAME}_SHA256SUMS
 
       - name: Setup GPG directory
         run: |
@@ -59,9 +58,12 @@ jobs:
         run: |
           export GNUPGHOME="$GPG_HOME"
           cd dist
-          for file in *.zip SHA256SUMS; do
+          # Signer les fichiers zip
+          for file in *.zip; do
             gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign --armor "$file"
           done
+          # Signer le fichier SHASUMS
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign --armor "${PROVIDER_NAME}_${GITHUB_REF_NAME}_SHA256SUMS"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
