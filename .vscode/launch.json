@@ -1,0 +1,49 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Go",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${fileDirname}",
+            "env": {},
+            "args": []
+        },
+        {
+            "name": "Terraform Init",
+            "type": "f5anything",
+            "command": "terraform init",
+            "request": "launch",
+            "preLaunchTask": "setTerraformDir"
+        },
+        {
+            "name": "Terraform Plan",
+            "type": "f5anything",
+            "command": "terraform plan",
+            "request": "launch",
+            "preLaunchTask": "setTerraformDir"
+        },
+        {
+            "name": "Terraform Apply",
+            "type": "f5anything",
+            "command": "terraform apply",
+            "request": "launch",
+            "preLaunchTask": "setTerraformDir"
+        },
+        {
+            "name": "Terraform Destroy",
+            "type": "f5anything",
+            "command": "terraform destroy",
+            "request": "launch",
+            "preLaunchTask": "setTerraformDir"
+        },
+        {
+            "name": "Terraform Version",
+            "type": "f5anything",
+            "command": "terraform -version",
+            "request": "launch",
+            "preLaunchTask": "setTerraformDir"
+        }
+    ]
+}
