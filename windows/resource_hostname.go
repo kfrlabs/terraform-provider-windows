@@ -20,13 +20,19 @@ func ResourceWindowsHostname() *schema.Resource {
 			"hostname": {
 				Type:        schema.TypeString,
 				Required:    true,
-				Description: "Le nouveau nom d'hôte à appliquer à la machine Windows.",
+				Description: "The new hostname to apply to the Windows machine.",
+			},
+			"restart": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Restart the computer after renaming.",
 			},
 			"command_timeout": {
 				Type:        schema.TypeInt,
 				Optional:    true,
 				Default:     300,
-				Description: "Timeout en secondes pour les commandes PowerShell.",
+				Description: "Timeout in seconds for PowerShell commands.",
 			},
 		},
 	}
@@ -36,8 +42,12 @@ func resourceWindowsHostnameCreate(d *schema.ResourceData, m interface{}) error 
 	sshClient := m.(*ssh.Client)
 	hostname := d.Get("hostname").(string)
 	timeout := d.Get("command_timeout").(int)
+	restart := d.Get("restart").(bool)
 
 	command := fmt.Sprintf("Rename-Computer -NewName '%s' -Force -ErrorAction Stop", hostname)
+	if restart {
+		command += " -Restart"
+	}
 	_, _, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to set hostname: %w", err)
@@ -68,7 +78,7 @@ func resourceWindowsHostnameUpdate(d *schema.ResourceData, m interface{}) error 
 }
 
 func resourceWindowsHostnameDelete(d *schema.ResourceData, m interface{}) error {
-	// Optionnel : restaurer l'ancien hostname si besoin
+	// Optional: restore the previous hostname if needed
 	d.SetId("")
 	return nil
 }
