@@ -50,6 +50,7 @@ func Provider() *schema.Provider {
 			"windows_hostname":       ResourceWindowsHostname(),
 			"windows_registry_key":   ResourceWindowsRegistryKey(),
 			"windows_registry_value": ResourceWindowsRegistryValue(),
+			"windows_localuser":      ResourceWindowsLocalUser(),
 		},
 		ConfigureFunc: providerConfigure,
 	}
