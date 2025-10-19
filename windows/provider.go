@@ -48,9 +48,10 @@ func Provider() *schema.Provider {
 		ResourcesMap: map[string]*schema.Resource{
 			"windows_feature":        ResourceWindowsFeature(),
 			"windows_hostname":       ResourceWindowsHostname(),
+			"windows_localuser":      ResourceWindowsLocalUser(),
+			"windows_localgroup":     ResourceWindowsLocalGroup(),
 			"windows_registry_key":   ResourceWindowsRegistryKey(),
 			"windows_registry_value": ResourceWindowsRegistryValue(),
-			"windows_localuser":      ResourceWindowsLocalUser(),
 		},
 		ConfigureFunc: providerConfigure,
 	}
