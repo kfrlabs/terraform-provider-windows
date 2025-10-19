@@ -52,6 +52,7 @@ func Provider() *schema.Provider {
 			"windows_localgroup":     ResourceWindowsLocalGroup(),
 			"windows_registry_key":   ResourceWindowsRegistryKey(),
 			"windows_registry_value": ResourceWindowsRegistryValue(),
+			"windows_sercice":        ResourceWindowsService(),
 		},
 		ConfigureFunc: providerConfigure,
 	}

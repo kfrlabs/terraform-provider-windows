@@ -34,7 +34,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
 | Provider Version | Terraform Version | Go Version |
 |------------------|------------------|------------|
-| 0.0.3            | >= 1.0           | >= 1.18    |
+| 0.0.6            | >= 1.0           | >= 1.18    |
 
 ## Support
 
@@ -43,12 +43,6 @@ For issues, questions, or feature requests, please open an issue on [GitHub Issu
 For commercial support, contact the maintainer directly.
 
 ## Todo
-
-windows_user : créer, modifier, supprimer un utilisateur.
-windows_group : créer des groupes locaux.
-windows_group_membership : ajouter ou retirer des utilisateurs d’un groupe.
-
-windows_service : démarrer, arrêter, configurer les services. Possibilité de gérer le type de démarrage (Automatic, Manual, Disabled).
 
 windows_package : installer ou désinstaller via MSI, EXE ou winget. Gestion des versions et des sources (locales ou réseau).
 
