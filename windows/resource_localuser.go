@@ -1,12 +1,24 @@
 package resources
 
 import (
+	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 )
+
+// LocalUserInfo représente les informations d'un utilisateur local
+type LocalUserInfo struct {
+	Exists                   bool     `json:"Exists"`
+	FullName                 string   `json:"FullName"`
+	Description              string   `json:"Description"`
+	PasswordNeverExpires     bool     `json:"PasswordNeverExpires"`
+	UserMayNotChangePassword bool     `json:"UserMayNotChangePassword"`
+	Enabled                  bool     `json:"Enabled"`
+	Groups                   []string `json:"Groups"`
+}
 
 func ResourceWindowsLocalUser() *schema.Resource {
 	return &schema.Resource{
@@ -80,16 +92,24 @@ func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error
 	password := d.Get("password").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	// Base command for creating user
-	command := fmt.Sprintf("New-LocalUser -Name '%s' -Password (ConvertTo-SecureString -AsPlainText '%s' -Force)",
-		username, password)
+	// ✅ Valider les inputs
+	if err := powershell.ValidatePowerShellArgument(username); err != nil {
+		return fmt.Errorf("invalid username: %w", err)
+	}
 
-	// Add optional parameters
+	// ✅ Construire la commande de manière sécurisée avec quoting
+	command := fmt.Sprintf(
+		"New-LocalUser -Name %s -Password (ConvertTo-SecureString -AsPlainText %s -Force)",
+		powershell.QuotePowerShellString(username),
+		powershell.QuotePowerShellString(password),
+	)
+
+	// Ajouter les paramètres optionnels
 	if fullName, ok := d.GetOk("full_name"); ok {
-		command += fmt.Sprintf(" -FullName '%s'", fullName.(string))
+		command += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(fullName.(string)))
 	}
 	if description, ok := d.GetOk("description"); ok {
-		command += fmt.Sprintf(" -Description '%s'", description.(string))
+		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description.(string)))
 	}
 	if d.Get("password_never_expires").(bool) {
 		command += " -PasswordNeverExpires $true"
@@ -103,21 +123,31 @@ func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error
 
 	command += " -ErrorAction Stop"
 
-	// Create the user
+	// Créer l'utilisateur
 	_, _, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to create local user: %w", err)
 	}
 
-	// Handle group memberships if specified
+	// Ajouter aux groupes si spécifiés
 	if groups, ok := d.GetOk("groups"); ok {
 		groupList := groups.(*schema.Set).List()
 		for _, group := range groupList {
-			addToGroupCmd := fmt.Sprintf("Add-LocalGroupMember -Group '%s' -Member '%s' -ErrorAction Stop",
-				group.(string), username)
+			groupName := group.(string)
+
+			// ✅ Valider le nom du groupe
+			if err := powershell.ValidatePowerShellArgument(groupName); err != nil {
+				return fmt.Errorf("invalid group name '%s': %w", groupName, err)
+			}
+
+			addToGroupCmd := fmt.Sprintf(
+				"Add-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
+				powershell.QuotePowerShellString(groupName),
+				powershell.QuotePowerShellString(username),
+			)
 			_, _, err := sshClient.ExecuteCommand(addToGroupCmd, timeout)
 			if err != nil {
-				return fmt.Errorf("failed to add user to group %s: %w", group.(string), err)
+				return fmt.Errorf("failed to add user to group %s: %w", groupName, err)
 			}
 		}
 	}
@@ -131,48 +161,63 @@ func resourceWindowsLocalUserRead(d *schema.ResourceData, m interface{}) error {
 	username := d.Id()
 	timeout := d.Get("command_timeout").(int)
 
-	// Check if user exists and get properties
+	// ✅ Valider le username avant utilisation
+	if err := powershell.ValidatePowerShellArgument(username); err != nil {
+		return fmt.Errorf("invalid username: %w", err)
+	}
+
+	// Commande PowerShell qui retourne du JSON structuré
 	command := fmt.Sprintf(`
-        $user = Get-LocalUser -Name '%s' -ErrorAction SilentlyContinue
-        if ($user) {
-            @{
-                'Exists' = $true
-                'FullName' = $user.FullName
-                'Description' = $user.Description
-                'PasswordNeverExpires' = $user.PasswordNeverExpires
-                'UserMayNotChangePassword' = !$user.UserMayChangePassword
-                'Enabled' = $user.Enabled
-                'Groups' = (Get-LocalGroup | Where-Object { $_.Members -contains $user }).Name
-            } | ConvertTo-Json
-        } else {
-            @{ 'Exists' = $false } | ConvertTo-Json
-        }
-    `, username)
+$user = Get-LocalUser -Name %s -ErrorAction SilentlyContinue
+if ($user) {
+    $groups = @()
+    try { 
+        $groups = @(Get-LocalGroup | Where-Object { 
+            (Get-LocalGroupMember -Group $_.Name -ErrorAction SilentlyContinue | 
+             Where-Object { $_.Name -eq "$env:COMPUTERNAME\$($user.Name)" }) -ne $null 
+        } | Select-Object -ExpandProperty Name)
+    } catch {}
+    
+    @{
+        'Exists' = $true
+        'FullName' = $user.FullName
+        'Description' = $user.Description
+        'PasswordNeverExpires' = $user.PasswordNeverExpires
+        'UserMayNotChangePassword' = -not $user.UserMayChangePassword
+        'Enabled' = $user.Enabled
+        'Groups' = $groups
+    } | ConvertTo-Json
+} else {
+    @{ 'Exists' = $false } | ConvertTo-Json
+}
+`,
+		powershell.QuotePowerShellString(username),
+	)
 
 	stdout, _, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to read local user: %w", err)
 	}
 
-	// Parse the JSON output
-	if strings.Contains(stdout, `"Exists": false`) {
+	// ✅ Parser le JSON de manière structurée
+	var info LocalUserInfo
+	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
+		return fmt.Errorf("failed to parse user info: %w; output: %s", err, stdout)
+	}
+
+	if !info.Exists {
 		d.SetId("")
 		return nil
 	}
 
-	// Update the state with the current values
+	// Mettre à jour l'état
 	d.Set("username", username)
-	d.Set("full_name", strings.TrimSpace(strings.Split(stdout, "FullName")[1]))
-	d.Set("description", strings.TrimSpace(strings.Split(stdout, "Description")[1]))
-	d.Set("password_never_expires", strings.Contains(stdout, `"PasswordNeverExpires": true`))
-	d.Set("user_cannot_change_password", strings.Contains(stdout, `"UserMayNotChangePassword": true`))
-	d.Set("account_disabled", !strings.Contains(stdout, `"Enabled": true`))
-
-	// Update groups
-	if strings.Contains(stdout, "Groups") {
-		groups := strings.Split(strings.Split(stdout, "Groups")[1], "]")[0]
-		d.Set("groups", strings.Split(groups, ","))
-	}
+	d.Set("full_name", info.FullName)
+	d.Set("description", info.Description)
+	d.Set("password_never_expires", info.PasswordNeverExpires)
+	d.Set("user_cannot_change_password", info.UserMayNotChangePassword)
+	d.Set("account_disabled", !info.Enabled)
+	d.Set("groups", info.Groups)
 
 	return nil
 }
@@ -182,23 +227,33 @@ func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error
 	username := d.Get("username").(string)
 	timeout := d.Get("command_timeout").(int)
 
+	// ✅ Valider le username
+	if err := powershell.ValidatePowerShellArgument(username); err != nil {
+		return fmt.Errorf("invalid username: %w", err)
+	}
+
+	// Mettre à jour le mot de passe
 	if d.HasChange("password") {
 		password := d.Get("password").(string)
-		command := fmt.Sprintf("Set-LocalUser -Name '%s' -Password (ConvertTo-SecureString -AsPlainText '%s' -Force)",
-			username, password)
+		command := fmt.Sprintf(
+			"Set-LocalUser -Name %s -Password (ConvertTo-SecureString -AsPlainText %s -Force)",
+			powershell.QuotePowerShellString(username),
+			powershell.QuotePowerShellString(password),
+		)
 		_, _, err := sshClient.ExecuteCommand(command, timeout)
 		if err != nil {
 			return fmt.Errorf("failed to update password: %w", err)
 		}
 	}
 
-	// Update other properties
-	command := fmt.Sprintf("Set-LocalUser -Name '%s'", username)
+	// Construire la commande de mise à jour
+	command := fmt.Sprintf("Set-LocalUser -Name %s", powershell.QuotePowerShellString(username))
+
 	if d.HasChange("full_name") {
-		command += fmt.Sprintf(" -FullName '%s'", d.Get("full_name").(string))
+		command += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(d.Get("full_name").(string)))
 	}
 	if d.HasChange("description") {
-		command += fmt.Sprintf(" -Description '%s'", d.Get("description").(string))
+		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(d.Get("description").(string)))
 	}
 	if d.HasChange("password_never_expires") {
 		command += fmt.Sprintf(" -PasswordNeverExpires $%t", d.Get("password_never_expires").(bool))
@@ -214,34 +269,57 @@ func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error
 		}
 	}
 
-	_, _, err := sshClient.ExecuteCommand(command, timeout)
-	if err != nil {
-		return fmt.Errorf("failed to update local user: %w", err)
+	if d.HasChange("full_name") || d.HasChange("description") || d.HasChange("password_never_expires") ||
+		d.HasChange("user_cannot_change_password") || d.HasChange("account_disabled") {
+		_, _, err := sshClient.ExecuteCommand(command, timeout)
+		if err != nil {
+			return fmt.Errorf("failed to update local user: %w", err)
+		}
 	}
 
-	// Handle group membership changes
+	// Gérer les modifications d'adhésion aux groupes
 	if d.HasChange("groups") {
 		o, n := d.GetChange("groups")
 		oldSet := o.(*schema.Set)
 		newSet := n.(*schema.Set)
 
-		// Remove from old groups that are not in new groups
+		// Retirer des anciens groupes
 		for _, group := range oldSet.Difference(newSet).List() {
-			command := fmt.Sprintf("Remove-LocalGroupMember -Group '%s' -Member '%s' -ErrorAction Stop",
-				group.(string), username)
+			groupName := group.(string)
+
+			// ✅ Valider le nom du groupe
+			if err := powershell.ValidatePowerShellArgument(groupName); err != nil {
+				return fmt.Errorf("invalid group name '%s': %w", groupName, err)
+			}
+
+			command := fmt.Sprintf(
+				"Remove-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
+				powershell.QuotePowerShellString(groupName),
+				powershell.QuotePowerShellString(username),
+			)
 			_, _, err := sshClient.ExecuteCommand(command, timeout)
 			if err != nil {
-				return fmt.Errorf("failed to remove user from group %s: %w", group.(string), err)
+				return fmt.Errorf("failed to remove user from group %s: %w", groupName, err)
 			}
 		}
 
-		// Add to new groups that were not in old groups
+		// Ajouter aux nouveaux groupes
 		for _, group := range newSet.Difference(oldSet).List() {
-			command := fmt.Sprintf("Add-LocalGroupMember -Group '%s' -Member '%s' -ErrorAction Stop",
-				group.(string), username)
+			groupName := group.(string)
+
+			// ✅ Valider le nom du groupe
+			if err := powershell.ValidatePowerShellArgument(groupName); err != nil {
+				return fmt.Errorf("invalid group name '%s': %w", groupName, err)
+			}
+
+			command := fmt.Sprintf(
+				"Add-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
+				powershell.QuotePowerShellString(groupName),
+				powershell.QuotePowerShellString(username),
+			)
 			_, _, err := sshClient.ExecuteCommand(command, timeout)
 			if err != nil {
-				return fmt.Errorf("failed to add user to group %s: %w", group.(string), err)
+				return fmt.Errorf("failed to add user to group %s: %w", groupName, err)
 			}
 		}
 	}
@@ -254,7 +332,12 @@ func resourceWindowsLocalUserDelete(d *schema.ResourceData, m interface{}) error
 	username := d.Get("username").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	command := fmt.Sprintf("Remove-LocalUser -Name '%s' -ErrorAction Stop", username)
+	// ✅ Valider le username
+	if err := powershell.ValidatePowerShellArgument(username); err != nil {
+		return fmt.Errorf("invalid username: %w", err)
+	}
+
+	command := fmt.Sprintf("Remove-LocalUser -Name %s -ErrorAction Stop", powershell.QuotePowerShellString(username))
 	_, _, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to delete local user: %w", err)

@@ -50,25 +50,21 @@ func Provider() *schema.Provider {
 			"known_hosts_path": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Description: "Path to the SSH known_hosts file for host key verification (e.g., ~/.ssh/known_hosts). If not specified, ~/.ssh/known_hosts will be used.",
+				Description: "Path to the SSH known_hosts file for host key verification (e.g., ~/.ssh/known_hosts). If not specified, ~/.ssh/known_hosts will be used by default.",
 			},
 			"host_key_fingerprints": {
-				Type:        schema.TypeList,
-				Optional:    true,
-				Elem:        &schema.Schema{Type: schema.TypeString},
-				Description: "List of expected SSH host key fingerprints (SHA256 format: 'SHA256:xxxxxx...'). If provided, the host key will be verified against these fingerprints instead of known_hosts.",
+				Type:     schema.TypeList,
+				Optional: true,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+				Description: "List of expected SSH host key fingerprints (SHA256 format: 'SHA256:xxxxxx...'). " +
+					"If provided, the host key will be verified against these fingerprints instead of known_hosts.",
 			},
 			"strict_host_key_checking": {
-				Type:        schema.TypeBool,
-				Optional:    true,
-				Default:     false,
-				Description: "If true, fail if host key is not found in known_hosts or fingerprints don't match. If false, log a warning but proceed (not recommended for production).",
-			},
-			"skip_host_key_verification": {
-				Type:        schema.TypeBool,
-				Optional:    true,
-				Default:     false,
-				Description: "⚠️ DEPRECATED and INSECURE: Skip SSH host key verification entirely. Use known_hosts_path or host_key_fingerprints instead. This option is provided only for backward compatibility and testing.",
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  true, // ✅ MODIFIÉ : true par défaut pour la sécurité
+				Description: "If true, fail if host key is not found in known_hosts or fingerprints don't match. " +
+					"If false, log a warning but proceed. Default is true for security.",
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
@@ -84,7 +80,7 @@ func Provider() *schema.Provider {
 	}
 }
 
-// ✅ CORRECTED: Retourne diag.Diagnostics au lieu de error
+// providerConfigure configure le provider Windows avec les paramètres SSH
 func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
@@ -112,25 +108,15 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		for i, fp := range fpList {
 			config.HostKeyFingerprints[i] = fp.(string)
 		}
-
 		tflog.Debug(ctx, "host key fingerprints configured",
 			map[string]any{"count": len(config.HostKeyFingerprints)})
 	}
 
-	// ⚠️ Vérifier l'option dépréciée
-	if d.Get("skip_host_key_verification").(bool) {
-		tflog.Warn(ctx,
-			"⚠️  DEPRECATED: skip_host_key_verification is deprecated and INSECURE. "+
-				"Use known_hosts_path or host_key_fingerprints instead for production environments.",
-		)
-	}
-
+	// Créer le client SSH
 	sshClient, err := ssh.NewClient(config)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to create SSH client: %v", err)
 		tflog.Error(ctx, errMsg)
-
-		// ✅ Retourner une erreur de diagnostic au lieu d'une erreur classique
 		diags = append(diags, diag.Diagnostic{
 			Severity: diag.Error,
 			Summary:  "Failed to configure SSH client",

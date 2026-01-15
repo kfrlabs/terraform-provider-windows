@@ -12,7 +12,75 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Executor gère l'exécution des commandes PowerShell
+// ============================================================================
+// HELPERS POUR L'ÉCHAPPEMENT POWERSHELL
+// ============================================================================
+
+// EscapePowerShellString échappe une chaîne pour une utilisation en PowerShell
+// Remplace les guillemets simples par des guillemets doubles échappés
+func EscapePowerShellString(s string) string {
+	// Remplacer les guillemets simples par deux guillemets simples
+	// C'est la façon standard d'échapper les guillemets en PowerShell
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// QuotePowerShellString enveloppe et échappe une chaîne pour PowerShell
+// Exemple: "test'value" -> "'test”value'"
+func QuotePowerShellString(s string) string {
+	return "'" + EscapePowerShellString(s) + "'"
+}
+
+// QuotePowerShellStringDouble enveloppe et échappe une chaîne avec des guillemets doubles
+// Utile pour les chemins avec des variables d'environnement
+// Exemple: "C:\Program Files" -> "\"C:\Program Files\""
+func QuotePowerShellStringDouble(s string) string {
+	// Échapper les guillemets doubles et les backticks
+	escaped := strings.ReplaceAll(s, "`", "``")
+	escaped = strings.ReplaceAll(escaped, "\"", "`\"")
+	return "\"" + escaped + "\""
+}
+
+// SanitizePowerShellInput supprime les caractères dangereux
+// (utiliser en dernier recours, préférer l'échappement)
+func SanitizePowerShellInput(s string) string {
+	dangerous := []string{";", "|", "&", "$", "`", "\n", "\r"}
+	result := s
+	for _, char := range dangerous {
+		result = strings.ReplaceAll(result, char, "")
+	}
+	return result
+}
+
+// ValidatePowerShellArgument vérifie qu'un argument n'a pas de caractères dangereux
+// Retourne une erreur si des patterns suspects sont trouvés
+func ValidatePowerShellArgument(arg string) error {
+	// Vérifier les patterns de commandes PowerShell
+	suspiciousPatterns := []string{
+		"|",   // Pipe
+		";",   // Séparateur de commande
+		"&",   // Opérateur ET
+		"||",  // OU
+		"&&",  // ET
+		"$(",  // Substitution de commande
+		"`",   // Backtick (escape PowerShell)
+		"$()", // Substitution de commande
+		"-",   // Drapeaux (peut être dangereux si combiné)
+	}
+
+	for _, pattern := range suspiciousPatterns {
+		if strings.Contains(arg, pattern) {
+			return fmt.Errorf("suspicious pattern '%s' found in argument", pattern)
+		}
+	}
+
+	return nil
+}
+
+// ============================================================================
+// EXECUTOR POWERSHELL SÉCURISÉ
+// ============================================================================
+
+// Executor gère l'exécution sécurisée des commandes PowerShell
 type Executor struct {
 	session *ssh.Session
 	opts    *Options
@@ -45,7 +113,7 @@ func NewExecutor(session *ssh.Session, opts *Options) *Executor {
 	}
 }
 
-// Execute exécute une commande PowerShell
+// Execute exécute une commande PowerShell de manière sécurisée
 func (e *Executor) Execute(ctx context.Context, command string) (string, string, error) {
 	var stdoutBuf, stderrBuf bytes.Buffer
 	e.session.Stdout = &stdoutBuf
@@ -67,6 +135,7 @@ func (e *Executor) Execute(ctx context.Context, command string) (string, string,
 	}
 }
 
+// buildCommand construit une commande PowerShell encodée (sécurisée)
 func (e *Executor) buildCommand(command string) string {
 	var cmdBuilder strings.Builder
 
@@ -95,4 +164,31 @@ func (e *Executor) buildCommand(command string) string {
 	cmdBuilder.WriteString(encodedCommand)
 
 	return cmdBuilder.String()
+}
+
+// ============================================================================
+// BUILDERS DE COMMANDES POWERSHELL SÉCURISÉES
+// ============================================================================
+
+// CommandBuilder aide à construire des commandes PowerShell de manière sécurisée
+type CommandBuilder struct {
+	commands []string
+}
+
+// NewCommandBuilder crée un nouveau builder de commandes
+func NewCommandBuilder() *CommandBuilder {
+	return &CommandBuilder{
+		commands: []string{},
+	}
+}
+
+// AddCommand ajoute une commande au builder
+func (cb *CommandBuilder) AddCommand(cmd string) *CommandBuilder {
+	cb.commands = append(cb.commands, cmd)
+	return cb
+}
+
+// Build retourne la commande combinée
+func (cb *CommandBuilder) Build() string {
+	return strings.Join(cb.commands, "; ")
 }
