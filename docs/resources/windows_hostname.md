@@ -1,432 +1,257 @@
-# Windows Hostname Resource
+# windows_hostname
 
-Manages the hostname of a Windows server via SSH and PowerShell remote execution.
-
-## Table of Contents
-
-1. [Example Usage](#example-usage)
-2. [Argument Reference](#argument-reference)
-3. [Attributes Reference](#attributes-reference)
-4. [Advanced Examples](#advanced-examples)
-5. [Import](#import)
-6. [Troubleshooting](#troubleshooting)
-
----
+Manages the hostname of a Windows server.
 
 ## Example Usage
 
-### Basic Usage
+### Basic Hostname Configuration
 
 ```hcl
-resource "windows_hostname" "example" {
-  hostname = "new-hostname"
+resource "windows_hostname" "server" {
+  hostname = "WEB-SERVER-01"
 }
 ```
 
-### With Automatic Restart
+### Hostname with Automatic Restart
 
 ```hcl
-resource "windows_hostname" "example" {
-  hostname        = "new-hostname"
-  restart         = true
-  command_timeout = 300
+resource "windows_hostname" "server" {
+  hostname = "WEB-SERVER-01"
+  restart  = true
+}
+```
+
+### FQDN Hostname
+
+```hcl
+resource "windows_hostname" "server" {
+  hostname = "web01.domain.local"
 }
 ```
 
 ### With Custom Timeout
 
 ```hcl
-resource "windows_hostname" "example" {
-  hostname        = "prod-server-01"
+resource "windows_hostname" "server" {
+  hostname        = "APP-SERVER-02"
   restart         = true
   command_timeout = 600
 }
 ```
 
----
-
 ## Argument Reference
 
-### Required Arguments
+The following arguments are supported:
 
-| Argument | Type | Description |
-|----------|------|-------------|
-| **hostname** | string | The new hostname to set for the Windows machine. Must be between 1-15 characters and contain only letters, numbers, and hyphens. Cannot start or end with a hyphen. |
+* `hostname` - (Required, String) The new hostname to apply to the Windows machine. The hostname must follow these rules:
+  - Maximum 255 characters total
+  - Each label (part between dots) maximum 63 characters
+  - Labels can contain letters, digits, and hyphens
+  - Labels cannot start or end with a hyphen
+  - Case-insensitive
 
-### Optional Arguments
+* `restart` - (Optional, Boolean) Restart the computer after renaming. Default: `false`. 
+  ⚠️ **Warning**: Setting this to `true` will cause the server to restart immediately, which will disconnect the SSH session.
 
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| **restart** | bool | false | Whether to restart the server automatically after changing the hostname. A restart is usually required for the hostname change to take effect. When `true`, the server will reboot without manual intervention. |
-| **command_timeout** | number | 300 | Timeout in seconds for PowerShell commands executed on the remote server. |
+* `command_timeout` - (Optional, Number) Timeout in seconds for PowerShell commands. Default: `300` (5 minutes).
 
----
-
-## Attributes Reference
+## Attribute Reference
 
 In addition to all arguments above, the following attributes are exported:
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| **id** | string | The current hostname of the machine. Used as the unique identifier. |
-| **current_hostname** | string | The hostname before the change was applied. Useful for tracking what the previous hostname was. |
-| **previous_hostname** | string | The hostname that was set before this resource was applied (imported state). |
-| **requires_restart** | bool | Whether a restart is required for the hostname change to take effect. |
-
----
-
-## Advanced Examples
-
-### Hostname with DNS Registration
-
-```hcl
-resource "windows_hostname" "web_server" {
-  hostname = "web-server-prod-01"
-  restart  = true
-}
-
-# Optional: Update DNS records after hostname change
-resource "aws_route53_record" "web_server" {
-  zone_id = aws_route53_zone.example.zone_id
-  name    = "web-server-prod-01.example.com"
-  type    = "A"
-  ttl     = 300
-  records = ["192.168.1.100"]
-
-  depends_on = [windows_hostname.web_server]
-}
-```
-
-### Conditional Hostname Change
-
-```hcl
-variable "environment" {
-  type    = string
-  default = "dev"
-}
-
-variable "server_number" {
-  type    = number
-  default = 1
-}
-
-resource "windows_hostname" "server" {
-  hostname = "${var.environment}-server-${format("%02d", var.server_number)}"
-  restart  = true
-}
-```
-
-### Multiple Server Hostname Management
-
-```hcl
-variable "servers" {
-  type = map(object({
-    hostname = string
-  }))
-  default = {
-    web1 = { hostname = "web-prod-01" }
-    web2 = { hostname = "web-prod-02" }
-    db1  = { hostname = "db-prod-01" }
-  }
-}
-
-resource "windows_hostname" "servers" {
-  for_each = var.servers
-
-  hostname = each.value.hostname
-  restart  = true
-}
-```
-
-### Hostname Change with Graceful Shutdown
-
-```hcl
-resource "windows_hostname" "example" {
-  hostname = "new-hostname"
-  restart  = true
-}
-
-# Optional: Notify users before restart
-resource "null_resource" "notify_users" {
-  provisioner "local-exec" {
-    command = "echo 'Hostname changed to: ${windows_hostname.example.hostname}'"
-  }
-
-  depends_on = [windows_hostname.example]
-}
-```
-
-### Scheduled Hostname Change
-
-```hcl
-resource "windows_hostname" "example" {
-  hostname        = "prod-server-renamed"
-  restart         = true
-  command_timeout = 600  # Allow 10 minutes for graceful shutdown
-}
-
-output "old_hostname" {
-  value       = windows_hostname.example.previous_hostname
-  description = "The previous hostname"
-}
-
-output "new_hostname" {
-  value       = windows_hostname.example.hostname
-  description = "The newly set hostname"
-}
-```
-
----
+* `id` - The hostname.
 
 ## Import
 
-Windows hostnames can be imported using the current hostname. This allows you to bring existing Windows servers under Terraform management.
+Windows hostname can be imported using the hostname:
 
-### Import Syntax
-
-```shell
-terraform import windows_hostname.<resource_name> <current_hostname>
+```bash
+terraform import windows_hostname.server WEB-SERVER-01
 ```
 
-### Import Examples
+## Hostname Naming Conventions
 
-Import a server with hostname "old-server":
+### NetBIOS Names (Single Label)
 
-```shell
-terraform import windows_hostname.example old-server
-```
+For standalone or workgroup computers, use a NetBIOS name:
+- Maximum 15 characters (16th is reserved by Windows)
+- Letters, digits, and hyphens only
+- Cannot start or end with hyphen
+- Case-insensitive
 
-Create the resource configuration first:
+Examples:
+- `WEB-SERVER-01`
+- `APP-01`
+- `DC-PRIMARY`
+
+### Fully Qualified Domain Names (FQDN)
+
+For domain-joined computers, you can use FQDN:
+- Multiple labels separated by dots
+- Each label follows NetBIOS rules
+- Total length maximum 255 characters
+
+Examples:
+- `web01.contoso.com`
+- `app-server.prod.domain.local`
+- `dc01.ad.company.net`
+
+## Restart Behavior
+
+When `restart = true`:
+
+1. The hostname change command includes `-Restart` flag
+2. The server will reboot immediately after the command executes
+3. The SSH connection will be lost
+4. Terraform will complete the operation before the reboot finishes
+
+⚠️ **Important Considerations**:
+- Ensure you have another way to connect to the server after restart
+- The server's IP address should not change
+- Consider using out-of-band management (iDRAC, iLO, etc.) for monitoring
+- Allow sufficient time for the server to complete the reboot
+
+When `restart = false`:
+- The hostname change is applied but won't take effect until manual reboot
+- The old hostname will still be active
+- You'll need to restart manually: `Restart-Computer -Force`
+
+## DNS and Domain Considerations
+
+### Standalone/Workgroup Servers
+
+Changing hostname on standalone servers is straightforward:
 
 ```hcl
-resource "windows_hostname" "example" {
-  hostname = "new-hostname"
+resource "windows_hostname" "standalone" {
+  hostname = "NEW-SERVER"
   restart  = true
 }
 ```
 
-Then import the existing server:
+### Domain-Joined Servers
 
-```shell
-terraform import windows_hostname.example old-server
+⚠️ **Important**: Changing the hostname of a domain-joined server requires additional steps:
+
+1. The computer must be removed from the domain first
+2. Change the hostname
+3. Re-join the domain with the new name
+
+This provider currently handles only the hostname change. For domain operations, you may need to:
+- Manually unjoin/rejoin the domain
+- Use additional automation tools
+- Coordinate with domain administrators
+
+### DNS Updates
+
+After changing hostname:
+- Dynamic DNS (DDNS) should update automatically if enabled
+- Static DNS records must be updated manually
+- DHCP reservations may need updating
+- Update any monitoring systems, scripts, or documentation
+
+## Validation
+
+The provider validates hostname format before applying:
+
+✅ **Valid hostnames**:
+```
+WEB-SERVER-01
+app-server
+DC01
+web01.domain.local
+server-2024-prod
 ```
 
-### Import Multiple Servers
+❌ **Invalid hostnames**:
+```
+-invalid        # starts with hyphen
+invalid-       # ends with hyphen
+my_server      # contains underscore
+server 01      # contains space
+thisisaverylonghostnamethathastoomanycharacterstobevalidforanetbiosname  # > 63 chars per label
+```
 
-Create resource definitions:
+## Common Use Cases
+
+### Standardized Naming Convention
 
 ```hcl
-resource "windows_hostname" "server1" {
-  hostname = "web-server-01"
-  restart  = true
+locals {
+  environment = "prod"
+  role        = "web"
+  instance    = "01"
+  hostname    = upper("${var.environment}-${var.role}-${var.instance}")
 }
 
-resource "windows_hostname" "server2" {
-  hostname = "db-server-01"
-  restart  = true
+resource "windows_hostname" "server" {
+  hostname = local.hostname  # PROD-WEB-01
 }
 ```
 
-Import the existing hostnames:
+### Sequential Server Naming
 
-```shell
-terraform import windows_hostname.server1 current-web-server
-terraform import windows_hostname.server2 current-db-server
+```hcl
+variable "server_count" {
+  default = 3
+}
+
+resource "windows_hostname" "servers" {
+  count    = var.server_count
+  hostname = upper("WEB-SERVER-${format("%02d", count.index + 1)}")
+}
+# Creates: WEB-SERVER-01, WEB-SERVER-02, WEB-SERVER-03
 ```
-
----
 
 ## Troubleshooting
 
-### Hostname Change Fails
+### Hostname Doesn't Change
 
-**Issue**: `hostname change failed` or `unable to rename computer`
+**Issue**: Resource applies successfully but hostname doesn't change
 
-**Solutions**:
-- Verify the hostname format (1-15 characters, alphanumeric and hyphens only)
-- Ensure the new hostname is unique in the network
-- Check for reserved or conflicting hostnames
-- Verify SSH user has administrator privileges
-- Check Windows event logs: `Get-EventLog -LogName System -Newest 20`
-
-### Hostname Not Taking Effect
-
-**Issue**: Hostname changed in PowerShell but not visible in the system
-
-**Solutions**:
-- Set `restart = true` to force a system restart
-- Manual restart: `Restart-Computer -Force`
-- Wait for the restart to complete before accessing the server
-- Run `hostname` command to verify the new hostname
-
-### SSH Connection Lost After Restart
-
-**Issue**: Connection drops after hostname change and restart
-
-**Solutions**:
-- This is normal behavior. Wait 30-60 seconds for the server to reboot
-- Update your Terraform provider configuration with the new hostname if the IP changed
-- Use IP addresses instead of hostnames in the provider configuration
-- Ensure the SSH user account exists after the rename (usually automatic)
+**Solution**:
+- Restart the server: `Restart-Computer -Force`
+- Or set `restart = true` in the resource
 
 ### Permission Denied
 
-**Issue**: `access denied` or `unauthorized` error during hostname change
+**Issue**: `Access is denied` or `You do not have sufficient privileges`
 
-**Solutions**:
-- Verify the SSH user is in the Administrators group
-- Check with: `whoami /groups | find "S-1-5-32-544"`
-- Local Computer Policy may restrict hostname changes
-- Check Group Policy: `gpresult /h report.html`
-
-### Invalid Hostname Characters
-
-**Issue**: `invalid hostname` or character-related errors
-
-**Solutions**:
-- Hostname must contain only letters (A-Z, a-z), numbers (0-9), and hyphens (-)
-- Cannot start or end with a hyphen
-- Maximum length is 15 characters for NetBIOS compatibility (63 for DNS)
-- Use lowercase letters for consistency: `new-hostname` (not `NEW-HOSTNAME`)
-- Examples of valid hostnames: `web-server-01`, `db01`, `prod-app-srv`
+**Solution**:
+- The SSH user must have administrator rights
+- Verify: `whoami /groups | find "S-1-5-32-544"`
 
 ### Hostname Conflict
 
-**Issue**: `hostname already in use` or duplicate hostname error
+**Issue**: New hostname conflicts with existing DNS records
 
-**Solutions**:
-- Ensure the new hostname is unique on the network
-- Check DNS and WINS records
-- Verify no other servers use the same hostname
-- Run network scan: `nslookup <hostname>`
-- Check DHCP reservations
+**Solution**:
+- Check DNS for conflicts: `nslookup NEW-HOSTNAME`
+- Remove or update conflicting DNS records
+- Update DHCP reservations if needed
 
-### Restart Timeout
+### Invalid Hostname Error
 
-**Issue**: Server restart takes too long, timeout occurs
+**Issue**: `invalid hostname` error during plan/apply
 
-**Solutions**:
-- Increase `command_timeout` to allow more time for restart
-- Example: `command_timeout = 600` (10 minutes)
-- Check server resource usage during restart
-- Verify no long-running processes are preventing shutdown
-- Check: `Get-Process | Sort-Object -Property CPU -Descending`
+**Solution**:
+- Check hostname follows naming rules
+- No special characters except hyphen
+- No leading or trailing hyphens
+- Maximum 63 characters per label
 
-### Domain-Joined Server Issues
+## Notes
 
-**Issue**: Cannot change hostname on domain-joined computer
+- Hostname changes are case-insensitive
+- The provider performs case-insensitive comparison during read operations
+- Changing hostname may affect Active Directory, DNS, certificates, and monitoring systems
+- Plan downtime appropriately when using `restart = true`
+- Update all references to the old hostname (scripts, documentation, DNS, etc.)
 
-**Solutions**:
-- Domain policies may restrict hostname changes
-- Administrator with domain privileges may be required
-- Check Group Policy: `gpresult /h report.html`
-- Contact domain administrator for policy exceptions
-- May require offline rename through domain controller
+## Security Considerations
 
-### State Mismatch
-
-**Issue**: Terraform state differs from actual hostname
-
-**Solutions**:
-- Manually changed hostname outside of Terraform
-- Run `terraform refresh` to update state
-- Or: `terraform import windows_hostname.example <current_hostname>`
-- Always use Terraform for hostname changes to keep state in sync
-
----
-
-## Best Practices
-
-### Hostname Naming Convention
-
-Use a consistent naming convention for easy identification:
-
-```hcl
-# Example naming scheme: <environment>-<role>-<number>
-resource "windows_hostname" "web_prod" {
-  hostname = "prod-web-01"  # Production web server #1
-  restart  = true
-}
-
-resource "windows_hostname" "db_staging" {
-  hostname = "stag-db-01"   # Staging database server #1
-  restart  = true
-}
-```
-
-### Always Plan Before Applying
-
-Hostname changes are significant infrastructure modifications:
-
-```bash
-terraform plan  # Review the changes
-terraform apply # Apply only after verification
-```
-
-### Document Hostname Changes
-
-```hcl
-resource "windows_hostname" "web_server" {
-  hostname = "prod-web-01"
-  restart  = true
-
-  tags = {
-    Name        = "Production Web Server"
-    Environment = "Production"
-    Purpose     = "Web hosting"
-    ManagedBy   = "Terraform"
-  }
-}
-```
-
-### Use Variables for Environment-Specific Names
-
-```hcl
-variable "hostname_prefix" {
-  type        = string
-  description = "Prefix for hostname (e.g., prod, dev, staging)"
-}
-
-resource "windows_hostname" "example" {
-  hostname = "${var.hostname_prefix}-server-01"
-  restart  = true
-}
-```
-
-### Coordinate with Other Infrastructure
-
-```hcl
-# Ensure DNS is updated before hostname change is complete
-resource "windows_hostname" "server" {
-  hostname = "new-hostname"
-  restart  = true
-}
-
-resource "route53_record" "server" {
-  zone_id = aws_route53_zone.example.zone_id
-  name    = "${windows_hostname.server.hostname}.example.com"
-  type    = "A"
-  ttl     = 300
-  records = ["192.168.1.100"]
-
-  depends_on = [windows_hostname.server]
-}
-```
-
----
-
-## Limitations
-
-- **Restart Required**: Hostname changes typically require a server restart to take full effect
-- **No Rollback**: Once applied, the hostname change is permanent until another change is made
-- **Single Change**: Only one hostname can be set per resource instance
-- **DNS Updates**: Ensure DNS records are updated separately if needed
-- **Domain Membership**: Domain-joined computers may have additional restrictions based on Group Policy
-
----
-
-## Additional Resources
-
-- [Windows Hostname Requirements (Microsoft Docs)](https://docs.microsoft.com/en-us/windows-server/)
-- [Group Policy for Hostname Management](https://docs.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/group-policy-and-windows-update)
-- [PowerShell Rename-Computer Documentation](https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.management/rename-computer)
+- Administrator privileges required
+- Hostname changes are logged in Windows Event Log
+- Consider impact on security policies and GPOs
+- Certificates with hostname in CN/SAN may need reissuing
+- Kerberos tickets may need to be refreshed

@@ -57,7 +57,7 @@ resource "windows_registry_value" "target_group" {
   path  = "HKLM:\\Software\\Policies\\Microsoft\\Windows\\WindowsUpdate"
   name  = "TargetGroup"
   type  = "String"
-  value = "OPTAVIS"
+  value = "MYCUSTOMER"
   depends_on = [windows_registry_key.windows_update]
 }
 

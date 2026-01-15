@@ -14,7 +14,9 @@
 ## Installation
 
 ### Prerequisites
+
 - Terraform >= 1.0
+- Go >= 1.18
 - A Windows server with OpenSSH Server installed
 - SSH access to the Windows server
 
@@ -26,8 +28,8 @@ Add the provider to your Terraform configuration:
 terraform {
   required_providers {
     windows = {
-      source  = "your-org/windows"
-      version = "~> 1.0"
+      source  = "kfrlabs/windows"
+      version = "~> 0.0.7"
     }
   }
 }
@@ -41,10 +43,10 @@ terraform {
 
 ```hcl
 provider "windows" {
-  host            = "192.168.1.1"
-  username        = "admin"
-  password        = "password"
-  conn_timeout    = 30
+  host         = "192.168.1.1"
+  username     = "admin"
+  password     = "password"
+  conn_timeout = 30
 }
 ```
 
@@ -52,10 +54,10 @@ provider "windows" {
 
 ```hcl
 provider "windows" {
-  host            = "192.168.1.1"
-  username        = "admin"
-  key_path        = "~/.ssh/id_rsa"
-  conn_timeout    = 30
+  host         = "192.168.1.1"
+  username     = "admin"
+  key_path     = "~/.ssh/id_rsa"
+  conn_timeout = 30
 }
 ```
 
@@ -63,10 +65,36 @@ provider "windows" {
 
 ```hcl
 provider "windows" {
-  host            = "192.168.1.1"
-  username        = "admin"
-  use_ssh_agent   = true
-  conn_timeout    = 30
+  host          = "192.168.1.1"
+  username      = "admin"
+  use_ssh_agent = true
+  conn_timeout  = 30
+}
+```
+
+### Configuration with Host Key Verification (Recommended)
+
+```hcl
+provider "windows" {
+  host                       = "192.168.1.1"
+  username                   = "admin"
+  password                   = var.windows_password
+  known_hosts_path           = "~/.ssh/known_hosts"
+  strict_host_key_checking   = true
+  conn_timeout               = 30
+}
+```
+
+### Configuration with Host Key Fingerprints
+
+```hcl
+provider "windows" {
+  host                       = "192.168.1.1"
+  username                   = "admin"
+  password                   = var.windows_password
+  host_key_fingerprints      = ["SHA256:xxxxxx..."]
+  strict_host_key_checking   = true
+  conn_timeout               = 30
 }
 ```
 
@@ -76,10 +104,10 @@ To avoid storing credentials in plain text:
 
 ```hcl
 provider "windows" {
-  host            = var.windows_host
-  username        = var.windows_username
-  password        = sensitive(var.windows_password)
-  conn_timeout    = 30
+  host         = var.windows_host
+  username     = var.windows_username
+  password     = sensitive(var.windows_password)
+  conn_timeout = 30
 }
 ```
 
@@ -104,20 +132,24 @@ variable "windows_password" {
 
 ### Argument Reference
 
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| **host** | string | Yes | Hostname or IP address of the Windows server |
-| **username** | string | Yes | Username for SSH authentication |
-| **password** | string | No | SSH password (required if `use_ssh_agent` is false and `key_path` is not defined) |
-| **key_path** | string | No | Path to the private SSH key (PEM format) |
-| **use_ssh_agent** | bool | No | Use SSH agent for authentication (default: false) |
-| **conn_timeout** | number | No | SSH connection timeout in seconds (default: 30) |
+| Argument | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| **host** | string | Yes | - | Hostname or IP address of the Windows server |
+| **username** | string | Yes | - | Username for SSH authentication |
+| **password** | string | No | - | SSH password (required if `use_ssh_agent` is false and `key_path` is not defined) |
+| **key_path** | string | No | - | Path to the private SSH key (PEM format) |
+| **use_ssh_agent** | bool | No | false | Use SSH agent for authentication |
+| **conn_timeout** | number | No | 30 | SSH connection timeout in seconds |
+| **known_hosts_path** | string | No | ~/.ssh/known_hosts | Path to the SSH known_hosts file for host key verification |
+| **host_key_fingerprints** | list(string) | No | [] | List of expected SSH host key fingerprints (SHA256 format) |
+| **strict_host_key_checking** | bool | No | false | If true, fail if host key is not found or doesn't match |
+| **skip_host_key_verification** | bool | No | false | ⚠️ **DEPRECATED & INSECURE**: Skip SSH host key verification entirely |
 
 ---
 
 ## Connecting to Windows Servers
 
-This provider connects to Windows servers via SSH and executes PowerShell commands remotely. Here's how to set up your infrastructure.
+This provider connects to Windows servers via SSH and executes PowerShell commands remotely.
 
 ### Server Prerequisites (Windows)
 
@@ -157,212 +189,37 @@ mkdir $env:USERPROFILE\.ssh -Force
 # Add the public key to authorized_keys
 Add-Content -Path $env:USERPROFILE\.ssh\authorized_keys -Value "<PASTE_YOUR_PUBLIC_KEY_HERE>" -NoNewline
 
-# Set appropriate permissions (read-only private key)
+# Set appropriate permissions
 icacls $env:USERPROFILE\.ssh /inheritance:r
 icacls $env:USERPROFILE\.ssh /grant "$($env:USERNAME):(R,W)"
 icacls $env:USERPROFILE\.ssh\authorized_keys /inheritance:r
 icacls $env:USERPROFILE\.ssh\authorized_keys /grant "$($env:USERNAME):(R)"
-
-# Set permissions for SYSTEM (if needed)
 icacls $env:USERPROFILE\.ssh /grant "NT AUTHORITY\SYSTEM:(R,W)"
 icacls $env:USERPROFILE\.ssh\authorized_keys /grant "NT AUTHORITY\SYSTEM:(R)"
 ```
 
-#### 4. Copying Public Key via SCP (from the client)
-
-If you have temporary SSH access from a Linux/macOS machine:
-
-```bash
-scp ~/.ssh/id_rsa.pub admin@192.168.1.1:C:/Users/Admin/.ssh/authorized_keys
-```
-
-### Provider Support
+### Provider Features
 
 - ✅ Password authentication
 - ✅ Private key authentication (PEM file)
-- ✅ SSH Agent
+- ✅ SSH Agent support
 - ✅ Configurable connection timeout
+- ✅ Host key verification (known_hosts or fingerprints)
+- ✅ Secure command execution with input validation
 
 ---
 
 ## Resources
 
-### windows_hostname
+The provider supports the following resources:
 
-Manages the hostname of a Windows server.
-
-#### Usage Example
-
-```hcl
-resource "windows_hostname" "example" {
-  hostname = "MY-NEW-SERVER"
-}
-```
-
-#### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| **hostname** | string | Yes | New hostname (max 15 characters) |
-
-#### Attributes
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| **id** | string | Unique identifier (hostname) |
-| **hostname** | string | Current hostname |
-| **requires_reboot** | bool | Indicates if a reboot is required |
-
----
-
-### windows_feature
-
-Manages Windows feature activation or deactivation.
-
-#### Usage Example
-
-```hcl
-# Enable IIS
-resource "windows_feature" "iis" {
-  name    = "Web-Server"
-  enabled = true
-}
-
-# Enable IIS with Management Tools
-resource "windows_feature" "iis_mgmt" {
-  name    = "Web-Mgmt-Tools"
-  enabled = true
-}
-
-# Disable a feature
-resource "windows_feature" "telnet" {
-  name    = "Telnet-Client"
-  enabled = false
-}
-```
-
-#### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| **name** | string | Yes | Windows feature name (e.g., "Web-Server", "RSAT-AD-Tools") |
-| **enabled** | bool | Yes | Enable (true) or disable (false) the feature |
-| **restart_required** | bool | No | Restart if necessary (default: false) |
-
-#### Attributes
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| **id** | string | Unique identifier (feature name) |
-| **installed** | bool | Current installation state |
-
-#### Common Features
-
-- `Web-Server` - IIS
-- `Web-Mgmt-Tools` - IIS Management Tools
-- `RSAT-AD-Tools` - Active Directory Tools
-- `Telnet-Client` - Telnet Client
-- `Container` - Container Support
-
----
-
-### windows_registry_key
-
-Manages Windows registry keys.
-
-#### Usage Example
-
-```hcl
-resource "windows_registry_key" "example" {
-  path   = "HKLM:\\Software\\MyApp"
-  action = "create"
-}
-
-resource "windows_registry_key" "delete_old_key" {
-  path   = "HKLM:\\Software\\OldApp"
-  action = "delete"
-}
-```
-
-#### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| **path** | string | Yes | Full registry key path (e.g., "HKLM:\\Software\\MyApp") |
-| **action** | string | Yes | "create" or "delete" |
-
-#### Attributes
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| **id** | string | Registry key path |
-| **exists** | bool | Indicates whether the key exists |
-
-#### Supported Hives
-
-- `HKCR` - Root Classes
-- `HKCU` - Current User
-- `HKLM` - Local Machine
-- `HKU` - Users
-- `HKCC` - Current Hardware Configuration
-
----
-
-### windows_registry_value
-
-Manages Windows registry values.
-
-#### Usage Example
-
-```hcl
-# Create a string value
-resource "windows_registry_value" "app_name" {
-  key   = "HKLM:\\Software\\MyApp"
-  name  = "AppName"
-  type  = "string"
-  value = "My Application"
-}
-
-# Create a DWORD value
-resource "windows_registry_value" "max_connections" {
-  key   = "HKLM:\\Software\\MyApp"
-  name  = "MaxConnections"
-  type  = "dword"
-  value = "100"
-}
-
-# Create a multi-string value
-resource "windows_registry_value" "paths" {
-  key   = "HKLM:\\Software\\MyApp"
-  name  = "SearchPaths"
-  type  = "multistring"
-  value = "C:\\Path1;C:\\Path2"
-}
-```
-
-#### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| **key** | string | Yes | Path to the parent key (e.g., "HKLM:\\Software\\MyApp") |
-| **name** | string | Yes | Registry value name |
-| **type** | string | Yes | Type: "string", "dword", "binary", "multistring", "qword" |
-| **value** | string | Yes | Value to set |
-
-#### Attributes
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| **id** | string | Unique identifier (key\name) |
-| **previous_value** | string | Previous value (if one existed) |
-
-#### Supported Types
-
-- `string` - Standard text value
-- `dword` - 32-bit integer
-- `qword` - 64-bit integer
-- `binary` - Binary data
-- `multistring` - Multiple strings separated by semicolons
+- [windows_feature](resources/windows_feature.md) - Manage Windows features
+- [windows_hostname](resources/windows_hostname.md) - Manage Windows hostname
+- [windows_localuser](resources/windows_localuser.md) - Manage local users
+- [windows_localgroup](resources/windows_localgroup.md) - Manage local groups
+- [windows_registry_key](resources/windows_registry_key.md) - Manage registry keys
+- [windows_registry_value](resources/windows_registry_value.md) - Manage registry values
+- [windows_service](resources/windows_service.md) - Manage Windows services
 
 ---
 
@@ -382,7 +239,14 @@ resource "windows_registry_value" "paths" {
 **Solutions**:
 - Verify your credentials
 - For key-based authentication, check that `authorized_keys` contains the correct public key
-- Verify permissions of the `authorized_keys` file (read-only for the user)
+- Verify permissions of the `authorized_keys` file
+
+**Issue**: `host key verification failed`
+
+**Solutions**:
+- Add the host key to your `known_hosts` file
+- Or provide the host key fingerprint in `host_key_fingerprints`
+- Get the host key fingerprint: `ssh-keyscan -t rsa 192.168.1.1 | ssh-keygen -lf -`
 
 ### Permission Errors
 
@@ -390,17 +254,8 @@ resource "windows_registry_value" "paths" {
 
 **Solutions**:
 - The SSH user must have administrator rights
-- For features, run: `whoami /groups | find "S-1-5-32-544"` (verify Administrators membership)
-- For the registry, check permissions: `regedit` → Edit → Permissions
-
-### Private Key Errors
-
-**Issue**: `invalid private key format` or `permission denied`
-
-**Solutions**:
-- Verify PEM format: `-----BEGIN RSA PRIVATE KEY-----`
-- Check file permissions: `chmod 600 ~/.ssh/id_rsa`
-- Regenerate the key if needed: `ssh-keygen -t rsa -b 4096`
+- Verify membership: `whoami /groups | find "S-1-5-32-544"`
+- Check registry permissions in `regedit`
 
 ### Connection Timeout
 
@@ -411,53 +266,32 @@ resource "windows_registry_value" "paths" {
 - Check network connectivity: `ping 192.168.1.1`
 - Verify port 22 is open: `Test-NetConnection -ComputerName 192.168.1.1 -Port 22`
 
-### Server Reboot
-
-**Issue**: Need to reboot the server after making changes
-
-**Solutions**:
-- Use `restart_required = true` in feature resources
-- Manual reboot: `Restart-Computer -Force`
-- Schedule a reboot: `Restart-Computer -AsJob -Delay 60`
-
 ---
 
 ## Security
 
-### ⚠️ Important Warnings
+### Security Best Practices
 
-**Host Key Verification**
+✅ **DO**:
+- Use `known_hosts_path` or `host_key_fingerprints` for host key verification
+- Set `strict_host_key_checking = true` in production
+- Use environment variables or Terraform Cloud for credentials
+- Rotate SSH keys regularly (every 6-12 months)
+- Use private networks or VPN for connections
+- Enable audit logging on Windows servers
+- Use principle of least privilege for SSH users
 
-The provider currently uses an insecure host key callback that accepts any host key. This exposes your infrastructure to man-in-the-middle attacks. For production, it is **strongly recommended** to:
-
-1. Implement host key fingerprint verification
-2. Maintain a list of known host keys
-3. Use a VPN or private network for connections
-
-**Migration to Secure Callback** (example for contributors):
-
-```go
-// Example code to implement verification
-hostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-    // Implement verification against known_hosts
-    return knownHosts.Check(hostname, remote, key)
-}
-```
+❌ **DON'T**:
+- Never use `skip_host_key_verification = true` in production
+- Never commit credentials in plain text
+- Don't share private keys
+- Don't use weak passwords
 
 ### Credential Management
 
-**Do not do**:
-```hcl
-# ❌ Do not commit credentials in plain text
-provider "windows" {
-  username = "admin"
-  password = "MyPassword123"
-}
-```
+**Use sensitive variables**:
 
-**Do this**:
 ```hcl
-# ✅ Use sensitive variables
 provider "windows" {
   username = var.windows_username
   password = sensitive(var.windows_password)
@@ -465,59 +299,37 @@ provider "windows" {
 ```
 
 **Set via environment variables**:
+
 ```bash
 export TF_VAR_windows_username="admin"
 export TF_VAR_windows_password="MyPassword123"
 terraform plan
 ```
 
-**Use Terraform Cloud/Enterprise**:
-- Store sensitive variables in secure backend
-- Encryption at rest and in transit
-- Automatic audit logging
-
 ### SSH Keys
 
 **Generate a secure key**:
+
 ```bash
-ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N "passphrase"
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa
 ```
 
 **Protect the private key**:
+
 ```bash
 chmod 600 ~/.ssh/id_rsa
 chmod 700 ~/.ssh
 ```
 
-**Rotate regularly**:
-- Generate a new key pair every 6-12 months
-- Update `authorized_keys` on servers
-- Remove old keys
-
-### Access Control
-
-**Principle of least privilege**:
-- The SSH user only needs to be an administrator if required by resources
-- For registry read-only access, use a non-admin user if possible
-- Regularly audit permissions
-
-**Example of limited permissions**:
-```powershell
-# Create a specialized user with limited rights
-New-LocalUser -Name "terraform-user" -Password (ConvertTo-SecureString "Password123!" -AsPlainText -Force)
-
-# Add to administrators (if needed)
-Add-LocalGroupMember -Group "Administrators" -Member "terraform-user"
-```
-
 ### Terraform State
 
 **Protect the state**:
-- Do not commit `terraform.tfstate` in plain text
 - Use an encrypted backend (S3, Azure Storage, Terraform Cloud)
 - Enable versioning and encryption
+- Never commit `terraform.tfstate` in plain text
 
 **Example with S3**:
+
 ```hcl
 terraform {
   backend "s3" {
@@ -530,9 +342,16 @@ terraform {
 }
 ```
 
-### Audit and Monitoring
+---
 
-- Enable SSH authentication logging on the Windows server
-- Monitor access to critical registry keys
-- Use a SIEM to detect suspicious activities
-- Retain logs for at least 90 days
+## Version Compatibility
+
+| Provider Version | Terraform Version | Go Version |
+|-----------------|-------------------|------------|
+| 0.0.7           | >= 1.0            | >= 1.18    |
+
+---
+
+## Support
+
+For issues, questions, or feature requests, please open an issue on [GitHub Issues](https://github.com/kfrlabs/terraform-provider-windows/issues).

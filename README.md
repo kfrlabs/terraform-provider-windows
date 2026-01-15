@@ -2,7 +2,7 @@
 
 ## Overview
 
-`terraform-provider-windows` is a Terraform provider for managing Windows features, registry keys, and registry values remotely via SSH and PowerShell. It enables automation of Windows server configuration directly from your Terraform workflows.
+`terraform-provider-windows` is a Terraform provider for managing Windows features, registry keys, registry values, local users, local groups, services, and hostname configuration remotely via SSH and PowerShell. It enables automation of Windows server configuration directly from your Terraform workflows.
 
 ## Requirements
 
@@ -13,10 +13,31 @@
 ## Documentation
 
 - [Provider Documentation](./docs/index.md)
+
+### Resources
+
 - [Resource: windows_feature](./docs/resources/windows_feature.md)
+- [Resource: windows_hostname](./docs/resources/windows_hostname.md)
+- [Resource: windows_localuser](./docs/resources/windows_localuser.md)
+- [Resource: windows_localgroup](./docs/resources/windows_localgroup.md)
 - [Resource: windows_registry_key](./docs/resources/windows_registry_key.md)
 - [Resource: windows_registry_value](./docs/resources/windows_registry_value.md)
+- [Resource: windows_service](./docs/resources/windows_service.md)
+
+### Examples
+
 - [Examples](./exemples/main.tf)
+
+## Features
+
+- 🖥️ **Windows Feature Management** - Install/uninstall Windows features
+- 🔑 **Registry Management** - Create/modify registry keys and values
+- 👤 **User Management** - Create and manage local user accounts
+- 👥 **Group Management** - Manage local groups and memberships
+- ⚙️ **Service Management** - Create, configure, and manage Windows services
+- 🏷️ **Hostname Configuration** - Set and manage server hostname
+- 🔐 **SSH Connection** - Secure remote management via SSH
+- 📝 **PowerShell Execution** - Remote PowerShell command execution
 
 ## Contributing
 
@@ -34,7 +55,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
 | Provider Version | Terraform Version | Go Version |
 |------------------|------------------|------------|
-| 0.0.6            | >= 1.0           | >= 1.18    |
+| 0.0.7            | >= 1.0           | >= 1.18    |
 
 ## Support
 
@@ -42,14 +63,17 @@ For issues, questions, or feature requests, please open an issue on [GitHub Issu
 
 For commercial support, contact the maintainer directly.
 
-## Todo
+## Roadmap
 
-windows_package : installer ou désinstaller via MSI, EXE ou winget. Gestion des versions et des sources (locales ou réseau).
+### Planned Features
 
-windows_file : créer/modifier des fichiers.
-windows_directory : créer/modifier des dossiers.
-windows_acl : Gestion des ACL pour la sécurité (permissions).
+- **windows_package** : Install or uninstall applications via MSI, EXE, or winget. Version management and source handling (local or network).
+- **windows_file** : Create and modify files.
+- **windows_directory** : Create and modify directories.
+- **windows_acl** : Manage ACLs for security (permissions).
+- **windows_firewall** : Manage Windows Firewall configuration.
+- **windows_firewall_rule** : Create and manage firewall rules.
 
-windows_firewall
-windows_firewall_rule
----
+## License
+
+See LICENSE file for details.
