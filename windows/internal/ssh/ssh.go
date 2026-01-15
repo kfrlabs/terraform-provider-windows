@@ -71,19 +71,26 @@ func NewClient(config Config) (*Client, error) {
 }
 
 // createHostKeyCallback crée un callback de vérification de clé d'hôte sécurisé
+// ✅ CORRIGÉ : Plus de mode insecure, toujours utiliser known_hosts par défaut
 func createHostKeyCallback(config Config) (ssh.HostKeyCallback, error) {
-	// Mode 1 : Utiliser known_hosts (RECOMMANDÉ)
-	if config.KnownHostsPath != "" {
-		return createKnownHostsCallback(config.KnownHostsPath, config.StrictHostKeyChecking)
-	}
-
-	// Mode 2 : Vérifier les empreintes digitales (si fournies)
+	// Mode 1 : Vérifier les empreintes digitales (prioritaire si fournies)
 	if len(config.HostKeyFingerprints) > 0 {
 		return createFingerprintCallback(config.Host, config.HostKeyFingerprints, config.StrictHostKeyChecking), nil
 	}
 
-	// Mode 3 : Mode insécurisé (déprécié, avec warning)
-	return ssh.InsecureIgnoreHostKey(), nil
+	// Mode 2 : Utiliser known_hosts (par défaut)
+	knownHostsPath := config.KnownHostsPath
+	if knownHostsPath == "" {
+		// ✅ NOUVEAU : Utiliser known_hosts par défaut
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine home directory for known_hosts: %w", err)
+		}
+		knownHostsPath = filepath.Join(home, ".ssh", "known_hosts")
+	}
+
+	// ✅ MODIFIÉ : Toujours utiliser known_hosts, pas de mode insecure
+	return createKnownHostsCallback(knownHostsPath, config.StrictHostKeyChecking)
 }
 
 // createKnownHostsCallback crée un callback à partir du fichier known_hosts
@@ -100,8 +107,13 @@ func createKnownHostsCallback(knownHostsPath string, strictMode bool) (ssh.HostK
 	// Vérifier si le fichier existe
 	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
 		if strictMode {
-			return nil, fmt.Errorf("known_hosts file not found at %s (strict mode enabled)", knownHostsPath)
+			return nil, fmt.Errorf(
+				"known_hosts file not found at %s (strict mode enabled)\n"+
+					"Please run: ssh-keyscan -H <host> >> %s\n"+
+					"Or provide host_key_fingerprints in provider configuration",
+				knownHostsPath, knownHostsPath)
 		}
+
 		// En mode non-strict, créer un fichier vide
 		if err := os.MkdirAll(filepath.Dir(knownHostsPath), 0700); err != nil {
 			return nil, fmt.Errorf("failed to create known_hosts directory: %w", err)
@@ -230,7 +242,6 @@ func sshAgentAuth() (ssh.AuthMethod, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to SSH agent: %w", err)
 	}
-
 	agentClient := agent.NewClient(sshAgent)
 	return ssh.PublicKeysCallback(agentClient.Signers), nil
 }
@@ -262,7 +273,7 @@ func publicKeyAuth(keyPath string) (ssh.AuthMethod, error) {
 }
 
 // ============================================================================
-// UTILITAIRES (OPTIONNEL)
+// UTILITAIRES
 // ============================================================================
 
 // NewClientSecure crée une nouvelle connexion SSH avec vérification stricte des host keys
@@ -289,33 +300,104 @@ func NewClientSecure(config Config) (*Client, error) {
 }
 
 // GetHostKeyFingerprint retourne l'empreinte digitale SHA256 du serveur SSH
-// Utile pour l'ajout initial à la configuration
+// ✅ IMPLÉMENTATION COMPLÈTE
 func GetHostKeyFingerprint(host string, port string) (string, error) {
 	if port == "" {
 		port = "22"
 	}
 
-	conn, err := net.Dial("tcp", net.JoinHostPort(host, port))
+	// Établir une connexion TCP
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 10*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("failed to connect to %s:%s: %w", host, port, err)
 	}
 	defer conn.Close()
 
-	// Réaliser la négociation SSH avec InsecureIgnoreHostKey (une seule fois)
-	sshConn, _, _, err := ssh.NewClientConn(conn, net.JoinHostPort(host, port), &ssh.ClientConfig{
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to establish SSH connection: %w", err)
+	// Variable pour stocker la clé d'hôte
+	var hostKey ssh.PublicKey
+
+	// Callback pour capturer la clé d'hôte
+	hostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		hostKey = key
+		return nil
 	}
-	defer sshConn.Close()
 
-	// Récupérer la clé d'hôte et son empreinte
-	hostKey := sshConn.RemoteAddr()
-	_ = hostKey // Note: L'empreinte doit être obtenue autrement
+	// Configuration SSH minimale pour récupérer la clé
+	config := &ssh.ClientConfig{
+		User:            "dummy", // Utilisateur fictif, on ne va pas s'authentifier
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         10 * time.Second,
+		Auth:            []ssh.AuthMethod{}, // Pas d'authentification
+	}
 
-	return "", fmt.Errorf("use 'ssh-keyscan -p %s %s | ssh-keygen -lf -' instead", port, host)
+	// Établir la connexion SSH pour récupérer la clé d'hôte
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, net.JoinHostPort(host, port), config)
+	if err != nil {
+		// L'erreur d'authentification est attendue, mais on a déjà la clé d'hôte
+		if hostKey == nil {
+			return "", fmt.Errorf("failed to retrieve host key: %w", err)
+		}
+	} else {
+		// Fermer la connexion proprement si elle a réussi
+		defer sshConn.Close()
+		go ssh.DiscardRequests(reqs)
+		go func() {
+			for range chans {
+			}
+		}()
+	}
+
+	// Calculer l'empreinte digitale au format SHA256
+	fingerprint := ssh.FingerprintSHA256(hostKey)
+
+	return fingerprint, nil
+}
+
+// GetHostKeyFingerprintLegacy retourne l'empreinte au format MD5 (legacy)
+// Fourni pour compatibilité avec les anciens systèmes
+func GetHostKeyFingerprintLegacy(host string, port string) (string, error) {
+	if port == "" {
+		port = "22"
+	}
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 10*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to %s:%s: %w", host, port, err)
+	}
+	defer conn.Close()
+
+	var hostKey ssh.PublicKey
+
+	hostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		hostKey = key
+		return nil
+	}
+
+	config := &ssh.ClientConfig{
+		User:            "dummy",
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         10 * time.Second,
+		Auth:            []ssh.AuthMethod{},
+	}
+
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, net.JoinHostPort(host, port), config)
+	if err != nil {
+		if hostKey == nil {
+			return "", fmt.Errorf("failed to retrieve host key: %w", err)
+		}
+	} else {
+		defer sshConn.Close()
+		go ssh.DiscardRequests(reqs)
+		go func() {
+			for range chans {
+			}
+		}()
+	}
+
+	// Format MD5 (legacy)
+	fingerprint := ssh.FingerprintLegacyMD5(hostKey)
+
+	return fingerprint, nil
 }
 
 // ============================================================================
