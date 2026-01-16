@@ -24,12 +24,10 @@ jobs:
       - name: Set provider name and version
         run: |
           REPO_NAME=${GITHUB_REPOSITORY##*/}
-          # Extract just the provider name without "terraform-provider-" prefix
-          PROVIDER_NAME=${REPO_NAME#terraform-provider-}
           VERSION=${GITHUB_REF_NAME#v}
-          echo "PROVIDER_NAME=$PROVIDER_NAME" >> $GITHUB_ENV
+          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Provider: $PROVIDER_NAME, Version: $VERSION"
+          echo "Repository: $REPO_NAME, Version: $VERSION"
 
       - name: Build binaries
         run: |
@@ -50,10 +48,13 @@ jobs:
               fi
               
               # Build the binary with the exact name Terraform expects
-              BINARY_NAME="terraform-provider-${PROVIDER_NAME}_v${VERSION}${BINARY_EXT}"
+              # REPO_NAME already contains "terraform-provider-windows"
+              BINARY_NAME="${REPO_NAME}_v${VERSION}${BINARY_EXT}"
               GOOS=$os GOARCH=$arch go build -o "${BINARY_NAME}"
               
               # Create zip archive with the binary at the root (not in dist/)
+              # Extract provider name from repo name for zip filename
+              PROVIDER_NAME=${REPO_NAME#terraform-provider-}
               zip "dist/${PROVIDER_NAME}_${VERSION}_${os}_${arch}.zip" "${BINARY_NAME}"
               rm "${BINARY_NAME}"
             done
@@ -62,6 +63,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
+          PROVIDER_NAME=${REPO_NAME#terraform-provider-}
           sha256sum *.zip > ${PROVIDER_NAME}_${VERSION}_SHA256SUMS
 
       - name: Setup GPG directory
@@ -79,6 +81,7 @@ jobs:
         run: |
           export GNUPGHOME="$GPG_HOME"
           cd dist
+          PROVIDER_NAME=${REPO_NAME#terraform-provider-}
           # Sign zip files (binary signature, not ASCII armored)
           for file in *.zip; do
             gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign "$file"
