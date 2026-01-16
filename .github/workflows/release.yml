@@ -23,7 +23,9 @@ jobs:
 
       - name: Set provider name and version
         run: |
-          PROVIDER_NAME=${GITHUB_REPOSITORY##*/}
+          REPO_NAME=${GITHUB_REPOSITORY##*/}
+          # Extract just the provider name without "terraform-provider-" prefix
+          PROVIDER_NAME=${REPO_NAME#terraform-provider-}
           VERSION=${GITHUB_REF_NAME#v}
           echo "PROVIDER_NAME=$PROVIDER_NAME" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
@@ -49,13 +51,11 @@ jobs:
               
               # Build the binary with the exact name Terraform expects
               BINARY_NAME="terraform-provider-${PROVIDER_NAME}_v${VERSION}${BINARY_EXT}"
-              GOOS=$os GOARCH=$arch go build -o "dist/${BINARY_NAME}"
+              GOOS=$os GOARCH=$arch go build -o "${BINARY_NAME}"
               
-              # Create zip archive with the binary inside
-              cd dist
-              zip "${PROVIDER_NAME}_${VERSION}_${os}_${arch}.zip" "${BINARY_NAME}"
+              # Create zip archive with the binary at the root (not in dist/)
+              zip "dist/${PROVIDER_NAME}_${VERSION}_${os}_${arch}.zip" "${BINARY_NAME}"
               rm "${BINARY_NAME}"
-              cd ..
             done
           done
 
