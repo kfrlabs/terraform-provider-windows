@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -17,6 +18,51 @@ type ResourceError struct {
 	Stdout      string
 	Stderr      string
 	OriginalErr error
+}
+
+// CleanPowerShellError nettoie les erreurs CLIXML de PowerShell
+func CleanPowerShellError(stderr string) string {
+	if stderr == "" {
+		return ""
+	}
+
+	// Si ce n'est pas du CLIXML, retourner tel quel
+	if !strings.Contains(stderr, "#< CLIXML") && !strings.Contains(stderr, "<Objs") {
+		return stderr
+	}
+
+	var cleanLines []string
+
+	// Extraire les lignes d'erreur du XML
+	errorPattern := regexp.MustCompile(`<S S="Error">([^<]+)</S>`)
+	matches := errorPattern.FindAllStringSubmatch(stderr, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			// Nettoyer les entités XML
+			line := match[1]
+			line = strings.ReplaceAll(line, "_x000D__x000A_", "")
+			line = strings.ReplaceAll(line, "_x000D_", "")
+			line = strings.ReplaceAll(line, "_x000A_", "")
+			line = strings.TrimSpace(line)
+
+			// Ignorer les lignes vides et de position
+			if line != "" &&
+				!strings.HasPrefix(line, "At line:") &&
+				!strings.HasPrefix(line, "+") &&
+				!strings.Contains(line, "CategoryInfo") &&
+				!strings.Contains(line, "FullyQualifiedErrorId") {
+				cleanLines = append(cleanLines, line)
+			}
+		}
+	}
+
+	if len(cleanLines) > 0 {
+		return strings.Join(cleanLines, "\n")
+	}
+
+	// Fallback: retourner une version simplifiée
+	return "PowerShell error (see details above)"
 }
 
 // Error implements the error interface
@@ -38,11 +84,18 @@ func (e *ResourceError) Error() string {
 	if e.Command != "" {
 		errMsg += fmt.Sprintf("\nCommand: %s", e.Command)
 	}
-	if e.Stdout != "" {
-		errMsg += fmt.Sprintf("\nStandard output: %s", e.Stdout)
-	}
+
+	// Nettoyer stderr si présent
 	if e.Stderr != "" {
-		errMsg += fmt.Sprintf("\nError output: %s", e.Stderr)
+		cleanedError := CleanPowerShellError(e.Stderr)
+		if cleanedError != "" {
+			errMsg += fmt.Sprintf("\nPowerShell Error: %s", cleanedError)
+		}
+	}
+
+	// Afficher stdout seulement si utile
+	if e.Stdout != "" && !strings.Contains(e.Stdout, "#< CLIXML") {
+		errMsg += fmt.Sprintf("\nOutput: %s", e.Stdout)
 	}
 
 	var baseErr string
@@ -55,7 +108,7 @@ func (e *ResourceError) Error() string {
 	}
 
 	if baseErr != "" {
-		errMsg += fmt.Sprintf("\nError: %s", baseErr)
+		errMsg += fmt.Sprintf("\nUnderlying error: %s", baseErr)
 	}
 
 	return errMsg

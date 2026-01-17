@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
 const (
@@ -55,17 +56,15 @@ func ResourceWindowsFeature() *schema.Resource {
 				Description: "Whether to restart the server automatically if needed.",
 			},
 			"include_all_sub_features": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Computed: true,
-				// Default:     false,
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Computed:    true,
 				Description: "Whether to include all sub-features of the specified feature.",
 			},
 			"include_management_tools": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Computed: true,
-				// Default:     false,
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Computed:    true,
 				Description: "Whether to include management tools for the specified feature.",
 			},
 			"install_state": {
@@ -78,6 +77,12 @@ func ResourceWindowsFeature() *schema.Resource {
 				Optional:    true,
 				Default:     defaultCommandTimeout,
 				Description: "Timeout in seconds for PowerShell commands.",
+			},
+			"allow_existing": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "If true, adopt existing feature instead of failing. If false, fail if feature already installed.",
 			},
 		},
 	}
@@ -94,23 +99,42 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 	includeAllSubFeatures := d.Get("include_all_sub_features").(bool)
 	includeManagementTools := d.Get("include_management_tools").(bool)
 	timeout := d.Get("command_timeout").(int)
+	allowExisting := d.Get("allow_existing").(bool)
 
+	// Validate feature name for security
 	if err := powershell.ValidatePowerShellArgument(feature); err != nil {
-		return fmt.Errorf("invalid feature name: %w", err)
+		return utils.HandleResourceError("validate", feature, "name", err)
 	}
 
 	// Check if feature is already installed
 	info, err := getFeatureDetails(ctx, sshClient, feature, timeout)
 	if err != nil {
-		return fmt.Errorf("error checking Windows feature: %w", err)
-	}
-	if info.Installed {
-		d.SetId(feature)
-		tflog.Debug(ctx, fmt.Sprintf("Feature %s already installed", feature))
-		return resourceWindowsFeatureRead(d, m)
+		return utils.HandleResourceError("check_existing", feature, "state", err)
 	}
 
-	// Secure PowerShell command construction with result capture
+	if info.Installed {
+		if allowExisting {
+			// Adopt the existing feature
+			tflog.Info(ctx, fmt.Sprintf("Feature %s already installed, adopting it (allow_existing=true)", feature))
+			d.SetId(feature)
+			return resourceWindowsFeatureRead(d, m)
+		} else {
+			// Fail with clear error
+			return utils.HandleResourceError(
+				"create",
+				feature,
+				"state",
+				fmt.Errorf("feature is already installed (InstallState: %s). "+
+					"To manage this existing feature, either:\n"+
+					"  1. Import it: terraform import windows_feature.%s %s\n"+
+					"  2. Set allow_existing = true in your configuration\n"+
+					"  3. Remove it first: Remove-WindowsFeature -Name '%s'",
+					info.InstallState, feature, feature, feature),
+			)
+		}
+	}
+
+	// Build secure PowerShell command with result capture
 	command := fmt.Sprintf(`
 $result = Install-WindowsFeature -Name %s -ErrorAction Stop`,
 		powershell.QuotePowerShellString(feature))
@@ -136,17 +160,41 @@ $result = Install-WindowsFeature -Name %s -ErrorAction Stop`,
 	tflog.Info(ctx, fmt.Sprintf("Installing Windows feature: %s", feature))
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to install Windows feature %s: %s (%w)", feature, stderr, err)
+		return utils.HandleCommandError(
+			"install",
+			feature,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
 	}
 
 	// Parse installation result
 	var installResult InstallResult
 	if err := json.Unmarshal([]byte(stdout), &installResult); err != nil {
-		return fmt.Errorf("failed to parse installation result: %w", err)
+		return utils.HandleCommandError(
+			"parse_result",
+			feature,
+			"installation_output",
+			command,
+			stdout,
+			stderr,
+			fmt.Errorf("failed to parse JSON output: %w", err),
+		)
 	}
 
 	if !installResult.Success {
-		return fmt.Errorf("installation of feature %s failed with exit code %d", feature, installResult.ExitCode)
+		return utils.HandleCommandError(
+			"install",
+			feature,
+			"state",
+			command,
+			stdout,
+			stderr,
+			fmt.Errorf("installation failed with exit code %d", installResult.ExitCode),
+		)
 	}
 
 	if installResult.RestartNeeded == "Yes" && !restart {
@@ -182,16 +230,16 @@ func resourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
 
 	// Update Terraform state
 	if err := d.Set("feature", feature); err != nil {
-		return fmt.Errorf("error setting feature: %w", err)
+		return utils.HandleResourceError("read", feature, "feature", err)
 	}
 	if err := d.Set("install_state", info.InstallState); err != nil {
-		return fmt.Errorf("error setting install_state: %w", err)
+		return utils.HandleResourceError("read", feature, "install_state", err)
 	}
 	if err := d.Set("include_all_sub_features", info.AllSubFeaturesInstalled); err != nil {
-		return fmt.Errorf("error setting include_all_sub_features: %w", err)
+		return utils.HandleResourceError("read", feature, "include_all_sub_features", err)
 	}
 	if err := d.Set("include_management_tools", info.ManagementToolsInstalled); err != nil {
-		return fmt.Errorf("error setting include_management_tools: %w", err)
+		return utils.HandleResourceError("read", feature, "include_management_tools", err)
 	}
 
 	d.SetId(feature)
@@ -204,7 +252,7 @@ func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 	timeout := d.Get("command_timeout").(int)
 
 	// If only non-destructive options changed, skip reinstall
-	if d.HasChange("restart") || d.HasChange("command_timeout") {
+	if d.HasChange("restart") || d.HasChange("command_timeout") || d.HasChange("allow_existing") {
 		tflog.Debug(ctx, "Non-destructive change detected, skipping reinstall")
 		return resourceWindowsFeatureRead(d, m)
 	}
@@ -214,12 +262,12 @@ func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 
 		if oldFeature != "" && oldFeature.(string) != "" {
 			if err := removeFeature(ctx, sshClient, oldFeature.(string), timeout); err != nil {
-				return fmt.Errorf("failed to remove feature %s: %w", oldFeature, err)
+				return utils.HandleResourceError("update_remove_old", oldFeature.(string), "state", err)
 			}
 		}
 
 		if err := d.Set("feature", newFeature); err != nil {
-			return fmt.Errorf("error updating feature: %w", err)
+			return utils.HandleResourceError("update", newFeature.(string), "feature", err)
 		}
 		return resourceWindowsFeatureCreate(d, m)
 	}
@@ -234,7 +282,7 @@ func resourceWindowsFeatureDelete(d *schema.ResourceData, m interface{}) error {
 	timeout := d.Get("command_timeout").(int)
 
 	if err := removeFeature(ctx, sshClient, feature, timeout); err != nil {
-		return err
+		return err // Already wrapped by removeFeature
 	}
 
 	d.SetId("")
@@ -247,30 +295,33 @@ func resourceWindowsFeatureImport(ctx context.Context, d *schema.ResourceData, m
 
 	info, err := getFeatureDetails(ctx, sshClient, feature, defaultCommandTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("failed to import feature %s: %w", feature, err)
+		return nil, utils.HandleResourceError("import", feature, "state", err)
 	}
 
 	if !info.Installed {
-		return nil, fmt.Errorf("feature %s is not installed, cannot import", feature)
+		return nil, utils.HandleResourceError(
+			"import",
+			feature,
+			"state",
+			fmt.Errorf("feature is not installed, cannot import"),
+		)
 	}
 
-	if err := d.Set("feature", feature); err != nil {
-		return nil, fmt.Errorf("error setting feature: %w", err)
+	// Set all attributes
+	attrs := map[string]interface{}{
+		"feature":                  feature,
+		"install_state":            info.InstallState,
+		"include_all_sub_features": info.AllSubFeaturesInstalled,
+		"include_management_tools": info.ManagementToolsInstalled,
+		"restart":                  false,
+		"command_timeout":          defaultCommandTimeout,
+		"allow_existing":           false,
 	}
-	if err := d.Set("install_state", info.InstallState); err != nil {
-		return nil, fmt.Errorf("error setting install_state: %w", err)
-	}
-	if err := d.Set("include_all_sub_features", info.AllSubFeaturesInstalled); err != nil {
-		return nil, fmt.Errorf("error setting include_all_sub_features: %w", err)
-	}
-	if err := d.Set("include_management_tools", info.ManagementToolsInstalled); err != nil {
-		return nil, fmt.Errorf("error setting include_management_tools: %w", err)
-	}
-	if err := d.Set("restart", false); err != nil {
-		return nil, fmt.Errorf("error setting restart: %w", err)
-	}
-	if err := d.Set("command_timeout", defaultCommandTimeout); err != nil {
-		return nil, fmt.Errorf("error setting command_timeout: %w", err)
+
+	for key, value := range attrs {
+		if err := d.Set(key, value); err != nil {
+			return nil, utils.HandleResourceError("import", feature, key, err)
+		}
 	}
 
 	d.SetId(feature)
@@ -281,7 +332,7 @@ func resourceWindowsFeatureImport(ctx context.Context, d *schema.ResourceData, m
 
 func getFeatureDetails(ctx context.Context, sshClient *ssh.Client, feature string, timeout int) (*FeatureInfo, error) {
 	if err := powershell.ValidatePowerShellArgument(feature); err != nil {
-		return nil, fmt.Errorf("invalid feature name: %w", err)
+		return nil, utils.HandleResourceError("validate", feature, "name", err)
 	}
 
 	command := fmt.Sprintf(`
@@ -329,12 +380,28 @@ if ($feature.Installed) {
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return nil, fmt.Errorf("PowerShell error: %s (%w)", stderr, err)
+		return nil, utils.HandleCommandError(
+			"get_details",
+			feature,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
 	}
 
 	var info FeatureInfo
 	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
-		return nil, fmt.Errorf("failed to parse feature details JSON: %w (output: %s)", err, stdout)
+		return nil, utils.HandleCommandError(
+			"parse_details",
+			feature,
+			"json_output",
+			command,
+			stdout,
+			stderr,
+			fmt.Errorf("failed to parse JSON: %w", err),
+		)
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Feature %s state: %+v", feature, info))
@@ -343,7 +410,7 @@ if ($feature.Installed) {
 
 func removeFeature(ctx context.Context, sshClient *ssh.Client, feature string, timeout int) error {
 	if err := powershell.ValidatePowerShellArgument(feature); err != nil {
-		return fmt.Errorf("invalid feature name: %w", err)
+		return utils.HandleResourceError("validate", feature, "name", err)
 	}
 
 	command := fmt.Sprintf(`
@@ -358,7 +425,15 @@ $result = Remove-WindowsFeature -Name %s -ErrorAction Stop
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to remove Windows feature %s: %s (%w)", feature, stderr, err)
+		return utils.HandleCommandError(
+			"remove",
+			feature,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
 	}
 
 	var result InstallResult
@@ -369,7 +444,15 @@ $result = Remove-WindowsFeature -Name %s -ErrorAction Stop
 	}
 
 	if !result.Success {
-		return fmt.Errorf("removal of feature %s failed with exit code %d", feature, result.ExitCode)
+		return utils.HandleCommandError(
+			"remove",
+			feature,
+			"state",
+			command,
+			stdout,
+			stderr,
+			fmt.Errorf("removal failed with exit code %d", result.ExitCode),
+		)
 	}
 
 	return nil

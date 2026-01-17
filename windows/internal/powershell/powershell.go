@@ -139,7 +139,7 @@ func (e *Executor) Execute(ctx context.Context, command string) (string, string,
 func (e *Executor) buildCommand(command string) string {
 	var cmdBuilder strings.Builder
 
-	cmdBuilder.WriteString("pwsh")
+	cmdBuilder.WriteString("powershell")
 
 	if e.opts.NoProfile {
 		cmdBuilder.WriteString(" -NoProfile")
