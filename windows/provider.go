@@ -62,19 +62,30 @@ func Provider() *schema.Provider {
 			"strict_host_key_checking": {
 				Type:     schema.TypeBool,
 				Optional: true,
-				Default:  true, // ✅ MODIFIÉ : true par défaut pour la sécurité
+				Default:  true,
 				Description: "If true, fail if host key is not found in known_hosts or fingerprints don't match. " +
 					"If false, log a warning but proceed. Default is true for security.",
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"windows_feature":        ResourceWindowsFeature(),
-			"windows_hostname":       ResourceWindowsHostname(),
-			"windows_localuser":      ResourceWindowsLocalUser(),
-			"windows_localgroup":     ResourceWindowsLocalGroup(),
-			"windows_registry_key":   ResourceWindowsRegistryKey(),
-			"windows_registry_value": ResourceWindowsRegistryValue(),
-			"windows_service":        ResourceWindowsService(),
+			"windows_feature":          ResourceWindowsFeature(),
+			"windows_hostname":         ResourceWindowsHostname(),
+			"windows_localuser":        ResourceWindowsLocalUser(),
+			"windows_localgroup":       ResourceWindowsLocalGroup(),
+			"windows_localgroupmember": ResourceWindowsLocalGroupMember(),
+			"windows_registry_key":     ResourceWindowsRegistryKey(),
+			"windows_registry_value":   ResourceWindowsRegistryValue(),
+			"windows_service":          ResourceWindowsService(),
+		},
+		// ✅ NOUVEAU : Ajout des Data Sources
+		DataSourcesMap: map[string]*schema.Resource{
+			"windows_localuser":         DataSourceWindowsLocalUser(),
+			"windows_localgroup":        DataSourceWindowsLocalGroup(),
+			"windows_localgroupmembers": DataSourceWindowsLocalGroupMembers(),
+			"windows_service":           DataSourceWindowsService(),
+			"windows_registry_value":    DataSourceWindowsRegistryValue(),
+			"windows_feature":           DataSourceWindowsFeature(),
+			"windows_hostname":          DataSourceWindowsHostname(),
 		},
 		ConfigureContextFunc: providerConfigure,
 	}
