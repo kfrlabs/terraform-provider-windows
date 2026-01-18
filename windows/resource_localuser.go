@@ -1,23 +1,26 @@
 package resources
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
 // LocalUserInfo représente les informations d'un utilisateur local
 type LocalUserInfo struct {
-	Exists                   bool     `json:"Exists"`
-	FullName                 string   `json:"FullName"`
-	Description              string   `json:"Description"`
-	PasswordNeverExpires     bool     `json:"PasswordNeverExpires"`
-	UserMayNotChangePassword bool     `json:"UserMayNotChangePassword"`
-	Enabled                  bool     `json:"Enabled"`
-	Groups                   []string `json:"Groups"`
+	Exists                   bool   `json:"Exists"`
+	FullName                 string `json:"FullName"`
+	Description              string `json:"Description"`
+	PasswordNeverExpires     bool   `json:"PasswordNeverExpires"`
+	UserMayNotChangePassword bool   `json:"UserMayNotChangePassword"`
+	Enabled                  bool   `json:"Enabled"`
 }
 
 func ResourceWindowsLocalUser() *schema.Resource {
@@ -34,7 +37,8 @@ func ResourceWindowsLocalUser() *schema.Resource {
 			"username": {
 				Type:        schema.TypeString,
 				Required:    true,
-				Description: "The name of the local user account.",
+				ForceNew:    true,
+				Description: "The name of the local user account. Cannot be changed after creation.",
 			},
 			"password": {
 				Type:        schema.TypeString,
@@ -68,13 +72,13 @@ func ResourceWindowsLocalUser() *schema.Resource {
 				Type:        schema.TypeBool,
 				Optional:    true,
 				Default:     false,
-				Description: "If true, the account will be created in a disabled state.",
+				Description: "If true, the account will be disabled.",
 			},
-			"groups": {
-				Type:        schema.TypeSet,
+			"allow_existing": {
+				Type:        schema.TypeBool,
 				Optional:    true,
-				Elem:        &schema.Schema{Type: schema.TypeString},
-				Description: "List of local groups this user should be a member of.",
+				Default:     false,
+				Description: "If true, adopt existing user instead of failing. If false, fail if user already exists.",
 			},
 			"command_timeout": {
 				Type:        schema.TypeInt,
@@ -86,18 +90,91 @@ func ResourceWindowsLocalUser() *schema.Resource {
 	}
 }
 
+// checkLocalUserExists vérifie si un utilisateur local existe et retourne ses informations
+func checkLocalUserExists(ctx context.Context, sshClient *ssh.Client, username string, timeout int) (*LocalUserInfo, error) {
+	// Valider le username pour sécurité
+	if err := powershell.ValidatePowerShellArgument(username); err != nil {
+		return nil, err
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Checking if local user exists: %s", username))
+
+	// Commande PowerShell qui retourne du JSON structuré
+	command := fmt.Sprintf(`
+$user = Get-LocalUser -Name %s -ErrorAction SilentlyContinue
+if ($user) {
+    @{
+        'Exists' = $true
+        'FullName' = $user.FullName
+        'Description' = $user.Description
+        'PasswordNeverExpires' = $user.PasswordNeverExpires
+        'UserMayNotChangePassword' = -not $user.UserMayChangePassword
+        'Enabled' = $user.Enabled
+    } | ConvertTo-Json -Compress
+} else {
+    @{ 'Exists' = $false } | ConvertTo-Json -Compress
+}
+`,
+		powershell.QuotePowerShellString(username),
+	)
+
+	stdout, _, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check user: %w", err)
+	}
+
+	var info LocalUserInfo
+	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
+		return nil, fmt.Errorf("failed to parse user info: %w; output: %s", err, stdout)
+	}
+
+	return &info, nil
+}
+
 func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
 	sshClient := m.(*ssh.Client)
+
 	username := d.Get("username").(string)
 	password := d.Get("password").(string)
 	timeout := d.Get("command_timeout").(int)
+	allowExisting := d.Get("allow_existing").(bool)
 
-	// ✅ Valider les inputs
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting local user creation for: %s", username))
+
+	// Valider le username pour sécurité
 	if err := powershell.ValidatePowerShellArgument(username); err != nil {
-		return fmt.Errorf("invalid username: %w", err)
+		return utils.HandleResourceError("validate", username, "username", err)
 	}
 
-	// ✅ Construire la commande de manière sécurisée avec quoting
+	// Vérifier si l'utilisateur existe déjà
+	info, err := checkLocalUserExists(ctx, sshClient, username, timeout)
+	if err != nil {
+		return utils.HandleResourceError("check_existing", username, "state", err)
+	}
+
+	if info.Exists {
+		if allowExisting {
+			tflog.Info(ctx, fmt.Sprintf("[CREATE] User %s already exists, adopting it (allow_existing=true)", username))
+			d.SetId(username)
+			return resourceWindowsLocalUserRead(d, m)
+		} else {
+			resourceName := "localuser"
+			return utils.HandleResourceError(
+				"create",
+				username,
+				"state",
+				fmt.Errorf("local user already exists. "+
+					"To manage this existing user, either:\n"+
+					"  1. Import it: terraform import windows_localuser.%s '%s'\n"+
+					"  2. Set allow_existing = true in your configuration\n"+
+					"  3. Remove it first (WARNING): Remove-LocalUser -Name '%s' -Force",
+					resourceName, username, username),
+			)
+		}
+	}
+
+	// Construire la commande de manière sécurisée
 	command := fmt.Sprintf(
 		"New-LocalUser -Name %s -Password (ConvertTo-SecureString -AsPlainText %s -Force)",
 		powershell.QuotePowerShellString(username),
@@ -106,243 +183,284 @@ func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error
 
 	// Ajouter les paramètres optionnels
 	if fullName, ok := d.GetOk("full_name"); ok {
+		if err := powershell.ValidatePowerShellArgument(fullName.(string)); err != nil {
+			return utils.HandleResourceError("validate", username, "full_name", err)
+		}
 		command += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(fullName.(string)))
 	}
+
 	if description, ok := d.GetOk("description"); ok {
+		if err := powershell.ValidatePowerShellArgument(description.(string)); err != nil {
+			return utils.HandleResourceError("validate", username, "description", err)
+		}
 		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description.(string)))
 	}
+
 	if d.Get("password_never_expires").(bool) {
-		command += " -PasswordNeverExpires $true"
+		command += " -PasswordNeverExpires"
 	}
+
 	if d.Get("user_cannot_change_password").(bool) {
-		command += " -UserMayNotChangePassword $true"
+		command += " -UserMayNotChangePassword"
 	}
+
 	if d.Get("account_disabled").(bool) {
-		command += " -Disabled $true"
+		command += " -AccountNeverExpires"
 	}
 
 	command += " -ErrorAction Stop"
 
-	// Créer l'utilisateur
-	_, _, err := sshClient.ExecuteCommand(command, timeout)
+	tflog.Info(ctx, "[CREATE] Creating local user (password hidden)")
+	tflog.Debug(ctx, fmt.Sprintf("[CREATE] Executing: %s", strings.ReplaceAll(command, password, "***REDACTED***")))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to create local user: %w", err)
+		return utils.HandleCommandError(
+			"create",
+			username,
+			"state",
+			"New-LocalUser (password hidden)",
+			stdout,
+			stderr,
+			err,
+		)
 	}
 
-	// Ajouter aux groupes si spécifiés
-	if groups, ok := d.GetOk("groups"); ok {
-		groupList := groups.(*schema.Set).List()
-		for _, group := range groupList {
-			groupName := group.(string)
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Local user created successfully: %s", username))
 
-			// ✅ Valider le nom du groupe
-			if err := powershell.ValidatePowerShellArgument(groupName); err != nil {
-				return fmt.Errorf("invalid group name '%s': %w", groupName, err)
-			}
+	// Désactiver le compte si nécessaire
+	if d.Get("account_disabled").(bool) {
+		disableCmd := fmt.Sprintf("Disable-LocalUser -Name %s -ErrorAction Stop",
+			powershell.QuotePowerShellString(username))
 
-			addToGroupCmd := fmt.Sprintf(
-				"Add-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
-				powershell.QuotePowerShellString(groupName),
-				powershell.QuotePowerShellString(username),
+		tflog.Debug(ctx, "[CREATE] Disabling user account")
+		stdout, stderr, err := sshClient.ExecuteCommand(disableCmd, timeout)
+		if err != nil {
+			return utils.HandleCommandError(
+				"create",
+				username,
+				"account_disabled",
+				disableCmd,
+				stdout,
+				stderr,
+				err,
 			)
-			_, _, err := sshClient.ExecuteCommand(addToGroupCmd, timeout)
-			if err != nil {
-				return fmt.Errorf("failed to add user to group %s: %w", groupName, err)
-			}
 		}
 	}
 
 	d.SetId(username)
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Local user resource created successfully with ID: %s", username))
+
 	return resourceWindowsLocalUserRead(d, m)
 }
 
 func resourceWindowsLocalUserRead(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
 	sshClient := m.(*ssh.Client)
+
 	username := d.Id()
-	timeout := d.Get("command_timeout").(int)
-
-	// ✅ Valider le username avant utilisation
-	if err := powershell.ValidatePowerShellArgument(username); err != nil {
-		return fmt.Errorf("invalid username: %w", err)
+	timeoutVal, ok := d.GetOk("command_timeout")
+	var timeout int
+	if !ok {
+		timeout = 300
+	} else {
+		timeout = timeoutVal.(int)
 	}
 
-	// Commande PowerShell qui retourne du JSON structuré
-	command := fmt.Sprintf(`
-$user = Get-LocalUser -Name %s -ErrorAction SilentlyContinue
-if ($user) {
-    $groups = @()
-    try { 
-        $groups = @(Get-LocalGroup | Where-Object { 
-            (Get-LocalGroupMember -Group $_.Name -ErrorAction SilentlyContinue | 
-             Where-Object { $_.Name -eq "$env:COMPUTERNAME\$($user.Name)" }) -ne $null 
-        } | Select-Object -ExpandProperty Name)
-    } catch {}
-    
-    @{
-        'Exists' = $true
-        'FullName' = $user.FullName
-        'Description' = $user.Description
-        'PasswordNeverExpires' = $user.PasswordNeverExpires
-        'UserMayNotChangePassword' = -not $user.UserMayChangePassword
-        'Enabled' = $user.Enabled
-        'Groups' = $groups
-    } | ConvertTo-Json
-} else {
-    @{ 'Exists' = $false } | ConvertTo-Json
-}
-`,
-		powershell.QuotePowerShellString(username),
-	)
+	tflog.Debug(ctx, fmt.Sprintf("[READ] Reading local user: %s", username))
 
-	stdout, _, err := sshClient.ExecuteCommand(command, timeout)
+	info, err := checkLocalUserExists(ctx, sshClient, username, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to read local user: %w", err)
-	}
-
-	// ✅ Parser le JSON de manière structurée
-	var info LocalUserInfo
-	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
-		return fmt.Errorf("failed to parse user info: %w; output: %s", err, stdout)
-	}
-
-	if !info.Exists {
+		tflog.Warn(ctx, fmt.Sprintf("[READ] Failed to read local user %s: %v", username, err))
 		d.SetId("")
 		return nil
 	}
 
-	// Mettre à jour l'état
-	d.Set("username", username)
-	d.Set("full_name", info.FullName)
-	d.Set("description", info.Description)
-	d.Set("password_never_expires", info.PasswordNeverExpires)
-	d.Set("user_cannot_change_password", info.UserMayNotChangePassword)
-	d.Set("account_disabled", !info.Enabled)
-	d.Set("groups", info.Groups)
+	if !info.Exists {
+		tflog.Debug(ctx, fmt.Sprintf("[READ] Local user %s does not exist, removing from state", username))
+		d.SetId("")
+		return nil
+	}
 
+	// Mettre à jour le state
+	if err := d.Set("username", username); err != nil {
+		return utils.HandleResourceError("read", username, "username", err)
+	}
+	if err := d.Set("full_name", info.FullName); err != nil {
+		return utils.HandleResourceError("read", username, "full_name", err)
+	}
+	if err := d.Set("description", info.Description); err != nil {
+		return utils.HandleResourceError("read", username, "description", err)
+	}
+	if err := d.Set("password_never_expires", info.PasswordNeverExpires); err != nil {
+		return utils.HandleResourceError("read", username, "password_never_expires", err)
+	}
+	if err := d.Set("user_cannot_change_password", info.UserMayNotChangePassword); err != nil {
+		return utils.HandleResourceError("read", username, "user_cannot_change_password", err)
+	}
+	if err := d.Set("account_disabled", !info.Enabled); err != nil {
+		return utils.HandleResourceError("read", username, "account_disabled", err)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("[READ] Local user read successfully: %s (enabled=%v)", username, info.Enabled))
 	return nil
 }
 
 func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
 	sshClient := m.(*ssh.Client)
+
 	username := d.Get("username").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	// ✅ Valider le username
+	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Updating local user: %s", username))
+
+	// Valider le username pour sécurité
 	if err := powershell.ValidatePowerShellArgument(username); err != nil {
-		return fmt.Errorf("invalid username: %w", err)
+		return utils.HandleResourceError("validate", username, "username", err)
 	}
 
 	// Mettre à jour le mot de passe
 	if d.HasChange("password") {
 		password := d.Get("password").(string)
 		command := fmt.Sprintf(
-			"Set-LocalUser -Name %s -Password (ConvertTo-SecureString -AsPlainText %s -Force)",
+			"Set-LocalUser -Name %s -Password (ConvertTo-SecureString -AsPlainText %s -Force) -ErrorAction Stop",
 			powershell.QuotePowerShellString(username),
 			powershell.QuotePowerShellString(password),
 		)
-		_, _, err := sshClient.ExecuteCommand(command, timeout)
+
+		tflog.Info(ctx, "[UPDATE] Updating password")
+		tflog.Debug(ctx, "[UPDATE] Executing: Set-LocalUser -Password (password hidden)")
+
+		stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 		if err != nil {
-			return fmt.Errorf("failed to update password: %w", err)
+			return utils.HandleCommandError(
+				"update",
+				username,
+				"password",
+				"Set-LocalUser -Password (password hidden)",
+				stdout,
+				stderr,
+				err,
+			)
 		}
 	}
 
-	// Construire la commande de mise à jour
+	// Construire la commande de mise à jour pour les autres attributs
+	needsUpdate := false
 	command := fmt.Sprintf("Set-LocalUser -Name %s", powershell.QuotePowerShellString(username))
 
 	if d.HasChange("full_name") {
-		command += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(d.Get("full_name").(string)))
+		fullName := d.Get("full_name").(string)
+		if err := powershell.ValidatePowerShellArgument(fullName); err != nil {
+			return utils.HandleResourceError("validate", username, "full_name", err)
+		}
+		command += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(fullName))
+		needsUpdate = true
 	}
+
 	if d.HasChange("description") {
-		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(d.Get("description").(string)))
+		description := d.Get("description").(string)
+		if err := powershell.ValidatePowerShellArgument(description); err != nil {
+			return utils.HandleResourceError("validate", username, "description", err)
+		}
+		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description))
+		needsUpdate = true
 	}
+
 	if d.HasChange("password_never_expires") {
 		command += fmt.Sprintf(" -PasswordNeverExpires $%t", d.Get("password_never_expires").(bool))
+		needsUpdate = true
 	}
+
 	if d.HasChange("user_cannot_change_password") {
 		command += fmt.Sprintf(" -UserMayChangePassword $%t", !d.Get("user_cannot_change_password").(bool))
-	}
-	if d.HasChange("account_disabled") {
-		if d.Get("account_disabled").(bool) {
-			command += " -Disabled $true"
-		} else {
-			command += " -Enabled $true"
-		}
+		needsUpdate = true
 	}
 
-	if d.HasChange("full_name") || d.HasChange("description") || d.HasChange("password_never_expires") ||
-		d.HasChange("user_cannot_change_password") || d.HasChange("account_disabled") {
-		_, _, err := sshClient.ExecuteCommand(command, timeout)
+	if needsUpdate {
+		command += " -ErrorAction Stop"
+		tflog.Debug(ctx, fmt.Sprintf("[UPDATE] Executing: %s", command))
+
+		stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 		if err != nil {
-			return fmt.Errorf("failed to update local user: %w", err)
+			return utils.HandleCommandError(
+				"update",
+				username,
+				"properties",
+				command,
+				stdout,
+				stderr,
+				err,
+			)
 		}
 	}
 
-	// Gérer les modifications d'adhésion aux groupes
-	if d.HasChange("groups") {
-		o, n := d.GetChange("groups")
-		oldSet := o.(*schema.Set)
-		newSet := n.(*schema.Set)
-
-		// Retirer des anciens groupes
-		for _, group := range oldSet.Difference(newSet).List() {
-			groupName := group.(string)
-
-			// ✅ Valider le nom du groupe
-			if err := powershell.ValidatePowerShellArgument(groupName); err != nil {
-				return fmt.Errorf("invalid group name '%s': %w", groupName, err)
-			}
-
-			command := fmt.Sprintf(
-				"Remove-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
-				powershell.QuotePowerShellString(groupName),
-				powershell.QuotePowerShellString(username),
-			)
-			_, _, err := sshClient.ExecuteCommand(command, timeout)
-			if err != nil {
-				return fmt.Errorf("failed to remove user from group %s: %w", groupName, err)
-			}
+	// Gérer l'activation/désactivation du compte
+	if d.HasChange("account_disabled") {
+		disabled := d.Get("account_disabled").(bool)
+		var cmd string
+		if disabled {
+			cmd = fmt.Sprintf("Disable-LocalUser -Name %s -ErrorAction Stop",
+				powershell.QuotePowerShellString(username))
+			tflog.Info(ctx, "[UPDATE] Disabling user account")
+		} else {
+			cmd = fmt.Sprintf("Enable-LocalUser -Name %s -ErrorAction Stop",
+				powershell.QuotePowerShellString(username))
+			tflog.Info(ctx, "[UPDATE] Enabling user account")
 		}
 
-		// Ajouter aux nouveaux groupes
-		for _, group := range newSet.Difference(oldSet).List() {
-			groupName := group.(string)
-
-			// ✅ Valider le nom du groupe
-			if err := powershell.ValidatePowerShellArgument(groupName); err != nil {
-				return fmt.Errorf("invalid group name '%s': %w", groupName, err)
-			}
-
-			command := fmt.Sprintf(
-				"Add-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
-				powershell.QuotePowerShellString(groupName),
-				powershell.QuotePowerShellString(username),
+		stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
+		if err != nil {
+			return utils.HandleCommandError(
+				"update",
+				username,
+				"account_disabled",
+				cmd,
+				stdout,
+				stderr,
+				err,
 			)
-			_, _, err := sshClient.ExecuteCommand(command, timeout)
-			if err != nil {
-				return fmt.Errorf("failed to add user to group %s: %w", groupName, err)
-			}
 		}
 	}
 
+	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Local user updated successfully: %s", username))
 	return resourceWindowsLocalUserRead(d, m)
 }
 
 func resourceWindowsLocalUserDelete(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
 	sshClient := m.(*ssh.Client)
+
 	username := d.Get("username").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	// ✅ Valider le username
+	tflog.Info(ctx, fmt.Sprintf("[DELETE] Deleting local user: %s", username))
+
+	// Valider le username pour sécurité
 	if err := powershell.ValidatePowerShellArgument(username); err != nil {
-		return fmt.Errorf("invalid username: %w", err)
+		return utils.HandleResourceError("validate", username, "username", err)
 	}
 
-	command := fmt.Sprintf("Remove-LocalUser -Name %s -ErrorAction Stop", powershell.QuotePowerShellString(username))
-	_, _, err := sshClient.ExecuteCommand(command, timeout)
+	command := fmt.Sprintf("Remove-LocalUser -Name %s -ErrorAction Stop",
+		powershell.QuotePowerShellString(username))
+
+	tflog.Debug(ctx, fmt.Sprintf("[DELETE] Executing: %s", command))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to delete local user: %w", err)
+		return utils.HandleCommandError(
+			"delete",
+			username,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
 	}
 
 	d.SetId("")
+	tflog.Info(ctx, fmt.Sprintf("[DELETE] Local user deleted successfully: %s", username))
 	return nil
 }
