@@ -4,19 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
-// LocalGroupInfo represents the information of a local group
+// LocalGroupInfo représente les informations d'un groupe local
 type LocalGroupInfo struct {
-	Exists      bool     `json:"Exists"`
-	Name        string   `json:"Name"`
-	Description string   `json:"Description"`
-	Members     []string `json:"Members"`
+	Exists      bool   `json:"Exists"`
+	Name        string `json:"Name"`
+	Description string `json:"Description"`
 }
 
 func ResourceWindowsLocalGroup() *schema.Resource {
@@ -26,26 +26,26 @@ func ResourceWindowsLocalGroup() *schema.Resource {
 		Update: resourceWindowsLocalGroupUpdate,
 		Delete: resourceWindowsLocalGroupDelete,
 		Importer: &schema.ResourceImporter{
-			StateContext: resourceWindowsLocalGroupImport,
+			StateContext: schema.ImportStatePassthroughContext,
 		},
 
 		Schema: map[string]*schema.Schema{
-			"group": {
+			"name": {
 				Type:        schema.TypeString,
 				Required:    true,
 				ForceNew:    true,
-				Description: "The local group name.",
+				Description: "The name of the local group. Cannot be changed after creation.",
 			},
 			"description": {
 				Type:        schema.TypeString,
 				Optional:    true,
 				Description: "A description for the local group.",
 			},
-			"members": {
-				Type:        schema.TypeSet,
+			"allow_existing": {
+				Type:        schema.TypeBool,
 				Optional:    true,
-				Elem:        &schema.Schema{Type: schema.TypeString},
-				Description: "Members to ensure are part of the group (local accounts or DOMAIN\\User).",
+				Default:     false,
+				Description: "If true, adopt existing group instead of failing. If false, fail if group already exists.",
 			},
 			"command_timeout": {
 				Type:        schema.TypeInt,
@@ -57,56 +57,127 @@ func ResourceWindowsLocalGroup() *schema.Resource {
 	}
 }
 
-func resourceWindowsLocalGroupCreate(d *schema.ResourceData, m interface{}) error {
-	sshClient := m.(*ssh.Client)
-	group := d.Get("group").(string)
-	timeout := d.Get("command_timeout").(int)
-
-	// Validate group name
-	if err := powershell.ValidatePowerShellArgument(group); err != nil {
-		return fmt.Errorf("invalid group name: %w", err)
+// checkLocalGroupExists vérifie si un groupe local existe et retourne ses informations
+func checkLocalGroupExists(ctx context.Context, sshClient *ssh.Client, name string, timeout int) (*LocalGroupInfo, error) {
+	// Valider le nom du groupe pour sécurité
+	if err := powershell.ValidatePowerShellArgument(name); err != nil {
+		return nil, err
 	}
 
-	// Create group
-	command := fmt.Sprintf("New-LocalGroup -Name %s -ErrorAction Stop", powershell.QuotePowerShellString(group))
-	log.Printf("[DEBUG] Creating local group: %s", group)
-	_, _, err := sshClient.ExecuteCommand(command, timeout)
+	tflog.Debug(ctx, fmt.Sprintf("Checking if local group exists: %s", name))
+
+	// Commande PowerShell qui retourne du JSON structuré
+	command := fmt.Sprintf(`
+$group = Get-LocalGroup -Name %s -ErrorAction SilentlyContinue
+if ($group) {
+    @{
+        'Exists' = $true
+        'Name' = $group.Name
+        'Description' = $group.Description
+    } | ConvertTo-Json -Compress
+} else {
+    @{ 'Exists' = $false } | ConvertTo-Json -Compress
+}
+`,
+		powershell.QuotePowerShellString(name),
+	)
+
+	stdout, _, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to create local group: %w", err)
+		return nil, fmt.Errorf("failed to check group: %w", err)
 	}
 
-	// Add members if provided
-	if members, ok := d.GetOk("members"); ok {
-		memberList := members.(*schema.Set).List()
-		for _, mbr := range memberList {
-			member := mbr.(string)
+	var info LocalGroupInfo
+	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
+		return nil, fmt.Errorf("failed to parse group info: %w; output: %s", err, stdout)
+	}
 
-			if err := powershell.ValidatePowerShellArgument(member); err != nil {
-				return fmt.Errorf("invalid member name '%s': %w", member, err)
-			}
+	return &info, nil
+}
 
-			addCmd := fmt.Sprintf("Add-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
-				powershell.QuotePowerShellString(group),
-				powershell.QuotePowerShellString(member),
+func resourceWindowsLocalGroupCreate(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	name := d.Get("name").(string)
+	timeout := d.Get("command_timeout").(int)
+	allowExisting := d.Get("allow_existing").(bool)
+
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting local group creation for: %s", name))
+
+	// Valider le nom du groupe pour sécurité
+	if err := powershell.ValidatePowerShellArgument(name); err != nil {
+		return utils.HandleResourceError("validate", name, "name", err)
+	}
+
+	// Vérifier si le groupe existe déjà
+	info, err := checkLocalGroupExists(ctx, sshClient, name, timeout)
+	if err != nil {
+		return utils.HandleResourceError("check_existing", name, "state", err)
+	}
+
+	if info.Exists {
+		if allowExisting {
+			tflog.Info(ctx, fmt.Sprintf("[CREATE] Group %s already exists, adopting it (allow_existing=true)", name))
+			d.SetId(name)
+			return resourceWindowsLocalGroupRead(d, m)
+		} else {
+			resourceName := "localgroup"
+			return utils.HandleResourceError(
+				"create",
+				name,
+				"state",
+				fmt.Errorf("local group already exists. "+
+					"To manage this existing group, either:\n"+
+					"  1. Import it: terraform import windows_localgroup.%s '%s'\n"+
+					"  2. Set allow_existing = true in your configuration\n"+
+					"  3. Remove it first (WARNING): Remove-LocalGroup -Name '%s' -Force",
+					resourceName, name, name),
 			)
-			log.Printf("[DEBUG] Adding member '%s' to group '%s'", member, group)
-			_, _, err := sshClient.ExecuteCommand(addCmd, timeout)
-			if err != nil {
-				return fmt.Errorf("failed to add member %s to group %s: %w", member, group, err)
-			}
 		}
 	}
 
-	d.SetId(group)
+	// Construire la commande de manière sécurisée
+	command := fmt.Sprintf("New-LocalGroup -Name %s",
+		powershell.QuotePowerShellString(name))
+
+	// Ajouter la description si fournie
+	if description, ok := d.GetOk("description"); ok {
+		if err := powershell.ValidatePowerShellArgument(description.(string)); err != nil {
+			return utils.HandleResourceError("validate", name, "description", err)
+		}
+		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description.(string)))
+	}
+
+	command += " -ErrorAction Stop"
+
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Creating local group: %s", name))
+	tflog.Debug(ctx, fmt.Sprintf("[CREATE] Executing: %s", command))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"create",
+			name,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	d.SetId(name)
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Local group created successfully with ID: %s", name))
+
 	return resourceWindowsLocalGroupRead(d, m)
 }
 
 func resourceWindowsLocalGroupRead(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
 	sshClient := m.(*ssh.Client)
-	group := d.Id()
-	if group == "" {
-		group = d.Get("group").(string)
-	}
+
+	name := d.Id()
 	timeoutVal, ok := d.GetOk("command_timeout")
 	var timeout int
 	if !ok {
@@ -115,166 +186,112 @@ func resourceWindowsLocalGroupRead(d *schema.ResourceData, m interface{}) error 
 		timeout = timeoutVal.(int)
 	}
 
-	// Validate group name
-	if err := powershell.ValidatePowerShellArgument(group); err != nil {
-		d.SetId("")
-		return fmt.Errorf("invalid group name: %w", err)
-	}
+	tflog.Debug(ctx, fmt.Sprintf("[READ] Reading local group: %s", name))
 
-	// Build PowerShell to return JSON about group existence and members
-	command := fmt.Sprintf(`
-$g = Get-LocalGroup -Name %s -ErrorAction SilentlyContinue
-if ($g) {
-    $members = @()
-    try {
-        $members = @(Get-LocalGroupMember -Group %s -ErrorAction SilentlyContinue | ForEach-Object {
-            # Format member name as "Domain\User" or "COMPUTERNAME\User"
-            if ($_.ObjectClass -eq 'User' -or $_.ObjectClass -eq 'Group') {
-                $_.Name
-            } else {
-                $_.Name
-            }
-        })
-    } catch {}
-    @{ 'Exists' = $true; 'Members' = $members } | ConvertTo-Json
-} else {
-    @{ 'Exists' = $false } | ConvertTo-Json
-}
-`, powershell.QuotePowerShellString(group), powershell.QuotePowerShellString(group))
-
-	stdout, _, err := sshClient.ExecuteCommand(command, timeout)
+	info, err := checkLocalGroupExists(ctx, sshClient, name, timeout)
 	if err != nil {
-		// If we can't read, clear id to force re-create/import
-		log.Printf("[DEBUG] failed to read local group '%s': %v", group, err)
+		tflog.Warn(ctx, fmt.Sprintf("[READ] Failed to read local group %s: %v", name, err))
 		d.SetId("")
 		return nil
-	}
-
-	var info LocalGroupInfo
-	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
-		return fmt.Errorf("failed to parse local group info: %w; output: %s", err, stdout)
 	}
 
 	if !info.Exists {
+		tflog.Debug(ctx, fmt.Sprintf("[READ] Local group %s does not exist, removing from state", name))
 		d.SetId("")
 		return nil
 	}
 
-	// Update state
-	d.Set("group", group)
-	d.Set("members", info.Members)
+	// Mettre à jour le state
+	if err := d.Set("name", info.Name); err != nil {
+		return utils.HandleResourceError("read", name, "name", err)
+	}
+	if err := d.Set("description", info.Description); err != nil {
+		return utils.HandleResourceError("read", name, "description", err)
+	}
 
+	tflog.Debug(ctx, fmt.Sprintf("[READ] Local group read successfully: %s", name))
 	return nil
 }
 
 func resourceWindowsLocalGroupUpdate(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
 	sshClient := m.(*ssh.Client)
-	group := d.Get("group").(string)
+
+	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	// Validate group
-	if err := powershell.ValidatePowerShellArgument(group); err != nil {
-		return fmt.Errorf("invalid group name: %w", err)
+	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Updating local group: %s", name))
+
+	// Valider le nom pour sécurité
+	if err := powershell.ValidatePowerShellArgument(name); err != nil {
+		return utils.HandleResourceError("validate", name, "name", err)
 	}
 
-	// Handle members changes
-	if d.HasChange("members") {
-		o, n := d.GetChange("members")
-		oldSet := o.(*schema.Set)
-		newSet := n.(*schema.Set)
-
-		// Remove members that are no longer present
-		for _, rm := range oldSet.Difference(newSet).List() {
-			member := rm.(string)
-
-			if err := powershell.ValidatePowerShellArgument(member); err != nil {
-				return fmt.Errorf("invalid member name '%s': %w", member, err)
-			}
-
-			removeCmd := fmt.Sprintf("Remove-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
-				powershell.QuotePowerShellString(group),
-				powershell.QuotePowerShellString(member),
-			)
-			log.Printf("[DEBUG] Removing member '%s' from group '%s'", member, group)
-			_, _, err := sshClient.ExecuteCommand(removeCmd, timeout)
-			if err != nil {
-				return fmt.Errorf("failed to remove member %s from group %s: %w", member, group, err)
-			}
+	// Mettre à jour la description
+	if d.HasChange("description") {
+		description := d.Get("description").(string)
+		if err := powershell.ValidatePowerShellArgument(description); err != nil {
+			return utils.HandleResourceError("validate", name, "description", err)
 		}
 
-		// Add new members
-		for _, am := range newSet.Difference(oldSet).List() {
-			member := am.(string)
+		command := fmt.Sprintf("Set-LocalGroup -Name %s -Description %s -ErrorAction Stop",
+			powershell.QuotePowerShellString(name),
+			powershell.QuotePowerShellString(description))
 
-			if err := powershell.ValidatePowerShellArgument(member); err != nil {
-				return fmt.Errorf("invalid member name '%s': %w", member, err)
-			}
+		tflog.Debug(ctx, "[UPDATE] Updating description")
+		tflog.Debug(ctx, fmt.Sprintf("[UPDATE] Executing: %s", command))
 
-			addCmd := fmt.Sprintf("Add-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
-				powershell.QuotePowerShellString(group),
-				powershell.QuotePowerShellString(member),
+		stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+		if err != nil {
+			return utils.HandleCommandError(
+				"update",
+				name,
+				"description",
+				command,
+				stdout,
+				stderr,
+				err,
 			)
-			log.Printf("[DEBUG] Adding member '%s' to group '%s'", member, group)
-			_, _, err := sshClient.ExecuteCommand(addCmd, timeout)
-			if err != nil {
-				return fmt.Errorf("failed to add member %s to group %s: %w", member, group, err)
-			}
 		}
 	}
 
-	// Nothing else to update for group itself (name is ForceNew)
+	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Local group updated successfully: %s", name))
 	return resourceWindowsLocalGroupRead(d, m)
 }
 
 func resourceWindowsLocalGroupDelete(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
 	sshClient := m.(*ssh.Client)
-	group := d.Get("group").(string)
+
+	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	// Validate group
-	if err := powershell.ValidatePowerShellArgument(group); err != nil {
-		return fmt.Errorf("invalid group name: %w", err)
+	tflog.Info(ctx, fmt.Sprintf("[DELETE] Deleting local group: %s", name))
+
+	// Valider le nom pour sécurité
+	if err := powershell.ValidatePowerShellArgument(name); err != nil {
+		return utils.HandleResourceError("validate", name, "name", err)
 	}
 
-	command := fmt.Sprintf("Remove-LocalGroup -Name %s -ErrorAction Stop", powershell.QuotePowerShellString(group))
-	log.Printf("[DEBUG] Removing local group: %s", group)
-	_, _, err := sshClient.ExecuteCommand(command, timeout)
+	command := fmt.Sprintf("Remove-LocalGroup -Name %s -ErrorAction Stop",
+		powershell.QuotePowerShellString(name))
+
+	tflog.Debug(ctx, fmt.Sprintf("[DELETE] Executing: %s", command))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to remove local group: %w", err)
+		return utils.HandleCommandError(
+			"delete",
+			name,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
 	}
 
 	d.SetId("")
+	tflog.Info(ctx, fmt.Sprintf("[DELETE] Local group deleted successfully: %s", name))
 	return nil
-}
-
-func resourceWindowsLocalGroupImport(ctx context.Context, d *schema.ResourceData, m interface{}) ([]*schema.ResourceData, error) {
-	sshClient := m.(*ssh.Client)
-	group := d.Id()
-
-	// Validate group
-	if err := powershell.ValidatePowerShellArgument(group); err != nil {
-		return nil, fmt.Errorf("invalid group name: %w", err)
-	}
-
-	// Set the group attribute and defaults
-	d.Set("group", group)
-	d.Set("command_timeout", 300)
-
-	// Try to fetch members, but allow import even if we can't verify
-	if stdout, _, err := sshClient.ExecuteCommand(fmt.Sprintf("Get-LocalGroupMember -Group %s | Select-Object -ExpandProperty Name | ConvertTo-Json", powershell.QuotePowerShellString(group)), 300); err == nil {
-		var members []string
-		if err := json.Unmarshal([]byte(stdout), &members); err == nil {
-			d.Set("members", members)
-		} else {
-			// If single member returned as string, try that
-			var single string
-			if err2 := json.Unmarshal([]byte(stdout), &single); err2 == nil && single != "" {
-				d.Set("members", []string{single})
-			}
-		}
-	} else {
-		log.Printf("[DEBUG] could not list members for group '%s' during import: %v", group, err)
-	}
-
-	return []*schema.ResourceData{d}, nil
 }
