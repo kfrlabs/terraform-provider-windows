@@ -53,7 +53,7 @@ func ResourceWindowsRegistryKey() *schema.Resource {
 // checkRegistryKeyExists vérifie si une clé de registre existe
 func checkRegistryKeyExists(ctx context.Context, sshClient *ssh.Client, path string, timeout int) (bool, error) {
 	// Validate path for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
+	if err := utils.ValidateField(path, path, "path"); err != nil {
 		return false, err
 	}
 
@@ -81,8 +81,8 @@ func resourceWindowsRegistryKeyCreate(d *schema.ResourceData, m interface{}) err
 	timeout := d.Get("command_timeout").(int)
 
 	// Validate path for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
-		return utils.HandleResourceError("validate", path, "path", err)
+	if err := utils.ValidateField(path, path, "path"); err != nil {
+		return err
 	}
 
 	// Check if registry key already exists
@@ -154,7 +154,7 @@ func resourceWindowsRegistryKeyRead(d *schema.ResourceData, m interface{}) error
 	}
 
 	// Validate path for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
+	if err := utils.ValidateField(path, path, "path"); err != nil {
 		return utils.HandleResourceError("validate", path, "path", err)
 	}
 
@@ -208,8 +208,8 @@ func resourceWindowsRegistryKeyDelete(d *schema.ResourceData, m interface{}) err
 	timeout := d.Get("command_timeout").(int)
 
 	// Validate path for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
-		return utils.HandleResourceError("validate", path, "path", err)
+	if err := utils.ValidateField(path, path, "path"); err != nil {
+		return err
 	}
 
 	// Build secure PowerShell command

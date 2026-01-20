@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
 func DataSourceWindowsLocalGroup() *schema.Resource {
@@ -48,23 +49,29 @@ func dataSourceWindowsLocalGroupRead(d *schema.ResourceData, m interface{}) erro
 
 	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading local group: %s", name))
 
+	// Validate name for security
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return utils.HandleResourceError("validate", name, "name", err)
+	}
+
 	// Check if group exists using the same function from resource_localgroup.go
 	info, err := checkLocalGroupExists(ctx, sshClient, name, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to read local group %s: %w", name, err)
+		return utils.HandleResourceError("read", name, "state", err)
 	}
 
 	if !info.Exists {
-		return fmt.Errorf("local group %s does not exist", name)
+		return utils.HandleResourceError("read", name, "state",
+			fmt.Errorf("local group %s does not exist", name))
 	}
 
 	// Set all attributes
 	d.SetId(name)
 	if err := d.Set("name", info.Name); err != nil {
-		return fmt.Errorf("failed to set name: %w", err)
+		return utils.HandleResourceError("read", name, "name", err)
 	}
 	if err := d.Set("description", info.Description); err != nil {
-		return fmt.Errorf("failed to set description: %w", err)
+		return utils.HandleResourceError("read", name, "description", err)
 	}
 
 	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read local group: %s", name))

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -14,39 +15,59 @@ import (
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
+// serviceInfo represents information about a Windows service
 type serviceInfo struct {
 	Exists         bool        `json:"Exists"`
 	Name           string      `json:"Name"`
 	DisplayName    string      `json:"DisplayName"`
 	Description    string      `json:"Description"`
-	Status         interface{} `json:"Status"`    // Peut être string ou int
-	StartType      interface{} `json:"StartType"` // Peut être string ou int
+	Status         interface{} `json:"Status"`    // Can be string or int
+	StartType      interface{} `json:"StartType"` // Can be string or int
 	StartName      string      `json:"StartName"`
 	BinaryPathName string      `json:"BinaryPathName"`
 	ServiceType    string      `json:"ServiceType"`
 }
 
-// convertServiceStatus convertit le code Status WMI en string
+// Service status constants (WMI Win32_Service Status codes)
+const (
+	ServiceStatusStopped         = 1
+	ServiceStatusStartPending    = 2
+	ServiceStatusStopPending     = 3
+	ServiceStatusRunning         = 4
+	ServiceStatusContinuePending = 5
+	ServiceStatusPausePending    = 6
+	ServiceStatusPaused          = 7
+)
+
+// Service start type constants (WMI Win32_Service StartMode codes)
+const (
+	ServiceStartTypeBoot      = 0
+	ServiceStartTypeSystem    = 1
+	ServiceStartTypeAutomatic = 2
+	ServiceStartTypeManual    = 3
+	ServiceStartTypeDisabled  = 4
+)
+
+// convertServiceStatus converts WMI Status code to string
 func convertServiceStatus(status interface{}) string {
 	switch v := status.(type) {
 	case string:
 		return v
 	case float64:
-		// Codes WMI Win32_Service Status
 		switch int(v) {
-		case 1:
+		case ServiceStatusStopped:
 			return "Stopped"
-		case 2:
+		case ServiceStatusStartPending:
 			return "Start Pending"
-		case 3:
+		case ServiceStatusStopPending:
 			return "Stop Pending"
-		case 4:
+		case ServiceStatusRunning:
 			return "Running"
-		case 5:
+		case ServiceStatusContinuePending:
 			return "Continue Pending"
-		case 6:
+		case ServiceStatusPausePending:
 			return "Pause Pending"
-		case 7:
+		case ServiceStatusPaused:
 			return "Paused"
 		default:
 			return "Unknown"
@@ -56,23 +77,22 @@ func convertServiceStatus(status interface{}) string {
 	}
 }
 
-// convertStartType convertit le code StartType WMI en string
+// convertStartType converts WMI StartType code to string
 func convertStartType(startType interface{}) string {
 	switch v := startType.(type) {
 	case string:
 		return v
 	case float64:
-		// Codes WMI Win32_Service StartMode
 		switch int(v) {
-		case 0:
+		case ServiceStartTypeBoot:
 			return "Boot"
-		case 1:
+		case ServiceStartTypeSystem:
 			return "System"
-		case 2:
+		case ServiceStartTypeAutomatic:
 			return "Automatic"
-		case 3:
+		case ServiceStartTypeManual:
 			return "Manual"
-		case 4:
+		case ServiceStartTypeDisabled:
 			return "Disabled"
 		default:
 			return "Unknown"
@@ -178,22 +198,38 @@ func ResourceWindowsService() *schema.Resource {
 	}
 }
 
-// checkServiceExists vérifie si un service existe et retourne ses informations
+// checkServiceExists verifies whether a Windows service exists and retrieves its configuration
+//
+// This function executes a PowerShell command combining Get-Service and WMI queries
+// to retrieve comprehensive service information.
+//
+// Parameters:
+//   - ctx: Context for logging and cancellation
+//   - sshClient: Authenticated SSH client to the Windows host
+//   - name: The service name to check (must be validated before calling)
+//   - timeout: Command execution timeout in seconds
+//
+// Returns:
+//   - *serviceInfo: Service information if exists, with Exists=false if not found
+//   - error: Any error during command execution or JSON parsing
 func checkServiceExists(ctx context.Context, sshClient *ssh.Client, name string, timeout int) (*serviceInfo, error) {
-	// Valider le nom du service pour sécurité
-	if err := powershell.ValidatePowerShellArgument(name); err != nil {
+	// Validate service name for security
+	if err := utils.ValidateField(name, name, "name"); err != nil {
 		return nil, err
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Checking if service exists: %s", name))
+	tflog.Debug(ctx, "Checking if service exists", map[string]any{
+		"service_name": name,
+	})
 
-	// PowerShell command to get service info as JSON avec conversion des codes
+	// PowerShell command to get service info as JSON with status code conversion
 	command := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
 $service = Get-Service -Name %s -ErrorAction SilentlyContinue
 if ($service) {
     $info = Get-WmiObject Win32_Service -Filter "Name='%s'" -ErrorAction SilentlyContinue
     
-    # Convertir Status code en string
+    # Convert Status code to string
     $statusString = switch ($service.Status.ToString()) {
         'Stopped' { 'Stopped' }
         'Running' { 'Running' }
@@ -201,7 +237,7 @@ if ($service) {
         default { $service.Status.ToString() }
     }
     
-    # Convertir StartType code en string
+    # Convert StartType code to string
     $startTypeString = switch ($service.StartType.ToString()) {
         'Automatic' { 'Automatic' }
         'Manual' { 'Manual' }
@@ -227,9 +263,9 @@ if ($service) {
 }
 `, powershell.QuotePowerShellString(name), name)
 
-	stdout, _, err := sshClient.ExecuteCommand(command, timeout) // ← stderr remplacé par _
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check service: %w", err)
+		return nil, fmt.Errorf("failed to check service: %w; stderr: %s", err, stderr)
 	}
 
 	var info serviceInfo
@@ -240,6 +276,130 @@ if ($service) {
 	return &info, nil
 }
 
+// buildServiceCreationCommand builds a PowerShell command to create a new service
+func buildServiceCreationCommand(d *schema.ResourceData, name, binaryPath string) (string, error) {
+	// Start building the command parts
+	params := []string{
+		fmt.Sprintf("-Name %s", powershell.QuotePowerShellString(name)),
+		fmt.Sprintf("-BinaryPathName %s", powershell.QuotePowerShellString(binaryPath)),
+	}
+
+	// Add display name if provided
+	if displayName, ok, err := utils.ValidateSchemaOptionalString(d, "display_name", name); err != nil {
+		return "", err
+	} else if ok {
+		params = append(params, fmt.Sprintf("-DisplayName %s", powershell.QuotePowerShellString(displayName)))
+	}
+
+	// Add start type
+	startType := d.Get("start_type").(string)
+	if err := utils.ValidateField(startType, name, "start_type"); err != nil {
+		return "", err
+	}
+	params = append(params, fmt.Sprintf("-StartupType %s", powershell.QuotePowerShellString(startType)))
+
+	// Add start name and credential if provided
+	if startName, ok, err := utils.ValidateSchemaOptionalString(d, "start_name", name); err != nil {
+		return "", err
+	} else if ok {
+		params = append(params, fmt.Sprintf("-StartName %s", powershell.QuotePowerShellString(startName)))
+
+		if credential, hasCredential := d.GetOk("credential"); hasCredential {
+			// Create a PowerShell credential object
+			credCmd := fmt.Sprintf("(New-Object System.Management.Automation.PSCredential(%s, (ConvertTo-SecureString %s -AsPlainText -Force)))",
+				powershell.QuotePowerShellString(startName),
+				powershell.QuotePowerShellString(credential.(string)))
+			params = append(params, fmt.Sprintf("-Credential %s", credCmd))
+		}
+	}
+
+	// Add load order group if provided
+	if loadOrderGroup, ok, err := utils.ValidateSchemaOptionalString(d, "load_order_group", name); err != nil {
+		return "", err
+	} else if ok {
+		params = append(params, fmt.Sprintf("-LoadOrderGroup %s", powershell.QuotePowerShellString(loadOrderGroup)))
+	}
+
+	// Build final command
+	command := "New-Service " + strings.Join(params, " ") + " -ErrorAction Stop"
+	return command, nil
+}
+
+// setServiceDescription sets the description for a service
+func setServiceDescription(ctx context.Context, sshClient *ssh.Client, name, description string, timeout int) error {
+	if description == "" {
+		return nil
+	}
+
+	if err := utils.ValidateField(description, name, "description"); err != nil {
+		return err
+	}
+
+	descCmd := fmt.Sprintf("Set-Service -Name %s -Description %s -ErrorAction Stop",
+		powershell.QuotePowerShellString(name),
+		powershell.QuotePowerShellString(description))
+
+	tflog.Debug(ctx, "Setting service description")
+	stdout, stderr, err := sshClient.ExecuteCommand(descCmd, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"create",
+			name,
+			"description",
+			descCmd,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	return nil
+}
+
+// setServiceState starts or stops a service based on desired state
+func setServiceState(ctx context.Context, sshClient *ssh.Client, name, desiredState string, timeout int) error {
+	if desiredState != "Running" && desiredState != "Stopped" {
+		return nil
+	}
+
+	var command string
+	var action string
+
+	if desiredState == "Running" {
+		command = fmt.Sprintf("Start-Service -Name %s -ErrorAction Stop",
+			powershell.QuotePowerShellString(name))
+		action = "start"
+	} else {
+		command = fmt.Sprintf("Stop-Service -Name %s -Force -ErrorAction Stop",
+			powershell.QuotePowerShellString(name))
+		action = "stop"
+	}
+
+	tflog.Info(ctx, fmt.Sprintf("Setting service state to: %s", desiredState), map[string]any{
+		"service_name": name,
+		"action":       action,
+	})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			action,
+			name,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	tflog.Info(ctx, fmt.Sprintf("Service %s successfully", action+"ed"), map[string]any{
+		"service_name": name,
+	})
+
+	return nil
+}
+
 func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
 	sshClient := m.(*ssh.Client)
@@ -248,14 +408,16 @@ func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 	timeout := d.Get("command_timeout").(int)
 	allowExisting := d.Get("allow_existing").(bool)
 
-	tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting service creation for: %s", name))
+	tflog.Info(ctx, "Starting service creation", map[string]any{
+		"service_name": name,
+	})
 
-	// Valider le nom du service pour sécurité
-	if err := powershell.ValidatePowerShellArgument(name); err != nil {
-		return utils.HandleResourceError("validate", name, "name", err)
+	// Validate service name
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
 	}
 
-	// Vérifier si le service existe déjà
+	// Check if service already exists
 	info, err := checkServiceExists(ctx, sshClient, name, timeout)
 	if err != nil {
 		return utils.HandleResourceError("check_existing", name, "state", err)
@@ -263,89 +425,55 @@ func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 
 	if info.Exists {
 		if allowExisting {
-			tflog.Info(ctx, fmt.Sprintf("[CREATE] Service %s already exists, adopting it (allow_existing=true)", name))
+			tflog.Info(ctx, "Service already exists, adopting it", map[string]any{
+				"service_name":   name,
+				"allow_existing": true,
+			})
 			d.SetId(name)
 			return resourceWindowsServiceRead(d, m)
-		} else {
-			resourceName := "service"
-			return utils.HandleResourceError(
-				"create",
-				name,
-				"state",
-				fmt.Errorf("service already exists. "+
-					"To manage this existing service, either:\n"+
-					"  1. Import it: terraform import windows_service.%s '%s'\n"+
-					"  2. Set allow_existing = true in your configuration\n"+
-					"  3. Remove it first (WARNING - will delete the service): sc.exe delete '%s'",
-					resourceName, name, name),
-			)
 		}
+
+		resourceName := "service"
+		return utils.HandleResourceError(
+			"create",
+			name,
+			"state",
+			fmt.Errorf("service already exists. "+
+				"To manage this existing service, either:\n"+
+				"  1. Import it: terraform import windows_service.%s '%s'\n"+
+				"  2. Set allow_existing = true in your configuration\n"+
+				"  3. Remove it first (WARNING - will delete the service): sc.exe delete '%s'",
+				resourceName, name, name),
+		)
 	}
 
-	// Vérifier que binary_path est fourni pour créer un nouveau service
+	// Verify binary_path is provided for new service
 	binaryPath, ok := d.GetOk("binary_path")
 	if !ok {
 		return utils.HandleResourceError("validate", name, "binary_path",
 			fmt.Errorf("binary_path is required for creating a new service"))
 	}
 
-	// Valider binary_path pour sécurité
-	if err := powershell.ValidatePowerShellArgument(binaryPath.(string)); err != nil {
-		return utils.HandleResourceError("validate", name, "binary_path", err)
+	// Validate binary_path
+	if err := utils.ValidateField(binaryPath.(string), name, "binary_path"); err != nil {
+		return err
 	}
 
-	// Construire la commande New-Service de manière sécurisée
-	command := fmt.Sprintf("New-Service -Name %s -BinaryPathName %s",
-		powershell.QuotePowerShellString(name),
-		powershell.QuotePowerShellString(binaryPath.(string)))
-
-	if displayName, ok := d.GetOk("display_name"); ok {
-		if err := powershell.ValidatePowerShellArgument(displayName.(string)); err != nil {
-			return utils.HandleResourceError("validate", name, "display_name", err)
-		}
-		command += fmt.Sprintf(" -DisplayName %s", powershell.QuotePowerShellString(displayName.(string)))
-	}
-
-	startType := d.Get("start_type").(string)
-	if err := powershell.ValidatePowerShellArgument(startType); err != nil {
-		return utils.HandleResourceError("validate", name, "start_type", err)
-	}
-	command += fmt.Sprintf(" -StartupType %s", powershell.QuotePowerShellString(startType))
-
-	if startName, ok := d.GetOk("start_name"); ok {
-		if err := powershell.ValidatePowerShellArgument(startName.(string)); err != nil {
-			return utils.HandleResourceError("validate", name, "start_name", err)
-		}
-
-		credential, hasCredential := d.GetOk("credential")
-		if hasCredential {
-			// Créer un credential PowerShell sécurisé
-			command += fmt.Sprintf(" -Credential (New-Object System.Management.Automation.PSCredential(%s, (ConvertTo-SecureString %s -AsPlainText -Force)))",
-				powershell.QuotePowerShellString(startName.(string)),
-				powershell.QuotePowerShellString(credential.(string)))
-		}
-	}
-
-	if loadOrderGroup, ok := d.GetOk("load_order_group"); ok {
-		if err := powershell.ValidatePowerShellArgument(loadOrderGroup.(string)); err != nil {
-			return utils.HandleResourceError("validate", name, "load_order_group", err)
-		}
-		command += fmt.Sprintf(" -LoadOrderGroup %s", powershell.QuotePowerShellString(loadOrderGroup.(string)))
-	}
-
-	command += " -ErrorAction Stop"
-
-	tflog.Info(ctx, "[CREATE] Creating service with command (credentials hidden)")
-
-	// Masquer les credentials dans les logs
-	logCommand := command
-	if cred, ok := d.GetOk("credential"); ok {
-		logCommand = strings.ReplaceAll(command, cred.(string), "***REDACTED***")
-	}
-	tflog.Debug(ctx, fmt.Sprintf("[CREATE] Executing: %s", logCommand))
-
-	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	// Build service creation command
+	command, err := buildServiceCreationCommand(d, name, binaryPath.(string))
 	if err != nil {
+		return err
+	}
+
+	tflog.Info(ctx, "Creating service with command (credentials hidden)")
+	tflog.Debug(ctx, "Executing service creation command", map[string]any{
+		"service_name":   name,
+		"has_credential": d.Get("credential").(string) != "",
+	})
+
+	// Execute service creation
+	stdout, stderr, execErr := sshClient.ExecuteCommand(command, timeout)
+	if execErr != nil {
 		return utils.HandleCommandError(
 			"create",
 			name,
@@ -353,61 +481,31 @@ func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 			"New-Service (credentials hidden)",
 			stdout,
 			stderr,
-			err,
+			execErr,
 		)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[CREATE] Service created successfully: %s", name))
+	tflog.Info(ctx, "Service created successfully", map[string]any{
+		"service_name": name,
+	})
 
-	// Définir la description si fournie
+	// Set description if provided
 	if description, ok := d.GetOk("description"); ok {
-		if err := powershell.ValidatePowerShellArgument(description.(string)); err != nil {
-			return utils.HandleResourceError("validate", name, "description", err)
-		}
-
-		descCmd := fmt.Sprintf("Set-Service -Name %s -Description %s -ErrorAction Stop",
-			powershell.QuotePowerShellString(name),
-			powershell.QuotePowerShellString(description.(string)))
-
-		tflog.Debug(ctx, "[CREATE] Setting service description")
-		stdout, stderr, err := sshClient.ExecuteCommand(descCmd, timeout)
-		if err != nil {
-			return utils.HandleCommandError(
-				"create",
-				name,
-				"description",
-				descCmd,
-				stdout,
-				stderr,
-				err,
-			)
+		if err := setServiceDescription(ctx, sshClient, name, description.(string), timeout); err != nil {
+			return err
 		}
 	}
 
-	// Définir l'état désiré
+	// Set desired state
 	desiredState := d.Get("state").(string)
-	if desiredState == "Running" {
-		startCmd := fmt.Sprintf("Start-Service -Name %s -ErrorAction Stop",
-			powershell.QuotePowerShellString(name))
-
-		tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting service: %s", name))
-		stdout, stderr, err := sshClient.ExecuteCommand(startCmd, timeout)
-		if err != nil {
-			return utils.HandleCommandError(
-				"create",
-				name,
-				"state",
-				startCmd,
-				stdout,
-				stderr,
-				err,
-			)
-		}
-		tflog.Info(ctx, fmt.Sprintf("[CREATE] Service started successfully: %s", name))
+	if err := setServiceState(ctx, sshClient, name, desiredState, timeout); err != nil {
+		return err
 	}
 
 	d.SetId(name)
-	tflog.Info(ctx, fmt.Sprintf("[CREATE] Service resource created successfully with ID: %s", name))
+	tflog.Info(ctx, "Service resource created successfully", map[string]any{
+		"service_name": name,
+	})
 
 	return resourceWindowsServiceRead(d, m)
 }
@@ -425,52 +523,56 @@ func resourceWindowsServiceRead(d *schema.ResourceData, m interface{}) error {
 		timeout = timeoutVal.(int)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("[READ] Reading service: %s", name))
+	tflog.Debug(ctx, "Reading service", map[string]any{
+		"service_name": name,
+	})
 
 	info, err := checkServiceExists(ctx, sshClient, name, timeout)
 	if err != nil {
-		tflog.Warn(ctx, fmt.Sprintf("[READ] Failed to read service %s: %v", name, err))
+		tflog.Warn(ctx, "Failed to read service, removing from state", map[string]any{
+			"service_name": name,
+			"error":        err.Error(),
+		})
 		d.SetId("")
 		return nil
 	}
 
 	if !info.Exists {
-		tflog.Debug(ctx, fmt.Sprintf("[READ] Service %s does not exist, removing from state", name))
+		tflog.Debug(ctx, "Service does not exist, removing from state", map[string]any{
+			"service_name": name,
+		})
 		d.SetId("")
 		return nil
 	}
 
-	// Convertir Status et StartType si nécessaire (fallback au cas où la conversion PowerShell échoue)
+	// Convert Status and StartType if necessary (fallback in case PowerShell conversion fails)
 	status := convertServiceStatus(info.Status)
 	startType := convertStartType(info.StartType)
 
-	// Mettre à jour le state
-	if err := d.Set("name", info.Name); err != nil {
-		return utils.HandleResourceError("read", name, "name", err)
-	}
-	if err := d.Set("display_name", info.DisplayName); err != nil {
-		return utils.HandleResourceError("read", name, "display_name", err)
-	}
-	if err := d.Set("description", info.Description); err != nil {
-		return utils.HandleResourceError("read", name, "description", err)
-	}
-	if err := d.Set("state", status); err != nil {
-		return utils.HandleResourceError("read", name, "state", err)
-	}
-	if err := d.Set("start_type", startType); err != nil {
-		return utils.HandleResourceError("read", name, "start_type", err)
-	}
-	if err := d.Set("start_name", info.StartName); err != nil {
-		return utils.HandleResourceError("read", name, "start_name", err)
-	}
-	if err := d.Set("binary_path", info.BinaryPathName); err != nil {
-		return utils.HandleResourceError("read", name, "binary_path", err)
-	}
-	if err := d.Set("service_type", info.ServiceType); err != nil {
-		return utils.HandleResourceError("read", name, "service_type", err)
+	// Update state with all service attributes
+	attributes := map[string]interface{}{
+		"name":         info.Name,
+		"display_name": info.DisplayName,
+		"description":  info.Description,
+		"state":        status,
+		"start_type":   startType,
+		"start_name":   info.StartName,
+		"binary_path":  info.BinaryPathName,
+		"service_type": info.ServiceType,
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("[READ] Service read successfully: %s (status=%s, start_type=%s)", name, status, startType))
+	for key, value := range attributes {
+		if err := d.Set(key, value); err != nil {
+			return utils.HandleResourceError("read", name, key, err)
+		}
+	}
+
+	tflog.Debug(ctx, "Service read successfully", map[string]any{
+		"service_name": name,
+		"status":       status,
+		"start_type":   startType,
+	})
+
 	return nil
 }
 
@@ -481,140 +583,98 @@ func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Updating service: %s", name))
+	tflog.Info(ctx, "Updating service", map[string]any{
+		"service_name": name,
+	})
 
-	// Valider le nom pour sécurité
-	if err := powershell.ValidatePowerShellArgument(name); err != nil {
-		return utils.HandleResourceError("validate", name, "name", err)
+	// Validate service name
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
 	}
 
-	// Mettre à jour display_name
+	// Track changes
+	changes := make(map[string]string)
+
+	// Update display_name
 	if d.HasChange("display_name") {
 		displayName := d.Get("display_name").(string)
-		if err := powershell.ValidatePowerShellArgument(displayName); err != nil {
-			return utils.HandleResourceError("validate", name, "display_name", err)
+		if err := utils.ValidateField(displayName, name, "display_name"); err != nil {
+			return err
 		}
 
 		cmd := fmt.Sprintf("Set-Service -Name %s -DisplayName %s -ErrorAction Stop",
 			powershell.QuotePowerShellString(name),
 			powershell.QuotePowerShellString(displayName))
 
-		tflog.Debug(ctx, "[UPDATE] Updating display_name")
+		changes["display_name"] = displayName
+
+		tflog.Debug(ctx, "Updating display_name")
 		stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 		if err != nil {
-			return utils.HandleCommandError(
-				"update",
-				name,
-				"display_name",
-				cmd,
-				stdout,
-				stderr,
-				err,
-			)
+			return utils.HandleCommandError("update", name, "display_name", cmd, stdout, stderr, err)
 		}
 	}
 
-	// Mettre à jour description
+	// Update description
 	if d.HasChange("description") {
 		description := d.Get("description").(string)
-		if err := powershell.ValidatePowerShellArgument(description); err != nil {
-			return utils.HandleResourceError("validate", name, "description", err)
+		if err := utils.ValidateField(description, name, "description"); err != nil {
+			return err
 		}
 
 		cmd := fmt.Sprintf("Set-Service -Name %s -Description %s -ErrorAction Stop",
 			powershell.QuotePowerShellString(name),
 			powershell.QuotePowerShellString(description))
 
-		tflog.Debug(ctx, "[UPDATE] Updating description")
+		changes["description"] = description
+
+		tflog.Debug(ctx, "Updating description")
 		stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 		if err != nil {
-			return utils.HandleCommandError(
-				"update",
-				name,
-				"description",
-				cmd,
-				stdout,
-				stderr,
-				err,
-			)
+			return utils.HandleCommandError("update", name, "description", cmd, stdout, stderr, err)
 		}
 	}
 
-	// Mettre à jour start_type
+	// Update start_type
 	if d.HasChange("start_type") {
 		startType := d.Get("start_type").(string)
-		if err := powershell.ValidatePowerShellArgument(startType); err != nil {
-			return utils.HandleResourceError("validate", name, "start_type", err)
+		if err := utils.ValidateField(startType, name, "start_type"); err != nil {
+			return err
 		}
 
 		cmd := fmt.Sprintf("Set-Service -Name %s -StartupType %s -ErrorAction Stop",
 			powershell.QuotePowerShellString(name),
 			powershell.QuotePowerShellString(startType))
 
-		tflog.Debug(ctx, fmt.Sprintf("[UPDATE] Updating start_type to: %s", startType))
+		changes["start_type"] = startType
+
+		tflog.Debug(ctx, "Updating start_type", map[string]any{
+			"new_value": startType,
+		})
 		stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 		if err != nil {
-			return utils.HandleCommandError(
-				"update",
-				name,
-				"start_type",
-				cmd,
-				stdout,
-				stderr,
-				err,
-			)
+			return utils.HandleCommandError("update", name, "start_type", cmd, stdout, stderr, err)
 		}
 	}
 
-	// Mettre à jour l'état du service
+	// Update service state
 	if d.HasChange("state") {
 		desiredState := d.Get("state").(string)
+		changes["state"] = desiredState
 
-		if desiredState == "Running" {
-			cmd := fmt.Sprintf("Start-Service -Name %s -ErrorAction Stop",
-				powershell.QuotePowerShellString(name))
-
-			tflog.Info(ctx, fmt.Sprintf("[UPDATE] Starting service: %s", name))
-			stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
-			if err != nil {
-				return utils.HandleCommandError(
-					"update",
-					name,
-					"state",
-					cmd,
-					stdout,
-					stderr,
-					err,
-				)
-			}
-		} else if desiredState == "Stopped" {
-			cmd := fmt.Sprintf("Stop-Service -Name %s -Force -ErrorAction Stop",
-				powershell.QuotePowerShellString(name))
-
-			tflog.Info(ctx, fmt.Sprintf("[UPDATE] Stopping service: %s", name))
-			stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
-			if err != nil {
-				return utils.HandleCommandError(
-					"update",
-					name,
-					"state",
-					cmd,
-					stdout,
-					stderr,
-					err,
-				)
-			}
+		if err := setServiceState(ctx, sshClient, name, desiredState, timeout); err != nil {
+			return err
 		}
 	}
 
-	// Mettre à jour start_name et credential
+	// Update start_name and credential
 	if d.HasChange("start_name") || d.HasChange("credential") {
 		startName := d.Get("start_name").(string)
 		credential := d.Get("credential").(string)
 
 		if startName != "" && credential != "" {
-			if err := powershell.ValidatePowerShellArgument(startName); err != nil {
-				return utils.HandleResourceError("validate", name, "start_name", err)
+			if err := utils.ValidateField(startName, name, "start_name"); err != nil {
+				return err
 			}
 
 			cmd := fmt.Sprintf("$cred = New-Object System.Management.Automation.PSCredential(%s, (ConvertTo-SecureString %s -AsPlainText -Force)); Set-Service -Name %s -Credential $cred -ErrorAction Stop",
@@ -622,23 +682,30 @@ func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 				powershell.QuotePowerShellString(credential),
 				powershell.QuotePowerShellString(name))
 
-			tflog.Info(ctx, fmt.Sprintf("[UPDATE] Updating service credentials for: %s", startName))
+			changes["start_name"] = startName
+			changes["credential"] = "***REDACTED***"
+
+			tflog.Info(ctx, "Updating service credentials", map[string]any{
+				"start_name": startName,
+			})
 			stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 			if err != nil {
-				return utils.HandleCommandError(
-					"update",
-					name,
-					"credential",
-					"Set-Service (credentials hidden)",
-					stdout,
-					stderr,
-					err,
-				)
+				return utils.HandleCommandError("update", name, "credential", "Set-Service (credentials hidden)", stdout, stderr, err)
 			}
 		}
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Service updated successfully: %s", name))
+	if len(changes) > 0 {
+		tflog.Info(ctx, "Service updated successfully", map[string]any{
+			"service_name": name,
+			"changes":      changes,
+		})
+	} else {
+		tflog.Debug(ctx, "No changes detected for service", map[string]any{
+			"service_name": name,
+		})
+	}
+
 	return resourceWindowsServiceRead(d, m)
 }
 
@@ -649,45 +716,55 @@ func resourceWindowsServiceDelete(d *schema.ResourceData, m interface{}) error {
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, fmt.Sprintf("[DELETE] Deleting service: %s", name))
+	tflog.Info(ctx, "Deleting service", map[string]any{
+		"service_name": name,
+	})
 
-	// Valider le nom pour sécurité
-	if err := powershell.ValidatePowerShellArgument(name); err != nil {
-		return utils.HandleResourceError("validate", name, "name", err)
+	// Validate service name
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
 	}
 
-	// Arrêter le service s'il est en cours d'exécution
+	// Stop service if running
 	stopCmd := fmt.Sprintf("Stop-Service -Name %s -Force -ErrorAction SilentlyContinue",
 		powershell.QuotePowerShellString(name))
 
-	tflog.Debug(ctx, fmt.Sprintf("[DELETE] Stopping service if running: %s", name))
+	tflog.Debug(ctx, "Stopping service if running", map[string]any{
+		"service_name": name,
+	})
+
+	// Execute stop command (ignore errors as service might already be stopped)
 	sshClient.ExecuteCommand(stopCmd, timeout)
 
-	// Supprimer le service (Remove-Service disponible depuis PowerShell 6.0, sinon utiliser sc.exe)
+	// Give service time to stop gracefully
+	time.Sleep(2 * time.Second)
+
+	// Remove service (Remove-Service available since PowerShell 6.0, otherwise use sc.exe)
 	cmd := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
 if (Get-Command Remove-Service -ErrorAction SilentlyContinue) {
     Remove-Service -Name %s -Force -ErrorAction Stop
 } else {
     sc.exe delete %s
-    if ($LASTEXITCODE -ne 0) { throw "Failed to delete service" }
+    if ($LASTEXITCODE -ne 0) { 
+        throw "Failed to delete service with exit code: $LASTEXITCODE" 
+    }
 }
 `, powershell.QuotePowerShellString(name), powershell.QuotePowerShellString(name))
 
-	tflog.Info(ctx, fmt.Sprintf("[DELETE] Removing service: %s", name))
+	tflog.Info(ctx, "Removing service", map[string]any{
+		"service_name": name,
+	})
+
 	stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 	if err != nil {
-		return utils.HandleCommandError(
-			"delete",
-			name,
-			"state",
-			cmd,
-			stdout,
-			stderr,
-			err,
-		)
+		return utils.HandleCommandError("delete", name, "state", cmd, stdout, stderr, err)
 	}
 
 	d.SetId("")
-	tflog.Info(ctx, fmt.Sprintf("[DELETE] Service deleted successfully: %s", name))
+	tflog.Info(ctx, "Service deleted successfully", map[string]any{
+		"service_name": name,
+	})
+
 	return nil
 }

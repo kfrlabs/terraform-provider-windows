@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
 func DataSourceWindowsService() *schema.Resource {
@@ -88,47 +89,53 @@ func dataSourceWindowsServiceRead(d *schema.ResourceData, m interface{}) error {
 
 	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading Windows service: %s", name))
 
+	// Validate service name for security
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return utils.HandleResourceError("validate", name, "name", err)
+	}
+
 	// Check if service exists using the same function from resource_services.go
 	info, err := checkServiceExists(ctx, sshClient, name, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to read service %s: %w", name, err)
+		return utils.HandleResourceError("read", name, "state", err)
 	}
 
 	if !info.Exists {
-		return fmt.Errorf("Windows service %s does not exist", name)
+		return utils.HandleResourceError("read", name, "state",
+			fmt.Errorf("Windows service %s does not exist", name))
 	}
 
 	// Set all attributes
 	d.SetId(name)
 	if err := d.Set("name", info.Name); err != nil {
-		return fmt.Errorf("failed to set name: %w", err)
+		return utils.HandleResourceError("read", name, "name", err)
 	}
 	if err := d.Set("display_name", info.DisplayName); err != nil {
-		return fmt.Errorf("failed to set display_name: %w", err)
+		return utils.HandleResourceError("read", name, "display_name", err)
 	}
 	if err := d.Set("description", info.Description); err != nil {
-		return fmt.Errorf("failed to set description: %w", err)
+		return utils.HandleResourceError("read", name, "description", err)
 	}
-	
+
 	// Convert status and start_type using helper functions
 	status := convertServiceStatus(info.Status)
 	if err := d.Set("status", status); err != nil {
-		return fmt.Errorf("failed to set status: %w", err)
+		return utils.HandleResourceError("read", name, "status", err)
 	}
-	
+
 	startType := convertStartType(info.StartType)
 	if err := d.Set("start_type", startType); err != nil {
-		return fmt.Errorf("failed to set start_type: %w", err)
+		return utils.HandleResourceError("read", name, "start_type", err)
 	}
-	
+
 	if err := d.Set("start_name", info.StartName); err != nil {
-		return fmt.Errorf("failed to set start_name: %w", err)
+		return utils.HandleResourceError("read", name, "start_name", err)
 	}
 	if err := d.Set("binary_path", info.BinaryPathName); err != nil {
-		return fmt.Errorf("failed to set binary_path: %w", err)
+		return utils.HandleResourceError("read", name, "binary_path", err)
 	}
 	if err := d.Set("service_type", info.ServiceType); err != nil {
-		return fmt.Errorf("failed to set service_type: %w", err)
+		return utils.HandleResourceError("read", name, "service_type", err)
 	}
 
 	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read service: %s (status=%s, start_type=%s)", name, status, startType))

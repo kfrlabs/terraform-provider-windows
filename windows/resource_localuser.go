@@ -93,7 +93,7 @@ func ResourceWindowsLocalUser() *schema.Resource {
 // checkLocalUserExists vérifie si un utilisateur local existe et retourne ses informations
 func checkLocalUserExists(ctx context.Context, sshClient *ssh.Client, username string, timeout int) (*LocalUserInfo, error) {
 	// Valider le username pour sécurité
-	if err := powershell.ValidatePowerShellArgument(username); err != nil {
+	if err := utils.ValidateField(username, username, "username"); err != nil {
 		return nil, err
 	}
 
@@ -143,8 +143,8 @@ func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error
 	tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting local user creation for: %s", username))
 
 	// Valider le username pour sécurité
-	if err := powershell.ValidatePowerShellArgument(username); err != nil {
-		return utils.HandleResourceError("validate", username, "username", err)
+	if err := utils.ValidateField(username, username, "username"); err != nil {
+		return err
 	}
 
 	// Vérifier si l'utilisateur existe déjà
@@ -183,17 +183,19 @@ func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error
 
 	// Ajouter les paramètres optionnels
 	if fullName, ok := d.GetOk("full_name"); ok {
-		if err := powershell.ValidatePowerShellArgument(fullName.(string)); err != nil {
-			return utils.HandleResourceError("validate", username, "full_name", err)
+		fullNameStr := fullName.(string)
+		if err := utils.ValidateField(fullNameStr, username, "full_name"); err != nil {
+			return err
 		}
-		command += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(fullName.(string)))
+		command += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(fullNameStr))
 	}
 
 	if description, ok := d.GetOk("description"); ok {
-		if err := powershell.ValidatePowerShellArgument(description.(string)); err != nil {
-			return utils.HandleResourceError("validate", username, "description", err)
+		descriptionStr := description.(string)
+		if err := utils.ValidateField(descriptionStr, username, "description"); err != nil {
+			return err
 		}
-		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description.(string)))
+		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(descriptionStr))
 	}
 
 	if d.Get("password_never_expires").(bool) {
@@ -267,6 +269,13 @@ func resourceWindowsLocalUserRead(d *schema.ResourceData, m interface{}) error {
 		timeout = timeoutVal.(int)
 	}
 
+	// Valider le username
+	if err := utils.ValidateField(username, username, "username"); err != nil {
+		tflog.Warn(ctx, fmt.Sprintf("[READ] Invalid username format: %v", err))
+		d.SetId("")
+		return nil
+	}
+
 	tflog.Debug(ctx, fmt.Sprintf("[READ] Reading local user: %s", username))
 
 	info, err := checkLocalUserExists(ctx, sshClient, username, timeout)
@@ -316,8 +325,8 @@ func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error
 	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Updating local user: %s", username))
 
 	// Valider le username pour sécurité
-	if err := powershell.ValidatePowerShellArgument(username); err != nil {
-		return utils.HandleResourceError("validate", username, "username", err)
+	if err := utils.ValidateField(username, username, "username"); err != nil {
+		return err
 	}
 
 	// Mettre à jour le mot de passe
@@ -352,8 +361,8 @@ func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error
 
 	if d.HasChange("full_name") {
 		fullName := d.Get("full_name").(string)
-		if err := powershell.ValidatePowerShellArgument(fullName); err != nil {
-			return utils.HandleResourceError("validate", username, "full_name", err)
+		if err := utils.ValidateField(fullName, username, "full_name"); err != nil {
+			return err
 		}
 		command += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(fullName))
 		needsUpdate = true
@@ -361,8 +370,8 @@ func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error
 
 	if d.HasChange("description") {
 		description := d.Get("description").(string)
-		if err := powershell.ValidatePowerShellArgument(description); err != nil {
-			return utils.HandleResourceError("validate", username, "description", err)
+		if err := utils.ValidateField(description, username, "description"); err != nil {
+			return err
 		}
 		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description))
 		needsUpdate = true
@@ -438,8 +447,8 @@ func resourceWindowsLocalUserDelete(d *schema.ResourceData, m interface{}) error
 	tflog.Info(ctx, fmt.Sprintf("[DELETE] Deleting local user: %s", username))
 
 	// Valider le username pour sécurité
-	if err := powershell.ValidatePowerShellArgument(username); err != nil {
-		return utils.HandleResourceError("validate", username, "username", err)
+	if err := utils.ValidateField(username, username, "username"); err != nil {
+		return err
 	}
 
 	command := fmt.Sprintf("Remove-LocalUser -Name %s -ErrorAction Stop",

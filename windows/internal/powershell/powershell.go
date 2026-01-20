@@ -25,7 +25,7 @@ func EscapePowerShellString(s string) string {
 }
 
 // QuotePowerShellString enveloppe et échappe une chaîne pour PowerShell
-// Exemple: "test'value" -> "'test”value'"
+// Exemple: "test'value" -> "'test"value'"
 func QuotePowerShellString(s string) string {
 	return "'" + EscapePowerShellString(s) + "'"
 }
@@ -89,6 +89,7 @@ type Executor struct {
 // Options définit les options d'exécution PowerShell
 type Options struct {
 	NoProfile       bool
+	NoLogo          bool
 	NonInteractive  bool
 	ExecutionPolicy string
 }
@@ -97,6 +98,7 @@ type Options struct {
 func DefaultOptions() *Options {
 	return &Options{
 		NoProfile:       true,
+		NoLogo:          true,
 		NonInteractive:  true,
 		ExecutionPolicy: "Bypass",
 	}
@@ -141,6 +143,9 @@ func (e *Executor) buildCommand(command string) string {
 
 	cmdBuilder.WriteString("powershell")
 
+	if e.opts.NoLogo {
+		cmdBuilder.WriteString(" -NoLogo")
+	}
 	if e.opts.NoProfile {
 		cmdBuilder.WriteString(" -NoProfile")
 	}

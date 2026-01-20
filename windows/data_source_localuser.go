@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
 func DataSourceWindowsLocalUser() *schema.Resource {
@@ -78,35 +79,41 @@ func dataSourceWindowsLocalUserRead(d *schema.ResourceData, m interface{}) error
 
 	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading local user: %s", username))
 
+	// Validate username for security
+	if err := utils.ValidateField(username, username, "username"); err != nil {
+		return utils.HandleResourceError("validate", username, "username", err)
+	}
+
 	// Check if user exists using the same function from resource_localuser.go
 	info, err := checkLocalUserExists(ctx, sshClient, username, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to read local user %s: %w", username, err)
+		return utils.HandleResourceError("read", username, "state", err)
 	}
 
 	if !info.Exists {
-		return fmt.Errorf("local user %s does not exist", username)
+		return utils.HandleResourceError("read", username, "state",
+			fmt.Errorf("local user %s does not exist", username))
 	}
 
 	// Set all attributes
 	d.SetId(username)
 	if err := d.Set("username", username); err != nil {
-		return fmt.Errorf("failed to set username: %w", err)
+		return utils.HandleResourceError("read", username, "username", err)
 	}
 	if err := d.Set("full_name", info.FullName); err != nil {
-		return fmt.Errorf("failed to set full_name: %w", err)
+		return utils.HandleResourceError("read", username, "full_name", err)
 	}
 	if err := d.Set("description", info.Description); err != nil {
-		return fmt.Errorf("failed to set description: %w", err)
+		return utils.HandleResourceError("read", username, "description", err)
 	}
 	if err := d.Set("password_never_expires", info.PasswordNeverExpires); err != nil {
-		return fmt.Errorf("failed to set password_never_expires: %w", err)
+		return utils.HandleResourceError("read", username, "password_never_expires", err)
 	}
 	if err := d.Set("user_cannot_change_password", info.UserMayNotChangePassword); err != nil {
-		return fmt.Errorf("failed to set user_cannot_change_password: %w", err)
+		return utils.HandleResourceError("read", username, "user_cannot_change_password", err)
 	}
 	if err := d.Set("enabled", info.Enabled); err != nil {
-		return fmt.Errorf("failed to set enabled: %w", err)
+		return utils.HandleResourceError("read", username, "enabled", err)
 	}
 
 	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read local user: %s", username))

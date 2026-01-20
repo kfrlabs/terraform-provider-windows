@@ -68,11 +68,12 @@ func ResourceWindowsRegistryValue() *schema.Resource {
 // checkRegistryValueExists vérifie si une valeur de registre existe
 func checkRegistryValueExists(ctx context.Context, sshClient *ssh.Client, path, name string, timeout int) (bool, string, error) {
 	// Validate inputs for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
+	resourceID := fmt.Sprintf("%s\\%s", path, name)
+	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
 		return false, "", err
 	}
 	if name != "" {
-		if err := powershell.ValidatePowerShellArgument(name); err != nil {
+		if err := utils.ValidateField(name, resourceID, "name"); err != nil {
 			return false, "", err
 		}
 	}
@@ -113,16 +114,16 @@ func resourceWindowsRegistryValueCreate(d *schema.ResourceData, m interface{}) e
 	resourceID := fmt.Sprintf("%s\\%s", path, name)
 
 	// Validate inputs for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
-		return utils.HandleResourceError("validate", resourceID, "path", err)
+	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
+		return err
 	}
 	if name != "" {
-		if err := powershell.ValidatePowerShellArgument(name); err != nil {
-			return utils.HandleResourceError("validate", resourceID, "name", err)
+		if err := utils.ValidateField(name, resourceID, "name"); err != nil {
+			return err
 		}
 	}
-	if err := powershell.ValidatePowerShellArgument(valueType); err != nil {
-		return utils.HandleResourceError("validate", resourceID, "type", err)
+	if err := utils.ValidateField(valueType, resourceID, "type"); err != nil {
+		return err
 	}
 
 	// Check if the registry key exists
@@ -240,11 +241,11 @@ func resourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) err
 	}
 
 	// Validate inputs for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
+	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
 		return utils.HandleResourceError("validate", resourceID, "path", err)
 	}
 	if name != "" {
-		if err := powershell.ValidatePowerShellArgument(name); err != nil {
+		if err := utils.ValidateField(name, resourceID, "name"); err != nil {
 			return utils.HandleResourceError("validate", resourceID, "name", err)
 		}
 	}
@@ -296,16 +297,16 @@ func resourceWindowsRegistryValueUpdate(d *schema.ResourceData, m interface{}) e
 	}
 
 	// Validate inputs for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
-		return utils.HandleResourceError("validate", resourceID, "path", err)
+	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
+		return err
 	}
 	if name != "" {
-		if err := powershell.ValidatePowerShellArgument(name); err != nil {
-			return utils.HandleResourceError("validate", resourceID, "name", err)
+		if err := utils.ValidateField(name, resourceID, "name"); err != nil {
+			return err
 		}
 	}
 
-	// Build secure PowerShell command
+	// Update the registry value
 	var command string
 	if name == "" {
 		command = fmt.Sprintf("Set-ItemProperty -Path %s -Name '(default)' -Value %s -ErrorAction Stop",
@@ -347,19 +348,19 @@ func resourceWindowsRegistryValueDelete(d *schema.ResourceData, m interface{}) e
 	resourceID := fmt.Sprintf("%s\\%s", path, name)
 
 	// Validate inputs for security
-	if err := powershell.ValidatePowerShellArgument(path); err != nil {
-		return utils.HandleResourceError("validate", resourceID, "path", err)
+	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
+		return err
 	}
 	if name != "" {
-		if err := powershell.ValidatePowerShellArgument(name); err != nil {
-			return utils.HandleResourceError("validate", resourceID, "name", err)
+		if err := utils.ValidateField(name, resourceID, "name"); err != nil {
+			return err
 		}
 	}
 
 	// Build secure PowerShell command
 	var command string
 	if name == "" {
-		// Cannot delete default value, only clear it
+		// Cannot remove default value, just clear it
 		command = fmt.Sprintf("Set-ItemProperty -Path %s -Name '(default)' -Value '' -ErrorAction Stop",
 			powershell.QuotePowerShellString(path))
 	} else {

@@ -60,7 +60,7 @@ func ResourceWindowsLocalGroup() *schema.Resource {
 // checkLocalGroupExists vérifie si un groupe local existe et retourne ses informations
 func checkLocalGroupExists(ctx context.Context, sshClient *ssh.Client, name string, timeout int) (*LocalGroupInfo, error) {
 	// Valider le nom du groupe pour sécurité
-	if err := powershell.ValidatePowerShellArgument(name); err != nil {
+	if err := utils.ValidateField(name, name, "name"); err != nil {
 		return nil, err
 	}
 
@@ -106,8 +106,8 @@ func resourceWindowsLocalGroupCreate(d *schema.ResourceData, m interface{}) erro
 	tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting local group creation for: %s", name))
 
 	// Valider le nom du groupe pour sécurité
-	if err := powershell.ValidatePowerShellArgument(name); err != nil {
-		return utils.HandleResourceError("validate", name, "name", err)
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
 	}
 
 	// Vérifier si le groupe existe déjà
@@ -142,11 +142,10 @@ func resourceWindowsLocalGroupCreate(d *schema.ResourceData, m interface{}) erro
 		powershell.QuotePowerShellString(name))
 
 	// Ajouter la description si fournie
-	if description, ok := d.GetOk("description"); ok {
-		if err := powershell.ValidatePowerShellArgument(description.(string)); err != nil {
-			return utils.HandleResourceError("validate", name, "description", err)
-		}
-		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description.(string)))
+	if description, ok, err := utils.ValidateSchemaOptionalString(d, "description", name); err != nil {
+		return err
+	} else if ok {
+		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description))
 	}
 
 	command += " -ErrorAction Stop"
@@ -223,15 +222,15 @@ func resourceWindowsLocalGroupUpdate(d *schema.ResourceData, m interface{}) erro
 	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Updating local group: %s", name))
 
 	// Valider le nom pour sécurité
-	if err := powershell.ValidatePowerShellArgument(name); err != nil {
-		return utils.HandleResourceError("validate", name, "name", err)
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
 	}
 
 	// Mettre à jour la description
 	if d.HasChange("description") {
 		description := d.Get("description").(string)
-		if err := powershell.ValidatePowerShellArgument(description); err != nil {
-			return utils.HandleResourceError("validate", name, "description", err)
+		if err := utils.ValidateField(description, name, "description"); err != nil {
+			return err
 		}
 
 		command := fmt.Sprintf("Set-LocalGroup -Name %s -Description %s -ErrorAction Stop",
@@ -269,8 +268,8 @@ func resourceWindowsLocalGroupDelete(d *schema.ResourceData, m interface{}) erro
 	tflog.Info(ctx, fmt.Sprintf("[DELETE] Deleting local group: %s", name))
 
 	// Valider le nom pour sécurité
-	if err := powershell.ValidatePowerShellArgument(name); err != nil {
-		return utils.HandleResourceError("validate", name, "name", err)
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
 	}
 
 	command := fmt.Sprintf("Remove-LocalGroup -Name %s -ErrorAction Stop",

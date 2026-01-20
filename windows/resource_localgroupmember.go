@@ -38,7 +38,7 @@ func ResourceWindowsLocalGroupMember() *schema.Resource {
 				Type:        schema.TypeInt,
 				Optional:    true,
 				Default:     300,
-				ForceNew:    true, // ← Ajouter cette ligne
+				ForceNew:    true,
 				Description: "Timeout in seconds for PowerShell commands.",
 			},
 		},
@@ -48,10 +48,11 @@ func ResourceWindowsLocalGroupMember() *schema.Resource {
 // checkMembershipExists vérifie si un membre appartient à un groupe
 func checkMembershipExists(ctx context.Context, sshClient *ssh.Client, group, member string, timeout int) (bool, error) {
 	// Valider les paramètres pour sécurité
-	if err := powershell.ValidatePowerShellArgument(group); err != nil {
+	resourceID := fmt.Sprintf("%s/%s", group, member)
+	if err := utils.ValidateField(group, resourceID, "group"); err != nil {
 		return false, err
 	}
-	if err := powershell.ValidatePowerShellArgument(member); err != nil {
+	if err := utils.ValidateField(member, resourceID, "member"); err != nil {
 		return false, err
 	}
 
@@ -117,11 +118,11 @@ func resourceWindowsLocalGroupMemberCreate(d *schema.ResourceData, m interface{}
 	tflog.Info(ctx, fmt.Sprintf("[CREATE] Adding member '%s' to group '%s'", member, group))
 
 	// Valider les paramètres pour sécurité
-	if err := powershell.ValidatePowerShellArgument(group); err != nil {
-		return utils.HandleResourceError("validate", resourceID, "group", err)
+	if err := utils.ValidateField(group, resourceID, "group"); err != nil {
+		return err
 	}
-	if err := powershell.ValidatePowerShellArgument(member); err != nil {
-		return utils.HandleResourceError("validate", resourceID, "member", err)
+	if err := utils.ValidateField(member, resourceID, "member"); err != nil {
+		return err
 	}
 
 	// Vérifier si le membre est déjà dans le groupe
@@ -224,11 +225,11 @@ func resourceWindowsLocalGroupMemberDelete(d *schema.ResourceData, m interface{}
 	tflog.Info(ctx, fmt.Sprintf("[DELETE] Removing member '%s' from group '%s'", member, group))
 
 	// Valider les paramètres pour sécurité
-	if err := powershell.ValidatePowerShellArgument(group); err != nil {
-		return utils.HandleResourceError("validate", resourceID, "group", err)
+	if err := utils.ValidateField(group, resourceID, "group"); err != nil {
+		return err
 	}
-	if err := powershell.ValidatePowerShellArgument(member); err != nil {
-		return utils.HandleResourceError("validate", resourceID, "member", err)
+	if err := utils.ValidateField(member, resourceID, "member"); err != nil {
+		return err
 	}
 
 	// Retirer le membre du groupe

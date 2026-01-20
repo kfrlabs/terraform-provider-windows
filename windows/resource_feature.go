@@ -102,8 +102,8 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 	allowExisting := d.Get("allow_existing").(bool)
 
 	// Validate feature name for security
-	if err := powershell.ValidatePowerShellArgument(feature); err != nil {
-		return utils.HandleResourceError("validate", feature, "name", err)
+	if err := utils.ValidateField(feature, feature, "feature"); err != nil {
+		return err
 	}
 
 	// Check if feature is already installed
@@ -328,54 +328,25 @@ func resourceWindowsFeatureImport(ctx context.Context, d *schema.ResourceData, m
 	return []*schema.ResourceData{d}, nil
 }
 
-// --- Utility functions ---
+// --- Helper functions ---
 
 func getFeatureDetails(ctx context.Context, sshClient *ssh.Client, feature string, timeout int) (*FeatureInfo, error) {
-	if err := powershell.ValidatePowerShellArgument(feature); err != nil {
-		return nil, utils.HandleResourceError("validate", feature, "name", err)
+	// Validate feature name for security
+	if err := utils.ValidateField(feature, feature, "feature"); err != nil {
+		return nil, err
 	}
 
 	command := fmt.Sprintf(`
-$feature = Get-WindowsFeature -Name %s
-if (-not $feature) { 
-	Write-Error "Feature not found"
-	exit 1 
+$feature = Get-WindowsFeature -Name %s -ErrorAction Stop
+$info = @{
+    Installed = $feature.Installed
+    InstallState = $feature.InstallState.ToString()
+    HasSubFeatures = ($feature.SubFeatures.Count -gt 0)
+    SubFeatures = ($feature.SubFeatures -join ',')
+    AllSubFeaturesInstalled = ($feature.SubFeatures.Count -eq 0) -or ($feature.SubFeatures | Where-Object { (Get-WindowsFeature -Name $_).Installed -eq $false } | Measure-Object).Count -eq 0
+    ManagementToolsInstalled = $feature.AdditionalInfo.MgmtToolsInstalled
 }
-
-$hasSubFeatures = $feature.SubFeatures.Count -gt 0
-$subFeaturesInstalled = $true
-
-if ($hasSubFeatures) {
-	foreach ($sf in $feature.SubFeatures) {
-		$subFeature = Get-WindowsFeature -Name $sf
-		if (-not $subFeature.Installed) {
-			$subFeaturesInstalled = $false
-			break
-		}
-	}
-}
-
-# Check if management tools are installed by looking for related features
-$mgmtToolsInstalled = $false
-if ($feature.Installed) {
-	$mgmtFeatureName = "$($feature.Name)-MGMT"
-	$mgmtFeature = Get-WindowsFeature -Name $mgmtFeatureName -ErrorAction SilentlyContinue
-	if ($mgmtFeature) {
-		$mgmtToolsInstalled = $mgmtFeature.Installed
-	} else {
-		# If no specific management feature exists, consider it as installed with the main feature
-		$mgmtToolsInstalled = $true
-	}
-}
-
-@{
-	Installed = $feature.Installed
-	InstallState = $feature.InstallState.ToString()
-	HasSubFeatures = $hasSubFeatures
-	SubFeatures = ($feature.SubFeatures -join ',')
-	AllSubFeaturesInstalled = $subFeaturesInstalled
-	ManagementToolsInstalled = $mgmtToolsInstalled
-} | ConvertTo-Json -Compress
+$info | ConvertTo-Json -Compress
 `, powershell.QuotePowerShellString(feature))
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
@@ -393,36 +364,22 @@ if ($feature.Installed) {
 
 	var info FeatureInfo
 	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
-		return nil, utils.HandleCommandError(
-			"parse_details",
-			feature,
-			"json_output",
-			command,
-			stdout,
-			stderr,
-			fmt.Errorf("failed to parse JSON: %w", err),
-		)
+		return nil, fmt.Errorf("failed to parse feature info: %w; output: %s", err, stdout)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Feature %s state: %+v", feature, info))
 	return &info, nil
 }
 
 func removeFeature(ctx context.Context, sshClient *ssh.Client, feature string, timeout int) error {
-	if err := powershell.ValidatePowerShellArgument(feature); err != nil {
-		return utils.HandleResourceError("validate", feature, "name", err)
+	// Validate feature name for security
+	if err := utils.ValidateField(feature, feature, "feature"); err != nil {
+		return err
 	}
 
-	command := fmt.Sprintf(`
-$result = Remove-WindowsFeature -Name %s -ErrorAction Stop
-@{
-	Success = $result.Success
-	ExitCode = $result.ExitCode.value__
-} | ConvertTo-Json -Compress
-`, powershell.QuotePowerShellString(feature))
+	command := fmt.Sprintf("Uninstall-WindowsFeature -Name %s -ErrorAction Stop",
+		powershell.QuotePowerShellString(feature))
 
 	tflog.Info(ctx, fmt.Sprintf("Removing Windows feature: %s", feature))
-
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return utils.HandleCommandError(
@@ -433,25 +390,6 @@ $result = Remove-WindowsFeature -Name %s -ErrorAction Stop
 			stdout,
 			stderr,
 			err,
-		)
-	}
-
-	var result InstallResult
-	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
-		// If parsing fails, log but don't fail the operation
-		tflog.Warn(ctx, fmt.Sprintf("Could not parse removal result: %v", err))
-		return nil
-	}
-
-	if !result.Success {
-		return utils.HandleCommandError(
-			"remove",
-			feature,
-			"state",
-			command,
-			stdout,
-			stderr,
-			fmt.Errorf("removal failed with exit code %d", result.ExitCode),
 		)
 	}
 

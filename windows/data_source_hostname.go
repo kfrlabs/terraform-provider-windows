@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
 // HostnameInfo représente les informations du nom d'hôte
@@ -87,12 +88,21 @@ $cs = Get-WmiObject Win32_ComputerSystem -ErrorAction Stop
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to get hostname info: %w; stderr: %s", err, stderr)
+		return utils.HandleCommandError(
+			"get_hostname",
+			"hostname_info",
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
 	}
 
 	var info HostnameInfo
 	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
-		return fmt.Errorf("failed to parse hostname info: %w; output: %s", err, stdout)
+		return utils.HandleResourceError("parse_hostname", "hostname_info", "output",
+			fmt.Errorf("failed to parse hostname info: %w; output: %s", err, stdout))
 	}
 
 	// Construire le FQDN
@@ -106,22 +116,22 @@ $cs = Get-WmiObject Win32_ComputerSystem -ErrorAction Stop
 	// Set all attributes
 	d.SetId(info.ComputerName)
 	if err := d.Set("computer_name", info.ComputerName); err != nil {
-		return fmt.Errorf("failed to set computer_name: %w", err)
+		return utils.HandleResourceError("read", info.ComputerName, "computer_name", err)
 	}
 	if err := d.Set("dns_hostname", info.DNSHostName); err != nil {
-		return fmt.Errorf("failed to set dns_hostname: %w", err)
+		return utils.HandleResourceError("read", info.ComputerName, "dns_hostname", err)
 	}
 	if err := d.Set("domain", info.Domain); err != nil {
-		return fmt.Errorf("failed to set domain: %w", err)
+		return utils.HandleResourceError("read", info.ComputerName, "domain", err)
 	}
 	if err := d.Set("workgroup", info.Workgroup); err != nil {
-		return fmt.Errorf("failed to set workgroup: %w", err)
+		return utils.HandleResourceError("read", info.ComputerName, "workgroup", err)
 	}
 	if err := d.Set("part_of_domain", info.PartOfDomain); err != nil {
-		return fmt.Errorf("failed to set part_of_domain: %w", err)
+		return utils.HandleResourceError("read", info.ComputerName, "part_of_domain", err)
 	}
 	if err := d.Set("fqdn", fqdn); err != nil {
-		return fmt.Errorf("failed to set fqdn: %w", err)
+		return utils.HandleResourceError("read", info.ComputerName, "fqdn", err)
 	}
 
 	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read hostname: %s (part_of_domain=%v)", info.ComputerName, info.PartOfDomain))

@@ -4,18 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
-// GroupMemberInfo représente les informations d'un membre de groupe
+// GroupMemberInfo represents information about a group member
 type GroupMemberInfo struct {
-	Name         string `json:"Name"`
-	ObjectClass  string `json:"ObjectClass"`
-	SID          string `json:"SID"`
+	Name            string `json:"Name"`
+	ObjectClass     string `json:"ObjectClass"`
+	SID             string `json:"SID"`
 	PrincipalSource string `json:"PrincipalSource"`
 }
 
@@ -73,87 +75,67 @@ func DataSourceWindowsLocalGroupMembers() *schema.Resource {
 	}
 }
 
-func dataSourceWindowsLocalGroupMembersRead(d *schema.ResourceData, m interface{}) error {
-	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
-
-	groupName := d.Get("group_name").(string)
-	timeout := d.Get("command_timeout").(int)
-
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading members of local group: %s", groupName))
-
-	// Valider le nom du groupe pour sécurité
-	if err := powershell.ValidatePowerShellArgument(groupName); err != nil {
-		return fmt.Errorf("invalid group name: %w", err)
+// isNoMembersError checks if an error message indicates that a group has no members
+// This is more robust than simple substring matching
+func isNoMembersError(stderr string) bool {
+	if stderr == "" {
+		return false
 	}
 
-	// Vérifier d'abord que le groupe existe
-	checkGroupInfo, err := checkLocalGroupExists(ctx, sshClient, groupName, timeout)
-	if err != nil {
-		return fmt.Errorf("failed to check group existence: %w", err)
+	// Convert to lowercase for case-insensitive matching
+	lowerStderr := strings.ToLower(stderr)
+
+	// Common patterns that indicate no members or group not found
+	noMemberPatterns := []string{
+		"no members",
+		"does not have any members",
+		"cannot find",
+		"no matching",
+		"member count is 0",
+		"the group has no members",
+		"no results found",
 	}
 
-	if !checkGroupInfo.Exists {
-		return fmt.Errorf("local group %s does not exist", groupName)
-	}
-
-	// Commande PowerShell pour récupérer les membres du groupe
-	command := fmt.Sprintf(`
-$members = Get-LocalGroupMember -Group %s -ErrorAction Stop
-$members | ForEach-Object {
-    @{
-        'Name' = $_.Name
-        'ObjectClass' = $_.ObjectClass
-        'SID' = $_.SID.Value
-        'PrincipalSource' = $_.PrincipalSource.ToString()
-    }
-} | ConvertTo-Json -Compress
-`,
-		powershell.QuotePowerShellString(groupName),
-	)
-
-	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
-	if err != nil {
-		// Si le groupe n'a pas de membres, Get-LocalGroupMember peut retourner une erreur
-		if stderr != "" && (contains(stderr, "no members") || contains(stderr, "Cannot find")) {
-			tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Group %s has no members", groupName))
-			d.SetId(groupName)
-			if err := d.Set("group_name", groupName); err != nil {
-				return fmt.Errorf("failed to set group_name: %w", err)
-			}
-			if err := d.Set("members", []interface{}{}); err != nil {
-				return fmt.Errorf("failed to set members: %w", err)
-			}
-			if err := d.Set("member_count", 0); err != nil {
-				return fmt.Errorf("failed to set member_count: %w", err)
-			}
-			return nil
+	for _, pattern := range noMemberPatterns {
+		if strings.Contains(lowerStderr, pattern) {
+			return true
 		}
-		return fmt.Errorf("failed to get group members: %w; stderr: %s", err, stderr)
 	}
 
-	// Parser le JSON retourné
+	return false
+}
+
+// parseGroupMembers parses the JSON output from PowerShell into GroupMemberInfo structs
+// It handles both single member objects and arrays of members
+func parseGroupMembers(output string) ([]GroupMemberInfo, error) {
+	trimmed := strings.TrimSpace(output)
+
+	// Empty output means no members
+	if trimmed == "" {
+		return []GroupMemberInfo{}, nil
+	}
+
 	var members []GroupMemberInfo
-	
-	// Le résultat peut être un objet unique ou un tableau
-	stdout = trimOutput(stdout)
-	if stdout == "" {
-		members = []GroupMemberInfo{}
-	} else if stdout[0] == '[' {
-		// Tableau de membres
-		if err := json.Unmarshal([]byte(stdout), &members); err != nil {
-			return fmt.Errorf("failed to parse group members: %w; output: %s", err, stdout)
+
+	// Try to parse as array first
+	if strings.HasPrefix(trimmed, "[") {
+		if err := json.Unmarshal([]byte(trimmed), &members); err != nil {
+			return nil, fmt.Errorf("failed to parse members array: %w; output: %s", err, trimmed)
 		}
-	} else {
-		// Un seul membre
-		var singleMember GroupMemberInfo
-		if err := json.Unmarshal([]byte(stdout), &singleMember); err != nil {
-			return fmt.Errorf("failed to parse group member: %w; output: %s", err, stdout)
-		}
-		members = []GroupMemberInfo{singleMember}
+		return members, nil
 	}
 
-	// Convertir en format Terraform
+	// Try to parse as single object
+	var singleMember GroupMemberInfo
+	if err := json.Unmarshal([]byte(trimmed), &singleMember); err != nil {
+		return nil, fmt.Errorf("failed to parse single member: %w; output: %s", err, trimmed)
+	}
+
+	return []GroupMemberInfo{singleMember}, nil
+}
+
+// convertMembersToTerraformList converts GroupMemberInfo structs to Terraform-compatible map format
+func convertMembersToTerraformList(members []GroupMemberInfo) []interface{} {
 	membersList := make([]interface{}, len(members))
 	for i, member := range members {
 		membersList[i] = map[string]interface{}{
@@ -163,38 +145,139 @@ $members | ForEach-Object {
 			"principal_source": member.PrincipalSource,
 		}
 	}
+	return membersList
+}
+
+func dataSourceWindowsLocalGroupMembersRead(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	groupName := d.Get("group_name").(string)
+	timeout := d.Get("command_timeout").(int)
+
+	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading members of local group: %s", groupName))
+
+	// Validate group name for security
+	if err := utils.ValidateField(groupName, groupName, "group_name"); err != nil {
+		return utils.HandleResourceError("validate", groupName, "group_name", err)
+	}
+
+	// First, verify that the group exists
+	checkGroupInfo, err := checkLocalGroupExists(ctx, sshClient, groupName, timeout)
+	if err != nil {
+		return utils.HandleResourceError("check_group", groupName, "state", err)
+	}
+
+	if !checkGroupInfo.Exists {
+		return utils.HandleResourceError("check_group", groupName, "state",
+			fmt.Errorf("local group %s does not exist", groupName))
+	}
+
+	// PowerShell command to retrieve group members
+	// Using -ErrorAction Stop ensures we catch errors properly
+	command := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+try {
+    $members = Get-LocalGroupMember -Group %s -ErrorAction Stop
+    if ($members) {
+        $members | ForEach-Object {
+            @{
+                'Name' = $_.Name
+                'ObjectClass' = $_.ObjectClass
+                'SID' = $_.SID.Value
+                'PrincipalSource' = $_.PrincipalSource.ToString()
+            }
+        } | ConvertTo-Json -Compress
+    } else {
+        # Group exists but has no members
+        Write-Output ''
+    }
+} catch {
+    # Check if it's a "no members" error
+    if ($_.Exception.Message -match 'no members|does not have any members') {
+        Write-Output ''
+    } else {
+        throw
+    }
+}
+`,
+		powershell.QuotePowerShellString(groupName),
+	)
+
+	tflog.Debug(ctx, fmt.Sprintf("[DATA SOURCE] Executing command to retrieve group members"))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+
+	// Handle different error scenarios
+	if err != nil {
+		// Check if this is a "no members" scenario
+		if isNoMembersError(stderr) {
+			tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Group %s has no members", groupName))
+			return setEmptyMembersList(d, groupName)
+		}
+
+		// Check if output suggests no members despite error
+		if isNoMembersError(stdout) {
+			tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Group %s has no members (detected from stdout)", groupName))
+			return setEmptyMembersList(d, groupName)
+		}
+
+		// Genuine error - return it
+		return utils.HandleCommandError(
+			"get_members",
+			groupName,
+			"members",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse the JSON output
+	members, err := parseGroupMembers(stdout)
+	if err != nil {
+		return utils.HandleResourceError("parse_members", groupName, "members", err)
+	}
+
+	// If no members found, handle gracefully
+	if len(members) == 0 {
+		tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Group %s has no members", groupName))
+		return setEmptyMembersList(d, groupName)
+	}
+
+	// Convert members to Terraform format
+	membersList := convertMembersToTerraformList(members)
 
 	// Set all attributes
 	d.SetId(groupName)
 	if err := d.Set("group_name", groupName); err != nil {
-		return fmt.Errorf("failed to set group_name: %w", err)
+		return utils.HandleResourceError("read", groupName, "group_name", err)
 	}
 	if err := d.Set("members", membersList); err != nil {
-		return fmt.Errorf("failed to set members: %w", err)
+		return utils.HandleResourceError("read", groupName, "members", err)
 	}
 	if err := d.Set("member_count", len(members)); err != nil {
-		return fmt.Errorf("failed to set member_count: %w", err)
+		return utils.HandleResourceError("read", groupName, "member_count", err)
 	}
 
 	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read %d members from group: %s", len(members), groupName))
 	return nil
 }
 
-// Helper functions
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[:len(substr)] == substr || 
-		   len(s) > len(substr) && contains(s[1:], substr)
-}
+// setEmptyMembersList sets the data source state for a group with no members
+func setEmptyMembersList(d *schema.ResourceData, groupName string) error {
+	d.SetId(groupName)
 
-func trimOutput(s string) string {
-	// Simple trim implementation
-	start := 0
-	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\n' || s[start] == '\r' || s[start] == '\t') {
-		start++
+	if err := d.Set("group_name", groupName); err != nil {
+		return utils.HandleResourceError("read", groupName, "group_name", err)
 	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\n' || s[end-1] == '\r' || s[end-1] == '\t') {
-		end--
+	if err := d.Set("members", []interface{}{}); err != nil {
+		return utils.HandleResourceError("read", groupName, "members", err)
 	}
-	return s[start:end]
+	if err := d.Set("member_count", 0); err != nil {
+		return utils.HandleResourceError("read", groupName, "member_count", err)
+	}
+
+	return nil
 }

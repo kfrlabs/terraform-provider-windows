@@ -1,151 +1,257 @@
-# windows_localgroupmember
+package resources
 
-Manages membership of a user or group in a local Windows group.
+import (
+	"context"
+	"fmt"
+	"strings"
 
-## Example Usage
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
+)
 
-### Add User to Administrators Group
+func ResourceWindowsLocalGroupMember() *schema.Resource {
+	return &schema.Resource{
+		Create: resourceWindowsLocalGroupMemberCreate,
+		Read:   resourceWindowsLocalGroupMemberRead,
+		Delete: resourceWindowsLocalGroupMemberDelete,
+		Importer: &schema.ResourceImporter{
+			StateContext: schema.ImportStatePassthroughContext,
+		},
 
-```hcl
-resource "windows_localgroupmember" "admin_user" {
-  group  = "Administrators"
-  member = "AppAdmin"
-}
-```
-
-### Add Domain User to Local Group
-
-```hcl
-resource "windows_localgroupmember" "domain_admin" {
-  group  = "Administrators"
-  member = "DOMAIN\\JohnDoe"
-}
-```
-
-### Add User to Remote Desktop Users
-
-```hcl
-resource "windows_localgroupmember" "rdp_access" {
-  group  = "Remote Desktop Users"
-  member = "AppUser"
-}
-```
-
-### Add Multiple Users to a Group
-
-```hcl
-variable "admin_users" {
-  type    = list(string)
-  default = ["User1", "User2", "User3"]
-}
-
-resource "windows_localgroupmember" "admins" {
-  for_each = toset(var.admin_users)
-  
-  group  = "Administrators"
-  member = each.value
-}
-```
-
-### Add User with Dependencies
-
-```hcl
-resource "windows_localuser" "app_user" {
-  username = "AppServiceAccount"
-  password = var.app_password
+		Schema: map[string]*schema.Schema{
+			"group": {
+				Type:        schema.TypeString,
+				Required:    true,
+				ForceNew:    true,
+				Description: "The name of the local group (e.g., 'Administrators', 'Users').",
+			},
+			"member": {
+				Type:        schema.TypeString,
+				Required:    true,
+				ForceNew:    true,
+				Description: "The name of the member to add to the group (e.g., 'AppUser', 'DOMAIN\\User').",
+			},
+			"command_timeout": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     300,
+				ForceNew:    true,
+				Description: "Timeout in seconds for PowerShell commands.",
+			},
+		},
+	}
 }
 
-resource "windows_localgroupmember" "app_user_admins" {
-  group  = "Administrators"
-  member = windows_localuser.app_user.username
-}
-```
+// checkMembershipExists vérifie si un membre appartient à un groupe
+func checkMembershipExists(ctx context.Context, sshClient *ssh.Client, group, member string, timeout int) (bool, error) {
+	// Valider les paramètres pour sécurité
+	if err := utils.ValidateField(group, fmt.Sprintf("%s/%s", group, member), "group"); err != nil {
+		return false, err
+	}
+	if err := utils.ValidateField(member, fmt.Sprintf("%s/%s", group, member), "member"); err != nil {
+		return false, err
+	}
 
-### Add Service Account to IIS Group
+	tflog.Debug(ctx, fmt.Sprintf("Checking if member '%s' is in group '%s'", member, group))
 
-```hcl
-resource "windows_localuser" "iis_user" {
-  username                    = "IISAppPoolUser"
-  password                    = var.iis_password
-  password_never_expires      = true
-  user_cannot_change_password = true
-}
+	// Commande PowerShell pour vérifier l'appartenance
+	// Note: Get-LocalGroupMember retourne les membres avec le format "COMPUTERNAME\Username"
+	command := fmt.Sprintf(`
+$group = %s
+$member = %s
+$found = $false
 
-resource "windows_localgroupmember" "iis_users" {
-  group  = "IIS_IUSRS"
-  member = windows_localuser.iis_user.username
-}
-```
-
-## Argument Reference
-
-The following arguments are supported:
-
-* `group` - (Required) The name of the local group (e.g., `Administrators`, `Users`, `Remote Desktop Users`). Changing this forces a new resource to be created.
-* `member` - (Required) The name of the member to add to the group. Can be a local user, domain user (format: `DOMAIN\User`), or another group. Changing this forces a new resource to be created.
-* `command_timeout` - (Optional) Timeout in seconds for PowerShell commands. Defaults to `300`. Changing this forces a new resource to be created.
-
-## Attribute Reference
-
-In addition to all arguments above, the following attributes are exported:
-
-* `id` - The resource ID in the format `group/member`.
-
-## Import
-
-Local group membership can be imported using the `group/member` format:
-
-```shell
-terraform import windows_localgroupmember.example "Administrators/AppUser"
-```
-
-For domain users, use the full domain\user format:
-
-```shell
-terraform import windows_localgroupmember.domain_user "Administrators/DOMAIN\\User"
-```
-
-## Notes
-
-* If the member is already in the group when the resource is created, Terraform will adopt the existing membership rather than failing.
-* The member name comparison is case-insensitive and handles computer name prefixes automatically (e.g., `COMPUTERNAME\User` matches `User`).
-* For domain users, you can specify with or without the domain prefix. The provider will match correctly either way.
-
-## Common Local Groups
-
-Here are some commonly used Windows local groups:
-
-* `Administrators` - Full control of the computer
-* `Users` - Standard users
-* `Remote Desktop Users` - Users who can connect via Remote Desktop
-* `Backup Operators` - Can backup and restore files
-* `Power Users` - Users with some administrative permissions (legacy)
-* `IIS_IUSRS` - Built-in group for IIS application pools
-* `Performance Monitor Users` - Can monitor performance counters
-* `Event Log Readers` - Can read event logs
-
-## Example: Complete User Setup
-
-```hcl
-# Create a service account
-resource "windows_localuser" "service_account" {
-  username                    = "MyServiceAccount"
-  password                    = var.service_password
-  full_name                   = "My Application Service Account"
-  description                 = "Service account for MyApp"
-  password_never_expires      = true
-  user_cannot_change_password = true
+try {
+    $members = Get-LocalGroupMember -Group $group -ErrorAction Stop
+    foreach ($m in $members) {
+        # Comparer en ignorant le préfixe COMPUTERNAME\ si présent
+        $memberName = if ($m.Name -match '\\') { 
+            ($m.Name -split '\\')[1] 
+        } else { 
+            $m.Name 
+        }
+        
+        $searchName = if ($member -match '\\') { 
+            ($member -split '\\')[1] 
+        } else { 
+            $member 
+        }
+        
+        if ($memberName -eq $searchName) {
+            $found = $true
+            break
+        }
+    }
+} catch {
+    # Si le groupe n'existe pas ou erreur, retourner false
 }
 
-# Add to IIS users group
-resource "windows_localgroupmember" "iis_membership" {
-  group  = "IIS_IUSRS"
-  member = windows_localuser.service_account.username
+if ($found) { 'true' } else { 'false' }
+`,
+		powershell.QuotePowerShellString(group),
+		powershell.QuotePowerShellString(member),
+	)
+
+	stdout, _, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return false, fmt.Errorf("failed to check membership: %w", err)
+	}
+
+	exists := strings.TrimSpace(stdout) == "true"
+	return exists, nil
 }
 
-# Add to Performance Monitor Users for monitoring
-resource "windows_localgroupmember" "perfmon_membership" {
-  group  = "Performance Monitor Users"
-  member = windows_localuser.service_account.username
+func resourceWindowsLocalGroupMemberCreate(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	group := d.Get("group").(string)
+	member := d.Get("member").(string)
+	timeout := d.Get("command_timeout").(int)
+
+	resourceID := fmt.Sprintf("%s/%s", group, member)
+
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Adding member '%s' to group '%s'", member, group))
+
+	// Valider les paramètres pour sécurité
+	if err := utils.ValidateField(group, resourceID, "group"); err != nil {
+		return err
+	}
+	if err := utils.ValidateField(member, resourceID, "member"); err != nil {
+		return err
+	}
+
+	// Vérifier si le membre est déjà dans le groupe
+	exists, err := checkMembershipExists(ctx, sshClient, group, member, timeout)
+	if err != nil {
+		return utils.HandleResourceError("check_existing", resourceID, "state", err)
+	}
+
+	if exists {
+		tflog.Info(ctx, fmt.Sprintf("[CREATE] Member '%s' is already in group '%s', adopting", member, group))
+		d.SetId(resourceID)
+		return resourceWindowsLocalGroupMemberRead(d, m)
+	}
+
+	// Ajouter le membre au groupe
+	command := fmt.Sprintf("Add-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
+		powershell.QuotePowerShellString(group),
+		powershell.QuotePowerShellString(member))
+
+	tflog.Debug(ctx, fmt.Sprintf("[CREATE] Executing: %s", command))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"create",
+			resourceID,
+			"membership",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	d.SetId(resourceID)
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Member added successfully: %s", resourceID))
+
+	return resourceWindowsLocalGroupMemberRead(d, m)
 }
-```
+
+func resourceWindowsLocalGroupMemberRead(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	// Parser l'ID au format "group/member"
+	parts := strings.SplitN(d.Id(), "/", 2)
+	if len(parts) != 2 {
+		return utils.HandleResourceError("read", d.Id(), "id",
+			fmt.Errorf("invalid ID format, expected 'group/member', got '%s'", d.Id()))
+	}
+
+	group := parts[0]
+	member := parts[1]
+
+	timeoutVal, ok := d.GetOk("command_timeout")
+	var timeout int
+	if !ok {
+		timeout = 300
+	} else {
+		timeout = timeoutVal.(int)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("[READ] Checking membership: %s", d.Id()))
+
+	exists, err := checkMembershipExists(ctx, sshClient, group, member, timeout)
+	if err != nil {
+		tflog.Warn(ctx, fmt.Sprintf("[READ] Failed to read membership %s: %v", d.Id(), err))
+		d.SetId("")
+		return nil
+	}
+
+	if !exists {
+		tflog.Debug(ctx, fmt.Sprintf("[READ] Membership %s does not exist, removing from state", d.Id()))
+		d.SetId("")
+		return nil
+	}
+
+	// Mettre à jour le state
+	if err := d.Set("group", group); err != nil {
+		return utils.HandleResourceError("read", d.Id(), "group", err)
+	}
+	if err := d.Set("member", member); err != nil {
+		return utils.HandleResourceError("read", d.Id(), "member", err)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("[READ] Membership verified: %s", d.Id()))
+	return nil
+}
+
+func resourceWindowsLocalGroupMemberDelete(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	group := d.Get("group").(string)
+	member := d.Get("member").(string)
+	timeout := d.Get("command_timeout").(int)
+
+	resourceID := d.Id()
+
+	tflog.Info(ctx, fmt.Sprintf("[DELETE] Removing member '%s' from group '%s'", member, group))
+
+	// Valider les paramètres pour sécurité
+	if err := utils.ValidateField(group, resourceID, "group"); err != nil {
+		return err
+	}
+	if err := utils.ValidateField(member, resourceID, "member"); err != nil {
+		return err
+	}
+
+	// Retirer le membre du groupe
+	command := fmt.Sprintf("Remove-LocalGroupMember -Group %s -Member %s -ErrorAction Stop",
+		powershell.QuotePowerShellString(group),
+		powershell.QuotePowerShellString(member))
+
+	tflog.Debug(ctx, fmt.Sprintf("[DELETE] Executing: %s", command))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"delete",
+			resourceID,
+			"membership",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	d.SetId("")
+	tflog.Info(ctx, fmt.Sprintf("[DELETE] Member removed successfully: %s", resourceID))
+	return nil
+}

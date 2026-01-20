@@ -1,214 +1,296 @@
-# windows_localgroup
+package resources
 
-Manages local groups on Windows servers.
+import (
+	"context"
+	"encoding/json"
+	"fmt"
 
-## Example Usage
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
+	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
+)
 
-### Basic Group Creation
-
-```hcl
-resource "windows_localgroup" "app_admins" {
-  name        = "Application Admins"
-  description = "Administrators for the application"
-}
-```
-
-### Group with Members
-
-```hcl
-resource "windows_localgroup" "db_operators" {
-  name        = "Database Operators"
-  description = "Operators for database management"
+// LocalGroupInfo représente les informations d'un groupe local
+type LocalGroupInfo struct {
+	Exists      bool   `json:"Exists"`
+	Name        string `json:"Name"`
+	Description string `json:"Description"`
 }
 
-resource "windows_localuser" "db_admin" {
-  username = "DBAdmin"
-  password = var.db_admin_password
+func ResourceWindowsLocalGroup() *schema.Resource {
+	return &schema.Resource{
+		Create: resourceWindowsLocalGroupCreate,
+		Read:   resourceWindowsLocalGroupRead,
+		Update: resourceWindowsLocalGroupUpdate,
+		Delete: resourceWindowsLocalGroupDelete,
+		Importer: &schema.ResourceImporter{
+			StateContext: schema.ImportStatePassthroughContext,
+		},
+
+		Schema: map[string]*schema.Schema{
+			"name": {
+				Type:        schema.TypeString,
+				Required:    true,
+				ForceNew:    true,
+				Description: "The name of the local group. Cannot be changed after creation.",
+			},
+			"description": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Description: "A description for the local group.",
+			},
+			"allow_existing": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "If true, adopt existing group instead of failing. If false, fail if group already exists.",
+			},
+			"command_timeout": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     300,
+				Description: "Timeout in seconds for PowerShell commands.",
+			},
+		},
+	}
 }
 
-resource "windows_localgroupmember" "db_admin_membership" {
-  group  = windows_localgroup.db_operators.name
-  member = windows_localuser.db_admin.username
+// checkLocalGroupExists vérifie si un groupe local existe et retourne ses informations
+func checkLocalGroupExists(ctx context.Context, sshClient *ssh.Client, name string, timeout int) (*LocalGroupInfo, error) {
+	// Valider le nom du groupe pour sécurité
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return nil, err
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Checking if local group exists: %s", name))
+
+	// Commande PowerShell qui retourne du JSON structuré
+	command := fmt.Sprintf(`
+$group = Get-LocalGroup -Name %s -ErrorAction SilentlyContinue
+if ($group) {
+    @{
+        'Exists' = $true
+        'Name' = $group.Name
+        'Description' = $group.Description
+    } | ConvertTo-Json -Compress
+} else {
+    @{ 'Exists' = $false } | ConvertTo-Json -Compress
 }
-```
+`,
+		powershell.QuotePowerShellString(name),
+	)
 
-### Adopt Existing Group
+	stdout, _, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check group: %w", err)
+	}
 
-```hcl
-resource "windows_localgroup" "existing_group" {
-  name           = "Remote Desktop Users"
-  allow_existing = true
-}
-```
+	var info LocalGroupInfo
+	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
+		return nil, fmt.Errorf("failed to parse group info: %w; output: %s", err, stdout)
+	}
 
-## Argument Reference
-
-The following arguments are supported:
-
-* `name` - (Required, Forces new resource) The name of the local group. Cannot be changed after creation.
-* `description` - (Optional) A description for the local group. Can be updated after creation.
-* `allow_existing` - (Optional) If `true`, adopt existing group instead of failing. If `false`, fail if group already exists. Defaults to `false`.
-* `command_timeout` - (Optional) Timeout in seconds for PowerShell commands. Defaults to `300` (5 minutes).
-
-## Attributes Reference
-
-In addition to all arguments above, the following attributes are exported:
-
-* `id` - The name of the local group.
-
-## Import
-
-Local groups can be imported using the group name:
-
-```shell
-terraform import windows_localgroup.app_admins "Application Admins"
-```
-
-## Behavior Notes
-
-### Existing Group Handling
-
-When creating a group resource:
-- If the group **does not exist**, it will be created normally.
-- If the group **already exists**:
-  - With `allow_existing = false` (default): Resource creation fails with error message suggesting import or setting `allow_existing = true`.
-  - With `allow_existing = true`: The existing group is adopted into Terraform state. The description will be updated to match the configuration.
-
-### Description Updates
-
-The `description` attribute can be updated after group creation. When you change the description in your configuration and apply, Terraform will update the group's description on the Windows system without recreating the group.
-
-### Built-in Groups
-
-Windows has several built-in local groups. You can manage these using `allow_existing = true`:
-
-- **Administrators** - Full control of the computer
-- **Users** - Standard users with limited privileges
-- **Remote Desktop Users** - Users who can connect via RDP
-- **Backup Operators** - Can backup and restore files
-- **Power Users** - Legacy group with some administrative permissions
-- **IIS_IUSRS** - Built-in group for IIS
-- **Performance Monitor Users** - Can monitor performance counters
-- **Event Log Readers** - Can read event logs
-
-**Warning:** Be cautious when managing built-in groups, as changing their configuration could affect system functionality.
-
-### Deletion Behavior
-
-When a group resource is deleted:
-- The group is removed from the Windows system using `Remove-LocalGroup`
-- All members are automatically removed from the group
-- If the group is a built-in group, deletion may fail (as built-in groups cannot be deleted)
-
-## Complete Example
-
-```hcl
-# Create custom local group for application management
-resource "windows_localgroup" "app_team" {
-  name        = "AppTeam"
-  description = "Application development and operations team"
+	return &info, nil
 }
 
-# Create multiple users
-resource "windows_localuser" "dev1" {
-  username = "DevUser1"
-  password = var.dev1_password
-  full_name = "Developer One"
+func resourceWindowsLocalGroupCreate(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	name := d.Get("name").(string)
+	timeout := d.Get("command_timeout").(int)
+	allowExisting := d.Get("allow_existing").(bool)
+
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting local group creation for: %s", name))
+
+	// Valider le nom du groupe pour sécurité
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
+	}
+
+	// Vérifier si le groupe existe déjà
+	info, err := checkLocalGroupExists(ctx, sshClient, name, timeout)
+	if err != nil {
+		return utils.HandleResourceError("check_existing", name, "state", err)
+	}
+
+	if info.Exists {
+		if allowExisting {
+			tflog.Info(ctx, fmt.Sprintf("[CREATE] Group %s already exists, adopting it (allow_existing=true)", name))
+			d.SetId(name)
+			return resourceWindowsLocalGroupRead(d, m)
+		} else {
+			resourceName := "localgroup"
+			return utils.HandleResourceError(
+				"create",
+				name,
+				"state",
+				fmt.Errorf("local group already exists. "+
+					"To manage this existing group, either:\n"+
+					"  1. Import it: terraform import windows_localgroup.%s '%s'\n"+
+					"  2. Set allow_existing = true in your configuration\n"+
+					"  3. Remove it first (WARNING): Remove-LocalGroup -Name '%s' -Force",
+					resourceName, name, name),
+			)
+		}
+	}
+
+	// Construire la commande de manière sécurisée
+	command := fmt.Sprintf("New-LocalGroup -Name %s",
+		powershell.QuotePowerShellString(name))
+
+	// Ajouter la description si fournie
+	if description, ok, err := utils.ValidateSchemaOptionalString(d, "description", name); err != nil {
+		return err
+	} else if ok {
+		command += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(description))
+	}
+
+	command += " -ErrorAction Stop"
+
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Creating local group: %s", name))
+	tflog.Debug(ctx, fmt.Sprintf("[CREATE] Executing: %s", command))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"create",
+			name,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	d.SetId(name)
+	tflog.Info(ctx, fmt.Sprintf("[CREATE] Local group created successfully with ID: %s", name))
+
+	return resourceWindowsLocalGroupRead(d, m)
 }
 
-resource "windows_localuser" "dev2" {
-  username = "DevUser2"
-  password = var.dev2_password
-  full_name = "Developer Two"
+func resourceWindowsLocalGroupRead(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	name := d.Id()
+	timeoutVal, ok := d.GetOk("command_timeout")
+	var timeout int
+	if !ok {
+		timeout = 300
+	} else {
+		timeout = timeoutVal.(int)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("[READ] Reading local group: %s", name))
+
+	info, err := checkLocalGroupExists(ctx, sshClient, name, timeout)
+	if err != nil {
+		tflog.Warn(ctx, fmt.Sprintf("[READ] Failed to read local group %s: %v", name, err))
+		d.SetId("")
+		return nil
+	}
+
+	if !info.Exists {
+		tflog.Debug(ctx, fmt.Sprintf("[READ] Local group %s does not exist, removing from state", name))
+		d.SetId("")
+		return nil
+	}
+
+	// Mettre à jour le state
+	if err := d.Set("name", info.Name); err != nil {
+		return utils.HandleResourceError("read", name, "name", err)
+	}
+	if err := d.Set("description", info.Description); err != nil {
+		return utils.HandleResourceError("read", name, "description", err)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("[READ] Local group read successfully: %s", name))
+	return nil
 }
 
-# Add users to the group
-resource "windows_localgroupmember" "dev1_membership" {
-  group  = windows_localgroup.app_team.name
-  member = windows_localuser.dev1.username
+func resourceWindowsLocalGroupUpdate(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	name := d.Get("name").(string)
+	timeout := d.Get("command_timeout").(int)
+
+	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Updating local group: %s", name))
+
+	// Valider le nom pour sécurité
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
+	}
+
+	// Mettre à jour la description
+	if d.HasChange("description") {
+		description := d.Get("description").(string)
+		if err := utils.ValidateField(description, name, "description"); err != nil {
+			return err
+		}
+
+		command := fmt.Sprintf("Set-LocalGroup -Name %s -Description %s -ErrorAction Stop",
+			powershell.QuotePowerShellString(name),
+			powershell.QuotePowerShellString(description))
+
+		tflog.Debug(ctx, "[UPDATE] Updating description")
+		tflog.Debug(ctx, fmt.Sprintf("[UPDATE] Executing: %s", command))
+
+		stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+		if err != nil {
+			return utils.HandleCommandError(
+				"update",
+				name,
+				"description",
+				command,
+				stdout,
+				stderr,
+				err,
+			)
+		}
+	}
+
+	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Local group updated successfully: %s", name))
+	return resourceWindowsLocalGroupRead(d, m)
 }
 
-resource "windows_localgroupmember" "dev2_membership" {
-  group  = windows_localgroup.app_team.name
-  member = windows_localuser.dev2.username
+func resourceWindowsLocalGroupDelete(d *schema.ResourceData, m interface{}) error {
+	ctx := context.Background()
+	sshClient := m.(*ssh.Client)
+
+	name := d.Get("name").(string)
+	timeout := d.Get("command_timeout").(int)
+
+	tflog.Info(ctx, fmt.Sprintf("[DELETE] Deleting local group: %s", name))
+
+	// Valider le nom pour sécurité
+	if err := utils.ValidateField(name, name, "name"); err != nil {
+		return err
+	}
+
+	command := fmt.Sprintf("Remove-LocalGroup -Name %s -ErrorAction Stop",
+		powershell.QuotePowerShellString(name))
+
+	tflog.Debug(ctx, fmt.Sprintf("[DELETE] Executing: %s", command))
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"delete",
+			name,
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	d.SetId("")
+	tflog.Info(ctx, fmt.Sprintf("[DELETE] Local group deleted successfully: %s", name))
+	return nil
 }
-
-# Grant group access to another built-in group
-resource "windows_localgroupmember" "app_team_rdp" {
-  group  = "Remote Desktop Users"
-  member = windows_localgroup.app_team.name
-}
-```
-
-## Managing Built-in Groups
-
-```hcl
-# Adopt existing built-in group for management
-resource "windows_localgroup" "rdp_users" {
-  name           = "Remote Desktop Users"
-  description    = "Managed by Terraform - Users who can connect via RDP"
-  allow_existing = true
-}
-
-# Now you can manage membership of this group
-resource "windows_localgroupmember" "rdp_access" {
-  group  = windows_localgroup.rdp_users.name
-  member = "AppUser"
-}
-```
-
-## Common Use Cases
-
-### Application Access Groups
-
-```hcl
-resource "windows_localgroup" "app_users" {
-  name        = "MyApp Users"
-  description = "Users with access to MyApp"
-}
-
-resource "windows_localgroup" "app_admins" {
-  name        = "MyApp Admins"
-  description = "Administrators for MyApp"
-}
-```
-
-### Environment-Specific Groups
-
-```hcl
-variable "environment" {
-  type = string
-}
-
-resource "windows_localgroup" "app_group" {
-  name        = "MyApp-${var.environment}"
-  description = "MyApp access for ${var.environment} environment"
-}
-```
-
-### Hierarchical Access Control
-
-```hcl
-# Create role-based groups
-resource "windows_localgroup" "operators" {
-  name        = "Operators"
-  description = "System operators with limited admin access"
-}
-
-resource "windows_localgroup" "developers" {
-  name        = "Developers"
-  description = "Application developers"
-}
-
-# Grant operators administrative access
-resource "windows_localgroupmember" "operators_admin" {
-  group  = "Administrators"
-  member = windows_localgroup.operators.name
-}
-
-# Grant developers RDP access only
-resource "windows_localgroupmember" "developers_rdp" {
-  group  = "Remote Desktop Users"
-  member = windows_localgroup.developers.name
-}
-```

@@ -92,8 +92,8 @@ func resourceWindowsHostnameCreate(d *schema.ResourceData, m interface{}) error 
 	}
 
 	// Valider pour sécurité PowerShell
-	if err := powershell.ValidatePowerShellArgument(hostname); err != nil {
-		return utils.HandleResourceError("validate", hostname, "hostname", err)
+	if err := utils.ValidateField(hostname, hostname, "hostname"); err != nil {
+		return err
 	}
 
 	tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting hostname creation/verification for: %s", hostname))
@@ -189,7 +189,7 @@ func resourceWindowsHostnameRead(d *schema.ResourceData, m interface{}) error {
 	tflog.Info(ctx, fmt.Sprintf("[READ] Starting hostname verification for: %s (pending_reboot=%v)", expected, pendingReboot))
 
 	// Valider pour sécurité PowerShell
-	if err := powershell.ValidatePowerShellArgument(expected); err != nil {
+	if err := utils.ValidateField(expected, expected, "hostname"); err != nil {
 		return utils.HandleResourceError("validate", expected, "hostname", err)
 	}
 
@@ -274,7 +274,7 @@ func resourceWindowsHostnameImport(ctx context.Context, d *schema.ResourceData, 
 	}
 
 	// Valider pour sécurité PowerShell
-	if err := powershell.ValidatePowerShellArgument(hostname); err != nil {
+	if err := utils.ValidateField(hostname, hostname, "hostname"); err != nil {
 		return nil, utils.HandleResourceError("validate", hostname, "hostname", err)
 	}
 
