@@ -1,6 +1,6 @@
 # windows_feature
 
-Manages the installation and configuration of Windows features via PowerShell.
+Manages Windows features (roles and role services) installation and removal.
 
 ## Example Usage
 
@@ -17,8 +17,8 @@ resource "windows_feature" "iis" {
 ```hcl
 resource "windows_feature" "iis_full" {
   feature                   = "Web-Server"
-  include_all_sub_features  = true
-  include_management_tools  = true
+  include_all_sub_features = true
+  include_management_tools = true
 }
 ```
 
@@ -26,28 +26,26 @@ resource "windows_feature" "iis_full" {
 
 ```hcl
 resource "windows_feature" "ad_tools" {
-  feature        = "RSAT-AD-Tools"
-  restart        = true
-  command_timeout = 600
+  feature = "RSAT-AD-Tools"
+  restart = true
 }
 ```
 
-### Multiple Features
+### Adopt Existing Feature
 
 ```hcl
-resource "windows_feature" "iis" {
-  feature                  = "Web-Server"
-  include_management_tools = true
+resource "windows_feature" "existing_iis" {
+  feature        = "Web-Server"
+  allow_existing = true
 }
+```
 
-resource "windows_feature" "asp_net" {
-  feature = "Web-Asp-Net45"
-  depends_on = [windows_feature.iis]
-}
+### Feature with Custom Timeout
 
-resource "windows_feature" "web_mgmt" {
-  feature = "Web-Mgmt-Console"
-  depends_on = [windows_feature.iis]
+```hcl
+resource "windows_feature" "dotnet" {
+  feature         = "NET-Framework-45-Core"
+  command_timeout = 600
 }
 ```
 
@@ -55,131 +53,72 @@ resource "windows_feature" "web_mgmt" {
 
 The following arguments are supported:
 
-* `feature` - (Required, String, ForceNew) The name of the Windows feature to install or remove. This is the feature name as used in PowerShell (e.g., "Web-Server", "RSAT-AD-Tools").
+* `feature` - (Required, Forces new resource) The name of the Windows feature to install (e.g., `Web-Server`, `RSAT-AD-Tools`).
+* `restart` - (Optional) Whether to restart the server automatically if needed after installation. Defaults to `false`.
+* `include_all_sub_features` - (Optional) Whether to include all sub-features of the specified feature. Defaults to `false`. Computed from actual installation state.
+* `include_management_tools` - (Optional) Whether to include management tools for the specified feature. Defaults to `false`. Computed from actual installation state.
+* `allow_existing` - (Optional) If `true`, adopt existing feature instead of failing. If `false`, fail if feature is already installed. Defaults to `false`.
+* `command_timeout` - (Optional) Timeout in seconds for PowerShell commands. Defaults to `300` (5 minutes).
 
-* `restart` - (Optional, Boolean) Whether to automatically restart the server if needed after installing the feature. Default: `false`.
-
-* `include_all_sub_features` - (Optional, Boolean, Computed) Whether to include all sub-features of the specified feature. Default: `false`.
-
-* `include_management_tools` - (Optional, Boolean, Computed) Whether to include management tools for the specified feature. Default: `false`.
-
-* `command_timeout` - (Optional, Number) Timeout in seconds for PowerShell commands. Default: `300` (5 minutes).
-
-## Attribute Reference
+## Attributes Reference
 
 In addition to all arguments above, the following attributes are exported:
 
-* `id` - The feature name.
-
-* `install_state` - Current installation state of the Windows feature (e.g., "Installed", "Available", "InstallPending").
+* `id` - The name of the feature.
+* `install_state` - Current installation state of the Windows feature (e.g., `Installed`, `Available`, `Removed`).
 
 ## Import
 
 Windows features can be imported using the feature name:
 
-```bash
-terraform import windows_feature.iis Web-Server
+```shell
+terraform import windows_feature.iis "Web-Server"
 ```
 
-## Common Windows Features
+**Note:** Only installed features can be imported. The feature must already be installed on the system.
 
-Here are some commonly used Windows features:
+## Behavior Notes
 
-### Web Server (IIS)
-- `Web-Server` - Core IIS web server
-- `Web-Mgmt-Tools` - IIS management tools
-- `Web-Mgmt-Console` - IIS management console
-- `Web-Asp-Net45` - ASP.NET 4.5
-- `Web-Net-Ext45` - .NET Extensibility 4.5
+### Existing Feature Handling
 
-### Active Directory
-- `AD-Domain-Services` - Active Directory Domain Services
-- `RSAT-AD-Tools` - AD administration tools
-- `RSAT-ADDS` - AD DS tools
-- `RSAT-AD-PowerShell` - AD PowerShell module
-
-### Remote Desktop Services
-- `RDS-RD-Server` - Remote Desktop Session Host
-- `RDS-Licensing` - RD Licensing
-- `RDS-Gateway` - RD Gateway
-- `RDS-Web-Access` - RD Web Access
-
-### Hyper-V
-- `Hyper-V` - Hyper-V role
-- `Hyper-V-Tools` - Hyper-V management tools
-- `Hyper-V-PowerShell` - Hyper-V PowerShell module
-
-### File and Storage Services
-- `FS-FileServer` - File Server
-- `FS-DFS-Namespace` - DFS Namespaces
-- `FS-DFS-Replication` - DFS Replication
-- `FS-Resource-Manager` - File Server Resource Manager
-
-### Other Common Features
-- `Telnet-Client` - Telnet client
-- `SNMP-Service` - SNMP service
-- `Container` - Containers
-- `Windows-Defender` - Windows Defender
-
-## Notes
-
-### Feature Names
-
-To list all available features on your Windows server, use:
-
-```powershell
-Get-WindowsFeature | Select-Object Name, DisplayName, InstallState | Format-Table -AutoSize
-```
-
-Or to search for a specific feature:
-
-```powershell
-Get-WindowsFeature | Where-Object {$_.DisplayName -like "*IIS*"} | Select-Object Name, DisplayName
-```
+When creating a feature resource:
+- If the feature is **not installed**, it will be installed normally.
+- If the feature is **already installed**:
+  - With `allow_existing = false` (default): Resource creation fails with a clear error message suggesting import or setting `allow_existing = true`.
+  - With `allow_existing = true`: The existing feature is adopted into Terraform state without modification.
 
 ### Restart Behavior
 
-Some features require a system restart to complete installation. Use the `restart` argument to automatically restart the server when needed. Be aware that:
+- If `restart = true`, the server will restart automatically after installation if required.
+- If `restart = false` (default) and a restart is needed, a warning is logged but no automatic restart occurs. A manual restart will be required for the feature to become fully functional.
 
-- The SSH connection will be lost during restart
-- Terraform will wait for the command to complete
-- Consider using a higher `command_timeout` for features that require restart
+### State Detection
 
-### Sub-Features and Management Tools
+The resource automatically detects the actual state of the feature during Read operations, including:
+- Whether all sub-features are installed
+- Whether management tools are installed
+- Current installation state
 
-When `include_all_sub_features` is `true`, Terraform will install the main feature along with all its sub-features. Similarly, `include_management_tools` will install the associated management tools.
+## Common Features
 
-During `terraform plan` and `terraform apply`, these values may show as "computed" until the actual state is read from the server.
+### Web Server (IIS)
+* `Web-Server` - IIS Web Server
+* `Web-Asp-Net45` - ASP.NET 4.5
+* `Web-Mgmt-Console` - IIS Management Console
+* `Web-WebSockets` - WebSocket Protocol
 
-### Dependencies
+### Remote Server Administration Tools (RSAT)
+* `RSAT-AD-Tools` - Active Directory Tools
+* `RSAT-DNS-Server` - DNS Server Tools
+* `RSAT-DHCP` - DHCP Server Tools
+* `RSAT-File-Services` - File Services Tools
 
-When installing features that depend on other features, use Terraform's `depends_on` to ensure proper installation order:
+### .NET Framework
+* `NET-Framework-45-Core` - .NET Framework 4.5 Core
+* `NET-Framework-45-ASPNET` - ASP.NET 4.5
 
-```hcl
-resource "windows_feature" "iis" {
-  feature = "Web-Server"
-}
-
-resource "windows_feature" "asp_net" {
-  feature = "Web-Asp-Net45"
-  depends_on = [windows_feature.iis]
-}
-```
-
-## Security Considerations
-
-- The SSH user must have administrator privileges to install Windows features
-- Feature installation may require system restart
-- Some features may open additional network ports
-- Always review the security implications of features before installation
-
-## Timeouts
-
-The `command_timeout` argument controls how long Terraform will wait for the PowerShell command to complete. Increase this value for features that take longer to install:
-
-```hcl
-resource "windows_feature" "large_feature" {
-  feature         = "AD-Domain-Services"
-  command_timeout = 900  # 15 minutes
-}
-```
+### Other Common Features
+* `Telnet-Client` - Telnet Client
+* `SNMP-Service` - SNMP Service
+* `Windows-Defender` - Windows Defender
+* `Containers` - Containers feature

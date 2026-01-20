@@ -15,26 +15,17 @@ resource "windows_hostname" "server" {
 ### Hostname with Automatic Restart
 
 ```hcl
-resource "windows_hostname" "server" {
-  hostname = "WEB-SERVER-01"
+resource "windows_hostname" "server_auto_restart" {
+  hostname = "DB-SERVER-01"
   restart  = true
 }
 ```
 
-### FQDN Hostname
+### Hostname with Custom Timeout
 
 ```hcl
-resource "windows_hostname" "server" {
-  hostname = "web01.domain.local"
-}
-```
-
-### With Custom Timeout
-
-```hcl
-resource "windows_hostname" "server" {
-  hostname        = "APP-SERVER-02"
-  restart         = true
+resource "windows_hostname" "server_custom" {
+  hostname        = "APP-SERVER-01"
   command_timeout = 600
 }
 ```
@@ -43,215 +34,103 @@ resource "windows_hostname" "server" {
 
 The following arguments are supported:
 
-* `hostname` - (Required, String) The new hostname to apply to the Windows machine. The hostname must follow these rules:
-  - Maximum 255 characters total
+* `hostname` - (Required) The new hostname to apply to the Windows machine. Must follow DNS hostname rules:
+  - Maximum 255 characters total length
   - Each label (part between dots) maximum 63 characters
   - Labels can contain letters, digits, and hyphens
   - Labels cannot start or end with a hyphen
-  - Case-insensitive
+  - Can be a simple name (e.g., `SERVER01`) or FQDN (e.g., `server01.domain.local`)
+* `restart` - (Optional) Whether to restart the computer after renaming. Defaults to `false`. **Important:** A restart is required for the hostname change to take effect.
+* `command_timeout` - (Optional) Timeout in seconds for PowerShell commands. Defaults to `300` (5 minutes).
 
-* `restart` - (Optional, Boolean) Restart the computer after renaming. Default: `false`. 
-  ⚠️ **Warning**: Setting this to `true` will cause the server to restart immediately, which will disconnect the SSH session.
-
-* `command_timeout` - (Optional, Number) Timeout in seconds for PowerShell commands. Default: `300` (5 minutes).
-
-## Attribute Reference
+## Attributes Reference
 
 In addition to all arguments above, the following attributes are exported:
 
 * `id` - The hostname.
+* `pending_reboot` - (Boolean) Indicates if a reboot is pending for the hostname change to take effect. This will be `true` if `restart = false` after creation/update, and will be set to `false` once a restart has been performed.
 
 ## Import
 
-Windows hostname can be imported using the hostname:
+Hostnames can be imported using the hostname value:
 
-```bash
-terraform import windows_hostname.server WEB-SERVER-01
+```shell
+terraform import windows_hostname.server "WEB-SERVER-01"
 ```
 
-## Hostname Naming Conventions
+## Behavior Notes
 
-### NetBIOS Names (Single Label)
+### Restart Requirements
 
-For standalone or workgroup computers, use a NetBIOS name:
-- Maximum 15 characters (16th is reserved by Windows)
-- Letters, digits, and hyphens only
-- Cannot start or end with hyphen
-- Case-insensitive
+**Important:** Changing a Windows hostname requires a system restart to take full effect.
 
-Examples:
-- `WEB-SERVER-01`
-- `APP-01`
-- `DC-PRIMARY`
+- If `restart = true`: The computer will restart automatically after the hostname is changed. The SSH connection will be lost during the restart.
+- If `restart = false` (default): The hostname change is applied but will not take effect until the computer is manually restarted. The `pending_reboot` attribute will be set to `true`.
 
-### Fully Qualified Domain Names (FQDN)
+### Existing Hostname Detection
 
-For domain-joined computers, you can use FQDN:
-- Multiple labels separated by dots
-- Each label follows NetBIOS rules
-- Total length maximum 255 characters
+When creating the resource:
+- If the current hostname already matches the target hostname, no change is made and no restart is required.
+- The comparison is case-insensitive (Windows hostnames are case-insensitive).
 
-Examples:
-- `web01.contoso.com`
-- `app-server.prod.domain.local`
-- `dc01.ad.company.net`
+### Read Behavior with Pending Reboot
 
-## Restart Behavior
+If a reboot is pending (`pending_reboot = true`):
+- The Read operation will tolerate the hostname mismatch, as the change hasn't taken effect yet.
+- Once the computer is restarted, the next Read will detect the new hostname and clear the `pending_reboot` flag.
 
-When `restart = true`:
+### Delete Behavior
 
-1. The hostname change command includes `-Restart` flag
-2. The server will reboot immediately after the command executes
-3. The SSH connection will be lost
-4. Terraform will complete the operation before the reboot finishes
+The delete operation removes the resource from Terraform state but **does not change the hostname** on the remote server. This is by design, as reverting a hostname could cause service disruptions.
 
-⚠️ **Important Considerations**:
-- Ensure you have another way to connect to the server after restart
-- The server's IP address should not change
-- Consider using out-of-band management (iDRAC, iLO, etc.) for monitoring
-- Allow sufficient time for the server to complete the reboot
+## Hostname Validation
 
-When `restart = false`:
-- The hostname change is applied but won't take effect until manual reboot
-- The old hostname will still be active
-- You'll need to restart manually: `Restart-Computer -Force`
+The resource validates hostnames according to DNS standards:
 
-## DNS and Domain Considerations
+### Valid Hostnames
+```hcl
+hostname = "SERVER01"              # Simple NetBIOS name
+hostname = "web-server-01"         # Name with hyphens
+hostname = "app.domain.local"      # Fully qualified domain name
+hostname = "db01.subdomain.company.com"  # Multi-level FQDN
+```
 
-### Standalone/Workgroup Servers
+### Invalid Hostnames
+```hcl
+hostname = "-webserver"            # Cannot start with hyphen
+hostname = "webserver-"            # Cannot end with hyphen
+hostname = "web_server"            # Underscores not allowed
+hostname = "a.very.long.hostname.that.exceeds.the.maximum.length.of.255.characters..."  # Too long
+hostname = "label-that-is-way-too-long-and-exceeds-sixty-three-characters-limit"  # Label too long
+```
 
-Changing hostname on standalone servers is straightforward:
+## Example: Managed Restart Workflow
 
 ```hcl
-resource "windows_hostname" "standalone" {
-  hostname = "NEW-SERVER"
+# Change hostname without automatic restart
+resource "windows_hostname" "app_server" {
+  hostname = "APP-SERVER-NEW"
+  restart  = false
+}
+
+# Output warns about pending restart
+output "reboot_required" {
+  value = windows_hostname.app_server.pending_reboot
+}
+
+# You can then manually restart the server when ready:
+# Restart-Computer -Force
+```
+
+## Example: Automatic Restart
+
+```hcl
+# Change hostname with automatic restart
+resource "windows_hostname" "web_server" {
+  hostname = "WEB-PROD-01"
   restart  = true
 }
+
+# Note: Terraform execution may be interrupted during restart
+# This is expected behavior
 ```
-
-### Domain-Joined Servers
-
-⚠️ **Important**: Changing the hostname of a domain-joined server requires additional steps:
-
-1. The computer must be removed from the domain first
-2. Change the hostname
-3. Re-join the domain with the new name
-
-This provider currently handles only the hostname change. For domain operations, you may need to:
-- Manually unjoin/rejoin the domain
-- Use additional automation tools
-- Coordinate with domain administrators
-
-### DNS Updates
-
-After changing hostname:
-- Dynamic DNS (DDNS) should update automatically if enabled
-- Static DNS records must be updated manually
-- DHCP reservations may need updating
-- Update any monitoring systems, scripts, or documentation
-
-## Validation
-
-The provider validates hostname format before applying:
-
-✅ **Valid hostnames**:
-```
-WEB-SERVER-01
-app-server
-DC01
-web01.domain.local
-server-2024-prod
-```
-
-❌ **Invalid hostnames**:
-```
--invalid        # starts with hyphen
-invalid-       # ends with hyphen
-my_server      # contains underscore
-server 01      # contains space
-thisisaverylonghostnamethathastoomanycharacterstobevalidforanetbiosname  # > 63 chars per label
-```
-
-## Common Use Cases
-
-### Standardized Naming Convention
-
-```hcl
-locals {
-  environment = "prod"
-  role        = "web"
-  instance    = "01"
-  hostname    = upper("${var.environment}-${var.role}-${var.instance}")
-}
-
-resource "windows_hostname" "server" {
-  hostname = local.hostname  # PROD-WEB-01
-}
-```
-
-### Sequential Server Naming
-
-```hcl
-variable "server_count" {
-  default = 3
-}
-
-resource "windows_hostname" "servers" {
-  count    = var.server_count
-  hostname = upper("WEB-SERVER-${format("%02d", count.index + 1)}")
-}
-# Creates: WEB-SERVER-01, WEB-SERVER-02, WEB-SERVER-03
-```
-
-## Troubleshooting
-
-### Hostname Doesn't Change
-
-**Issue**: Resource applies successfully but hostname doesn't change
-
-**Solution**:
-- Restart the server: `Restart-Computer -Force`
-- Or set `restart = true` in the resource
-
-### Permission Denied
-
-**Issue**: `Access is denied` or `You do not have sufficient privileges`
-
-**Solution**:
-- The SSH user must have administrator rights
-- Verify: `whoami /groups | find "S-1-5-32-544"`
-
-### Hostname Conflict
-
-**Issue**: New hostname conflicts with existing DNS records
-
-**Solution**:
-- Check DNS for conflicts: `nslookup NEW-HOSTNAME`
-- Remove or update conflicting DNS records
-- Update DHCP reservations if needed
-
-### Invalid Hostname Error
-
-**Issue**: `invalid hostname` error during plan/apply
-
-**Solution**:
-- Check hostname follows naming rules
-- No special characters except hyphen
-- No leading or trailing hyphens
-- Maximum 63 characters per label
-
-## Notes
-
-- Hostname changes are case-insensitive
-- The provider performs case-insensitive comparison during read operations
-- Changing hostname may affect Active Directory, DNS, certificates, and monitoring systems
-- Plan downtime appropriately when using `restart = true`
-- Update all references to the old hostname (scripts, documentation, DNS, etc.)
-
-## Security Considerations
-
-- Administrator privileges required
-- Hostname changes are logged in Windows Event Log
-- Consider impact on security policies and GPOs
-- Certificates with hostname in CN/SAN may need reissuing
-- Kerberos tickets may need to be refreshed

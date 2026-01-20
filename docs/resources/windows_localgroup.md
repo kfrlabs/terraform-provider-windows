@@ -8,7 +8,7 @@ Manages local groups on Windows servers.
 
 ```hcl
 resource "windows_localgroup" "app_admins" {
-  group       = "Application Admins"
+  name        = "Application Admins"
   description = "Administrators for the application"
 }
 ```
@@ -16,63 +16,28 @@ resource "windows_localgroup" "app_admins" {
 ### Group with Members
 
 ```hcl
-resource "windows_localgroup" "backup_operators" {
-  group       = "Backup Team"
-  description = "Backup operators group"
-  
-  members = [
-    "backup_admin",
-    "svc_backup",
-    "DOMAIN\\BackupUser"
-  ]
+resource "windows_localgroup" "db_operators" {
+  name        = "Database Operators"
+  description = "Operators for database management"
+}
+
+resource "windows_localuser" "db_admin" {
+  username = "DBAdmin"
+  password = var.db_admin_password
+}
+
+resource "windows_localgroupmember" "db_admin_membership" {
+  group  = windows_localgroup.db_operators.name
+  member = windows_localuser.db_admin.username
 }
 ```
 
-### Group with Domain Users
+### Adopt Existing Group
 
 ```hcl
-resource "windows_localgroup" "remote_support" {
-  group       = "Remote Support"
-  description = "Remote support team members"
-  
-  members = [
-    "CONTOSO\\SupportTeam",
-    "CONTOSO\\john.doe",
-    "local_admin"
-  ]
-}
-```
-
-### Complete Example with Local Users
-
-```hcl
-# Create local users
-resource "windows_localuser" "operator1" {
-  username = "operator1"
-  password = var.operator1_password
-  full_name = "Operator One"
-}
-
-resource "windows_localuser" "operator2" {
-  username = "operator2"
-  password = var.operator2_password
-  full_name = "Operator Two"
-}
-
-# Create group and add users
-resource "windows_localgroup" "operators" {
-  group       = "System Operators"
-  description = "System operation team"
-  
-  members = [
-    windows_localuser.operator1.username,
-    windows_localuser.operator2.username
-  ]
-  
-  depends_on = [
-    windows_localuser.operator1,
-    windows_localuser.operator2
-  ]
+resource "windows_localgroup" "existing_group" {
+  name           = "Remote Desktop Users"
+  allow_existing = true
 }
 ```
 
@@ -80,446 +45,170 @@ resource "windows_localgroup" "operators" {
 
 The following arguments are supported:
 
-* `group` - (Required, String, ForceNew) The name of the local group. Group name cannot be changed after creation (will force recreation).
+* `name` - (Required, Forces new resource) The name of the local group. Cannot be changed after creation.
+* `description` - (Optional) A description for the local group. Can be updated after creation.
+* `allow_existing` - (Optional) If `true`, adopt existing group instead of failing. If `false`, fail if group already exists. Defaults to `false`.
+* `command_timeout` - (Optional) Timeout in seconds for PowerShell commands. Defaults to `300` (5 minutes).
 
-* `description` - (Optional, String) A description for the local group.
-
-* `members` - (Optional, Set of Strings) Members to ensure are part of the group. Members can be:
-  - Local user accounts (e.g., `"username"`)
-  - Domain users (e.g., `"DOMAIN\\username"`)
-  - Domain groups (e.g., `"DOMAIN\\GroupName"`)
-
-* `command_timeout` - (Optional, Number) Timeout in seconds for PowerShell commands. Default: `300` (5 minutes).
-
-## Attribute Reference
+## Attributes Reference
 
 In addition to all arguments above, the following attributes are exported:
 
-* `id` - The group name.
+* `id` - The name of the local group.
 
 ## Import
 
 Local groups can be imported using the group name:
 
-```bash
+```shell
 terraform import windows_localgroup.app_admins "Application Admins"
 ```
 
-When importing, Terraform will read the current group description and members. Note that the members list may include domain users/groups if the server is domain-joined.
+## Behavior Notes
 
-## Member Name Formats
+### Existing Group Handling
 
-### Local Users
+When creating a group resource:
+- If the group **does not exist**, it will be created normally.
+- If the group **already exists**:
+  - With `allow_existing = false` (default): Resource creation fails with error message suggesting import or setting `allow_existing = true`.
+  - With `allow_existing = true`: The existing group is adopted into Terraform state. The description will be updated to match the configuration.
 
-For local user accounts, use just the username:
+### Description Updates
 
-```hcl
-members = [
-  "john.doe",
-  "admin_user",
-  "svc_backup"
-]
-```
+The `description` attribute can be updated after group creation. When you change the description in your configuration and apply, Terraform will update the group's description on the Windows system without recreating the group.
 
-### Domain Users
+### Built-in Groups
 
-For domain users, use the format `DOMAIN\username`:
+Windows has several built-in local groups. You can manage these using `allow_existing = true`:
 
-```hcl
-members = [
-  "CONTOSO\\john.doe",
-  "CONTOSO\\jane.smith",
-  "AD\\admin_user"
-]
-```
+- **Administrators** - Full control of the computer
+- **Users** - Standard users with limited privileges
+- **Remote Desktop Users** - Users who can connect via RDP
+- **Backup Operators** - Can backup and restore files
+- **Power Users** - Legacy group with some administrative permissions
+- **IIS_IUSRS** - Built-in group for IIS
+- **Performance Monitor Users** - Can monitor performance counters
+- **Event Log Readers** - Can read event logs
 
-### Domain Groups
+**Warning:** Be cautious when managing built-in groups, as changing their configuration could affect system functionality.
 
-Domain groups can also be members of local groups:
+### Deletion Behavior
 
-```hcl
-members = [
-  "CONTOSO\\Domain Admins",
-  "CONTOSO\\IT Support",
-  "AD\\Developers"
-]
-```
+When a group resource is deleted:
+- The group is removed from the Windows system using `Remove-LocalGroup`
+- All members are automatically removed from the group
+- If the group is a built-in group, deletion may fail (as built-in groups cannot be deleted)
 
-### Mixed Members
-
-You can mix local and domain members:
+## Complete Example
 
 ```hcl
-resource "windows_localgroup" "admins" {
-  group = "Server Administrators"
-  
-  members = [
-    "local_admin",              # Local user
-    "CONTOSO\\Domain Admins",   # Domain group
-    "CONTOSO\\john.doe",        # Domain user
-    "svc_app"                   # Local user
-  ]
+# Create custom local group for application management
+resource "windows_localgroup" "app_team" {
+  name        = "AppTeam"
+  description = "Application development and operations team"
+}
+
+# Create multiple users
+resource "windows_localuser" "dev1" {
+  username = "DevUser1"
+  password = var.dev1_password
+  full_name = "Developer One"
+}
+
+resource "windows_localuser" "dev2" {
+  username = "DevUser2"
+  password = var.dev2_password
+  full_name = "Developer Two"
+}
+
+# Add users to the group
+resource "windows_localgroupmember" "dev1_membership" {
+  group  = windows_localgroup.app_team.name
+  member = windows_localuser.dev1.username
+}
+
+resource "windows_localgroupmember" "dev2_membership" {
+  group  = windows_localgroup.app_team.name
+  member = windows_localuser.dev2.username
+}
+
+# Grant group access to another built-in group
+resource "windows_localgroupmember" "app_team_rdp" {
+  group  = "Remote Desktop Users"
+  member = windows_localgroup.app_team.name
 }
 ```
 
-## Managing Group Membership
-
-### Adding Members
-
-When you add members to the `members` list, Terraform will:
-1. Detect the change during `terraform plan`
-2. Add the new members during `terraform apply`
-3. Preserve existing members not managed by Terraform (if any)
-
-### Removing Members
-
-When you remove members from the `members` list:
-1. Terraform will detect the removal
-2. Remove those members from the group during apply
-3. Keep other members in the list
-
-### Updating Members
+## Managing Built-in Groups
 
 ```hcl
-# Before
-resource "windows_localgroup" "operators" {
-  group = "Operators"
-  members = ["user1", "user2", "user3"]
+# Adopt existing built-in group for management
+resource "windows_localgroup" "rdp_users" {
+  name           = "Remote Desktop Users"
+  description    = "Managed by Terraform - Users who can connect via RDP"
+  allow_existing = true
 }
 
-# After - user2 removed, user4 added
-resource "windows_localgroup" "operators" {
-  group = "operators"
-  members = ["user1", "user3", "user4"]
-}
-```
-
-Result:
-- `user1` and `user3` remain in the group
-- `user2` is removed from the group
-- `user4` is added to the group
-
-### Empty Group
-
-To create a group with no members:
-
-```hcl
-resource "windows_localgroup" "future_use" {
-  group       = "Reserved Group"
-  description = "Reserved for future use"
-  # No members attribute = empty group
+# Now you can manage membership of this group
+resource "windows_localgroupmember" "rdp_access" {
+  group  = windows_localgroup.rdp_users.name
+  member = "AppUser"
 }
 ```
 
 ## Common Use Cases
 
-### Application-Specific Groups
+### Application Access Groups
 
 ```hcl
-resource "windows_localgroup" "web_app_admins" {
-  group       = "WebApp Admins"
-  description = "Administrators for the web application"
-  
-  members = [
-    "CONTOSO\\WebAppTeam",
-    "local_webadmin"
-  ]
+resource "windows_localgroup" "app_users" {
+  name        = "MyApp Users"
+  description = "Users with access to MyApp"
 }
 
-resource "windows_localgroup" "web_app_users" {
-  group       = "WebApp Users"
-  description = "Users of the web application"
-  
-  members = [
-    "CONTOSO\\AllEmployees",
-    "CONTOSO\\Contractors"
-  ]
+resource "windows_localgroup" "app_admins" {
+  name        = "MyApp Admins"
+  description = "Administrators for MyApp"
 }
 ```
 
-### Service Account Groups
+### Environment-Specific Groups
 
 ```hcl
-resource "windows_localgroup" "service_accounts" {
-  group       = "Service Accounts"
-  description = "All service accounts on this server"
-  
-  members = [
-    "svc_webapp",
-    "svc_backup",
-    "svc_monitoring"
-  ]
+variable "environment" {
+  type = string
+}
+
+resource "windows_localgroup" "app_group" {
+  name        = "MyApp-${var.environment}"
+  description = "MyApp access for ${var.environment} environment"
 }
 ```
 
-### Delegation Groups
+### Hierarchical Access Control
 
 ```hcl
-resource "windows_localgroup" "log_readers" {
-  group       = "Log Readers"
-  description = "Users who can read logs"
-  
-  members = [
-    "CONTOSO\\SecurityTeam",
-    "monitoring_user"
-  ]
-}
-
-# Use in ACL/permissions configuration
-```
-
-### Dynamic Member Assignment
-
-```hcl
-variable "dev_users" {
-  type    = list(string)
-  default = ["dev1", "dev2", "dev3"]
-}
-
-resource "windows_localuser" "developers" {
-  for_each = toset(var.dev_users)
-  
-  username = each.value
-  password = var.dev_password
+# Create role-based groups
+resource "windows_localgroup" "operators" {
+  name        = "Operators"
+  description = "System operators with limited admin access"
 }
 
 resource "windows_localgroup" "developers" {
-  group       = "Developers"
-  description = "Development team members"
-  
-  members = [for user in windows_localuser.developers : user.username]
-  
-  depends_on = [windows_localuser.developers]
+  name        = "Developers"
+  description = "Application developers"
+}
+
+# Grant operators administrative access
+resource "windows_localgroupmember" "operators_admin" {
+  group  = "Administrators"
+  member = windows_localgroup.operators.name
+}
+
+# Grant developers RDP access only
+resource "windows_localgroupmember" "developers_rdp" {
+  group  = "Remote Desktop Users"
+  member = windows_localgroup.developers.name
 }
 ```
-
-## Built-in Windows Groups
-
-Some commonly used built-in local groups:
-
-### Administrative
-- `Administrators` - Full control of the computer
-- `Power Users` - Legacy group (mostly deprecated)
-- `Server Operators` - Can administer domain servers
-
-### Remote Access
-- `Remote Desktop Users` - Can log on remotely via RDP
-- `Remote Management Users` - Can manage the server via WMI and WinRM
-
-### Backup and Recovery
-- `Backup Operators` - Can override security to back up files
-- `Replicator` - Supports file replication
-
-### Networking
-- `Network Configuration Operators` - Can modify network settings
-- `Distributed COM Users` - Can launch DCOM applications
-
-### Monitoring
-- `Performance Monitor Users` - Can access performance data locally/remotely
-- `Performance Log Users` - Can manage performance counters and logs
-- `Event Log Readers` - Can read event logs
-
-### IIS (if installed)
-- `IIS_IUSRS` - Used by IIS worker processes
-
-⚠️ **Warning**: Be careful when modifying built-in groups as it can affect system security and functionality.
-
-## Group Naming Best Practices
-
-### Naming Conventions
-
-```hcl
-# Application-based
-"AppName Admins"
-"AppName Users"
-"AppName Operators"
-
-# Role-based
-"Server Administrators"
-"Backup Operators"
-"Log Readers"
-
-# Environment-based
-"Production Support"
-"Development Team"
-"QA Testers"
-
-# Function-based
-"Database Admins"
-"Web Server Managers"
-"Security Auditors"
-```
-
-### Descriptive Names
-
-```hcl
-# ✅ Good - Clear and descriptive
-resource "windows_localgroup" "sql_db_admins" {
-  group = "SQL Database Administrators"
-  description = "Administrators for SQL Server databases"
-}
-
-# ❌ Avoid - Too generic or unclear
-resource "windows_localgroup" "group1" {
-  group = "Group1"
-  description = "Some users"
-}
-```
-
-## Security Considerations
-
-### Principle of Least Privilege
-
-```hcl
-# Create specific groups for specific tasks
-resource "windows_localgroup" "file_readers" {
-  group       = "File Readers"
-  description = "Read-only access to shared files"
-  members     = ["user1", "user2"]
-}
-
-# Instead of adding everyone to Administrators
-# ❌ Don't do this unless necessary
-resource "windows_localgroup" "bad_practice" {
-  group   = "Administrators"
-  members = ["user1", "user2", "user3"]  # Too many admins
-}
-```
-
-### Domain User Management
-
-When adding domain users to local groups:
-
-```hcl
-resource "windows_localgroup" "remote_admins" {
-  group       = "Remote Administrators"
-  description = "Can administer this server remotely"
-  
-  members = [
-    "CONTOSO\\ServerAdmins",     # Domain group
-    "CONTOSO\\john.doe",         # Specific user for emergency access
-    "local_admin"                # Local admin account
-  ]
-}
-```
-
-Best practices:
-- Prefer domain groups over individual domain users
-- Use specific groups rather than broad groups (e.g., "IT Support" not "All Employees")
-- Document why domain accounts need local access
-- Regular review and audit of group memberships
-
-### Audit and Compliance
-
-```hcl
-resource "windows_localgroup" "privileged_users" {
-  group       = "Privileged Users"
-  description = "Users with elevated privileges - AUDIT REQUIRED"
-  
-  members = [
-    "admin_user",
-    "CONTOSO\\ITAdmin"
-  ]
-  
-  # Document in comments
-  # Created: 2024-01-15
-  # Owner: IT Security Team
-  # Review: Quarterly
-  # Last reviewed: 2024-01-15
-}
-```
-
-## Troubleshooting
-
-### Permission Denied
-
-**Issue**: Error creating or modifying group
-
-**Solution**:
-- SSH user must have administrator rights
-- Verify: `net localgroup Administrators`
-
-### Member Not Found
-
-**Issue**: Error adding member to group - member doesn't exist
-
-**Solution**:
-- For local users: Ensure user exists first (create with `windows_localuser`)
-- For domain users: Verify username format (`DOMAIN\username`)
-- Check that domain is accessible from the server
-- List existing users: `Get-LocalUser` or `net user /domain`
-
-### Group Already Exists
-
-**Issue**: Error creating group because it already exists
-
-**Solution**:
-- Import the existing group: `terraform import windows_localgroup.name "Group Name"`
-- Or manually delete the group and re-run Terraform
-
-### Domain User Format Error
-
-**Issue**: Cannot add domain user to group
-
-**Solution**:
-- Use correct format: `DOMAIN\username` (not `username@domain.com`)
-- Use double backslash in HCL: `"DOMAIN\\username"`
-- Verify domain connectivity: `nltest /dsgetdc:DOMAIN`
-
-### Group Name Contains Spaces
-
-**Issue**: Group name with spaces causing issues
-
-**Solution**:
-- Use quotes in Terraform: `group = "My Group Name"`
-- Use quotes in import: `terraform import windows_localgroup.name "My Group Name"`
-
-## Notes
-
-- Group name changes will force recreation (ForceNew)
-- Description can be updated without recreating the group
-- Member order doesn't matter (stored as a Set)
-- Built-in groups cannot be deleted
-- Removing the resource from Terraform will delete the group (be careful with built-in groups)
-- The provider manages group membership additively - members not in Terraform are left alone unless explicitly removed
-
-## Relationship with Other Resources
-
-### With Local Users
-
-```hcl
-resource "windows_localuser" "admin" {
-  username = "app_admin"
-  password = var.password
-}
-
-resource "windows_localgroup" "admins" {
-  group   = "App Admins"
-  members = [windows_localuser.admin.username]
-  
-  depends_on = [windows_localuser.admin]
-}
-```
-
-### With Features
-
-```hcl
-# Install IIS
-resource "windows_feature" "iis" {
-  feature = "Web-Server"
-}
-
-# Create IIS administrators group
-resource "windows_localgroup" "iis_admins" {
-  group       = "IIS Administrators"
-  description = "IIS Server Administrators"
-  
-  depends_on = [windows_feature.iis]
-}
-```
-
-## Related Resources
-
-- `windows_localuser` - Create users to add to groups
-- `windows_feature` - Some features create their own groups
-- Consider Active Directory groups for domain environments

@@ -1,61 +1,62 @@
 # windows_service
 
-Manages Windows services (start, stop, configure startup type).
+Manages Windows services (create, configure, start, stop).
 
 ## Example Usage
 
-### Start a Service
+### Manage Existing Service State
 
 ```hcl
 resource "windows_service" "iis" {
-  name  = "W3SVC"
-  state = "Running"
+  name       = "W3SVC"
+  state      = "Running"
+  start_type = "Automatic"
+  allow_existing = true
 }
 ```
 
-### Stop a Service
+### Create New Service
 
 ```hcl
-resource "windows_service" "telnet" {
-  name  = "TlntSvr"
-  state = "Stopped"
-}
-```
-
-### Configure Service Startup Type
-
-```hcl
-resource "windows_service" "windows_update" {
-  name         = "wuauserv"
-  startup_type = "Manual"
-}
-```
-
-### Complete Service Configuration
-
-```hcl
-resource "windows_service" "my_app_service" {
+resource "windows_service" "my_app" {
   name         = "MyAppService"
+  display_name = "My Application Service"
+  description  = "Custom application service"
+  binary_path  = "C:\\Program Files\\MyApp\\service.exe"
+  start_type   = "Automatic"
   state        = "Running"
-  startup_type = "Automatic"
+}
+```
+
+### Service with Custom Account
+
+```hcl
+resource "windows_localuser" "service_account" {
+  username                    = "MyServiceAccount"
+  password                    = var.service_password
+  password_never_expires      = true
+  user_cannot_change_password = true
+}
+
+resource "windows_service" "custom_service" {
+  name        = "CustomService"
+  binary_path = "C:\\Services\\custom.exe"
+  start_name  = ".\\${windows_localuser.service_account.username}"
+  credential  = var.service_password
+  start_type  = "Automatic"
+  state       = "Running"
 }
 ```
 
 ### Service with Dependencies
 
 ```hcl
-# Ensure IIS is installed
-resource "windows_feature" "iis" {
-  feature = "Web-Server"
-}
-
-# Configure and start IIS service
-resource "windows_service" "iis" {
-  name         = "W3SVC"
-  state        = "Running"
-  startup_type = "Automatic"
-  
-  depends_on = [windows_feature.iis]
+resource "windows_service" "dependent_service" {
+  name               = "DependentService"
+  binary_path        = "C:\\Services\\dependent.exe"
+  start_type         = "Automatic"
+  depend_on_service  = ["W3SVC", "MSSQLSERVER"]
+  state              = "Running"
 }
 ```
 
@@ -63,620 +64,208 @@ resource "windows_service" "iis" {
 
 The following arguments are supported:
 
-* `name` - (Required, String, ForceNew) The name of the Windows service (service name, not display name). Examples: `"W3SVC"`, `"MSSQLSERVER"`, `"Spooler"`.
+* `name` - (Required, Forces new resource) The name of the Windows service (e.g., `W3SVC`, `MyAppService`). This is the internal service name, not the display name. Cannot be changed after creation.
+* `display_name` - (Optional, Computed) The display name of the service shown in the Services application. If not specified for a new service, it defaults to the service name.
+* `description` - (Optional, Computed) A description of what the service does.
+* `binary_path` - (Optional, Computed, Forces new resource) The full path to the service executable (e.g., `C:\\Program Files\\MyApp\\service.exe`). **Required when creating a new service**. Cannot be changed after creation.
+* `start_type` - (Optional) The startup type of the service. Defaults to `Manual`. Valid values:
+  - `Automatic` - Starts automatically at boot
+  - `Manual` - Starts manually  
+  - `Disabled` - Cannot be started
+  - `Boot` - Device driver started by boot loader
+  - `System` - Device driver started by kernel
+* `state` - (Optional) The desired state of the service. Defaults to `Stopped`. Valid values:
+  - `Running` - Service should be running
+  - `Stopped` - Service should be stopped
+* `start_name` - (Optional, Computed) The account under which the service runs. Common values:
+  - `LocalSystem` - Local System account (default)
+  - `NT AUTHORITY\\NetworkService` - Network Service account
+  - `NT AUTHORITY\\LocalService` - Local Service account
+  - `.\\username` - Local user account
+  - `DOMAIN\\username` - Domain user account
+* `credential` - (Optional, Sensitive) The password for the service account if `start_name` is a domain or local user account. Only used during creation and update. Not stored in state.
+* `load_order_group` - (Optional) The load order group for driver services.
+* `service_type` - (Optional, Computed) The type of service. Valid values:
+  - `Win32OwnProcess` - Service runs in its own process (most common)
+  - `Win32ShareProcess` - Service shares a process with other services
+  - `KernelDriver` - Kernel device driver
+  - `FileSystemDriver` - File system driver
+* `depend_on_service` - (Optional) Set of service names this service depends on. The service will not start until all dependencies are running.
+* `allow_existing` - (Optional) If `true`, adopt existing service instead of failing. If `false`, fail if service already exists. Defaults to `false`.
+* `command_timeout` - (Optional) Timeout in seconds for PowerShell commands. Defaults to `300` (5 minutes).
 
-* `state` - (Optional, String) The desired state of the service. Valid values:
-  - `"Running"` - Service should be running
-  - `"Stopped"` - Service should be stopped
-  - `"Paused"` - Service should be paused (if supported)
-  
-  If not specified, only the startup type will be configured.
-
-* `startup_type` - (Optional, String) The startup type for the service. Valid values:
-  - `"Automatic"` - Start automatically at boot
-  - `"Manual"` - Start manually or when required
-  - `"Disabled"` - Cannot be started
-  - `"AutomaticDelayedStart"` - Start automatically with delay
-  
-  If not specified, the startup type will not be changed.
-
-* `command_timeout` - (Optional, Number) Timeout in seconds for PowerShell commands. Default: `300` (5 minutes).
-
-## Attribute Reference
+## Attributes Reference
 
 In addition to all arguments above, the following attributes are exported:
 
-* `id` - The service name.
-
-* `display_name` - The display name of the service (read-only).
-
-* `status` - Current status of the service (read-only). Examples: `"Running"`, `"Stopped"`, `"StartPending"`.
+* `id` - The name of the service.
 
 ## Import
 
 Windows services can be imported using the service name:
 
-```bash
-terraform import windows_service.iis W3SVC
+```shell
+terraform import windows_service.iis "W3SVC"
 ```
 
-## Service Names vs Display Names
+**Note:** When importing services that run under a user account, you must provide the `credential` in your configuration if you plan to manage the service account, as passwords cannot be retrieved.
 
-### Service Name (Use This)
+## Behavior Notes
 
-The internal service name used in Windows. This is what you must use in the `name` argument.
+### Creating vs Managing Services
 
-Examples:
-- `W3SVC` (IIS)
-- `MSSQLSERVER` (SQL Server)
-- `WinRM` (Windows Remote Management)
-- `Spooler` (Print Spooler)
+The resource behaves differently depending on whether the service already exists:
 
-### Display Name (For Reference)
+**New Service Creation:**
+- `binary_path` is **required**
+- Service will be created with all specified configuration
+- Other attributes use defaults if not specified
 
-The human-readable name shown in Services management console.
+**Managing Existing Service:**
+- Set `allow_existing = true`
+- `binary_path` is not required (will be read from existing service)
+- Only specified attributes will be managed
+- Service configuration will be updated to match
 
-Examples:
-- World Wide Web Publishing Service (W3SVC)
-- SQL Server (MSSQLSERVER)
-- Windows Remote Management (WinRM)
-- Print Spooler (Spooler)
+### Service States
 
-### Finding Service Names
+The `state` attribute controls the running state:
+- `Running`: Terraform will start the service if stopped
+- `Stopped`: Terraform will stop the service if running
 
-To find the service name for a service:
+State changes are applied after configuration changes.
 
-```powershell
-# List all services with name and display name
-Get-Service | Select-Object Name, DisplayName, Status | Format-Table -AutoSize
+### Service Account Management
 
-# Search by display name
-Get-Service | Where-Object {$_.DisplayName -like "*IIS*"}
+When using a custom service account:
+1. Create the user account first
+2. Ensure the account has "Log on as a service" rights
+3. Provide the password via the `credential` attribute
+4. For local accounts, use `.\\username` format in `start_name`
+5. For domain accounts, use `DOMAIN\\username` format
 
-# Get specific service details
-Get-Service -Name "W3SVC" | Select-Object *
-```
+The `credential` is only used when the service is created or when `start_name` is changed. It is not stored in Terraform state.
 
-From command line:
-```cmd
-sc query
-sc query state= all
-```
+### Service Dependencies
 
-## Service States
+Services listed in `depend_on_service` must exist on the system. The dependent service will not start until all dependencies are in a running state.
 
-### Running
+### Start Type vs State
 
-Service is currently running.
+These are independent settings:
+- `start_type` determines when the service starts automatically (boot, on-demand, never)
+- `state` determines if the service should be running right now
+
+Common combinations:
+- `start_type = "Automatic"` + `state = "Running"`: Service starts at boot and is running now
+- `start_type = "Manual"` + `state = "Stopped"`: Service can be started manually but is stopped
+- `start_type = "Disabled"` + `state = "Stopped"`: Service cannot be started
+
+## Complete Examples
+
+### IIS Web Server Management
 
 ```hcl
-resource "windows_service" "example" {
-  name  = "MyService"
-  state = "Running"
-}
-```
-
-When you set `state = "Running"`:
-- If stopped, Terraform will start the service
-- If paused, Terraform will resume the service
-- If already running, no action taken
-
-### Stopped
-
-Service is not running.
-
-```hcl
-resource "windows_service" "example" {
-  name  = "TelnetService"
-  state = "Stopped"
-}
-```
-
-When you set `state = "Stopped"`:
-- If running or paused, Terraform will stop the service
-- If already stopped, no action taken
-
-### Paused
-
-Service is paused (not all services support this state).
-
-```hcl
-resource "windows_service" "example" {
-  name  = "MyService"
-  state = "Paused"
-}
-```
-
-**Note**: Not all services support pause/resume. Services that don't support pause will return an error.
-
-## Startup Types
-
-### Automatic
-
-Service starts automatically when the system boots.
-
-```hcl
-resource "windows_service" "critical_service" {
-  name         = "MyCriticalService"
-  startup_type = "Automatic"
-  state        = "Running"
-}
-```
-
-**Use for**: Essential services that must run at all times.
-
-### Automatic (Delayed Start)
-
-Service starts automatically but after other automatic services have started.
-
-```hcl
-resource "windows_service" "background_service" {
-  name         = "MyBackgroundService"
-  startup_type = "AutomaticDelayedStart"
-}
-```
-
-**Use for**: Non-critical services to speed up boot time.
-
-### Manual
-
-Service must be started manually or by another service.
-
-```hcl
-resource "windows_service" "on_demand_service" {
-  name         = "MyOnDemandService"
-  startup_type = "Manual"
-}
-```
-
-**Use for**: Services that are used occasionally.
-
-### Disabled
-
-Service cannot be started.
-
-```hcl
-resource "windows_service" "unused_service" {
-  name         = "UnusedService"
-  startup_type = "Disabled"
-}
-```
-
-**Use for**: Services you want to permanently disable.
-
-## Common Windows Services
-
-### IIS (Web Server)
-
-```hcl
-resource "windows_service" "iis" {
-  name         = "W3SVC"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-
-resource "windows_service" "iis_admin" {
-  name         = "IISADMIN"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### SQL Server
-
-```hcl
-resource "windows_service" "sql_server" {
-  name         = "MSSQLSERVER"  # Default instance
-  state        = "Running"
-  startup_type = "Automatic"
-}
-
-resource "windows_service" "sql_agent" {
-  name         = "SQLSERVERAGENT"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-
-# Named instance: use "MSSQL$INSTANCENAME"
-resource "windows_service" "sql_instance" {
-  name         = "MSSQL$MYINSTANCE"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### Remote Desktop
-
-```hcl
-resource "windows_service" "rdp" {
-  name         = "TermService"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### Windows Update
-
-```hcl
-resource "windows_service" "windows_update" {
-  name         = "wuauserv"
-  startup_type = "Manual"  # Often set to Manual to control updates
-}
-```
-
-### Print Spooler
-
-```hcl
-resource "windows_service" "print_spooler" {
-  name         = "Spooler"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### Windows Firewall
-
-```hcl
-resource "windows_service" "firewall" {
-  name         = "MpsSvc"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### DNS Client
-
-```hcl
-resource "windows_service" "dns_client" {
-  name         = "Dnscache"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### Task Scheduler
-
-```hcl
-resource "windows_service" "task_scheduler" {
-  name         = "Schedule"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### Windows Time
-
-```hcl
-resource "windows_service" "windows_time" {
-  name         = "W32Time"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### WinRM (Windows Remote Management)
-
-```hcl
-resource "windows_service" "winrm" {
-  name         = "WinRM"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-## Managing Custom Services
-
-### Application Service
-
-```hcl
-resource "windows_service" "my_app" {
-  name         = "MyApplication"
-  state        = "Running"
-  startup_type = "Automatic"
-}
-```
-
-### Multiple Application Services
-
-```hcl
-locals {
-  app_services = {
-    "MyAppAPI"     = { state = "Running", startup = "Automatic" }
-    "MyAppWorker"  = { state = "Running", startup = "Automatic" }
-    "MyAppMonitor" = { state = "Running", startup = "AutomaticDelayedStart" }
-  }
-}
-
-resource "windows_service" "app_services" {
-  for_each = local.app_services
-  
-  name         = each.key
-  state        = each.value.state
-  startup_type = each.value.startup
-}
-```
-
-## Service Lifecycle Management
-
-### Starting a Stopped Service
-
-```hcl
-# Before: service is stopped
-resource "windows_service" "app" {
-  name  = "MyAppService"
-  state = "Stopped"
-}
-
-# After: service will be started
-resource "windows_service" "app" {
-  name  = "MyAppService"
-  state = "Running"
-}
-```
-
-### Changing Startup Type Without Affecting State
-
-```hcl
-resource "windows_service" "app" {
-  name         = "MyAppService"
-  startup_type = "Manual"
-  # No 'state' specified - current state is preserved
-}
-```
-
-### Restart Behavior
-
-To restart a service (stop then start):
-
-```hcl
-# This provider doesn't directly support restart
-# But you can:
-# 1. Set state to "Stopped"
-# 2. Apply
-# 3. Set state to "Running"
-# 4. Apply again
-
-# Or use provisioners (not recommended)
-resource "null_resource" "restart_service" {
-  triggers = {
-    version = var.app_version
-  }
-  
-  provisioner "local-exec" {
-    command = "ssh admin@server 'Restart-Service -Name MyAppService'"
-  }
-}
-```
-
-## Dependencies and Ordering
-
-### Service Depends on Feature
-
-```hcl
+# Ensure IIS is installed
 resource "windows_feature" "iis" {
   feature = "Web-Server"
 }
 
+# Manage W3SVC service
 resource "windows_service" "iis" {
-  name         = "W3SVC"
-  state        = "Running"
-  startup_type = "Automatic"
+  name           = "W3SVC"
+  start_type     = "Automatic"
+  state          = "Running"
+  allow_existing = true
   
   depends_on = [windows_feature.iis]
 }
 ```
 
-### Start Services in Order
+### Custom Application Service
 
 ```hcl
-resource "windows_service" "database" {
-  name  = "MSSQLSERVER"
-  state = "Running"
+# Create service account
+resource "windows_localuser" "app_service" {
+  username                    = "AppService"
+  password                    = var.service_password
+  full_name                   = "Application Service Account"
+  password_never_expires      = true
+  user_cannot_change_password = true
 }
 
+# Grant service account necessary permissions
+resource "windows_localgroupmember" "service_operators" {
+  group  = "Performance Log Users"
+  member = windows_localuser.app_service.username
+}
+
+# Create and configure service
 resource "windows_service" "app" {
-  name  = "MyAppService"
-  state = "Running"
-  
-  depends_on = [windows_service.database]
+  name         = "MyApplication"
+  display_name = "My Application Service"
+  description  = "Provides application functionality"
+  binary_path  = "C:\\Program Files\\MyApp\\service.exe"
+  start_name   = ".\\${windows_localuser.app_service.username}"
+  credential   = var.service_password
+  start_type   = "Automatic"
+  state        = "Running"
 }
 ```
 
-### Service Depends on Configuration
+### Service with Multiple Dependencies
 
 ```hcl
-# Create registry configuration
-resource "windows_registry_value" "app_config" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "DatabaseServer"
-  type  = "String"
-  value = "sql-server.example.com"
-}
-
-# Start service after configuration
-resource "windows_service" "app" {
-  name  = "MyAppService"
-  state = "Running"
-  
-  depends_on = [windows_registry_value.app_config]
+resource "windows_service" "web_app" {
+  name              = "WebApplication"
+  display_name      = "Web Application Service"
+  binary_path       = "C:\\WebApp\\service.exe"
+  start_type        = "Automatic"
+  depend_on_service = ["W3SVC", "MSSQLSERVER", "WinRM"]
+  state             = "Running"
 }
 ```
 
-## Error Handling
+## Common Services
 
-### Service Doesn't Exist
+### Web Services
+* `W3SVC` - IIS World Wide Web Publishing Service
+* `WAS` - Windows Process Activation Service
+* `IISADMIN` - IIS Admin Service
 
-If the service doesn't exist, Terraform will error. Ensure:
-- Service is installed
-- Service name is correct (use `Get-Service` to verify)
+### Database Services
+* `MSSQLSERVER` - SQL Server (default instance)
+* `MSSQL$INSTANCENAME` - SQL Server (named instance)
+* `SQLWriter` - SQL Server VSS Writer
 
-### Cannot Start Service
-
-Common reasons:
-- Service is disabled (`startup_type = "Disabled"`)
-- Dependencies are not running
-- Service binary is missing or corrupt
-- Permission issues
-
-### Cannot Stop Service
-
-Some services are protected and cannot be stopped. Examples:
-- Critical system services
-- Services with dependents that are running
-
-## Security Considerations
-
-### Service Account
-
-This resource doesn't manage the service account. To change the service account:
-
-```powershell
-# Use PowerShell or sc.exe
-sc.exe config MyService obj= "NT AUTHORITY\NetworkService" password= ""
-
-# Or PowerShell
-$credential = Get-Credential
-Set-Service -Name MyService -Credential $credential
-```
-
-### Permissions
-
-The SSH user needs:
-- **Read** permission to query service status
-- **Start/Stop** permission to change service state
-- **Configure** permission to change startup type
-
-For most services, administrator privileges are required.
-
-### Critical Services
-
-Be careful with critical system services:
-
-⚠️ **Don't stop these** (system may become unstable):
-- `RpcSs` (Remote Procedure Call)
-- `DcomLaunch` (DCOM Server Process Launcher)
-- `PlugPlay` (Plug and Play)
-- `CryptSvc` (Cryptographic Services)
-- `EventLog` (Windows Event Log)
+### System Services
+* `WinRM` - Windows Remote Management
+* `Spooler` - Print Spooler
+* `Dnscache` - DNS Client
+* `Dhcp` - DHCP Client
+* `EventLog` - Windows Event Log
 
 ## Troubleshooting
 
-### Permission Denied
+### Service Won't Start
 
-**Issue**: Access denied when managing service
+Check:
+1. Binary path is correct and executable exists
+2. Service account has necessary permissions
+3. Dependencies are running
+4. Service account has "Log on as a service" right
+5. Check Windows Event Logs for service-specific errors
 
-**Solution**:
-- SSH user must have administrator rights
-- Check service permissions: `sc.exe sdshow MyService`
+### Permission Denied Errors
 
-### Service Not Found
+Ensure:
+- Service account has access to binary path
+- Service account has "Log on as a service" right
+- Service account has access to any resources the service needs
 
-**Issue**: Service name not found
+### Terraform Times Out
 
-**Solution**:
-- List all services: `Get-Service | Format-Table -AutoSize`
-- Use service name, not display name
-- Check if service is installed
-
-### Service Dependency Error
-
-**Issue**: Cannot start service due to dependency
-
-**Solution**:
-- Check dependencies: `sc.exe qc MyService`
-- Ensure dependent services are running
-- Use `depends_on` in Terraform
-
-### Timeout Starting Service
-
-**Issue**: Service takes too long to start
-
-**Solution**:
-- Increase `command_timeout`
-- Check service logs for startup issues
-- Verify service configuration
-
-### Service Won't Stop
-
-**Issue**: Service cannot be stopped
-
-**Solution**:
-- Check if other services depend on it: `sc.exe enumdepend MyService`
-- Stop dependent services first
-- Check if service is marked as "cannot stop"
-
-## Best Practices
-
-### State vs Startup Type
-
-Configure both for production services:
-
+Increase `command_timeout` if service operations take longer than 5 minutes:
 ```hcl
-resource "windows_service" "production_app" {
-  name         = "MyAppService"
-  state        = "Running"        # Current state
-  startup_type = "Automatic"      # Boot behavior
-}
+command_timeout = 600  # 10 minutes
 ```
-
-### Conditional Service Management
-
-```hcl
-variable "enable_telnet" {
-  type    = bool
-  default = false
-}
-
-resource "windows_service" "telnet" {
-  count = var.enable_telnet ? 1 : 0
-  
-  name         = "TlntSvr"
-  state        = "Running"
-  startup_type = "Manual"
-}
-```
-
-### Health Checks
-
-After starting services, verify they're healthy:
-
-```hcl
-resource "null_resource" "health_check" {
-  depends_on = [windows_service.app]
-  
-  provisioner "local-exec" {
-    command = "curl -f http://localhost:8080/health || exit 1"
-  }
-}
-```
-
-### Documentation
-
-```hcl
-resource "windows_service" "app" {
-  name         = "MyAppService"
-  state        = "Running"
-  startup_type = "Automatic"
-  
-  # Service purpose: Main application API service
-  # Required for: Customer-facing API
-  # Dependencies: MSSQLSERVER
-  # Owner: Platform Team
-}
-```
-
-## Notes
-
-- Service name is case-insensitive in Windows
-- Not all services support pause/resume
-- Some services require elevated privileges to manage
-- Service state changes may take a few seconds
-- Terraform tracks desired state, not runtime state
-- Service may be started by other processes between Terraform runs
-
-## Related Resources
-
-- `windows_feature` - Install Windows features that include services
-- Some features automatically install and configure services
-- Use registry resources to configure service parameters
-- Consider Windows service account management separately

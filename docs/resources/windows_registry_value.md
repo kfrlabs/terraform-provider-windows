@@ -10,41 +10,52 @@ Manages Windows Registry values within registry keys.
 resource "windows_registry_value" "app_name" {
   path  = "HKLM:\\Software\\MyCompany\\MyApp"
   name  = "ApplicationName"
-  type  = "String"
   value = "My Application"
+  type  = "String"
 }
 ```
 
-### DWORD Value
+### DWord Value
 
 ```hcl
-resource "windows_registry_value" "port" {
-  path  = "HKLM:\\Software\\MyCompany\\MyApp"
-  name  = "Port"
+resource "windows_registry_value" "timeout" {
+  path  = "HKLM:\\Software\\MyApp"
+  name  = "Timeout"
+  value = "3600"
   type  = "DWord"
-  value = "8080"
+}
+```
+
+### Default Value
+
+```hcl
+resource "windows_registry_value" "default" {
+  path  = "HKLM:\\Software\\MyApp"
+  name  = ""  # Empty string for default value
+  value = "Default application"
+  type  = "String"
 }
 ```
 
 ### Binary Value
 
 ```hcl
-resource "windows_registry_value" "license_key" {
-  path  = "HKLM:\\Software\\MyCompany\\MyApp"
-  name  = "LicenseKey"
-  type  = "Binary"
+resource "windows_registry_value" "binary_data" {
+  path  = "HKLM:\\Software\\MyApp"
+  name  = "BinaryData"
   value = "01020304"
+  type  = "Binary"
 }
 ```
 
-### ExpandString Value (Environment Variables)
+### ExpandString Value
 
 ```hcl
 resource "windows_registry_value" "install_path" {
-  path  = "HKLM:\\Software\\MyCompany\\MyApp"
+  path  = "HKLM:\\Software\\MyApp"
   name  = "InstallPath"
-  type  = "ExpandString"
   value = "%ProgramFiles%\\MyApp"
+  type  = "ExpandString"
 }
 ```
 
@@ -52,80 +63,22 @@ resource "windows_registry_value" "install_path" {
 
 ```hcl
 resource "windows_registry_value" "search_paths" {
-  path  = "HKLM:\\Software\\MyCompany\\MyApp"
+  path  = "HKLM:\\Software\\MyApp"
   name  = "SearchPaths"
-  type  = "MultiString"
   value = "C:\\Path1\nC:\\Path2\nC:\\Path3"
+  type  = "MultiString"
 }
 ```
 
-### QWORD Value (64-bit)
+### Adopt Existing Value
 
 ```hcl
-resource "windows_registry_value" "max_size" {
-  path  = "HKLM:\\Software\\MyCompany\\MyApp"
-  name  = "MaxSize"
-  type  = "Qword"
-  value = "9223372036854775807"
-}
-```
-
-### Complete Application Configuration
-
-```hcl
-# Create the registry key first
-resource "windows_registry_key" "app" {
-  path = "HKLM:\\Software\\MyCompany\\MyApp"
-}
-
-# Application name
-resource "windows_registry_value" "app_name" {
-  path  = windows_registry_key.app.path
-  name  = "AppName"
-  type  = "String"
-  value = "My Application"
-  
-  depends_on = [windows_registry_key.app]
-}
-
-# Version number
-resource "windows_registry_value" "version" {
-  path  = windows_registry_key.app.path
-  name  = "Version"
-  type  = "String"
-  value = "1.0.0"
-  
-  depends_on = [windows_registry_key.app]
-}
-
-# Port number
-resource "windows_registry_value" "port" {
-  path  = windows_registry_key.app.path
-  name  = "Port"
-  type  = "DWord"
-  value = "8080"
-  
-  depends_on = [windows_registry_key.app]
-}
-
-# Enable feature flag
-resource "windows_registry_value" "enabled" {
-  path  = windows_registry_key.app.path
-  name  = "Enabled"
-  type  = "DWord"
-  value = "1"
-  
-  depends_on = [windows_registry_key.app]
-}
-
-# Install location
-resource "windows_registry_value" "install_dir" {
-  path  = windows_registry_key.app.path
-  name  = "InstallDirectory"
-  type  = "ExpandString"
-  value = "%ProgramFiles%\\MyCompany\\MyApp"
-  
-  depends_on = [windows_registry_key.app]
+resource "windows_registry_value" "existing_value" {
+  path           = "HKLM:\\Software\\MyApp"
+  name           = "Version"
+  value          = "2.0"
+  type           = "String"
+  allow_existing = true
 }
 ```
 
@@ -133,603 +86,411 @@ resource "windows_registry_value" "install_dir" {
 
 The following arguments are supported:
 
-* `path` - (Required, String, ForceNew) The full path to the parent registry key using PowerShell notation (e.g., `HKLM:\Software\MyApp`). Changing this will force recreation.
+* `path` - (Required, Forces new resource) The path to the registry key using PowerShell drive notation (e.g., `HKLM:\\Software\\MyApp`). The key must already exist. Cannot be changed after creation.
+* `name` - (Optional, Forces new resource) The name of the registry value. Use empty string `""` for the default value. Defaults to `""`. Cannot be changed after creation.
+* `type` - (Optional, Forces new resource) The type of the registry value. Defaults to `String`. Valid values:
+  - `String` - REG_SZ (regular string)
+  - `ExpandString` - REG_EXPAND_SZ (string with environment variables)
+  - `Binary` - REG_BINARY (binary data as hex string)
+  - `DWord` - REG_DWORD (32-bit number as string)
+  - `QWord` - REG_QWORD (64-bit number as string)
+  - `MultiString` - REG_MULTI_SZ (multiple strings separated by `\n`)
+  - `Unknown` - Unknown type (use with caution)
+* `value` - (Optional) The value to set in the registry. Format depends on `type`:
+  - `String`/`ExpandString`: Plain text
+  - `DWord`/`QWord`: Numeric value as string (e.g., `"3600"`)
+  - `Binary`: Hexadecimal string (e.g., `"01020304"`)
+  - `MultiString`: Strings separated by `\n` (e.g., `"Line1\nLine2\nLine3"`)
+* `allow_existing` - (Optional) If `true`, adopt existing registry value instead of failing. If `false`, fail if value already exists. Defaults to `false`.
+* `command_timeout` - (Optional) Timeout in seconds for PowerShell commands. Defaults to `300` (5 minutes).
 
-* `name` - (Optional, String, ForceNew) The name of the registry value. If not specified or empty, creates the default value `(Default)` for the key. Changing this will force recreation.
-
-* `type` - (Optional, String, ForceNew) The type of the registry value. Default: `"String"`. Valid values:
-  - `"String"` - Text string (REG_SZ)
-  - `"ExpandString"` - Expandable text string with environment variables (REG_EXPAND_SZ)
-  - `"Binary"` - Binary data (REG_BINARY)
-  - `"DWord"` - 32-bit number (REG_DWORD)
-  - `"MultiString"` - Multiple text strings (REG_MULTI_SZ)
-  - `"Qword"` - 64-bit number (REG_QWORD)
-  - `"Unknown"` - Unknown type (REG_NONE)
-
-* `value` - (Optional, String) The value to set in the registry. Format depends on the type (see below).
-
-* `command_timeout` - (Optional, Number) Timeout in seconds for PowerShell commands. Default: `300` (5 minutes).
-
-## Attribute Reference
+## Attributes Reference
 
 In addition to all arguments above, the following attributes are exported:
 
-* `id` - Unique identifier in format `{path}\{name}` (e.g., `HKLM:\Software\MyApp\Version`).
+* `id` - The full path to the registry value in the format `path\name`.
 
 ## Import
 
-Registry values can be imported using the path and name:
+Registry values can be imported using the format `path\name`:
 
-```bash
-# Named value
-terraform import windows_registry_value.port "HKLM:\\Software\\MyApp\\Port"
-
-# Default value
-terraform import windows_registry_value.default "HKLM:\\Software\\MyApp\\"
+```shell
+terraform import windows_registry_value.app_name "HKLM:\\Software\\MyApp\ApplicationName"
 ```
 
-## Registry Value Types
+For the default value (empty name):
+```shell
+terraform import windows_registry_value.default "HKLM:\\Software\\MyApp\"
+```
 
-### String (REG_SZ)
+**Note:** Use PowerShell drive notation and include the backslash before the value name.
 
-Standard text string.
+## Behavior Notes
+
+### Registry Key Must Exist
+
+The registry key specified in `path` must already exist before creating a value. Use `windows_registry_key` resource to create keys first:
 
 ```hcl
-resource "windows_registry_value" "company_name" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "CompanyName"
+resource "windows_registry_key" "app" {
+  path = "HKLM:\\Software\\MyApp"
+}
+
+resource "windows_registry_value" "app_name" {
+  path  = windows_registry_key.app.path
+  name  = "ApplicationName"
+  value = "My Application"
   type  = "String"
-  value = "My Company Inc."
 }
 ```
 
-**Use cases**:
-- Application names
-- Company names
-- File paths (fixed)
-- Configuration text
+### Existing Value Handling
 
-### ExpandString (REG_EXPAND_SZ)
+When creating a value resource:
+- If the value **does not exist**, it will be created normally.
+- If the value **already exists**:
+  - With `allow_existing = false` (default): Resource creation fails with error showing current value and suggesting import or setting `allow_existing = true`.
+  - With `allow_existing = true`: The existing value is adopted and updated to match the configuration.
 
-Text string that can contain environment variables. Windows will expand these variables when reading the value.
+### Value Updates
 
-```hcl
-resource "windows_registry_value" "data_dir" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "DataDirectory"
-  type  = "ExpandString"
-  value = "%APPDATA%\\MyApp\\Data"
-}
+When updating a registry value:
+- Only the `value` attribute can be updated
+- Changes to `path`, `name`, or `type` force recreation of the resource
+- The value is updated using `Set-ItemProperty`
 
-resource "windows_registry_value" "log_file" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "LogFile"
-  type  = "ExpandString"
-  value = "%SystemRoot%\\Logs\\myapp.log"
-}
-```
+### Default Value
 
-**Common environment variables**:
-- `%ProgramFiles%` - C:\Program Files
-- `%ProgramFiles(x86)%` - C:\Program Files (x86)
-- `%SystemRoot%` - C:\Windows
-- `%APPDATA%` - User's AppData\Roaming
-- `%LOCALAPPDATA%` - User's AppData\Local
-- `%TEMP%` - Temporary folder
-- `%USERNAME%` - Current username
-- `%COMPUTERNAME%` - Computer name
-
-### DWord (REG_DWORD)
-
-32-bit unsigned integer (0 to 4,294,967,295).
-
-```hcl
-# Boolean flag (0 = false, 1 = true)
-resource "windows_registry_value" "enabled" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "Enabled"
-  type  = "DWord"
-  value = "1"
-}
-
-# Port number
-resource "windows_registry_value" "port" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "Port"
-  type  = "DWord"
-  value = "8080"
-}
-
-# Timeout in seconds
-resource "windows_registry_value" "timeout" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "TimeoutSeconds"
-  type  = "DWord"
-  value = "300"
-}
-```
-
-**Use cases**:
-- Boolean flags (0/1)
-- Port numbers
-- Timeouts
-- Counters
-- Enumeration values
-
-### Qword (REG_QWORD)
-
-64-bit unsigned integer (0 to 18,446,744,073,709,551,615).
-
-```hcl
-# Large file size limit (in bytes)
-resource "windows_registry_value" "max_file_size" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "MaxFileSize"
-  type  = "Qword"
-  value = "10737418240"  # 10 GB
-}
-
-# Large counter
-resource "windows_registry_value" "request_count" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "TotalRequests"
-  type  = "Qword"
-  value = "9223372036854775807"
-}
-```
-
-**Use cases**:
-- Large numbers
-- File sizes
-- Memory sizes
-- Large counters
-
-### Binary (REG_BINARY)
-
-Binary data in hexadecimal format.
-
-```hcl
-# License key
-resource "windows_registry_value" "license" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "License"
-  type  = "Binary"
-  value = "0102030405060708"
-}
-
-# Configuration blob
-resource "windows_registry_value" "config_blob" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "ConfigBlob"
-  type  = "Binary"
-  value = "DEADBEEF"
-}
-```
-
-**Format**: Hexadecimal string (each byte as 2 hex digits)
-- `"01"` = byte with value 1
-- `"FF"` = byte with value 255
-- `"0102030405"` = 5 bytes
-
-**Use cases**:
-- License keys
-- Encrypted data
-- Binary configuration
-- Certificates
-
-### MultiString (REG_MULTI_SZ)
-
-Multiple text strings, separated by newlines in Terraform.
-
-```hcl
-resource "windows_registry_value" "search_paths" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "SearchPaths"
-  type  = "MultiString"
-  value = "C:\\Path1\nC:\\Path2\nC:\\Path3"
-}
-
-resource "windows_registry_value" "allowed_users" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "AllowedUsers"
-  type  = "MultiString"
-  value = "CONTOSO\\User1\nCONTOSO\\User2\nCONTOSO\\User3"
-}
-```
-
-**Format**: Separate each string with `\n` (newline)
-
-**Use cases**:
-- Search paths
-- User lists
-- Multiple configuration values
-- Plugin lists
-
-### Unknown (REG_NONE)
-
-Empty or unknown type. Rarely used.
-
-```hcl
-resource "windows_registry_value" "placeholder" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "Placeholder"
-  type  = "Unknown"
-  value = ""
-}
-```
-
-## Default Value
-
-The default value (unnamed value) in a registry key can be set by omitting the `name` argument:
-
+To manage the default value of a registry key, use an empty string for the `name`:
 ```hcl
 resource "windows_registry_value" "default" {
-  path  = "HKLU:\\Software\\MyApp"
+  path  = "HKLM:\\Software\\MyApp"
+  name  = ""  # Default value
+  value = "Default"
   type  = "String"
-  value = "Default value text"
-  # No 'name' argument = default value
 }
 ```
 
-In the registry editor, this appears as `(Default)`.
+### Data Type Specifics
 
-## Common Use Cases
+**String / ExpandString:**
+- Plain text values
+- ExpandString expands environment variables (e.g., `%ProgramFiles%`) when read
 
-### Application Settings
+**DWord / QWord:**
+- Numeric values stored as strings in Terraform
+- DWord: 32-bit (0 to 4,294,967,295)
+- QWord: 64-bit (0 to 18,446,744,073,709,551,615)
+- Example: `value = "1234"`
+
+**Binary:**
+- Hexadecimal string representation
+- Example: `value = "01020304"` represents bytes [0x01, 0x02, 0x03, 0x04]
+
+**MultiString:**
+- Multiple strings separated by newline (`\n`)
+- Example: `value = "String1\nString2\nString3"`
+
+## Complete Examples
+
+### Application Configuration
 
 ```hcl
-resource "windows_registry_key" "app_settings" {
-  path = "HKLM:\\Software\\MyApp\\Settings"
+# Create registry key structure
+resource "windows_registry_key" "app_root" {
+  path = "HKLM:\\Software\\MyCompany\\MyApp"
 }
 
-resource "windows_registry_value" "server_url" {
-  path  = windows_registry_key.app_settings.path
-  name  = "ServerURL"
+resource "windows_registry_key" "app_config" {
+  path = "${windows_registry_key.app_root.path}\\Config"
+}
+
+# Application metadata
+resource "windows_registry_value" "app_name" {
+  path  = windows_registry_key.app_root.path
+  name  = "ApplicationName"
+  value = "My Application"
   type  = "String"
-  value = "https://api.example.com"
-  depends_on = [windows_registry_key.app_settings]
 }
 
-resource "windows_registry_value" "retry_count" {
-  path  = windows_registry_key.app_settings.path
-  name  = "RetryCount"
-  type  = "DWord"
-  value = "3"
-  depends_on = [windows_registry_key.app_settings]
+resource "windows_registry_value" "app_version" {
+  path  = windows_registry_key.app_root.path
+  name  = "Version"
+  value = "2.1.0"
+  type  = "String"
 }
 
-resource "windows_registry_value" "use_ssl" {
-  path  = windows_registry_key.app_settings.path
-  name  = "UseSSL"
+resource "windows_registry_value" "install_date" {
+  path  = windows_registry_key.app_root.path
+  name  = "InstallDate"
+  value = "2026-01-20"
+  type  = "String"
+}
+
+# Configuration values
+resource "windows_registry_value" "timeout" {
+  path  = windows_registry_key.app_config.path
+  name  = "Timeout"
+  value = "3600"
   type  = "DWord"
+}
+
+resource "windows_registry_value" "max_connections" {
+  path  = windows_registry_key.app_config.path
+  name  = "MaxConnections"
+  value = "100"
+  type  = "DWord"
+}
+
+resource "windows_registry_value" "enable_logging" {
+  path  = windows_registry_key.app_config.path
+  name  = "EnableLogging"
   value = "1"
-  depends_on = [windows_registry_key.app_settings]
+  type  = "DWord"
 }
 ```
 
-### Windows Service Configuration
+### Database Connection String
 
 ```hcl
-resource "windows_registry_key" "service_params" {
-  path = "HKLM:\\System\\CurrentControlSet\\Services\\MyService\\Parameters"
+resource "windows_registry_key" "app_db" {
+  path = "HKLM:\\Software\\MyApp\\Database"
+}
+
+resource "windows_registry_value" "db_server" {
+  path  = windows_registry_key.app_db.path
+  name  = "Server"
+  value = "sql-server-01.local"
+  type  = "String"
+}
+
+resource "windows_registry_value" "db_name" {
+  path  = windows_registry_key.app_db.path
+  name  = "Database"
+  value = "MyAppDB"
+  type  = "String"
+}
+
+resource "windows_registry_value" "db_port" {
+  path  = windows_registry_key.app_db.path
+  name  = "Port"
+  value = "1433"
+  type  = "DWord"
+}
+```
+
+### Environment-Specific Settings
+
+```hcl
+variable "environment" {
+  type = string
+}
+
+variable "api_endpoint" {
+  type = map(string)
+  default = {
+    dev  = "https://api-dev.example.com"
+    prod = "https://api.example.com"
+  }
+}
+
+resource "windows_registry_key" "app_env" {
+  path  = "HKLM:\\Software\\MyApp\\Environment"
   force = true
 }
 
-resource "windows_registry_value" "service_port" {
-  path  = windows_registry_key.service_params.path
-  name  = "Port"
-  type  = "DWord"
-  value = "9000"
-  depends_on = [windows_registry_key.service_params]
-}
-
-resource "windows_registry_value" "service_data_dir" {
-  path  = windows_registry_key.service_params.path
-  name  = "DataDirectory"
-  type  = "ExpandString"
-  value = "%ProgramData%\\MyService\\Data"
-  depends_on = [windows_registry_key.service_params]
-}
-```
-
-### Uninstall Information
-
-```hcl
-resource "windows_registry_key" "uninstall" {
-  path = "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MyApp"
-}
-
-resource "windows_registry_value" "display_name" {
-  path  = windows_registry_key.uninstall.path
-  name  = "DisplayName"
+resource "windows_registry_value" "environment" {
+  path  = windows_registry_key.app_env.path
+  name  = "Environment"
+  value = var.environment
   type  = "String"
-  value = "My Application"
-  depends_on = [windows_registry_key.uninstall]
 }
 
-resource "windows_registry_value" "display_version" {
-  path  = windows_registry_key.uninstall.path
-  name  = "DisplayVersion"
+resource "windows_registry_value" "api_url" {
+  path  = windows_registry_key.app_env.path
+  name  = "ApiEndpoint"
+  value = var.api_endpoint[var.environment]
   type  = "String"
-  value = "1.0.0"
-  depends_on = [windows_registry_key.uninstall]
-}
-
-resource "windows_registry_value" "publisher" {
-  path  = windows_registry_key.uninstall.path
-  name  = "Publisher"
-  type  = "String"
-  value = "My Company"
-  depends_on = [windows_registry_key.uninstall]
-}
-
-resource "windows_registry_value" "install_location" {
-  path  = windows_registry_key.uninstall.path
-  name  = "InstallLocation"
-  type  = "String"
-  value = "C:\\Program Files\\MyApp"
-  depends_on = [windows_registry_key.uninstall]
-}
-
-resource "windows_registry_value" "uninstall_string" {
-  path  = windows_registry_key.uninstall.path
-  name  = "UninstallString"
-  type  = "String"
-  value = "C:\\Program Files\\MyApp\\uninstall.exe"
-  depends_on = [windows_registry_key.uninstall]
 }
 ```
 
 ### Feature Flags
 
 ```hcl
-locals {
-  features = {
-    "EnableLogging"      = "1"
-    "EnableMetrics"      = "1"
-    "EnableDebugMode"    = "0"
-    "MaxConnections"     = "100"
-  }
-}
-
-resource "windows_registry_key" "features" {
+resource "windows_registry_key" "app_features" {
   path = "HKLM:\\Software\\MyApp\\Features"
 }
 
-resource "windows_registry_value" "feature_flags" {
-  for_each = local.features
-  
-  path  = windows_registry_key.features.path
-  name  = each.key
+resource "windows_registry_value" "feature_analytics" {
+  path  = windows_registry_key.app_features.path
+  name  = "EnableAnalytics"
+  value = "1"
   type  = "DWord"
-  value = each.value
-  
-  depends_on = [windows_registry_key.features]
+}
+
+resource "windows_registry_value" "feature_beta" {
+  path  = windows_registry_key.app_features.path
+  name  = "EnableBetaFeatures"
+  value = "0"
+  type  = "DWord"
 }
 ```
 
-## Dynamic Configuration
+### Path Configuration with Environment Variables
 
-### From Variables
+```hcl
+resource "windows_registry_key" "app_paths" {
+  path = "HKLM:\\Software\\MyApp\\Paths"
+}
+
+resource "windows_registry_value" "install_path" {
+  path  = windows_registry_key.app_paths.path
+  name  = "InstallPath"
+  value = "%ProgramFiles%\\MyApp"
+  type  = "ExpandString"  # Will expand %ProgramFiles% when read
+}
+
+resource "windows_registry_value" "data_path" {
+  path  = windows_registry_key.app_paths.path
+  name  = "DataPath"
+  value = "%ProgramData%\\MyApp\\Data"
+  type  = "ExpandString"
+}
+
+resource "windows_registry_value" "log_path" {
+  path  = windows_registry_key.app_paths.path
+  name  = "LogPath"
+  value = "%ProgramData%\\MyApp\\Logs"
+  type  = "ExpandString"
+}
+```
+
+### List of Search Paths (MultiString)
+
+```hcl
+resource "windows_registry_value" "search_paths" {
+  path  = "HKLM:\\Software\\MyApp"
+  name  = "SearchPaths"
+  value = join("\\n", [
+    "C:\\Program Files\\MyApp\\Plugins",
+    "C:\\Program Files\\MyApp\\Modules",
+    "C:\\ProgramData\\MyApp\\Extensions"
+  ])
+  type = "MultiString"
+}
+```
+
+## Best Practices
+
+### 1. Create Keys Before Values
+
+```hcl
+resource "windows_registry_key" "app" {
+  path = "HKLM:\\Software\\MyApp"
+}
+
+resource "windows_registry_value" "setting" {
+  path  = windows_registry_key.app.path  # Reference the key
+  name  = "Setting"
+  value = "Value"
+  type  = "String"
+}
+```
+
+### 2. Use Appropriate Data Types
+
+```hcl
+# Numbers: Use DWord or QWord
+resource "windows_registry_value" "port" {
+  name  = "Port"
+  value = "8080"  # String representation of number
+  type  = "DWord"
+}
+
+# Paths with variables: Use ExpandString
+resource "windows_registry_value" "install_dir" {
+  name  = "InstallDir"
+  value = "%ProgramFiles%\\MyApp"
+  type  = "ExpandString"
+}
+
+# Boolean flags: Use DWord with 0/1
+resource "windows_registry_value" "enabled" {
+  name  = "Enabled"
+  value = "1"  # 1 = true, 0 = false
+  type  = "DWord"
+}
+```
+
+### 3. Document Value Purpose
+
+```hcl
+# Application timeout in seconds
+resource "windows_registry_value" "timeout" {
+  path  = windows_registry_key.app_config.path
+  name  = "TimeoutSeconds"
+  value = "300"
+  type  = "DWord"
+}
+```
+
+### 4. Use Variables for Flexibility
 
 ```hcl
 variable "app_config" {
-  type = map(string)
-  default = {
-    "ServerURL"  = "https://api.example.com"
-    "APIKey"     = "secret-key-123"
-    "Timeout"    = "30"
-  }
+  type = object({
+    timeout         = number
+    max_connections = number
+    enable_logging  = bool
+  })
 }
 
-resource "windows_registry_key" "config" {
-  path = "HKLM:\\Software\\MyApp\\Config"
-}
-
-resource "windows_registry_value" "config_values" {
-  for_each = var.app_config
-  
-  path  = windows_registry_key.config.path
-  name  = each.key
-  type  = "String"
-  value = each.value
-  
-  depends_on = [windows_registry_key.config]
-}
-```
-
-### Environment-Specific
-
-```hcl
-variable "environment" {
-  default = "production"
-}
-
-locals {
-  config_by_env = {
-    development = {
-      port     = "8080"
-      log_level = "debug"
-    }
-    production = {
-      port     = "443"
-      log_level = "info"
-    }
-  }
-  config = local.config_by_env[var.environment]
-}
-
-resource "windows_registry_value" "port" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "Port"
+resource "windows_registry_value" "timeout" {
+  path  = windows_registry_key.app.path
+  name  = "Timeout"
+  value = tostring(var.app_config.timeout)
   type  = "DWord"
-  value = local.config.port
-}
-
-resource "windows_registry_value" "log_level" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "LogLevel"
-  type  = "String"
-  value = local.config.log_level
 }
 ```
 
 ## Security Considerations
 
-### Sensitive Values
+1. **Sensitive Data:** Avoid storing passwords or secrets in the registry. Use Windows Credential Manager or other secure storage instead.
 
-Mark sensitive registry values:
+2. **HKLM vs HKCU:**
+   - `HKLM` (Local Machine) affects all users, requires admin privileges
+   - `HKCU` (Current User) affects only current user
 
-```hcl
-variable "api_key" {
-  type      = string
-  sensitive = true
-}
+3. **Permissions:** Ensure Terraform has appropriate permissions to modify registry values.
 
-resource "windows_registry_value" "api_key" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "APIKey"
-  type  = "String"
-  value = var.api_key
-}
-```
-
-### Permissions
-
-The SSH user needs:
-- **Read** permission to check current value
-- **Write** permission to create/update value
-- **Delete** permission to remove value
-
-For HKLM keys, administrator privileges are required.
-
-### Sensitive Keys
-
-Be cautious with these registry areas:
-
-```hcl
-# Security settings
-"HKLM:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon"
-
-# Credentials (avoid storing passwords in plain text)
-"HKLM:\\Software\\MyApp\\Credentials"
-
-# System configuration
-"HKLM:\\System\\CurrentControlSet\\Control"
-```
+4. **Backup:** Always back up registry keys before making changes in production.
 
 ## Troubleshooting
 
-### Permission Denied
-
-**Issue**: Access denied when creating/modifying value
-
-**Solution**:
-- Ensure SSH user has administrator rights (for HKLM)
-- Check registry key permissions in `regedit`
-- Verify the parent key exists and is writable
-
-### Key Does Not Exist
-
-**Issue**: Cannot create value because parent key doesn't exist
-
-**Solution**:
-- Create the key first with `windows_registry_key`
-- Use `depends_on` to enforce order
+### "Registry key does not exist"
+Create the parent key first:
 ```hcl
-resource "windows_registry_key" "app" {
+resource "windows_registry_key" "parent" {
   path = "HKLM:\\Software\\MyApp"
 }
 
-resource "windows_registry_value" "setting" {
-  path  = windows_registry_key.app.path
-  name  = "Setting"
-  type  = "String"
-  value = "value"
-  depends_on = [windows_registry_key.app]
-}
-```
-
-### Invalid Type
-
-**Issue**: Type validation error
-
-**Solution**:
-- Use one of the valid types: String, ExpandString, Binary, DWord, MultiString, Qword, Unknown
-- Check spelling and capitalization
-
-### Value Format Error
-
-**Issue**: Value doesn't match type format
-
-**Solution**:
-- **DWord/Qword**: Use numeric string ("123" not "abc")
-- **Binary**: Use hex string ("DEADBEEF")
-- **MultiString**: Separate strings with `\n`
-
-## Best Practices
-
-### Organization
-
-```hcl
-# Group related values under subkeys
-HKLM:\Software\MyApp\Database
-HKLM:\Software\MyApp\Logging
-HKLM:\Software\MyApp\Security
-```
-
-### Naming
-
-```hcl
-# Use descriptive names
-"DatabaseConnectionString"  # Good
-"DBConn"                   # Less clear
-
-# Use PascalCase or camelCase consistently
-"LogLevel" or "logLevel"
-```
-
-### Dependencies
-
-```hcl
-# Always ensure key exists before creating values
-resource "windows_registry_key" "app" {
-  path = "HKLM:\\Software\\MyApp"
-}
-
-resource "windows_registry_value" "setting" {
-  path       = windows_registry_key.app.path
-  depends_on = [windows_registry_key.app]
+resource "windows_registry_value" "value" {
+  path = windows_registry_key.parent.path
+  name = "Setting"
   # ...
 }
 ```
 
-### Documentation
+### "Value already exists"
+- Set `allow_existing = true` to adopt it
+- Or import the existing value
 
-```hcl
-resource "windows_registry_value" "timeout" {
-  path  = "HKLM:\\Software\\MyApp"
-  name  = "ConnectionTimeout"
-  type  = "DWord"
-  value = "30"
-  
-  # Purpose: Connection timeout in seconds
-  # Default: 30 seconds
-  # Valid range: 5-300 seconds
-}
-```
+### Wrong Data Type
+Ensure the `value` matches the `type`:
+- DWord/QWord: Use string representation of numbers
+- Binary: Use hexadecimal string
+- MultiString: Separate with `\n`
 
-## Notes
-
-- Value names are case-insensitive in Windows
-- Maximum value name length: 16,383 characters
-- Maximum value data size varies by type
-- Empty string values are valid
-- The default (unnamed) value is valid and commonly used
-- Terraform stores the value in state (sensitive values are encrypted)
-
-## Related Resources
-
-- `windows_registry_key` - Create the parent key first
-- Always create keys before creating values within them
-- Use both resources together for complete registry configuration
+### Access Denied
+- Run with administrator privileges for HKLM
+- Check registry key permissions

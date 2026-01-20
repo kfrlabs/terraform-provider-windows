@@ -16,29 +16,13 @@ resource "windows_localuser" "john" {
 ### User with Full Configuration
 
 ```hcl
-resource "windows_localuser" "admin_user" {
-  username                      = "backup_admin"
-  password                      = var.backup_admin_password
-  full_name                     = "Backup Administrator"
-  description                   = "Account for automated backups"
-  password_never_expires        = true
-  user_cannot_change_password   = false
-  account_disabled              = false
-  groups                        = ["Administrators", "Backup Operators"]
-}
-```
-
-### Service Account
-
-```hcl
 resource "windows_localuser" "service_account" {
-  username                    = "svc_webapp"
+  username                    = "AppServiceAccount"
   password                    = var.service_password
-  full_name                   = "Web Application Service Account"
-  description                 = "Service account for web application"
+  full_name                   = "Application Service Account"
+  description                 = "Service account for MyApp"
   password_never_expires      = true
   user_cannot_change_password = true
-  account_disabled            = false
 }
 ```
 
@@ -46,28 +30,20 @@ resource "windows_localuser" "service_account" {
 
 ```hcl
 resource "windows_localuser" "temp_user" {
-  username         = "temp.contractor"
-  password         = "TempP@ss123!"
-  full_name        = "Temporary Contractor"
-  description      = "Temporary access for contractor"
+  username         = "TempUser"
+  password         = var.temp_password
+  description      = "Temporary account"
   account_disabled = true
 }
 ```
 
-### User with Group Memberships
+### Adopt Existing User
 
 ```hcl
-resource "windows_localuser" "operator" {
-  username    = "monitoring_user"
-  password    = var.monitoring_password
-  full_name   = "Monitoring Operator"
-  description = "Account for monitoring system"
-  
-  groups = [
-    "Performance Monitor Users",
-    "Event Log Readers",
-    "Remote Management Users"
-  ]
+resource "windows_localuser" "existing_user" {
+  username       = "Administrator"
+  password       = var.admin_password
+  allow_existing = true
 }
 ```
 
@@ -75,342 +51,142 @@ resource "windows_localuser" "operator" {
 
 The following arguments are supported:
 
-* `username` - (Required, String) The name of the local user account. Should follow Windows username conventions (letters, digits, periods, hyphens, underscores).
+* `username` - (Required, Forces new resource) The name of the local user account. Cannot be changed after creation.
+* `password` - (Required, Sensitive) The password for the local user account. Changes to this field will trigger an update.
+* `full_name` - (Optional) The full name of the user.
+* `description` - (Optional) A description for the user account.
+* `password_never_expires` - (Optional) If `true`, the password will never expire. Defaults to `false`.
+* `user_cannot_change_password` - (Optional) If `true`, the user cannot change their password. Defaults to `false`.
+* `account_disabled` - (Optional) If `true`, the account will be disabled. Defaults to `false`.
+* `allow_existing` - (Optional) If `true`, adopt existing user instead of failing. If `false`, fail if user already exists. Defaults to `false`.
+* `command_timeout` - (Optional) Timeout in seconds for PowerShell commands. Defaults to `300` (5 minutes).
 
-* `password` - (Required, String, Sensitive) The password for the local user account. Should follow the Windows password complexity requirements configured on the server.
-
-* `full_name` - (Optional, String) The full name of the user (display name).
-
-* `description` - (Optional, String) A description for the user account.
-
-* `password_never_expires` - (Optional, Boolean) If true, the password will never expire. Default: `false`.
-
-* `user_cannot_change_password` - (Optional, Boolean) If true, the user cannot change their own password. Default: `false`.
-
-* `account_disabled` - (Optional, Boolean) If true, the account will be created in a disabled state. Default: `false`.
-
-* `groups` - (Optional, Set of Strings) List of local groups this user should be a member of. Groups must already exist on the system.
-
-* `command_timeout` - (Optional, Number) Timeout in seconds for PowerShell commands. Default: `300` (5 minutes).
-
-## Attribute Reference
+## Attributes Reference
 
 In addition to all arguments above, the following attributes are exported:
 
-* `id` - The username.
+* `id` - The username of the local user.
 
 ## Import
 
 Local users can be imported using the username:
 
-```bash
-terraform import windows_localuser.john john.doe
+```shell
+terraform import windows_localuser.john "john.doe"
 ```
 
-When importing, Terraform will read the current state of the user including group memberships. However, the password cannot be retrieved and must be set in your configuration.
+**Note:** When importing, you must provide the password in your configuration, as it cannot be retrieved from the system.
 
-## Common Windows Groups
+## Behavior Notes
 
-Here are commonly used local groups for the `groups` attribute:
+### Existing User Handling
 
-### Administrative Groups
-- `Administrators` - Full system access
-- `Backup Operators` - Can backup and restore files
-- `Power Users` - Limited administrative privileges
-
-### Service Groups
-- `Remote Desktop Users` - Can connect via RDP
-- `Remote Management Users` - Can manage server remotely (WinRM)
-- `IIS_IUSRS` - IIS worker process identity
-
-### Monitoring Groups
-- `Performance Monitor Users` - Can access performance data
-- `Performance Log Users` - Can manage performance counters
-- `Event Log Readers` - Can read event logs
-
-### Network Groups
-- `Network Configuration Operators` - Can manage network settings
-- `Distributed COM Users` - Can launch DCOM applications
-
-## Password Requirements
-
-Windows enforces password complexity by default. Common requirements:
-
-- Minimum length: 8 characters (configurable via Group Policy)
-- Must contain characters from three of these categories:
-  - Uppercase letters (A-Z)
-  - Lowercase letters (a-z)
-  - Digits (0-9)
-  - Special characters (!@#$%^&*())
-- Cannot contain username or parts of full name
-
-**Example of strong passwords**:
-- `P@ssw0rd123!`
-- `MyS3cure!Pass`
-- `C0mpl3x#2024`
-
-**Recommended practices**:
-- Use Terraform variables with `sensitive = true` for passwords
-- Store passwords in a secrets management system (Vault, AWS Secrets Manager, etc.)
-- Rotate passwords regularly
-- Use unique passwords for each account
-
-## Managing Group Memberships
-
-### Adding User to Multiple Groups
-
-```hcl
-resource "windows_localuser" "admin" {
-  username = "backup_admin"
-  password = var.password
-  
-  groups = [
-    "Administrators",
-    "Backup Operators",
-    "Remote Desktop Users"
-  ]
-}
-```
-
-### Removing User from Groups
-
-When you update the `groups` attribute, Terraform will:
-- Add the user to any new groups in the list
-- Remove the user from any groups no longer in the list
-
-```hcl
-# Before: member of Administrators, Backup Operators
-# After: only member of Backup Operators
-
-resource "windows_localuser" "admin" {
-  username = "backup_admin"
-  password = var.password
-  
-  groups = [
-    "Backup Operators"  # Removed from Administrators
-  ]
-}
-```
-
-### Dynamic Group Assignment
-
-```hcl
-variable "is_admin" {
-  type    = bool
-  default = false
-}
-
-resource "windows_localuser" "user" {
-  username = "app_user"
-  password = var.password
-  
-  groups = var.is_admin ? ["Administrators", "Users"] : ["Users"]
-}
-```
-
-## Account Lifecycle Management
-
-### Creating Multiple Users
-
-```hcl
-variable "users" {
-  type = map(object({
-    full_name   = string
-    description = string
-    groups      = list(string)
-  }))
-  default = {
-    "dev1" = {
-      full_name   = "Developer One"
-      description = "Development team member"
-      groups      = ["Users", "Remote Desktop Users"]
-    }
-    "dev2" = {
-      full_name   = "Developer Two"
-      description = "Development team member"
-      groups      = ["Users", "Remote Desktop Users"]
-    }
-  }
-}
-
-resource "windows_localuser" "developers" {
-  for_each = var.users
-  
-  username    = each.key
-  password    = var.default_password
-  full_name   = each.value.full_name
-  description = each.value.description
-  groups      = each.value.groups
-}
-```
-
-### Temporary Account with Expiration
-
-While this resource doesn't directly support account expiration, you can combine it with external automation:
-
-```hcl
-resource "windows_localuser" "temp" {
-  username    = "temp_user_${formatdate("YYYYMMDD", timestamp())}"
-  password    = random_password.temp.result
-  description = "Temporary account created ${formatdate("YYYY-MM-DD", timestamp())}"
-}
-
-resource "random_password" "temp" {
-  length  = 16
-  special = true
-}
-
-# Use external script or scheduled task to disable/delete after expiration
-```
-
-## Security Best Practices
+When creating a user resource:
+- If the user **does not exist**, it will be created normally.
+- If the user **already exists**:
+  - With `allow_existing = false` (default): Resource creation fails with error message suggesting import or setting `allow_existing = true`.
+  - With `allow_existing = true`: The existing user is adopted into Terraform state. The password and other attributes will be updated to match the configuration.
 
 ### Password Management
 
+- The password is marked as **sensitive** and will not appear in Terraform logs or output.
+- Password changes are detected and will trigger an update of the user account.
+- The actual password value cannot be read from the system, so Terraform relies on the value in the configuration.
+
+### Account Status
+
+The `account_disabled` attribute controls whether the account is enabled:
+- `account_disabled = false`: Account is enabled (default)
+- `account_disabled = true`: Account is disabled and cannot be used to log in
+
+### User Account Properties Update
+
+When updating an existing user:
+- Password changes are applied via `Set-LocalUser`
+- Full name, description, and password policy flags can be updated
+- Account enabled/disabled status can be toggled
+- Username cannot be changed (ForceNew)
+
+## Common Use Cases
+
+### Service Accounts
+
 ```hcl
-# Use Terraform variables marked as sensitive
-variable "admin_password" {
+resource "windows_localuser" "iis_app_pool" {
+  username                    = "IISAppPoolUser"
+  password                    = var.iis_password
+  full_name                   = "IIS Application Pool User"
+  description                 = "User account for IIS application pool"
+  password_never_expires      = true
+  user_cannot_change_password = true
+}
+
+resource "windows_localgroupmember" "iis_membership" {
+  group  = "IIS_IUSRS"
+  member = windows_localuser.iis_app_pool.username
+}
+```
+
+### Administrative User
+
+```hcl
+resource "windows_localuser" "app_admin" {
+  username    = "AppAdmin"
+  password    = var.admin_password
+  full_name   = "Application Administrator"
+  description = "Administrator for application management"
+}
+
+resource "windows_localgroupmember" "app_admin_membership" {
+  group  = "Administrators"
+  member = windows_localuser.app_admin.username
+}
+```
+
+### Temporary User with Expiration
+
+```hcl
+resource "windows_localuser" "contractor" {
+  username                    = "ContractorUser"
+  password                    = var.contractor_password
+  full_name                   = "External Contractor"
+  description                 = "Temporary contractor access - Valid until 2026-06-30"
+  password_never_expires      = false
+  user_cannot_change_password = true
+}
+```
+
+## Security Considerations
+
+1. **Password Storage**: Store passwords in Terraform variables, environment variables, or a secure secrets management system. Never commit passwords to version control.
+
+2. **Password Complexity**: Ensure passwords meet Windows complexity requirements:
+   - At least 8 characters (recommended: 12+)
+   - Mix of uppercase, lowercase, numbers, and symbols
+   - Not containing the username
+
+3. **Least Privilege**: Create users with minimal necessary permissions. Use group membership to grant additional access rather than making every user an administrator.
+
+4. **Service Accounts**: For service accounts:
+   - Set `password_never_expires = true`
+   - Set `user_cannot_change_password = true`
+   - Use descriptive names and descriptions
+   - Document the purpose of each service account
+
+## Password Change Example
+
+```hcl
+variable "current_password" {
   type      = string
   sensitive = true
 }
 
-resource "windows_localuser" "admin" {
-  username = "admin_user"
-  password = var.admin_password
+resource "windows_localuser" "app_user" {
+  username = "AppUser"
+  password = var.current_password
+  full_name = "Application User"
 }
+
+# To change the password, update the variable value and apply:
+# terraform apply -var="current_password=NewP@ssw0rd456!"
 ```
-
-```bash
-# Pass password via environment variable
-export TF_VAR_admin_password="P@ssw0rd123!"
-terraform apply
-```
-
-### Least Privilege Principle
-
-```hcl
-# Regular user with minimal permissions
-resource "windows_localuser" "app_service" {
-  username                      = "svc_app"
-  password                      = var.service_password
-  description                   = "Application service account"
-  password_never_expires        = true
-  user_cannot_change_password   = true
-  
-  # Only add to groups necessary for the application
-  groups = ["IIS_IUSRS"]
-}
-```
-
-### Service Accounts
-
-For service accounts, consider:
-
-```hcl
-resource "windows_localuser" "service" {
-  username                    = "svc_backup"
-  password                    = var.service_password
-  full_name                   = "Backup Service Account"
-  description                 = "Managed by Terraform - Do not modify manually"
-  password_never_expires      = true
-  user_cannot_change_password = true
-  account_disabled            = false
-  
-  groups = ["Backup Operators"]
-}
-```
-
-**Service account best practices**:
-- Use descriptive names with `svc_` prefix
-- Set `password_never_expires = true` to prevent service disruption
-- Set `user_cannot_change_password = true` to prevent accidental changes
-- Document the purpose in `description`
-- Grant only necessary permissions via group memberships
-
-## Updating User Attributes
-
-### Changing Password
-
-When you update the password in your configuration, Terraform will:
-1. Detect the change during `terraform plan`
-2. Update the password on the server during `terraform apply`
-3. The user's session remains active (no logout)
-
-⚠️ **Note**: The password is marked as sensitive and won't be displayed in plan output.
-
-### Modifying Group Memberships
-
-Terraform tracks group memberships and will:
-- Add user to new groups
-- Remove user from groups no longer listed
-- Preserve memberships for groups managed outside Terraform (if not in the `groups` list)
-
-### Enabling/Disabling Accounts
-
-```hcl
-resource "windows_localuser" "user" {
-  username         = "john.doe"
-  password         = var.password
-  account_disabled = true  # Change from false to true to disable
-}
-```
-
-## Troubleshooting
-
-### User Already Exists
-
-**Issue**: Error creating user because it already exists
-
-**Solution**:
-- Import the existing user: `terraform import windows_localuser.john john.doe`
-- Or manually delete the user on Windows and re-run Terraform
-
-### Permission Denied
-
-**Issue**: `Access is denied` when creating/modifying users
-
-**Solution**:
-- The SSH user must have administrator rights
-- Verify: `net localgroup Administrators`
-
-### Password Complexity Error
-
-**Issue**: Password does not meet complexity requirements
-
-**Solution**:
-- Check Windows password policy: `net accounts`
-- Use a stronger password meeting all requirements
-- Verify minimum length and character requirements
-
-### Group Not Found
-
-**Issue**: Error adding user to group because group doesn't exist
-
-**Solution**:
-- List available groups: `Get-LocalGroup`
-- Create the group first (manually or with `windows_localgroup` resource)
-- Use exact group name (case-sensitive)
-
-### User Cannot Login
-
-**Issue**: User created successfully but cannot login
-
-**Solution**:
-- Check if account is disabled: `Get-LocalUser -Name username | Select-Object Enabled`
-- Verify Remote Desktop access: `net localgroup "Remote Desktop Users"`
-- Check Group Policy restrictions
-
-## Notes
-
-- Username changes will force recreation of the user (new user will be created, old one deleted)
-- Password updates are applied in-place without recreating the user
-- Group memberships are managed as a set (order doesn't matter)
-- The provider cannot read the current password from Windows (it's one-way encrypted)
-- User profile data is not managed by this resource
-- Home directory creation is not automatic (Windows default behavior)
-
-## Related Resources
-
-- `windows_localgroup` - Manage local groups
-- Consider using Active Directory for domain environments
-- For advanced user management, consider ADSI or Active Directory PowerShell module
