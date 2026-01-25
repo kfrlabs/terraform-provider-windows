@@ -8,11 +8,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
-	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
-// FeatureInfo représente les informations d'une fonctionnalité Windows
+// FeatureDataSourceInfo represents information about a Windows feature
 type FeatureDataSourceInfo struct {
 	Exists                    bool   `json:"Exists"`
 	Name                      string `json:"Name"`
@@ -83,19 +82,26 @@ func DataSourceWindowsFeature() *schema.Resource {
 
 func dataSourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	// 1. Pool SSH avec cleanup
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading Windows feature: %s", name))
+	tflog.Info(ctx, "Reading Windows feature data source",
+		map[string]any{"feature_name": name})
 
-	// Valider le nom de la fonctionnalité pour sécurité
+	// Validate feature name for security
 	if err := utils.ValidateField(name, name, "name"); err != nil {
 		return utils.HandleResourceError("validate", name, "name", err)
 	}
 
-	// Commande PowerShell pour récupérer les informations de la fonctionnalité
+	// PowerShell command to retrieve feature information
 	command := fmt.Sprintf(`
 $feature = Get-WindowsFeature -Name %s -ErrorAction SilentlyContinue
 if ($feature) {
@@ -117,6 +123,8 @@ if ($feature) {
 `,
 		powershell.QuotePowerShellString(name),
 	)
+
+	tflog.Debug(ctx, "Executing command to retrieve feature information")
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
@@ -169,6 +177,12 @@ if ($feature) {
 		return utils.HandleResourceError("read", name, "sub_features", err)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read feature: %s (installed=%v)", name, info.Installed))
+	tflog.Info(ctx, "Successfully read feature data source",
+		map[string]any{
+			"feature_name":  name,
+			"installed":     info.Installed,
+			"install_state": info.InstallState,
+		})
+
 	return nil
 }

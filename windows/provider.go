@@ -11,6 +11,12 @@ import (
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 )
 
+// ProviderMeta holds provider-level metadata including the connection pool
+type ProviderMeta struct {
+	connectionPool *ssh.ConnectionPool
+	sshConfig      ssh.Config
+}
+
 func Provider() *schema.Provider {
 	return &schema.Provider{
 		Schema: map[string]*schema.Schema{
@@ -66,6 +72,31 @@ func Provider() *schema.Provider {
 				Description: "If true, fail if host key is not found in known_hosts or fingerprints don't match. " +
 					"If false, log a warning but proceed. Default is true for security.",
 			},
+			// Connection Pool Settings
+			"enable_connection_pool": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     true,
+				Description: "Enable SSH connection pooling for better performance.",
+			},
+			"pool_max_idle": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     5,
+				Description: "Maximum number of idle connections in the pool.",
+			},
+			"pool_max_active": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     10,
+				Description: "Maximum number of active connections (0 = unlimited).",
+			},
+			"pool_idle_timeout": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     300,
+				Description: "Maximum time (in seconds) a connection can be idle before being closed.",
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"windows_feature":          ResourceWindowsFeature(),
@@ -77,7 +108,6 @@ func Provider() *schema.Provider {
 			"windows_registry_value":   ResourceWindowsRegistryValue(),
 			"windows_service":          ResourceWindowsService(),
 		},
-		// ✅ NOUVEAU : Ajout des Data Sources
 		DataSourcesMap: map[string]*schema.Resource{
 			"windows_localuser":         DataSourceWindowsLocalUser(),
 			"windows_localgroup":        DataSourceWindowsLocalGroup(),
@@ -91,7 +121,7 @@ func Provider() *schema.Provider {
 	}
 }
 
-// providerConfigure configure le provider Windows avec les paramètres SSH
+// providerConfigure configures the Windows provider with SSH settings and connection pool
 func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
@@ -101,6 +131,7 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 			"username": d.Get("username").(string),
 		})
 
+	// Build SSH configuration
 	config := ssh.Config{
 		Host:                  d.Get("host").(string),
 		Username:              d.Get("username").(string),
@@ -112,7 +143,7 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		StrictHostKeyChecking: d.Get("strict_host_key_checking").(bool),
 	}
 
-	// Traiter les empreintes digitales host key
+	// Process host key fingerprints
 	if fingerprints, ok := d.GetOk("host_key_fingerprints"); ok {
 		fpList := fingerprints.([]interface{})
 		config.HostKeyFingerprints = make([]string, len(fpList))
@@ -123,7 +154,44 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 			map[string]any{"count": len(config.HostKeyFingerprints)})
 	}
 
-	// Créer le client SSH
+	// Security validation
+	securityDiags := validateSecurityConfig(d)
+	diags = append(diags, securityDiags...)
+
+	// Check if connection pooling is enabled
+	enablePool := d.Get("enable_connection_pool").(bool)
+
+	if enablePool {
+		// Create connection pool
+		poolConfig := ssh.PoolConfig{
+			MaxIdle:      d.Get("pool_max_idle").(int),
+			MaxActive:    d.Get("pool_max_active").(int),
+			IdleTimeout:  time.Duration(d.Get("pool_idle_timeout").(int)) * time.Second,
+			WaitTimeout:  30 * time.Second,
+			TestOnBorrow: true,
+			TestInterval: 30 * time.Second,
+		}
+
+		pool := ssh.NewConnectionPool(config, poolConfig)
+
+		tflog.Info(ctx, "connection pool created",
+			map[string]any{
+				"max_idle":     poolConfig.MaxIdle,
+				"max_active":   poolConfig.MaxActive,
+				"idle_timeout": poolConfig.IdleTimeout,
+			})
+
+		meta := &ProviderMeta{
+			connectionPool: pool,
+			sshConfig:      config,
+		}
+
+		return meta, diags
+	}
+
+	// Fallback to single SSH client (legacy mode)
+	tflog.Info(ctx, "connection pooling disabled, using single connection mode")
+
 	sshClient, err := ssh.NewClient(config)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to create SSH client: %v", err)
@@ -140,4 +208,79 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 		map[string]any{"host": config.Host})
 
 	return sshClient, diags
+}
+
+// validateSecurityConfig validates the security configuration
+func validateSecurityConfig(d *schema.ResourceData) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	strictHostKey := d.Get("strict_host_key_checking").(bool)
+	hasFingerprints := false
+	hasKnownHosts := d.Get("known_hosts_path").(string) != ""
+
+	if fingerprints, ok := d.GetOk("host_key_fingerprints"); ok {
+		hasFingerprints = len(fingerprints.([]interface{})) > 0
+	}
+
+	if !strictHostKey && !hasFingerprints && !hasKnownHosts {
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Warning,
+			Summary:  "Insecure SSH configuration",
+			Detail: "Host key verification is disabled without fingerprints or known_hosts. " +
+				"This configuration is insecure and should only be used in development environments. " +
+				"For production, enable strict_host_key_checking or provide host_key_fingerprints.",
+		})
+	}
+
+	// Validate that authentication method is provided
+	hasPassword := d.Get("password").(string) != ""
+	hasKeyPath := d.Get("key_path").(string) != ""
+	useSSHAgent := d.Get("use_ssh_agent").(bool)
+
+	if !hasPassword && !hasKeyPath && !useSSHAgent {
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "No authentication method provided",
+			Detail:   "You must provide at least one authentication method: password, key_path, or use_ssh_agent.",
+		})
+	}
+
+	return diags
+}
+
+// GetSSHClient gets an SSH client from the provider meta
+// This helper function abstracts the connection pool vs single client logic
+func GetSSHClient(ctx context.Context, m interface{}) (*ssh.Client, func(), error) {
+	switch meta := m.(type) {
+	case *ProviderMeta:
+		// Connection pool mode
+		client, err := meta.connectionPool.Get(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get connection from pool: %w", err)
+		}
+
+		// Return client and cleanup function
+		cleanup := func() {
+			meta.connectionPool.Put(client)
+		}
+
+		return client, cleanup, nil
+
+	case *ssh.Client:
+		// Single client mode (legacy)
+		// No cleanup needed as the connection is reused
+		cleanup := func() {}
+		return meta, cleanup, nil
+
+	default:
+		return nil, nil, fmt.Errorf("invalid provider meta type")
+	}
+}
+
+// GetPoolStats returns connection pool statistics if pooling is enabled
+func GetPoolStats(m interface{}) (ssh.PoolStats, bool) {
+	if meta, ok := m.(*ProviderMeta); ok {
+		return meta.connectionPool.Stats(), true
+	}
+	return ssh.PoolStats{}, false
 }

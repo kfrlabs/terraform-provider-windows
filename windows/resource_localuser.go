@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -13,7 +12,7 @@ import (
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
-// LocalUserInfo représente les informations d'un utilisateur local
+// LocalUserInfo represents information about a local user
 type LocalUserInfo struct {
 	Exists                   bool   `json:"Exists"`
 	FullName                 string `json:"FullName"`
@@ -90,16 +89,16 @@ func ResourceWindowsLocalUser() *schema.Resource {
 	}
 }
 
-// checkLocalUserExists vérifie si un utilisateur local existe et retourne ses informations
+// checkLocalUserExists checks if a local user exists and returns its information
 func checkLocalUserExists(ctx context.Context, sshClient *ssh.Client, username string, timeout int) (*LocalUserInfo, error) {
-	// Valider le username pour sécurité
+	// Validate username for security
 	if err := utils.ValidateField(username, username, "username"); err != nil {
 		return nil, err
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Checking if local user exists: %s", username))
+	tflog.Debug(ctx, "Checking if local user exists", map[string]any{"username": username})
 
-	// Commande PowerShell qui retourne du JSON structuré
+	// PowerShell command that returns structured JSON
 	command := fmt.Sprintf(`
 $user = Get-LocalUser -Name %s -ErrorAction SilentlyContinue
 if ($user) {
@@ -133,21 +132,27 @@ if ($user) {
 
 func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	// 1. Pool SSH avec cleanup
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	username := d.Get("username").(string)
 	password := d.Get("password").(string)
 	timeout := d.Get("command_timeout").(int)
 	allowExisting := d.Get("allow_existing").(bool)
 
-	tflog.Info(ctx, fmt.Sprintf("[CREATE] Starting local user creation for: %s", username))
+	tflog.Info(ctx, "Creating local user", map[string]any{"username": username})
 
-	// Valider le username pour sécurité
+	// Validate username for security
 	if err := utils.ValidateField(username, username, "username"); err != nil {
 		return err
 	}
 
-	// Vérifier si l'utilisateur existe déjà
+	// Check if user already exists
 	info, err := checkLocalUserExists(ctx, sshClient, username, timeout)
 	if err != nil {
 		return utils.HandleResourceError("check_existing", username, "state", err)
@@ -155,33 +160,32 @@ func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error
 
 	if info.Exists {
 		if allowExisting {
-			tflog.Info(ctx, fmt.Sprintf("[CREATE] User %s already exists, adopting it (allow_existing=true)", username))
+			tflog.Info(ctx, "User already exists, adopting it",
+				map[string]any{"username": username})
 			d.SetId(username)
 			return resourceWindowsLocalUserRead(d, m)
-		} else {
-			resourceName := "localuser"
-			return utils.HandleResourceError(
-				"create",
-				username,
-				"state",
-				fmt.Errorf("local user already exists. "+
-					"To manage this existing user, either:\n"+
-					"  1. Import it: terraform import windows_localuser.%s '%s'\n"+
-					"  2. Set allow_existing = true in your configuration\n"+
-					"  3. Remove it first (WARNING): Remove-LocalUser -Name '%s' -Force",
-					resourceName, username, username),
-			)
 		}
+
+		return utils.HandleResourceError(
+			"create",
+			username,
+			"state",
+			fmt.Errorf("local user already exists. "+
+				"To manage this existing user, either:\n"+
+				"  1. Import it: terraform import windows_localuser.example '%s'\n"+
+				"  2. Set allow_existing = true in your configuration",
+				username),
+		)
 	}
 
-	// Construire la commande de manière sécurisée
+	// Build command securely
 	command := fmt.Sprintf(
 		"New-LocalUser -Name %s -Password (ConvertTo-SecureString -AsPlainText %s -Force)",
 		powershell.QuotePowerShellString(username),
 		powershell.QuotePowerShellString(password),
 	)
 
-	// Ajouter les paramètres optionnels
+	// Add optional parameters
 	if fullName, ok := d.GetOk("full_name"); ok {
 		fullNameStr := fullName.(string)
 		if err := utils.ValidateField(fullNameStr, username, "full_name"); err != nil {
@@ -206,14 +210,9 @@ func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error
 		command += " -UserMayNotChangePassword"
 	}
 
-	if d.Get("account_disabled").(bool) {
-		command += " -AccountNeverExpires"
-	}
-
 	command += " -ErrorAction Stop"
 
-	tflog.Info(ctx, "[CREATE] Creating local user (password hidden)")
-	tflog.Debug(ctx, fmt.Sprintf("[CREATE] Executing: %s", strings.ReplaceAll(command, password, "***REDACTED***")))
+	tflog.Debug(ctx, "Creating local user with command (password hidden)")
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
@@ -228,37 +227,39 @@ func resourceWindowsLocalUserCreate(d *schema.ResourceData, m interface{}) error
 		)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[CREATE] Local user created successfully: %s", username))
+	tflog.Info(ctx, "Local user created successfully", map[string]any{"username": username})
 
-	// Désactiver le compte si nécessaire
+	// Disable account if necessary
 	if d.Get("account_disabled").(bool) {
 		disableCmd := fmt.Sprintf("Disable-LocalUser -Name %s -ErrorAction Stop",
 			powershell.QuotePowerShellString(username))
 
-		tflog.Debug(ctx, "[CREATE] Disabling user account")
+		tflog.Debug(ctx, "Disabling user account", map[string]any{"username": username})
+
 		stdout, stderr, err := sshClient.ExecuteCommand(disableCmd, timeout)
 		if err != nil {
-			return utils.HandleCommandError(
-				"create",
-				username,
-				"account_disabled",
-				disableCmd,
-				stdout,
-				stderr,
-				err,
-			)
+			return utils.HandleCommandError("create", username, "account_disabled", disableCmd, stdout, stderr, err)
 		}
 	}
 
 	d.SetId(username)
-	tflog.Info(ctx, fmt.Sprintf("[CREATE] Local user resource created successfully with ID: %s", username))
+
+	// Log pool statistics if available
+	if stats, ok := GetPoolStats(m); ok {
+		tflog.Debug(ctx, "Pool statistics after create", map[string]any{"stats": stats.String()})
+	}
 
 	return resourceWindowsLocalUserRead(d, m)
 }
 
 func resourceWindowsLocalUserRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	username := d.Id()
 	timeoutVal, ok := d.GetOk("command_timeout")
@@ -269,29 +270,36 @@ func resourceWindowsLocalUserRead(d *schema.ResourceData, m interface{}) error {
 		timeout = timeoutVal.(int)
 	}
 
-	// Valider le username
+	// Validate username
 	if err := utils.ValidateField(username, username, "username"); err != nil {
-		tflog.Warn(ctx, fmt.Sprintf("[READ] Invalid username format: %v", err))
+		tflog.Warn(ctx, "Invalid username format", map[string]any{
+			"username": username,
+			"error":    err.Error(),
+		})
 		d.SetId("")
 		return nil
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("[READ] Reading local user: %s", username))
+	tflog.Debug(ctx, "Reading local user", map[string]any{"username": username})
 
 	info, err := checkLocalUserExists(ctx, sshClient, username, timeout)
 	if err != nil {
-		tflog.Warn(ctx, fmt.Sprintf("[READ] Failed to read local user %s: %v", username, err))
+		tflog.Warn(ctx, "Failed to read local user", map[string]any{
+			"username": username,
+			"error":    err.Error(),
+		})
 		d.SetId("")
 		return nil
 	}
 
 	if !info.Exists {
-		tflog.Debug(ctx, fmt.Sprintf("[READ] Local user %s does not exist, removing from state", username))
+		tflog.Debug(ctx, "Local user does not exist, removing from state",
+			map[string]any{"username": username})
 		d.SetId("")
 		return nil
 	}
 
-	// Mettre à jour le state
+	// Update state
 	if err := d.Set("username", username); err != nil {
 		return utils.HandleResourceError("read", username, "username", err)
 	}
@@ -311,25 +319,35 @@ func resourceWindowsLocalUserRead(d *schema.ResourceData, m interface{}) error {
 		return utils.HandleResourceError("read", username, "account_disabled", err)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("[READ] Local user read successfully: %s (enabled=%v)", username, info.Enabled))
+	tflog.Debug(ctx, "Local user read successfully",
+		map[string]any{
+			"username": username,
+			"enabled":  info.Enabled,
+		})
+
 	return nil
 }
 
 func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	username := d.Get("username").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Updating local user: %s", username))
+	tflog.Info(ctx, "Updating local user", map[string]any{"username": username})
 
-	// Valider le username pour sécurité
+	// Validate username for security
 	if err := utils.ValidateField(username, username, "username"); err != nil {
 		return err
 	}
 
-	// Mettre à jour le mot de passe
+	// Update password
 	if d.HasChange("password") {
 		password := d.Get("password").(string)
 		command := fmt.Sprintf(
@@ -338,8 +356,7 @@ func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error
 			powershell.QuotePowerShellString(password),
 		)
 
-		tflog.Info(ctx, "[UPDATE] Updating password")
-		tflog.Debug(ctx, "[UPDATE] Executing: Set-LocalUser -Password (password hidden)")
+		tflog.Debug(ctx, "Updating password (password hidden)")
 
 		stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 		if err != nil {
@@ -355,7 +372,7 @@ func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error
 		}
 	}
 
-	// Construire la commande de mise à jour pour les autres attributs
+	// Build update command for other attributes
 	needsUpdate := false
 	command := fmt.Sprintf("Set-LocalUser -Name %s", powershell.QuotePowerShellString(username))
 
@@ -389,64 +406,59 @@ func resourceWindowsLocalUserUpdate(d *schema.ResourceData, m interface{}) error
 
 	if needsUpdate {
 		command += " -ErrorAction Stop"
-		tflog.Debug(ctx, fmt.Sprintf("[UPDATE] Executing: %s", command))
+
+		tflog.Debug(ctx, "Executing user update", map[string]any{"username": username})
 
 		stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 		if err != nil {
-			return utils.HandleCommandError(
-				"update",
-				username,
-				"properties",
-				command,
-				stdout,
-				stderr,
-				err,
-			)
+			return utils.HandleCommandError("update", username, "properties", command, stdout, stderr, err)
 		}
 	}
 
-	// Gérer l'activation/désactivation du compte
+	// Handle account enable/disable
 	if d.HasChange("account_disabled") {
 		disabled := d.Get("account_disabled").(bool)
 		var cmd string
+		var action string
+
 		if disabled {
 			cmd = fmt.Sprintf("Disable-LocalUser -Name %s -ErrorAction Stop",
 				powershell.QuotePowerShellString(username))
-			tflog.Info(ctx, "[UPDATE] Disabling user account")
+			action = "Disabling"
 		} else {
 			cmd = fmt.Sprintf("Enable-LocalUser -Name %s -ErrorAction Stop",
 				powershell.QuotePowerShellString(username))
-			tflog.Info(ctx, "[UPDATE] Enabling user account")
+			action = "Enabling"
 		}
+
+		tflog.Debug(ctx, action+" user account", map[string]any{"username": username})
 
 		stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 		if err != nil {
-			return utils.HandleCommandError(
-				"update",
-				username,
-				"account_disabled",
-				cmd,
-				stdout,
-				stderr,
-				err,
-			)
+			return utils.HandleCommandError("update", username, "account_disabled", cmd, stdout, stderr, err)
 		}
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[UPDATE] Local user updated successfully: %s", username))
+	tflog.Info(ctx, "Local user updated successfully", map[string]any{"username": username})
+
 	return resourceWindowsLocalUserRead(d, m)
 }
 
 func resourceWindowsLocalUserDelete(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	username := d.Get("username").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, fmt.Sprintf("[DELETE] Deleting local user: %s", username))
+	tflog.Info(ctx, "Deleting local user", map[string]any{"username": username})
 
-	// Valider le username pour sécurité
+	// Validate username for security
 	if err := utils.ValidateField(username, username, "username"); err != nil {
 		return err
 	}
@@ -454,13 +466,260 @@ func resourceWindowsLocalUserDelete(d *schema.ResourceData, m interface{}) error
 	command := fmt.Sprintf("Remove-LocalUser -Name %s -ErrorAction Stop",
 		powershell.QuotePowerShellString(username))
 
-	tflog.Debug(ctx, fmt.Sprintf("[DELETE] Executing: %s", command))
+	tflog.Debug(ctx, "Executing user deletion", map[string]any{"username": username})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError("delete", username, "state", command, stdout, stderr, err)
+	}
+
+	d.SetId("")
+
+	tflog.Info(ctx, "Local user deleted successfully", map[string]any{"username": username})
+
+	return nil
+}
+
+// ============================================================================
+// BATCH OPERATIONS FOR MULTIPLE LOCAL USERS
+// ============================================================================
+
+// LocalUserConfig represents a local user configuration for batch operations
+type LocalUserConfig struct {
+	Username                 string
+	Password                 string
+	FullName                 string
+	Description              string
+	PasswordNeverExpires     bool
+	UserCannotChangePassword bool
+	AccountDisabled          bool
+}
+
+// CreateMultipleLocalUsers creates multiple local users in a batch
+func CreateMultipleLocalUsers(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	users []LocalUserConfig,
+	timeout int,
+) error {
+	if len(users) == 0 {
+		return nil
+	}
+
+	tflog.Info(ctx, "Creating multiple local users in batch",
+		map[string]any{"count": len(users)})
+
+	// Build batch command
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, user := range users {
+		// Build creation command
+		cmd := fmt.Sprintf(
+			"New-LocalUser -Name %s -Password (ConvertTo-SecureString -AsPlainText %s -Force)",
+			powershell.QuotePowerShellString(user.Username),
+			powershell.QuotePowerShellString(user.Password),
+		)
+
+		if user.FullName != "" {
+			cmd += fmt.Sprintf(" -FullName %s", powershell.QuotePowerShellString(user.FullName))
+		}
+
+		if user.Description != "" {
+			cmd += fmt.Sprintf(" -Description %s", powershell.QuotePowerShellString(user.Description))
+		}
+
+		if user.PasswordNeverExpires {
+			cmd += " -PasswordNeverExpires"
+		}
+
+		if user.UserCannotChangePassword {
+			cmd += " -UserMayNotChangePassword"
+		}
+
+		cmd += " -ErrorAction SilentlyContinue; "
+
+		// Disable if needed
+		if user.AccountDisabled {
+			cmd += fmt.Sprintf("Disable-LocalUser -Name %s -ErrorAction SilentlyContinue; ",
+				powershell.QuotePowerShellString(user.Username))
+		}
+
+		// Check if created
+		cmd += fmt.Sprintf("(Get-LocalUser -Name %s -ErrorAction SilentlyContinue) -ne $null",
+			powershell.QuotePowerShellString(user.Username))
+
+		batch.Add(cmd)
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch user creation (passwords hidden)",
+		map[string]any{"user_count": len(users)})
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return utils.HandleCommandError(
-			"delete",
-			username,
+			"batch_create",
+			"multiple_users",
+			"state",
+			"batch user creation (passwords hidden)",
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Check results
+	failedUsers := []string{}
+	for i, user := range users {
+		created, _ := result.GetStringResult(i)
+		if created != "True" {
+			failedUsers = append(failedUsers, user.Username)
+		}
+	}
+
+	if len(failedUsers) > 0 {
+		tflog.Warn(ctx, "Some users failed to create",
+			map[string]any{
+				"failed_count": len(failedUsers),
+				"failed_users": failedUsers,
+			})
+	}
+
+	tflog.Info(ctx, "Successfully created local users in batch",
+		map[string]any{
+			"total":   len(users),
+			"failed":  len(failedUsers),
+			"success": len(users) - len(failedUsers),
+		})
+
+	return nil
+}
+
+// CheckMultipleLocalUsersExist checks if multiple local users exist
+func CheckMultipleLocalUsersExist(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	usernames []string,
+	timeout int,
+) (map[string]*LocalUserInfo, error) {
+	if len(usernames) == 0 {
+		return make(map[string]*LocalUserInfo), nil
+	}
+
+	tflog.Debug(ctx, "Checking multiple local users existence",
+		map[string]any{"count": len(usernames)})
+
+	// Build batch command
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, username := range usernames {
+		command := fmt.Sprintf(`
+$user = Get-LocalUser -Name %s -ErrorAction SilentlyContinue
+if ($user) {
+    @{
+        'Exists' = $true
+        'FullName' = $user.FullName
+        'Description' = $user.Description
+        'PasswordNeverExpires' = $user.PasswordNeverExpires
+        'UserMayNotChangePassword' = -not $user.UserMayChangePassword
+        'Enabled' = $user.Enabled
+    } | ConvertTo-Json -Compress
+} else {
+    @{ 'Exists' = $false } | ConvertTo-Json -Compress
+}`,
+			powershell.QuotePowerShellString(username))
+
+		batch.Add(command)
+	}
+
+	cmd := batch.Build()
+	stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
+	if err != nil {
+		return nil, utils.HandleCommandError(
+			"batch_check",
+			"multiple_users",
+			"state",
+			cmd,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Build result map
+	infoMap := make(map[string]*LocalUserInfo)
+	for i, username := range usernames {
+		infoStr, _ := result.GetStringResult(i)
+
+		var info LocalUserInfo
+		if err := json.Unmarshal([]byte(infoStr), &info); err != nil {
+			tflog.Warn(ctx, "Failed to parse user info",
+				map[string]any{
+					"username": username,
+					"error":    err.Error(),
+				})
+			continue
+		}
+
+		infoMap[username] = &info
+	}
+
+	tflog.Debug(ctx, "Local user existence status retrieved",
+		map[string]any{"count": len(infoMap)})
+
+	return infoMap, nil
+}
+
+// DeleteMultipleLocalUsers deletes multiple local users in a batch
+func DeleteMultipleLocalUsers(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	usernames []string,
+	timeout int,
+) error {
+	if len(usernames) == 0 {
+		return nil
+	}
+
+	tflog.Info(ctx, "Deleting multiple local users in batch",
+		map[string]any{"count": len(usernames)})
+
+	// Build batch command
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, username := range usernames {
+		command := fmt.Sprintf("Remove-LocalUser -Name %s -ErrorAction SilentlyContinue; (Get-LocalUser -Name %s -ErrorAction SilentlyContinue) -eq $null",
+			powershell.QuotePowerShellString(username),
+			powershell.QuotePowerShellString(username))
+		batch.Add(command)
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch user deletion",
+		map[string]any{"user_count": len(usernames)})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"batch_delete",
+			"multiple_users",
 			"state",
 			command,
 			stdout,
@@ -469,7 +728,35 @@ func resourceWindowsLocalUserDelete(d *schema.ResourceData, m interface{}) error
 		)
 	}
 
-	d.SetId("")
-	tflog.Info(ctx, fmt.Sprintf("[DELETE] Local user deleted successfully: %s", username))
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Check results (users should NOT exist after deletion)
+	notDeletedUsers := []string{}
+	for i, username := range usernames {
+		deleted, _ := result.GetStringResult(i)
+		if deleted != "True" {
+			notDeletedUsers = append(notDeletedUsers, username)
+		}
+	}
+
+	if len(notDeletedUsers) > 0 {
+		tflog.Warn(ctx, "Some users failed to delete",
+			map[string]any{
+				"failed_count": len(notDeletedUsers),
+				"failed_users": notDeletedUsers,
+			})
+	}
+
+	tflog.Info(ctx, "Successfully deleted local users in batch",
+		map[string]any{
+			"total":   len(usernames),
+			"failed":  len(notDeletedUsers),
+			"success": len(usernames) - len(notDeletedUsers),
+		})
+
 	return nil
 }

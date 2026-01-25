@@ -6,7 +6,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
@@ -42,12 +41,19 @@ func DataSourceWindowsLocalGroup() *schema.Resource {
 
 func dataSourceWindowsLocalGroupRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	// 1. Pool SSH avec cleanup
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading local group: %s", name))
+	tflog.Info(ctx, "Reading local group data source",
+		map[string]any{"name": name})
 
 	// Validate name for security
 	if err := utils.ValidateField(name, name, "name"); err != nil {
@@ -74,6 +80,8 @@ func dataSourceWindowsLocalGroupRead(d *schema.ResourceData, m interface{}) erro
 		return utils.HandleResourceError("read", name, "description", err)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read local group: %s", name))
+	tflog.Info(ctx, "Successfully read local group data source",
+		map[string]any{"name": name})
+
 	return nil
 }

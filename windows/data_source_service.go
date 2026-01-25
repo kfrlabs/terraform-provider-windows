@@ -6,7 +6,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
@@ -82,12 +81,19 @@ func DataSourceWindowsService() *schema.Resource {
 
 func dataSourceWindowsServiceRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	// 1. Pool SSH avec cleanup (cohérence avec ressources)
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading Windows service: %s", name))
+	tflog.Info(ctx, "Reading Windows service data source",
+		map[string]any{"service_name": name})
 
 	// Validate service name for security
 	if err := utils.ValidateField(name, name, "name"); err != nil {
@@ -138,6 +144,12 @@ func dataSourceWindowsServiceRead(d *schema.ResourceData, m interface{}) error {
 		return utils.HandleResourceError("read", name, "service_type", err)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read service: %s (status=%s, start_type=%s)", name, status, startType))
+	tflog.Info(ctx, "Successfully read service data source",
+		map[string]any{
+			"service_name": name,
+			"status":       status,
+			"start_type":   startType,
+		})
+
 	return nil
 }

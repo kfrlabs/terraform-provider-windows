@@ -8,7 +8,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
-	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
@@ -50,7 +49,12 @@ func DataSourceWindowsRegistryValue() *schema.Resource {
 
 func dataSourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	path := d.Get("path").(string)
 	name := d.Get("name").(string)
@@ -58,9 +62,12 @@ func dataSourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) e
 
 	resourceID := fmt.Sprintf("%s\\%s", path, name)
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading registry value: %s", resourceID))
+	tflog.Info(ctx, "Reading registry value data source",
+		map[string]any{
+			"path": path,
+			"name": name,
+		})
 
-	// Valider les paramètres pour sécurité
 	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
 		return utils.HandleResourceError("validate", resourceID, "path", err)
 	}
@@ -70,57 +77,75 @@ func dataSourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) e
 		}
 	}
 
-	// Vérifier que la clé de registre existe
-	checkKeyCommand := fmt.Sprintf("Test-Path -Path %s -ErrorAction Stop",
-		powershell.QuotePowerShellString(path))
+	// Use batch with OutputRaw
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputRaw) // ← CORRECTION ICI
 
-	keyStdout, keyStderr, keyErr := sshClient.ExecuteCommand(checkKeyCommand, timeout)
-	if keyErr != nil || keyStdout != "True" {
-		return utils.HandleCommandError(
-			"check_key",
-			resourceID,
-			"state",
-			checkKeyCommand,
-			keyStdout,
-			keyStderr,
-			fmt.Errorf("registry key does not exist: %s", path),
-		)
+	// Command 1: Check if key exists
+	batch.Add(fmt.Sprintf("Test-Path -Path %s", powershell.QuotePowerShellString(path)))
+
+	// Command 2: Get value
+	if name == "" {
+		batch.Add(fmt.Sprintf("(Get-ItemProperty -Path %s -ErrorAction SilentlyContinue).'(default)'",
+			powershell.QuotePowerShellString(path)))
+	} else {
+		batch.Add(fmt.Sprintf("Get-ItemPropertyValue -Path %s -Name %s -ErrorAction SilentlyContinue",
+			powershell.QuotePowerShellString(path),
+			powershell.QuotePowerShellString(name)))
 	}
 
-	// Récupérer la valeur du registre
-	exists, currentValue, err := checkRegistryValueExists(ctx, sshClient, path, name, timeout)
+	// Command 3: Get type
+	if name == "" {
+		batch.Add(fmt.Sprintf("(Get-Item -Path %s -ErrorAction SilentlyContinue).GetValueKind('(default)')",
+			powershell.QuotePowerShellString(path)))
+	} else {
+		batch.Add(fmt.Sprintf("(Get-Item -Path %s -ErrorAction SilentlyContinue).GetValueKind(%s)",
+			powershell.QuotePowerShellString(path),
+			powershell.QuotePowerShellString(name)))
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch command to read registry value")
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return utils.HandleResourceError("read", resourceID, "state", err)
+		return utils.HandleCommandError("read_batch", resourceID, "state", command, stdout, stderr, err)
 	}
 
-	if !exists {
+	// Parse batch results with OutputRaw
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputRaw) // ← CORRECTION ICI
+	if err != nil {
+		return utils.HandleResourceError("read", resourceID, "parse_result",
+			fmt.Errorf("failed to parse batch result: %w", err))
+	}
+
+	if result.Count() < 3 {
+		return utils.HandleResourceError("read", resourceID, "state",
+			fmt.Errorf("incomplete batch result"))
+	}
+
+	// Result 1: Key existence
+	keyExists, _ := result.GetStringResult(0)
+	if keyExists != "True" {
+		return utils.HandleResourceError("read", resourceID, "state",
+			fmt.Errorf("registry key does not exist: %s", path))
+	}
+
+	// Result 2: Value
+	currentValue, _ := result.GetStringResult(1)
+	if currentValue == "" {
 		return utils.HandleResourceError("read", resourceID, "state",
 			fmt.Errorf("registry value does not exist: %s", resourceID))
 	}
+	currentValue = strings.TrimSpace(currentValue)
 
-	// Récupérer le type de la valeur
-	var typeCommand string
-	if name == "" {
-		typeCommand = fmt.Sprintf(
-			"(Get-Item -Path %s -ErrorAction Stop).GetValueKind('(default)')",
-			powershell.QuotePowerShellString(path),
-		)
-	} else {
-		typeCommand = fmt.Sprintf(
-			"(Get-Item -Path %s -ErrorAction Stop).GetValueKind(%s)",
-			powershell.QuotePowerShellString(path),
-			powershell.QuotePowerShellString(name),
-		)
+	// Result 3: Type
+	valueType, _ := result.GetStringResult(2)
+	if valueType == "" {
+		valueType = "Unknown"
 	}
-
-	typeStdout, _, typeErr := sshClient.ExecuteCommand(typeCommand, timeout)
-	if typeErr != nil {
-		// Si on ne peut pas obtenir le type, on met "Unknown"
-		typeStdout = "Unknown"
-	}
-
-	// Nettoyer la sortie du type
-	valueType := strings.TrimSpace(typeStdout)
+	valueType = strings.TrimSpace(valueType)
 
 	// Set all attributes
 	d.SetId(resourceID)
@@ -137,6 +162,11 @@ func dataSourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) e
 		return utils.HandleResourceError("read", resourceID, "type", err)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read registry value: %s (type=%s)", resourceID, valueType))
+	tflog.Info(ctx, "Successfully read registry value data source",
+		map[string]any{
+			"resource_id": resourceID,
+			"type":        valueType,
+		})
+
 	return nil
 }

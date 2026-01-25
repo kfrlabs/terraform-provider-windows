@@ -92,7 +92,13 @@ func ResourceWindowsFeature() *schema.Resource {
 
 func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	// 1. Pool SSH avec cleanup
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	feature := d.Get("feature").(string)
 	restart := d.Get("restart").(bool)
@@ -106,6 +112,13 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
+	tflog.Info(ctx, "Creating Windows feature", map[string]any{
+		"feature":                  feature,
+		"include_all_sub_features": includeAllSubFeatures,
+		"include_management_tools": includeManagementTools,
+		"restart":                  restart,
+	})
+
 	// Check if feature is already installed
 	info, err := getFeatureDetails(ctx, sshClient, feature, timeout)
 	if err != nil {
@@ -114,24 +127,25 @@ func resourceWindowsFeatureCreate(d *schema.ResourceData, m interface{}) error {
 
 	if info.Installed {
 		if allowExisting {
-			// Adopt the existing feature
-			tflog.Info(ctx, fmt.Sprintf("Feature %s already installed, adopting it (allow_existing=true)", feature))
+			tflog.Info(ctx, "Feature already installed, adopting it",
+				map[string]any{
+					"feature":       feature,
+					"install_state": info.InstallState,
+				})
 			d.SetId(feature)
 			return resourceWindowsFeatureRead(d, m)
-		} else {
-			// Fail with clear error
-			return utils.HandleResourceError(
-				"create",
-				feature,
-				"state",
-				fmt.Errorf("feature is already installed (InstallState: %s). "+
-					"To manage this existing feature, either:\n"+
-					"  1. Import it: terraform import windows_feature.%s %s\n"+
-					"  2. Set allow_existing = true in your configuration\n"+
-					"  3. Remove it first: Remove-WindowsFeature -Name '%s'",
-					info.InstallState, feature, feature, feature),
-			)
 		}
+
+		return utils.HandleResourceError(
+			"create",
+			feature,
+			"state",
+			fmt.Errorf("feature is already installed (InstallState: %s). "+
+				"To manage this existing feature, either:\n"+
+				"  1. Import it: terraform import windows_feature.example %s\n"+
+				"  2. Set allow_existing = true in your configuration",
+				info.InstallState, feature),
+		)
 	}
 
 	// Build secure PowerShell command with result capture
@@ -151,24 +165,17 @@ $result = Install-WindowsFeature -Name %s -ErrorAction Stop`,
 
 	command += `
 @{
-	Success = $result.Success
-	RestartNeeded = $result.RestartNeeded
-	ExitCode = $result.ExitCode.value__
-	FeatureResult = $result.FeatureResult
+    Success = $result.Success
+    RestartNeeded = $result.RestartNeeded
+    ExitCode = $result.ExitCode.value__
+    FeatureResult = $result.FeatureResult
 } | ConvertTo-Json -Compress`
 
-	tflog.Info(ctx, fmt.Sprintf("Installing Windows feature: %s", feature))
+	tflog.Debug(ctx, "Installing Windows feature", map[string]any{"feature": feature})
+
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return utils.HandleCommandError(
-			"install",
-			feature,
-			"state",
-			command,
-			stdout,
-			stderr,
-			err,
-		)
+		return utils.HandleCommandError("install", feature, "state", command, stdout, stderr, err)
 	}
 
 	// Parse installation result
@@ -198,32 +205,52 @@ $result = Install-WindowsFeature -Name %s -ErrorAction Stop`,
 	}
 
 	if installResult.RestartNeeded == "Yes" && !restart {
-		tflog.Warn(ctx, fmt.Sprintf("Feature %s installed but requires restart", feature))
+		tflog.Warn(ctx, "Feature installed but requires restart",
+			map[string]any{"feature": feature})
 	}
 
 	d.SetId(feature)
+
+	// Log pool statistics if available
+	if stats, ok := GetPoolStats(m); ok {
+		tflog.Debug(ctx, "Pool statistics after create", map[string]any{"stats": stats.String()})
+	}
+
 	return resourceWindowsFeatureRead(d, m)
 }
 
 func resourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	feature := d.Id()
 	if feature == "" {
 		feature = d.Get("feature").(string)
 	}
-	timeout := d.Get("command_timeout").(int)
 
-	info, err := getFeatureDetails(ctx, sshClient, feature, timeout)
+	timeout, ok := d.GetOk("command_timeout")
+	if !ok {
+		timeout = defaultCommandTimeout
+	}
+
+	info, err := getFeatureDetails(ctx, sshClient, feature, timeout.(int))
 	if err != nil {
-		tflog.Warn(ctx, fmt.Sprintf("Failed to read feature %s: %v", feature, err))
+		tflog.Warn(ctx, "Failed to read feature", map[string]any{
+			"feature": feature,
+			"error":   err.Error(),
+		})
 		d.SetId("")
 		return nil
 	}
 
 	if !info.Installed {
-		tflog.Debug(ctx, fmt.Sprintf("Feature %s is not installed, removing from state", feature))
+		tflog.Debug(ctx, "Feature is not installed, removing from state",
+			map[string]any{"feature": feature})
 		d.SetId("")
 		return nil
 	}
@@ -248,7 +275,13 @@ func resourceWindowsFeatureRead(d *schema.ResourceData, m interface{}) error {
 
 func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	timeout := d.Get("command_timeout").(int)
 
 	// If only non-destructive options changed, skip reinstall
@@ -261,6 +294,9 @@ func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 		oldFeature, newFeature := d.GetChange("feature")
 
 		if oldFeature != "" && oldFeature.(string) != "" {
+			tflog.Info(ctx, "Removing old feature before update",
+				map[string]any{"old_feature": oldFeature.(string)})
+
 			if err := removeFeature(ctx, sshClient, oldFeature.(string), timeout); err != nil {
 				return utils.HandleResourceError("update_remove_old", oldFeature.(string), "state", err)
 			}
@@ -269,6 +305,7 @@ func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 		if err := d.Set("feature", newFeature); err != nil {
 			return utils.HandleResourceError("update", newFeature.(string), "feature", err)
 		}
+
 		return resourceWindowsFeatureCreate(d, m)
 	}
 
@@ -277,7 +314,13 @@ func resourceWindowsFeatureUpdate(d *schema.ResourceData, m interface{}) error {
 
 func resourceWindowsFeatureDelete(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	feature := d.Get("feature").(string)
 	timeout := d.Get("command_timeout").(int)
 
@@ -290,8 +333,15 @@ func resourceWindowsFeatureDelete(d *schema.ResourceData, m interface{}) error {
 }
 
 func resourceWindowsFeatureImport(ctx context.Context, d *schema.ResourceData, m interface{}) ([]*schema.ResourceData, error) {
-	sshClient := m.(*ssh.Client)
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
 	feature := d.Id()
+
+	tflog.Info(ctx, "Importing Windows feature", map[string]any{"feature": feature})
 
 	info, err := getFeatureDetails(ctx, sshClient, feature, defaultCommandTimeout)
 	if err != nil {
@@ -325,6 +375,13 @@ func resourceWindowsFeatureImport(ctx context.Context, d *schema.ResourceData, m
 	}
 
 	d.SetId(feature)
+
+	tflog.Info(ctx, "Successfully imported Windows feature",
+		map[string]any{
+			"feature":       feature,
+			"install_state": info.InstallState,
+		})
+
 	return []*schema.ResourceData{d}, nil
 }
 
@@ -349,17 +406,11 @@ $info = @{
 $info | ConvertTo-Json -Compress
 `, powershell.QuotePowerShellString(feature))
 
+	tflog.Debug(ctx, "Getting feature details", map[string]any{"feature": feature})
+
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return nil, utils.HandleCommandError(
-			"get_details",
-			feature,
-			"state",
-			command,
-			stdout,
-			stderr,
-			err,
-		)
+		return nil, utils.HandleCommandError("get_details", feature, "state", command, stdout, stderr, err)
 	}
 
 	var info FeatureInfo
@@ -379,12 +430,86 @@ func removeFeature(ctx context.Context, sshClient *ssh.Client, feature string, t
 	command := fmt.Sprintf("Uninstall-WindowsFeature -Name %s -ErrorAction Stop",
 		powershell.QuotePowerShellString(feature))
 
-	tflog.Info(ctx, fmt.Sprintf("Removing Windows feature: %s", feature))
+	tflog.Info(ctx, "Removing Windows feature", map[string]any{"feature": feature})
+
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return utils.HandleCommandError(
-			"remove",
-			feature,
+		return utils.HandleCommandError("remove", feature, "state", command, stdout, stderr, err)
+	}
+
+	tflog.Info(ctx, "Successfully removed Windows feature", map[string]any{"feature": feature})
+
+	return nil
+}
+
+// ============================================================================
+// BATCH OPERATIONS FOR MULTIPLE FEATURES
+// ============================================================================
+
+// FeatureConfig represents a feature configuration for batch operations
+type FeatureConfig struct {
+	Name                   string
+	IncludeAllSubFeatures  bool
+	IncludeManagementTools bool
+	Restart                bool
+}
+
+// InstallMultipleFeatures installs multiple Windows features in a single batch
+// This is useful when setting up a server with many features at once
+func InstallMultipleFeatures(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	features []FeatureConfig,
+	timeout int,
+) ([]InstallResult, error) {
+	if len(features) == 0 {
+		return nil, nil
+	}
+
+	tflog.Info(ctx, "Installing multiple Windows features in batch",
+		map[string]any{"count": len(features)})
+
+	// Build batch command for all features
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, f := range features {
+		command := fmt.Sprintf("Install-WindowsFeature -Name %s -ErrorAction Stop",
+			powershell.QuotePowerShellString(f.Name))
+
+		if f.IncludeAllSubFeatures {
+			command += " -IncludeAllSubFeatures"
+		}
+		if f.IncludeManagementTools {
+			command += " -IncludeManagementTools"
+		}
+		if f.Restart {
+			command += " -Restart"
+		}
+
+		// Add command that returns JSON result
+		fullCommand := fmt.Sprintf(`
+$result = %s
+@{
+    Success = $result.Success
+    RestartNeeded = $result.RestartNeeded
+    ExitCode = $result.ExitCode.value__
+    FeatureResult = $result.FeatureResult
+} | ConvertTo-Json -Compress`, command)
+
+		batch.Add(fullCommand)
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch feature installation",
+		map[string]any{"feature_count": len(features)})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return nil, utils.HandleCommandError(
+			"batch_install",
+			"multiple_features",
 			"state",
 			command,
 			stdout,
@@ -393,5 +518,102 @@ func removeFeature(ctx context.Context, sshClient *ssh.Client, feature string, t
 		)
 	}
 
-	return nil
+	// Parse batch results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Parse each feature result
+	results := make([]InstallResult, 0, len(features))
+	for i := 0; i < len(features); i++ {
+		resultStr, err := result.GetStringResult(i)
+		if err != nil {
+			tflog.Warn(ctx, "Failed to get result for feature",
+				map[string]any{
+					"feature": features[i].Name,
+					"index":   i,
+					"error":   err.Error(),
+				})
+			continue
+		}
+
+		var installResult InstallResult
+		if err := json.Unmarshal([]byte(resultStr), &installResult); err != nil {
+			tflog.Warn(ctx, "Failed to parse result for feature",
+				map[string]any{
+					"feature": features[i].Name,
+					"error":   err.Error(),
+				})
+			continue
+		}
+
+		results = append(results, installResult)
+	}
+
+	tflog.Info(ctx, "Successfully installed features in batch",
+		map[string]any{
+			"requested": len(features),
+			"installed": len(results),
+		})
+
+	return results, nil
+}
+
+// CheckMultipleFeaturesInstalled checks if multiple features are installed
+// Returns a map of feature name to installation status
+func CheckMultipleFeaturesInstalled(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	features []string,
+	timeout int,
+) (map[string]bool, error) {
+	if len(features) == 0 {
+		return make(map[string]bool), nil
+	}
+
+	tflog.Debug(ctx, "Checking multiple features installation status",
+		map[string]any{"count": len(features)})
+
+	// Build batch command
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, feature := range features {
+		command := fmt.Sprintf("(Get-WindowsFeature -Name %s -ErrorAction SilentlyContinue).Installed",
+			powershell.QuotePowerShellString(feature))
+		batch.Add(command)
+	}
+
+	command := batch.Build()
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return nil, utils.HandleCommandError(
+			"batch_check",
+			"multiple_features",
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Build result map
+	statusMap := make(map[string]bool)
+	for i, feature := range features {
+		installed, _ := result.GetStringResult(i)
+		statusMap[feature] = (installed == "True")
+	}
+
+	tflog.Debug(ctx, "Feature installation status retrieved",
+		map[string]any{"count": len(statusMap)})
+
+	return statusMap, nil
 }

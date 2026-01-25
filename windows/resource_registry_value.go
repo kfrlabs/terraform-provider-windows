@@ -65,10 +65,11 @@ func ResourceWindowsRegistryValue() *schema.Resource {
 	}
 }
 
-// checkRegistryValueExists vérifie si une valeur de registre existe
+// checkRegistryValueExists checks if a registry value exists (using batch for efficiency)
 func checkRegistryValueExists(ctx context.Context, sshClient *ssh.Client, path, name string, timeout int) (bool, string, error) {
-	// Validate inputs for security
 	resourceID := fmt.Sprintf("%s\\%s", path, name)
+
+	// Validate inputs
 	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
 		return false, "", err
 	}
@@ -78,31 +79,88 @@ func checkRegistryValueExists(ctx context.Context, sshClient *ssh.Client, path, 
 		}
 	}
 
-	// Build secure PowerShell command
-	var command string
+	// ✨ CORRECTION : Utiliser OutputSeparator pour gérer les types mixtes
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputSeparator)
+
+	// Add commands to check key existence and get value
+	batch.Add(fmt.Sprintf("Test-Path -Path %s", powershell.QuotePowerShellString(path)))
+
 	if name == "" {
-		// Check default value: (Get-ItemProperty -Path 'path').'(default)'
-		command = fmt.Sprintf("(Get-ItemProperty -Path %s -ErrorAction Stop).'(default)'",
-			powershell.QuotePowerShellString(path))
+		batch.Add(fmt.Sprintf("(Get-ItemProperty -Path %s -ErrorAction SilentlyContinue).'(default)'",
+			powershell.QuotePowerShellString(path)))
 	} else {
-		command = fmt.Sprintf("Get-ItemPropertyValue -Path %s -Name %s -ErrorAction Stop",
+		batch.Add(fmt.Sprintf("Get-ItemPropertyValue -Path %s -Name %s -ErrorAction SilentlyContinue",
 			powershell.QuotePowerShellString(path),
-			powershell.QuotePowerShellString(name))
+			powershell.QuotePowerShellString(name)))
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Checking registry value existence: %s\\%s", path, name))
+	command := batch.Build()
+	tflog.Debug(ctx, "Checking registry value existence with batch command")
 
 	stdout, _, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return false, "", nil // Si erreur, la valeur n'existe pas
+		// Erreur SSH, pas une erreur d'existence
+		tflog.Debug(ctx, "SSH error while checking registry value", map[string]any{"error": err.Error()})
+		return false, "", nil
 	}
 
-	return true, strings.TrimSpace(stdout), nil
+	// ✨ CORRECTION : Parse avec OutputSeparator
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputSeparator)
+	if err != nil {
+		tflog.Debug(ctx, "Failed to parse batch result", map[string]any{"error": err.Error()})
+		return false, "", nil
+	}
+
+	if result.Count() < 2 {
+		tflog.Debug(ctx, "Incomplete batch result", map[string]any{"count": result.Count()})
+		return false, "", nil
+	}
+
+	// Check if key exists
+	keyExists, err := result.GetStringResult(0)
+	if err != nil {
+		tflog.Debug(ctx, "Failed to get key existence result", map[string]any{"error": err.Error()})
+		return false, "", nil
+	}
+
+	if keyExists != "True" {
+		tflog.Debug(ctx, "Registry key does not exist", map[string]any{"path": path})
+		return false, "", nil
+	}
+
+	// Get value
+	value, err := result.GetStringResult(1)
+	if err != nil {
+		tflog.Debug(ctx, "Failed to get value result", map[string]any{"error": err.Error()})
+		return false, "", nil
+	}
+
+	// Si la valeur est vide, elle n'existe probablement pas
+	trimmedValue := strings.TrimSpace(value)
+	if trimmedValue == "" {
+		tflog.Debug(ctx, "Registry value is empty, considering as non-existent")
+		return false, "", nil
+	}
+
+	tflog.Debug(ctx, "Registry value exists", map[string]any{
+		"path":  path,
+		"name":  name,
+		"value": trimmedValue,
+	})
+
+	return true, trimmedValue, nil
 }
 
 func resourceWindowsRegistryValueCreate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	// Get SSH client from pool or single connection
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	path := d.Get("path").(string)
 	name := d.Get("name").(string)
@@ -113,7 +171,7 @@ func resourceWindowsRegistryValueCreate(d *schema.ResourceData, m interface{}) e
 
 	resourceID := fmt.Sprintf("%s\\%s", path, name)
 
-	// Validate inputs for security
+	// Validate inputs
 	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
 		return err
 	}
@@ -126,26 +184,26 @@ func resourceWindowsRegistryValueCreate(d *schema.ResourceData, m interface{}) e
 		return err
 	}
 
-	// Check if the registry key exists
-	checkKeyCommand := fmt.Sprintf("Test-Path -Path %s -ErrorAction Stop",
-		powershell.QuotePowerShellString(path))
+	tflog.Info(ctx, "Creating registry value", map[string]any{"resource_id": resourceID})
 
-	tflog.Debug(ctx, fmt.Sprintf("Checking if registry key exists: %s", path))
+	// ✨ CORRECTION : Pas de batch pour une seule commande simple
+	// Check if registry key exists
+	checkKeyCommand := fmt.Sprintf("Test-Path -Path %s", powershell.QuotePowerShellString(path))
 
-	keyStdout, keyStderr, keyErr := sshClient.ExecuteCommand(checkKeyCommand, timeout)
-	if keyErr != nil || keyStdout != "True" {
+	stdout, stderr, err := sshClient.ExecuteCommand(checkKeyCommand, timeout)
+	if err != nil || stdout != "True" {
 		return utils.HandleCommandError(
 			"check_key",
 			resourceID,
 			"state",
 			checkKeyCommand,
-			keyStdout,
-			keyStderr,
-			fmt.Errorf("registry key does not exist: %s", path),
+			stdout,
+			stderr,
+			fmt.Errorf("registry key does not exist: %s (create it first with windows_registry_key)", path),
 		)
 	}
 
-	// Check if registry value already exists
+	// Check if value already exists
 	exists, currentValue, err := checkRegistryValueExists(ctx, sshClient, path, name, timeout)
 	if err != nil {
 		return utils.HandleResourceError("check_existing", resourceID, "state", err)
@@ -153,77 +211,74 @@ func resourceWindowsRegistryValueCreate(d *schema.ResourceData, m interface{}) e
 
 	if exists {
 		if allowExisting {
-			// Adopt the existing registry value
-			tflog.Info(ctx, fmt.Sprintf("Registry value %s already exists with value '%s', adopting it (allow_existing=true)", resourceID, currentValue))
+			tflog.Info(ctx, "Registry value already exists, adopting it",
+				map[string]any{
+					"resource_id":   resourceID,
+					"current_value": currentValue,
+				})
 			d.SetId(resourceID)
 			return resourceWindowsRegistryValueRead(d, m)
-		} else {
-			// Fail with clear error
-			resourceName := "registry_value"
-			return utils.HandleResourceError(
-				"create",
-				resourceID,
-				"state",
-				fmt.Errorf("registry value already exists with value '%s'. "+
-					"To manage this existing registry value, either:\n"+
-					"  1. Import it: terraform import windows_registry_value.%s '%s'\n"+
-					"  2. Set allow_existing = true in your configuration\n"+
-					"  3. Remove it first: Remove-ItemProperty -Path '%s' -Name '%s' -Force",
-					currentValue, resourceName, resourceID, path, name),
-			)
 		}
+
+		return utils.HandleResourceError(
+			"create",
+			resourceID,
+			"state",
+			fmt.Errorf("registry value already exists with value '%s'. "+
+				"To manage this existing registry value, either:\n"+
+				"  1. Import it: terraform import windows_registry_value.example '%s'\n"+
+				"  2. Set allow_existing = true in your configuration",
+				currentValue, resourceID),
+		)
 	}
 
-	// Build secure PowerShell command to create the value
-	var command string
+	// Create the registry value
+	var createCmd string
 	if name == "" {
-		// Set default value: Set-ItemProperty -Path 'path' -Name '(default)' -Value 'value'
-		command = fmt.Sprintf("Set-ItemProperty -Path %s -Name '(default)' -Value %s -ErrorAction Stop",
+		createCmd = fmt.Sprintf("Set-ItemProperty -Path %s -Name '(default)' -Value %s -ErrorAction Stop",
 			powershell.QuotePowerShellString(path),
 			powershell.QuotePowerShellString(value))
 	} else {
-		command = fmt.Sprintf("New-ItemProperty -Path %s -Name %s -Value %s -PropertyType %s -ErrorAction Stop",
+		createCmd = fmt.Sprintf("New-ItemProperty -Path %s -Name %s -Value %s -PropertyType %s -ErrorAction Stop",
 			powershell.QuotePowerShellString(path),
 			powershell.QuotePowerShellString(name),
 			powershell.QuotePowerShellString(value),
 			powershell.QuotePowerShellString(valueType))
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("Creating registry value: %s", resourceID))
+	tflog.Debug(ctx, "Creating registry value", map[string]any{"resource_id": resourceID})
 
-	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	stdout, stderr, err = sshClient.ExecuteCommand(createCmd, timeout)
 	if err != nil {
-		return utils.HandleCommandError(
-			"create",
-			resourceID,
-			"state",
-			command,
-			stdout,
-			stderr,
-			err,
-		)
+		return utils.HandleCommandError("create", resourceID, "state", createCmd, stdout, stderr, err)
 	}
 
 	d.SetId(resourceID)
+
+	// Log pool statistics if available
+	if stats, ok := GetPoolStats(m); ok {
+		tflog.Debug(ctx, "Pool statistics after create", map[string]any{"stats": stats.String()})
+	}
+
 	return resourceWindowsRegistryValueRead(d, m)
 }
 
 func resourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
 
-	// Parse ID or get from schema
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	var path, name string
 	if d.Id() != "" {
-		// L'ID est au format "path\name"
-		// Il faut trouver le DERNIER backslash pour séparer correctement
-		// car le path contient déjà des backslashes
 		lastBackslash := strings.LastIndex(d.Id(), "\\")
 		if lastBackslash > 0 {
 			path = d.Id()[:lastBackslash]
 			name = d.Id()[lastBackslash+1:]
 		} else {
-			// Fallback si pas de backslash trouvé
 			path = d.Get("path").(string)
 			name = d.Get("name").(string)
 		}
@@ -234,13 +289,12 @@ func resourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) err
 
 	resourceID := fmt.Sprintf("%s\\%s", path, name)
 
-	// Get timeout from schema
 	timeout, ok := d.GetOk("command_timeout")
 	if !ok {
-		timeout = 300 // Default value from schema
+		timeout = 300
 	}
 
-	// Validate inputs for security
+	// Validate inputs
 	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
 		return utils.HandleResourceError("validate", resourceID, "path", err)
 	}
@@ -250,16 +304,20 @@ func resourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) err
 		}
 	}
 
-	// Check if registry value exists and get its current value
+	// Check existence using batch (more efficient)
 	exists, currentValue, err := checkRegistryValueExists(ctx, sshClient, path, name, timeout.(int))
 	if err != nil {
-		tflog.Warn(ctx, fmt.Sprintf("Failed to read registry value %s: %v", resourceID, err))
+		tflog.Warn(ctx, "Failed to read registry value", map[string]any{
+			"resource_id": resourceID,
+			"error":       err.Error(),
+		})
 		d.SetId("")
 		return nil
 	}
 
 	if !exists {
-		tflog.Debug(ctx, fmt.Sprintf("Registry value %s does not exist, removing from state", resourceID))
+		tflog.Debug(ctx, "Registry value does not exist, removing from state",
+			map[string]any{"resource_id": resourceID})
 		d.SetId("")
 		return nil
 	}
@@ -281,7 +339,12 @@ func resourceWindowsRegistryValueRead(d *schema.ResourceData, m interface{}) err
 
 func resourceWindowsRegistryValueUpdate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	path := d.Get("path").(string)
 	name := d.Get("name").(string)
@@ -290,13 +353,13 @@ func resourceWindowsRegistryValueUpdate(d *schema.ResourceData, m interface{}) e
 
 	resourceID := fmt.Sprintf("%s\\%s", path, name)
 
-	// If only non-destructive options changed, skip update
+	// Only update if value changed
 	if d.HasChange("command_timeout") || d.HasChange("allow_existing") {
 		tflog.Debug(ctx, "Non-destructive change detected, skipping update")
 		return resourceWindowsRegistryValueRead(d, m)
 	}
 
-	// Validate inputs for security
+	// Validate inputs
 	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
 		return err
 	}
@@ -319,19 +382,11 @@ func resourceWindowsRegistryValueUpdate(d *schema.ResourceData, m interface{}) e
 			powershell.QuotePowerShellString(value))
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("Updating registry value: %s", resourceID))
+	tflog.Info(ctx, "Updating registry value", map[string]any{"resource_id": resourceID})
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return utils.HandleCommandError(
-			"update",
-			resourceID,
-			"value",
-			command,
-			stdout,
-			stderr,
-			err,
-		)
+		return utils.HandleCommandError("update", resourceID, "value", command, stdout, stderr, err)
 	}
 
 	return resourceWindowsRegistryValueRead(d, m)
@@ -339,7 +394,12 @@ func resourceWindowsRegistryValueUpdate(d *schema.ResourceData, m interface{}) e
 
 func resourceWindowsRegistryValueDelete(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	path := d.Get("path").(string)
 	name := d.Get("name").(string)
@@ -347,7 +407,7 @@ func resourceWindowsRegistryValueDelete(d *schema.ResourceData, m interface{}) e
 
 	resourceID := fmt.Sprintf("%s\\%s", path, name)
 
-	// Validate inputs for security
+	// Validate inputs
 	if err := utils.ValidateField(path, resourceID, "path"); err != nil {
 		return err
 	}
@@ -357,10 +417,9 @@ func resourceWindowsRegistryValueDelete(d *schema.ResourceData, m interface{}) e
 		}
 	}
 
-	// Build secure PowerShell command
+	// Build command
 	var command string
 	if name == "" {
-		// Cannot remove default value, just clear it
 		command = fmt.Sprintf("Set-ItemProperty -Path %s -Name '(default)' -Value '' -ErrorAction Stop",
 			powershell.QuotePowerShellString(path))
 	} else {
@@ -369,13 +428,53 @@ func resourceWindowsRegistryValueDelete(d *schema.ResourceData, m interface{}) e
 			powershell.QuotePowerShellString(name))
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("Deleting registry value: %s", resourceID))
+	tflog.Info(ctx, "Deleting registry value", map[string]any{"resource_id": resourceID})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError("delete", resourceID, "state", command, stdout, stderr, err)
+	}
+
+	d.SetId("")
+	return nil
+}
+
+// ============================================================================
+// BATCH OPERATIONS FOR MULTIPLE REGISTRY VALUES
+// ============================================================================
+
+// CreateMultipleRegistryValues creates multiple registry values in a single batch
+// This is useful when creating many values at once (e.g., initial app configuration)
+func CreateMultipleRegistryValues(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	values []RegistryValueConfig,
+	timeout int,
+) error {
+	if len(values) == 0 {
+		return nil
+	}
+
+	tflog.Info(ctx, "Creating multiple registry values in batch",
+		map[string]any{"count": len(values)})
+
+	// Build batch command
+	batch := powershell.NewRegistryBatchBuilder()
+
+	for _, v := range values {
+		batch.AddCreateValue(v.Path, v.Name, v.Value, v.Type)
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch registry creation",
+		map[string]any{"command_count": batch.Count()})
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
 		return utils.HandleCommandError(
-			"delete",
-			resourceID,
+			"batch_create",
+			"multiple_values",
 			"state",
 			command,
 			stdout,
@@ -384,6 +483,16 @@ func resourceWindowsRegistryValueDelete(d *schema.ResourceData, m interface{}) e
 		)
 	}
 
-	d.SetId("")
+	tflog.Info(ctx, "Successfully created registry values in batch",
+		map[string]any{"count": len(values)})
+
 	return nil
+}
+
+// RegistryValueConfig represents a registry value configuration for batch operations
+type RegistryValueConfig struct {
+	Path  string
+	Name  string
+	Value string
+	Type  string
 }

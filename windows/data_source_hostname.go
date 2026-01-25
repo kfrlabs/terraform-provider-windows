@@ -8,11 +8,10 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
-// HostnameInfo représente les informations du nom d'hôte
+// HostnameInfo represents hostname information
 type HostnameInfo struct {
 	ComputerName string `json:"ComputerName"`
 	DNSHostName  string `json:"DNSHostName"`
@@ -68,13 +67,19 @@ func DataSourceWindowsHostname() *schema.Resource {
 
 func dataSourceWindowsHostnameRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	// 1. Pool SSH avec cleanup
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, "[DATA SOURCE] Reading Windows hostname information")
+	tflog.Info(ctx, "Reading Windows hostname data source")
 
-	// Commande PowerShell pour récupérer toutes les informations du nom d'hôte
+	// PowerShell command to retrieve all hostname information
 	command := `
 $cs = Get-WmiObject Win32_ComputerSystem -ErrorAction Stop
 @{
@@ -85,6 +90,8 @@ $cs = Get-WmiObject Win32_ComputerSystem -ErrorAction Stop
     'PartOfDomain' = $cs.PartOfDomain
 } | ConvertTo-Json -Compress
 `
+
+	tflog.Debug(ctx, "Executing command to retrieve hostname information")
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
@@ -105,7 +112,7 @@ $cs = Get-WmiObject Win32_ComputerSystem -ErrorAction Stop
 			fmt.Errorf("failed to parse hostname info: %w; output: %s", err, stdout))
 	}
 
-	// Construire le FQDN
+	// Build FQDN
 	var fqdn string
 	if info.PartOfDomain && info.Domain != "" {
 		fqdn = fmt.Sprintf("%s.%s", strings.ToLower(info.ComputerName), strings.ToLower(info.Domain))
@@ -134,6 +141,12 @@ $cs = Get-WmiObject Win32_ComputerSystem -ErrorAction Stop
 		return utils.HandleResourceError("read", info.ComputerName, "fqdn", err)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read hostname: %s (part_of_domain=%v)", info.ComputerName, info.PartOfDomain))
+	tflog.Info(ctx, "Successfully read hostname data source",
+		map[string]any{
+			"computer_name":  info.ComputerName,
+			"part_of_domain": info.PartOfDomain,
+			"fqdn":           fqdn,
+		})
+
 	return nil
 }

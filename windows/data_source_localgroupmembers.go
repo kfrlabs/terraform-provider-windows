@@ -9,7 +9,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/powershell"
-	"github.com/kfrlabs/terraform-provider-windows/windows/internal/ssh"
 	"github.com/kfrlabs/terraform-provider-windows/windows/internal/utils"
 )
 
@@ -76,16 +75,12 @@ func DataSourceWindowsLocalGroupMembers() *schema.Resource {
 }
 
 // isNoMembersError checks if an error message indicates that a group has no members
-// This is more robust than simple substring matching
 func isNoMembersError(stderr string) bool {
 	if stderr == "" {
 		return false
 	}
 
-	// Convert to lowercase for case-insensitive matching
 	lowerStderr := strings.ToLower(stderr)
-
-	// Common patterns that indicate no members or group not found
 	noMemberPatterns := []string{
 		"no members",
 		"does not have any members",
@@ -106,11 +101,8 @@ func isNoMembersError(stderr string) bool {
 }
 
 // parseGroupMembers parses the JSON output from PowerShell into GroupMemberInfo structs
-// It handles both single member objects and arrays of members
 func parseGroupMembers(output string) ([]GroupMemberInfo, error) {
 	trimmed := strings.TrimSpace(output)
-
-	// Empty output means no members
 	if trimmed == "" {
 		return []GroupMemberInfo{}, nil
 	}
@@ -150,99 +142,94 @@ func convertMembersToTerraformList(members []GroupMemberInfo) []interface{} {
 
 func dataSourceWindowsLocalGroupMembersRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	groupName := d.Get("group_name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Reading members of local group: %s", groupName))
+	tflog.Info(ctx, "Reading local group members data source",
+		map[string]any{"group_name": groupName})
 
-	// Validate group name for security
 	if err := utils.ValidateField(groupName, groupName, "group_name"); err != nil {
 		return utils.HandleResourceError("validate", groupName, "group_name", err)
 	}
 
-	// First, verify that the group exists
-	checkGroupInfo, err := checkLocalGroupExists(ctx, sshClient, groupName, timeout)
+	// Use batch with OutputSeparator
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputSeparator) // ← CHANGE ICI : OutputRaw → OutputSeparator
+
+	// Command 1: Check if group exists
+	batch.Add(fmt.Sprintf("(Get-LocalGroup -Name %s -ErrorAction SilentlyContinue) -ne $null",
+		powershell.QuotePowerShellString(groupName)))
+
+	// Command 2: Get group members
+	membersCommand := fmt.Sprintf(`
+$members = Get-LocalGroupMember -Group %s -ErrorAction SilentlyContinue
+if ($members) {
+    $members | ForEach-Object {
+        @{
+            'Name' = $_.Name
+            'ObjectClass' = $_.ObjectClass
+            'SID' = $_.SID.Value
+            'PrincipalSource' = $_.PrincipalSource.ToString()
+        }
+    } | ConvertTo-Json -Compress
+} else {
+    ''
+}`,
+		powershell.QuotePowerShellString(groupName))
+
+	batch.Add(membersCommand)
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch command to check group and get members")
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return utils.HandleResourceError("check_group", groupName, "state", err)
+		if isNoMembersError(stderr) || isNoMembersError(stdout) {
+			tflog.Info(ctx, "Group has no members", map[string]any{"group_name": groupName})
+			return setEmptyMembersList(d, groupName)
+		}
+		return utils.HandleCommandError("get_members_batch", groupName, "members", command, stdout, stderr, err)
 	}
 
-	if !checkGroupInfo.Exists {
+	// Parse batch results with OutputSeparator
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputSeparator) // ← CHANGE ICI : OutputRaw → OutputSeparator
+	if err != nil {
+		return utils.HandleResourceError("read", groupName, "parse_result",
+			fmt.Errorf("failed to parse batch result: %w", err))
+	}
+
+	if result.Count() < 2 {
+		return utils.HandleResourceError("read", groupName, "state",
+			fmt.Errorf("incomplete batch result"))
+	}
+
+	// Result 1: Group existence
+	groupExists, _ := result.GetStringResult(0)
+	if groupExists != "True" {
 		return utils.HandleResourceError("check_group", groupName, "state",
 			fmt.Errorf("local group %s does not exist", groupName))
 	}
 
-	// PowerShell command to retrieve group members
-	// Using -ErrorAction Stop ensures we catch errors properly
-	command := fmt.Sprintf(`
-$ErrorActionPreference = 'Stop'
-try {
-    $members = Get-LocalGroupMember -Group %s -ErrorAction Stop
-    if ($members) {
-        $members | ForEach-Object {
-            @{
-                'Name' = $_.Name
-                'ObjectClass' = $_.ObjectClass
-                'SID' = $_.SID.Value
-                'PrincipalSource' = $_.PrincipalSource.ToString()
-            }
-        } | ConvertTo-Json -Compress
-    } else {
-        # Group exists but has no members
-        Write-Output ''
-    }
-} catch {
-    # Check if it's a "no members" error
-    if ($_.Exception.Message -match 'no members|does not have any members') {
-        Write-Output ''
-    } else {
-        throw
-    }
-}
-`,
-		powershell.QuotePowerShellString(groupName),
-	)
-
-	tflog.Debug(ctx, fmt.Sprintf("[DATA SOURCE] Executing command to retrieve group members"))
-
-	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
-
-	// Handle different error scenarios
-	if err != nil {
-		// Check if this is a "no members" scenario
-		if isNoMembersError(stderr) {
-			tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Group %s has no members", groupName))
-			return setEmptyMembersList(d, groupName)
-		}
-
-		// Check if output suggests no members despite error
-		if isNoMembersError(stdout) {
-			tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Group %s has no members (detected from stdout)", groupName))
-			return setEmptyMembersList(d, groupName)
-		}
-
-		// Genuine error - return it
-		return utils.HandleCommandError(
-			"get_members",
-			groupName,
-			"members",
-			command,
-			stdout,
-			stderr,
-			err,
-		)
-	}
+	// Result 2: Members
+	membersOutput, _ := result.GetStringResult(1)
 
 	// Parse the JSON output
-	members, err := parseGroupMembers(stdout)
+	members, err := parseGroupMembers(membersOutput)
 	if err != nil {
 		return utils.HandleResourceError("parse_members", groupName, "members", err)
 	}
 
 	// If no members found, handle gracefully
 	if len(members) == 0 {
-		tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Group %s has no members", groupName))
+		tflog.Info(ctx, "Group has no members", map[string]any{"group_name": groupName})
 		return setEmptyMembersList(d, groupName)
 	}
 
@@ -261,14 +248,18 @@ try {
 		return utils.HandleResourceError("read", groupName, "member_count", err)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("[DATA SOURCE] Successfully read %d members from group: %s", len(members), groupName))
+	tflog.Info(ctx, "Successfully read group members data source",
+		map[string]any{
+			"group_name":   groupName,
+			"member_count": len(members),
+		})
+
 	return nil
 }
 
 // setEmptyMembersList sets the data source state for a group with no members
 func setEmptyMembersList(d *schema.ResourceData, groupName string) error {
 	d.SetId(groupName)
-
 	if err := d.Set("group_name", groupName); err != nil {
 		return utils.HandleResourceError("read", groupName, "group_name", err)
 	}
@@ -278,6 +269,5 @@ func setEmptyMembersList(d *schema.ResourceData, groupName string) error {
 	if err := d.Set("member_count", 0); err != nil {
 		return utils.HandleResourceError("read", groupName, "member_count", err)
 	}
-
 	return nil
 }

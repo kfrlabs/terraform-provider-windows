@@ -199,28 +199,13 @@ func ResourceWindowsService() *schema.Resource {
 }
 
 // checkServiceExists verifies whether a Windows service exists and retrieves its configuration
-//
-// This function executes a PowerShell command combining Get-Service and WMI queries
-// to retrieve comprehensive service information.
-//
-// Parameters:
-//   - ctx: Context for logging and cancellation
-//   - sshClient: Authenticated SSH client to the Windows host
-//   - name: The service name to check (must be validated before calling)
-//   - timeout: Command execution timeout in seconds
-//
-// Returns:
-//   - *serviceInfo: Service information if exists, with Exists=false if not found
-//   - error: Any error during command execution or JSON parsing
 func checkServiceExists(ctx context.Context, sshClient *ssh.Client, name string, timeout int) (*serviceInfo, error) {
 	// Validate service name for security
 	if err := utils.ValidateField(name, name, "name"); err != nil {
 		return nil, err
 	}
 
-	tflog.Debug(ctx, "Checking if service exists", map[string]any{
-		"service_name": name,
-	})
+	tflog.Debug(ctx, "Checking if service exists", map[string]any{"service_name": name})
 
 	// PowerShell command to get service info as JSON with status code conversion
 	command := fmt.Sprintf(`
@@ -339,18 +324,10 @@ func setServiceDescription(ctx context.Context, sshClient *ssh.Client, name, des
 		powershell.QuotePowerShellString(name),
 		powershell.QuotePowerShellString(description))
 
-	tflog.Debug(ctx, "Setting service description")
+	tflog.Debug(ctx, "Setting service description", map[string]any{"service_name": name})
 	stdout, stderr, err := sshClient.ExecuteCommand(descCmd, timeout)
 	if err != nil {
-		return utils.HandleCommandError(
-			"create",
-			name,
-			"description",
-			descCmd,
-			stdout,
-			stderr,
-			err,
-		)
+		return utils.HandleCommandError("create", name, "description", descCmd, stdout, stderr, err)
 	}
 
 	return nil
@@ -375,42 +352,42 @@ func setServiceState(ctx context.Context, sshClient *ssh.Client, name, desiredSt
 		action = "stop"
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("Setting service state to: %s", desiredState), map[string]any{
-		"service_name": name,
-		"action":       action,
-	})
+	tflog.Info(ctx, "Setting service state",
+		map[string]any{
+			"service_name":  name,
+			"desired_state": desiredState,
+			"action":        action,
+		})
 
 	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
 	if err != nil {
-		return utils.HandleCommandError(
-			action,
-			name,
-			"state",
-			command,
-			stdout,
-			stderr,
-			err,
-		)
+		return utils.HandleCommandError(action, name, "state", command, stdout, stderr, err)
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("Service %s successfully", action+"ed"), map[string]any{
-		"service_name": name,
-	})
+	tflog.Info(ctx, "Service state changed successfully",
+		map[string]any{
+			"service_name": name,
+			"new_state":    desiredState,
+		})
 
 	return nil
 }
 
 func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	// 1. Pool SSH avec cleanup
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 	allowExisting := d.Get("allow_existing").(bool)
 
-	tflog.Info(ctx, "Starting service creation", map[string]any{
-		"service_name": name,
-	})
+	tflog.Info(ctx, "Creating service", map[string]any{"service_name": name})
 
 	// Validate service name
 	if err := utils.ValidateField(name, name, "name"); err != nil {
@@ -425,25 +402,24 @@ func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 
 	if info.Exists {
 		if allowExisting {
-			tflog.Info(ctx, "Service already exists, adopting it", map[string]any{
-				"service_name":   name,
-				"allow_existing": true,
-			})
+			tflog.Info(ctx, "Service already exists, adopting it",
+				map[string]any{
+					"service_name":   name,
+					"allow_existing": true,
+				})
 			d.SetId(name)
 			return resourceWindowsServiceRead(d, m)
 		}
 
-		resourceName := "service"
 		return utils.HandleResourceError(
 			"create",
 			name,
 			"state",
 			fmt.Errorf("service already exists. "+
 				"To manage this existing service, either:\n"+
-				"  1. Import it: terraform import windows_service.%s '%s'\n"+
-				"  2. Set allow_existing = true in your configuration\n"+
-				"  3. Remove it first (WARNING - will delete the service): sc.exe delete '%s'",
-				resourceName, name, name),
+				"  1. Import it: terraform import windows_service.example '%s'\n"+
+				"  2. Set allow_existing = true in your configuration",
+				name),
 		)
 	}
 
@@ -465,11 +441,11 @@ func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
-	tflog.Info(ctx, "Creating service with command (credentials hidden)")
-	tflog.Debug(ctx, "Executing service creation command", map[string]any{
-		"service_name":   name,
-		"has_credential": d.Get("credential").(string) != "",
-	})
+	tflog.Debug(ctx, "Creating service (credentials hidden)",
+		map[string]any{
+			"service_name":   name,
+			"has_credential": d.Get("credential").(string) != "",
+		})
 
 	// Execute service creation
 	stdout, stderr, execErr := sshClient.ExecuteCommand(command, timeout)
@@ -485,9 +461,7 @@ func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 		)
 	}
 
-	tflog.Info(ctx, "Service created successfully", map[string]any{
-		"service_name": name,
-	})
+	tflog.Info(ctx, "Service created successfully", map[string]any{"service_name": name})
 
 	// Set description if provided
 	if description, ok := d.GetOk("description"); ok {
@@ -503,16 +477,23 @@ func resourceWindowsServiceCreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	d.SetId(name)
-	tflog.Info(ctx, "Service resource created successfully", map[string]any{
-		"service_name": name,
-	})
+
+	// Log pool statistics if available
+	if stats, ok := GetPoolStats(m); ok {
+		tflog.Debug(ctx, "Pool statistics after create", map[string]any{"stats": stats.String()})
+	}
 
 	return resourceWindowsServiceRead(d, m)
 }
 
 func resourceWindowsServiceRead(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	name := d.Id()
 	timeoutVal, ok := d.GetOk("command_timeout")
@@ -523,24 +504,22 @@ func resourceWindowsServiceRead(d *schema.ResourceData, m interface{}) error {
 		timeout = timeoutVal.(int)
 	}
 
-	tflog.Debug(ctx, "Reading service", map[string]any{
-		"service_name": name,
-	})
+	tflog.Debug(ctx, "Reading service", map[string]any{"service_name": name})
 
 	info, err := checkServiceExists(ctx, sshClient, name, timeout)
 	if err != nil {
-		tflog.Warn(ctx, "Failed to read service, removing from state", map[string]any{
-			"service_name": name,
-			"error":        err.Error(),
-		})
+		tflog.Warn(ctx, "Failed to read service, removing from state",
+			map[string]any{
+				"service_name": name,
+				"error":        err.Error(),
+			})
 		d.SetId("")
 		return nil
 	}
 
 	if !info.Exists {
-		tflog.Debug(ctx, "Service does not exist, removing from state", map[string]any{
-			"service_name": name,
-		})
+		tflog.Debug(ctx, "Service does not exist, removing from state",
+			map[string]any{"service_name": name})
 		d.SetId("")
 		return nil
 	}
@@ -567,25 +546,29 @@ func resourceWindowsServiceRead(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
-	tflog.Debug(ctx, "Service read successfully", map[string]any{
-		"service_name": name,
-		"status":       status,
-		"start_type":   startType,
-	})
+	tflog.Debug(ctx, "Service read successfully",
+		map[string]any{
+			"service_name": name,
+			"status":       status,
+			"start_type":   startType,
+		})
 
 	return nil
 }
 
 func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, "Updating service", map[string]any{
-		"service_name": name,
-	})
+	tflog.Info(ctx, "Updating service", map[string]any{"service_name": name})
 
 	// Validate service name
 	if err := utils.ValidateField(name, name, "name"); err != nil {
@@ -608,7 +591,7 @@ func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 
 		changes["display_name"] = displayName
 
-		tflog.Debug(ctx, "Updating display_name")
+		tflog.Debug(ctx, "Updating display_name", map[string]any{"service_name": name})
 		stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 		if err != nil {
 			return utils.HandleCommandError("update", name, "display_name", cmd, stdout, stderr, err)
@@ -628,7 +611,7 @@ func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 
 		changes["description"] = description
 
-		tflog.Debug(ctx, "Updating description")
+		tflog.Debug(ctx, "Updating description", map[string]any{"service_name": name})
 		stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 		if err != nil {
 			return utils.HandleCommandError("update", name, "description", cmd, stdout, stderr, err)
@@ -648,9 +631,11 @@ func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 
 		changes["start_type"] = startType
 
-		tflog.Debug(ctx, "Updating start_type", map[string]any{
-			"new_value": startType,
-		})
+		tflog.Debug(ctx, "Updating start_type",
+			map[string]any{
+				"service_name": name,
+				"new_value":    startType,
+			})
 		stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 		if err != nil {
 			return utils.HandleCommandError("update", name, "start_type", cmd, stdout, stderr, err)
@@ -685,9 +670,8 @@ func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 			changes["start_name"] = startName
 			changes["credential"] = "***REDACTED***"
 
-			tflog.Info(ctx, "Updating service credentials", map[string]any{
-				"start_name": startName,
-			})
+			tflog.Info(ctx, "Updating service credentials",
+				map[string]any{"start_name": startName})
 			stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 			if err != nil {
 				return utils.HandleCommandError("update", name, "credential", "Set-Service (credentials hidden)", stdout, stderr, err)
@@ -696,14 +680,14 @@ func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	if len(changes) > 0 {
-		tflog.Info(ctx, "Service updated successfully", map[string]any{
-			"service_name": name,
-			"changes":      changes,
-		})
+		tflog.Info(ctx, "Service updated successfully",
+			map[string]any{
+				"service_name": name,
+				"changes":      changes,
+			})
 	} else {
-		tflog.Debug(ctx, "No changes detected for service", map[string]any{
-			"service_name": name,
-		})
+		tflog.Debug(ctx, "No changes detected for service",
+			map[string]any{"service_name": name})
 	}
 
 	return resourceWindowsServiceRead(d, m)
@@ -711,14 +695,17 @@ func resourceWindowsServiceUpdate(d *schema.ResourceData, m interface{}) error {
 
 func resourceWindowsServiceDelete(d *schema.ResourceData, m interface{}) error {
 	ctx := context.Background()
-	sshClient := m.(*ssh.Client)
+
+	sshClient, cleanup, err := GetSSHClient(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	name := d.Get("name").(string)
 	timeout := d.Get("command_timeout").(int)
 
-	tflog.Info(ctx, "Deleting service", map[string]any{
-		"service_name": name,
-	})
+	tflog.Info(ctx, "Deleting service", map[string]any{"service_name": name})
 
 	// Validate service name
 	if err := utils.ValidateField(name, name, "name"); err != nil {
@@ -729,9 +716,7 @@ func resourceWindowsServiceDelete(d *schema.ResourceData, m interface{}) error {
 	stopCmd := fmt.Sprintf("Stop-Service -Name %s -Force -ErrorAction SilentlyContinue",
 		powershell.QuotePowerShellString(name))
 
-	tflog.Debug(ctx, "Stopping service if running", map[string]any{
-		"service_name": name,
-	})
+	tflog.Debug(ctx, "Stopping service if running", map[string]any{"service_name": name})
 
 	// Execute stop command (ignore errors as service might already be stopped)
 	sshClient.ExecuteCommand(stopCmd, timeout)
@@ -752,9 +737,7 @@ if (Get-Command Remove-Service -ErrorAction SilentlyContinue) {
 }
 `, powershell.QuotePowerShellString(name), powershell.QuotePowerShellString(name))
 
-	tflog.Info(ctx, "Removing service", map[string]any{
-		"service_name": name,
-	})
+	tflog.Debug(ctx, "Removing service", map[string]any{"service_name": name})
 
 	stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
 	if err != nil {
@@ -762,9 +745,429 @@ if (Get-Command Remove-Service -ErrorAction SilentlyContinue) {
 	}
 
 	d.SetId("")
-	tflog.Info(ctx, "Service deleted successfully", map[string]any{
-		"service_name": name,
-	})
+	tflog.Info(ctx, "Service deleted successfully", map[string]any{"service_name": name})
+
+	return nil
+}
+
+// ============================================================================
+// BATCH OPERATIONS FOR MULTIPLE SERVICES
+// ============================================================================
+
+// ServiceConfig represents a service configuration for batch operations
+type ServiceConfig struct {
+	Name         string
+	DisplayName  string
+	Description  string
+	BinaryPath   string
+	StartType    string
+	StartName    string
+	Credential   string
+	DesiredState string
+}
+
+// CheckMultipleServicesExist checks if multiple services exist in a batch
+func CheckMultipleServicesExist(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	serviceNames []string,
+	timeout int,
+) (map[string]*serviceInfo, error) {
+	if len(serviceNames) == 0 {
+		return make(map[string]*serviceInfo), nil
+	}
+
+	tflog.Debug(ctx, "Checking multiple services existence",
+		map[string]any{"count": len(serviceNames)})
+
+	// Build batch command
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, name := range serviceNames {
+		command := fmt.Sprintf(`
+$service = Get-Service -Name %s -ErrorAction SilentlyContinue
+if ($service) {
+    $info = Get-WmiObject Win32_Service -Filter "Name='%s'" -ErrorAction SilentlyContinue
+    @{
+        Exists = $true
+        Name = $service.Name
+        DisplayName = $service.DisplayName
+        Description = $info.Description
+        Status = $service.Status.ToString()
+        StartType = $service.StartType.ToString()
+        StartName = $info.StartName
+        BinaryPathName = $info.PathName
+        ServiceType = $info.ServiceType
+    } | ConvertTo-Json -Compress
+} else {
+    @{ Exists = $false } | ConvertTo-Json -Compress
+}`,
+			powershell.QuotePowerShellString(name), name)
+
+		batch.Add(command)
+	}
+
+	cmd := batch.Build()
+	stdout, stderr, err := sshClient.ExecuteCommand(cmd, timeout)
+	if err != nil {
+		return nil, utils.HandleCommandError(
+			"batch_check",
+			"multiple_services",
+			"state",
+			cmd,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Build result map
+	infoMap := make(map[string]*serviceInfo)
+	for i, name := range serviceNames {
+		infoStr, _ := result.GetStringResult(i)
+
+		var info serviceInfo
+		if err := json.Unmarshal([]byte(infoStr), &info); err != nil {
+			tflog.Warn(ctx, "Failed to parse service info",
+				map[string]any{
+					"service_name": name,
+					"error":        err.Error(),
+				})
+			continue
+		}
+
+		infoMap[name] = &info
+	}
+
+	tflog.Debug(ctx, "Service existence status retrieved",
+		map[string]any{"count": len(infoMap)})
+
+	return infoMap, nil
+}
+
+// StartMultipleServices starts multiple services in a batch
+func StartMultipleServices(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	serviceNames []string,
+	timeout int,
+) error {
+	if len(serviceNames) == 0 {
+		return nil
+	}
+
+	tflog.Info(ctx, "Starting multiple services in batch",
+		map[string]any{"count": len(serviceNames)})
+
+	// Build batch command
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, name := range serviceNames {
+		cmd := fmt.Sprintf("Start-Service -Name %s -ErrorAction SilentlyContinue; (Get-Service -Name %s).Status -eq 'Running'",
+			powershell.QuotePowerShellString(name),
+			powershell.QuotePowerShellString(name))
+		batch.Add(cmd)
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch service starts",
+		map[string]any{"service_count": len(serviceNames)})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"batch_start",
+			"multiple_services",
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Check results
+	failedServices := []string{}
+	for i, name := range serviceNames {
+		running, _ := result.GetStringResult(i)
+		if running != "True" {
+			failedServices = append(failedServices, name)
+		}
+	}
+
+	if len(failedServices) > 0 {
+		tflog.Warn(ctx, "Some services failed to start",
+			map[string]any{
+				"failed_count":    len(failedServices),
+				"failed_services": failedServices,
+			})
+	}
+
+	tflog.Info(ctx, "Successfully started services in batch",
+		map[string]any{
+			"total":   len(serviceNames),
+			"failed":  len(failedServices),
+			"success": len(serviceNames) - len(failedServices),
+		})
+
+	return nil
+}
+
+// StopMultipleServices stops multiple services in a batch
+func StopMultipleServices(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	serviceNames []string,
+	timeout int,
+) error {
+	if len(serviceNames) == 0 {
+		return nil
+	}
+
+	tflog.Info(ctx, "Stopping multiple services in batch",
+		map[string]any{"count": len(serviceNames)})
+
+	// Build batch command
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, name := range serviceNames {
+		cmd := fmt.Sprintf("Stop-Service -Name %s -Force -ErrorAction SilentlyContinue; (Get-Service -Name %s).Status -eq 'Stopped'",
+			powershell.QuotePowerShellString(name),
+			powershell.QuotePowerShellString(name))
+		batch.Add(cmd)
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch service stops",
+		map[string]any{"service_count": len(serviceNames)})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"batch_stop",
+			"multiple_services",
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Check results
+	failedServices := []string{}
+	for i, name := range serviceNames {
+		stopped, _ := result.GetStringResult(i)
+		if stopped != "True" {
+			failedServices = append(failedServices, name)
+		}
+	}
+
+	if len(failedServices) > 0 {
+		tflog.Warn(ctx, "Some services failed to stop",
+			map[string]any{
+				"failed_count":    len(failedServices),
+				"failed_services": failedServices,
+			})
+	}
+
+	tflog.Info(ctx, "Successfully stopped services in batch",
+		map[string]any{
+			"total":   len(serviceNames),
+			"failed":  len(failedServices),
+			"success": len(serviceNames) - len(failedServices),
+		})
+
+	return nil
+}
+
+// SetMultipleServicesStartType sets startup type for multiple services in a batch
+func SetMultipleServicesStartType(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	updates map[string]string, // map[serviceName]startType
+	timeout int,
+) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tflog.Info(ctx, "Setting startup type for multiple services",
+		map[string]any{"count": len(updates)})
+
+	// Build batch command
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for name, startType := range updates {
+		cmd := fmt.Sprintf("Set-Service -Name %s -StartupType %s -ErrorAction SilentlyContinue; $?",
+			powershell.QuotePowerShellString(name),
+			powershell.QuotePowerShellString(startType))
+		batch.Add(cmd)
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch startup type updates",
+		map[string]any{"update_count": len(updates)})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"batch_set_starttype",
+			"multiple_services",
+			"start_type",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Check results
+	failedServices := []string{}
+	i := 0
+	for name := range updates {
+		success, _ := result.GetStringResult(i)
+		if success != "True" {
+			failedServices = append(failedServices, name)
+		}
+		i++
+	}
+
+	if len(failedServices) > 0 {
+		tflog.Warn(ctx, "Some service updates failed",
+			map[string]any{
+				"failed_count":    len(failedServices),
+				"failed_services": failedServices,
+			})
+	}
+
+	tflog.Info(ctx, "Successfully updated services startup type",
+		map[string]any{
+			"total":   len(updates),
+			"failed":  len(failedServices),
+			"success": len(updates) - len(failedServices),
+		})
+
+	return nil
+}
+
+// DeleteMultipleServices deletes multiple services in a batch
+func DeleteMultipleServices(
+	ctx context.Context,
+	sshClient *ssh.Client,
+	serviceNames []string,
+	timeout int,
+) error {
+	if len(serviceNames) == 0 {
+		return nil
+	}
+
+	tflog.Info(ctx, "Deleting multiple services in batch",
+		map[string]any{"count": len(serviceNames)})
+
+	// First stop all services
+	tflog.Debug(ctx, "Stopping services before deletion")
+	StopMultipleServices(ctx, sshClient, serviceNames, timeout)
+
+	// Give services time to stop
+	time.Sleep(2 * time.Second)
+
+	// Build batch command for deletion
+	batch := powershell.NewBatchCommandBuilder()
+	batch.SetOutputFormat(powershell.OutputArray)
+
+	for _, name := range serviceNames {
+		cmd := fmt.Sprintf(`
+if (Get-Command Remove-Service -ErrorAction SilentlyContinue) {
+    Remove-Service -Name %s -Force -ErrorAction SilentlyContinue
+} else {
+    sc.exe delete %s | Out-Null
+}
+(Get-Service -Name %s -ErrorAction SilentlyContinue) -eq $null`,
+			powershell.QuotePowerShellString(name),
+			powershell.QuotePowerShellString(name),
+			powershell.QuotePowerShellString(name))
+		batch.Add(cmd)
+	}
+
+	command := batch.Build()
+
+	tflog.Debug(ctx, "Executing batch service deletion",
+		map[string]any{"service_count": len(serviceNames)})
+
+	stdout, stderr, err := sshClient.ExecuteCommand(command, timeout)
+	if err != nil {
+		return utils.HandleCommandError(
+			"batch_delete",
+			"multiple_services",
+			"state",
+			command,
+			stdout,
+			stderr,
+			err,
+		)
+	}
+
+	// Parse results
+	result, err := powershell.ParseBatchResult(stdout, powershell.OutputArray)
+	if err != nil {
+		return fmt.Errorf("failed to parse batch result: %w", err)
+	}
+
+	// Check results (services should NOT exist after deletion)
+	failedServices := []string{}
+	for i, name := range serviceNames {
+		deleted, _ := result.GetStringResult(i)
+		if deleted != "True" {
+			failedServices = append(failedServices, name)
+		}
+	}
+
+	if len(failedServices) > 0 {
+		tflog.Warn(ctx, "Some services failed to delete",
+			map[string]any{
+				"failed_count":    len(failedServices),
+				"failed_services": failedServices,
+			})
+	}
+
+	tflog.Info(ctx, "Successfully deleted services in batch",
+		map[string]any{
+			"total":   len(serviceNames),
+			"failed":  len(failedServices),
+			"success": len(serviceNames) - len(failedServices),
+		})
 
 	return nil
 }
