@@ -77,3 +77,33 @@ For commercial support, contact the maintainer directly.
 ## License
 
 See LICENSE file for details.
+
+### new struct
+
+terraform-provider-windows/
+├── main.go                          # Point d'entrée (MIGRÉ)
+├── internal/
+|   ├── common/
+│       └── provider_data.go
+│   ├── provider/
+│   │   ├── provider.go              # Provider principal (MIGRÉ)
+│   │   ├── provider_test.go
+│   │   └── provider_data.go         # Helper pour données partagées
+│   ├── resources/
+│   │   ├── resource_feature.go      # À MIGRER
+│   │   ├── resource_hostname.go     # À MIGRER
+│   │   ├── resource_localuser.go    # À MIGRER
+│   │   ├── resource_localgroup.go   # À MIGRER
+│   │   └── ...
+│   ├── datasources/
+│   │   ├── datasource_feature.go    # À MIGRER
+│   │   └── ...
+│   ├── validators/                  # Custom validators
+│   │   ├── powershell_string.go
+│   │   └── windows_feature.go
+│   └── ssh/                         # Client SSH (inchangé)
+│       ├── client.go
+│       ├── clixml_parser.go
+│       └── pool.go
+├── examples/                        # Exemples Terraform
+└── docs/                           # Documentation générée
