@@ -29,11 +29,14 @@
 				"hashicorp.terraform",
 				"ms-vscode.powershell",
 				"GitHub.vscode-github-actions",
-				"eamodio.gitlens"
+				"eamodio.gitlens",
+				"spencerwmiles.vscode-task-buttons",
+				"discretegames.f5anything"
 			]
 		}
-	}
-
+	},
+	//"remoteUser": "kfr",
+	//"postStartCommand": "sudo chown -R kfr:kfr /workspaces"
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
 

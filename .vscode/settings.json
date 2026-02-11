@@ -1,0 +1,24 @@
+{
+    "task-buttons.buttons": [
+        {
+            "label": "$(tools) Build",
+            "task": "🔨 Build Provider",
+            "tooltip": "Build Terraform Provider"
+        },
+        {
+            "label": "$(refresh) Init",
+            "task": "🔧 Terraform Init",
+            "tooltip": "Terraform Init"
+        },
+        {
+            "label": "$(play) Apply",
+            "task": "🚀 Terraform Apply",
+            "tooltip": "Terraform Apply --auto-approve"
+        },
+        {
+            "label": "$(rocket) Full",
+            "task": "⚡ Build & Apply (Full)",
+            "tooltip": "Build + Init + Apply"
+        }
+    ]
+}

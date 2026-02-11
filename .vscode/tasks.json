@@ -2,9 +2,49 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "setTerraformDir",
+            "label": "🔨 Build Provider",
             "type": "shell",
-            "command": "cd ${workspaceFolder}/exemples",
+            "command": "go build -o terraform-provider-windows",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "🔧 Terraform Init",
+            "type": "shell",
+            "command": "terraform init",
+            "options": {
+                "cwd": "${workspaceFolder}/test"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "🚀 Terraform Apply",
+            "type": "shell",
+            "command": "terraform apply --auto-approve",
+            "options": {
+                "cwd": "${workspaceFolder}/test"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "⚡ Build & Apply (Full)",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "🔨 Build Provider",
+                "🔧 Terraform Init",
+                "🚀 Terraform Apply"
+            ],
             "problemMatcher": []
         }
     ]

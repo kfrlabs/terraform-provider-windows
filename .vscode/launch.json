@@ -11,39 +11,53 @@
             "args": []
         },
         {
-            "name": "Terraform Init",
+            "name": "🔨 Build Provider",
             "type": "f5anything",
-            "command": "terraform init",
+            "command": "go build -o terraform-provider-windows",
             "request": "launch",
-            "preLaunchTask": "setTerraformDir"
+            "terminalIndex": 0
         },
         {
-            "name": "Terraform Plan",
+            "name": "🔧 Terraform Init",
             "type": "f5anything",
-            "command": "terraform plan",
+            "command": "cd test && terraform init",
             "request": "launch",
-            "preLaunchTask": "setTerraformDir"
+            "terminalIndex": 1
         },
         {
-            "name": "Terraform Apply",
+            "name": "📋 Terraform Plan",
             "type": "f5anything",
-            "command": "terraform apply",
+            "command": "cd test && terraform plan",
             "request": "launch",
-            "preLaunchTask": "setTerraformDir"
+            "terminalIndex": 1
         },
         {
-            "name": "Terraform Destroy",
+            "name": "🚀 Terraform Apply",
             "type": "f5anything",
-            "command": "terraform destroy",
+            "command": "cd test && terraform apply --auto-approve",
             "request": "launch",
-            "preLaunchTask": "setTerraformDir"
+            "terminalIndex": 1
         },
         {
-            "name": "Terraform Version",
+            "name": "💥 Terraform Destroy",
             "type": "f5anything",
-            "command": "terraform -version",
+            "command": "cd test && terraform destroy",
             "request": "launch",
-            "preLaunchTask": "setTerraformDir"
+            "terminalIndex": 1
+        },
+        {
+            "name": "ℹ️ Terraform Version",
+            "type": "f5anything",
+            "command": "cd test && terraform -version",
+            "request": "launch",
+            "terminalIndex": 1
+        },
+        {
+            "name": "⚡ Build & Apply (Full)",
+            "type": "f5anything",
+            "command": "go build -o terraform-provider-windows && cd test && terraform init && terraform apply --auto-approve",
+            "request": "launch",
+            "terminalIndex": 2
         }
     ]
 }
