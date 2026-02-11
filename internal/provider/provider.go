@@ -314,7 +314,7 @@ func (p *windowsProvider) Resources(ctx context.Context) []func() resource.Resou
 	return []func() resource.Resource{
 		resources.NewFeatureResource,
 		resources.NewHostnameResource,
-		// resources.NewLocalUserResource,
+		resources.NewLocalUserResource,
 		// resources.NewLocalGroupResource,
 		// resources.NewLocalGroupMemberResource,
 		// resources.NewRegistryKeyResource,
@@ -328,7 +328,7 @@ func (p *windowsProvider) DataSources(ctx context.Context) []func() datasource.D
 	return []func() datasource.DataSource{
 		datasources.NewFeatureDataSource,
 		datasources.NewHostnameDataSource,
-		// datasources.NewLocalUserDataSource,
+		datasources.NewLocalUserDataSource,
 		// datasources.NewLocalGroupDataSource,
 		// datasources.NewLocalGroupMembersDataSource,
 		// datasources.NewServiceDataSource,
