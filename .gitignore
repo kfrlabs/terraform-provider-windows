@@ -1,0 +1,23 @@
+# Binaries
+terraform-provider-windows
+terraform-provider-windows.exe
+dist/
+
+# Go
+*.test
+*.out
+vendor/
+
+# KDust work dir (pipeline intermediate files)
+work/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+crash.log
