@@ -7,7 +7,7 @@ toolchain go1.22.12
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.13.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.15.0
-	github.com/hashicorp/terraform-plugin-go v0.25.0 // indirect
+	github.com/hashicorp/terraform-plugin-go v0.25.0
 	github.com/hashicorp/terraform-plugin-log v0.9.0 // indirect
 	github.com/masterzen/winrm v0.0.0-20240702205601-3fad6e106085
 )
