@@ -7,7 +7,7 @@
 //
 // Security invariants:
 //   - service_password is interpolated only through psQuote (single-quoted
-//     PowerShell literal with embedded "''" escape). It is NEVER concatenated
+//     PowerShell literal with embedded "”" escape). It is NEVER concatenated
 //     raw into scripts and NEVER logged or copied into ServiceError.
 //   - All scripts are rendered as UTF-16LE / base64 via the underlying Client
 //     (-EncodedCommand); no shell metacharacters ever reach cmd.exe.

@@ -83,14 +83,14 @@ func TestSchema_ResourceLevelCall(t *testing.T) {
 
 func TestBuiltinAccountRe(t *testing.T) {
 	cases := map[string]bool{
-		"LocalSystem":                   true,
-		"localsystem":                   true, // case-insensitive
-		"NT AUTHORITY\\SYSTEM":          true,
-		"NT AUTHORITY\\NetworkService":  true,
-		"nt authority\\LocalService":    true,
-		"DOMAIN\\svc-app":               false,
-		".\\svcuser":                    false,
-		"":                              false,
+		"LocalSystem":                  true,
+		"localsystem":                  true, // case-insensitive
+		"NT AUTHORITY\\SYSTEM":         true,
+		"NT AUTHORITY\\NetworkService": true,
+		"nt authority\\LocalService":   true,
+		"DOMAIN\\svc-app":              false,
+		".\\svcuser":                   false,
+		"":                             false,
 	}
 	for in, want := range cases {
 		if got := builtinAccountRe.MatchString(in); got != want {
@@ -402,19 +402,19 @@ func TestWindowsServiceModel_Shape(t *testing.T) {
 // handlers without touching WinRM. Each method captures the last input and
 // returns a preset response/error for assertion.
 type fakeSvcClient struct {
-	createIn     winclient.ServiceInput
-	createOut    *winclient.ServiceState
-	createErr    error
-	readOut      *winclient.ServiceState
-	readErr      error
-	updateIn     winclient.ServiceInput
-	updateOut    *winclient.ServiceState
-	updateErr    error
-	deleteName   string
-	deleteErr    error
-	startCalls   int
-	stopCalls    int
-	pauseCalls   int
+	createIn   winclient.ServiceInput
+	createOut  *winclient.ServiceState
+	createErr  error
+	readOut    *winclient.ServiceState
+	readErr    error
+	updateIn   winclient.ServiceInput
+	updateOut  *winclient.ServiceState
+	updateErr  error
+	deleteName string
+	deleteErr  error
+	startCalls int
+	stopCalls  int
+	pauseCalls int
 }
 
 func (f *fakeSvcClient) Create(_ context.Context, in winclient.ServiceInput) (*winclient.ServiceState, error) {

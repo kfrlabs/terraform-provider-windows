@@ -31,9 +31,9 @@ import (
 
 // Framework interface assertions.
 var (
-	_ resource.Resource                = (*windowsServiceResource)(nil)
-	_ resource.ResourceWithConfigure   = (*windowsServiceResource)(nil)
-	_ resource.ResourceWithImportState = (*windowsServiceResource)(nil)
+	_ resource.Resource                     = (*windowsServiceResource)(nil)
+	_ resource.ResourceWithConfigure        = (*windowsServiceResource)(nil)
+	_ resource.ResourceWithImportState      = (*windowsServiceResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsServiceResource)(nil)
 )
 

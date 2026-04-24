@@ -18,8 +18,8 @@ import (
 // Client wraps a WinRM session and exposes helpers to run PowerShell scripts
 // against the configured Windows host.
 type Client struct {
-	cfg    Config
-	winrm  *winrm.Client
+	cfg   Config
+	winrm *winrm.Client
 }
 
 // New creates and validates a new WinRM Client from the given Config.

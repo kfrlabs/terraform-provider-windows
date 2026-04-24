@@ -1,4 +1,3 @@
-
 // Package winclient defines the WindowsServiceClient interface and associated
 // types for managing Windows services over WinRM.
 //
