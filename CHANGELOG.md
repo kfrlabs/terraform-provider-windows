@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_local_group_member` resource: non-authoritative single-membership
+  management for Windows local groups (companion to `windows_local_group`).
+  Each Terraform resource instance represents one `(group, member)` pair;
+  out-of-band memberships are left undisturbed (EC-12). Composite resource ID
+  is `"<group_sid>/<member_sid>"` — both SIDs are stable across renames.
+  Supports all Windows identity formats for `member` (`DOMAIN\user`, UPN,
+  local username, direct SID string). Implements three-tier orphaned-AD-SID
+  fallback (`Get-LocalGroupMember` → `Win32_GroupUser` WMI → `net localgroup`)
+  for groups containing stale AD SIDs (EC-6). BUILTIN groups (`Administrators`,
+  `Remote Desktop Users`, etc.) are explicitly supported as primary targets
+  (EC-9). Import accepts `"<group>/<member>"` with name or SID on either side.
+  Structured error classification: `group_not_found`, `member_already_exists`,
+  `member_unresolvable`, `member_not_found`, `permission_denied`, `unknown`.
+
 - `windows_local_group` resource: manages a Windows local group (Local Users
   and Groups) on a remote host via WinRM and PowerShell
   (`Microsoft.PowerShell.LocalAccounts`, Windows Server 2016 / Windows 10+).
