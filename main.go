@@ -10,11 +10,11 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"github.com/ecritel/terraform-provider-windows/internal/provider"
+	"github.com/kfrlabs/terraform-provider-windows/internal/provider"
 )
 
 // providerAddress is the Terraform Registry address of this provider.
-const providerAddress = "registry.terraform.io/ecritel/windows"
+const providerAddress = "registry.terraform.io/kfrlabs/windows"
 
 // version is injected at build time via -ldflags.
 var version = "dev"

@@ -46,7 +46,7 @@ creates a new one.
 terraform {
   required_providers {
     windows = {
-      source  = "ecritel/windows"
+      source  = "kfrlabs/windows"
       version = "~> 0.1"
     }
   }
