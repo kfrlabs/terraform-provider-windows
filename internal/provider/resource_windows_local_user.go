@@ -36,7 +36,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/ecritel/terraform-provider-windows/internal/winclient"
+	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
 
 // Framework interface assertions.

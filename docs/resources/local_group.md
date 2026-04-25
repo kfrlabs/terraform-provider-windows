@@ -57,7 +57,7 @@ resource "windows_local_group" "app_admins" {
 terraform {
   required_providers {
     windows = {
-      source  = "ecritel/windows"
+      source  = "kfrlabs/windows"
       version = "~> 0.1"
     }
   }

@@ -11,7 +11,7 @@
 ## Building the provider
 
 ```bash
-git clone https://github.com/ecritel/terraform-provider-windows.git
+git clone https://github.com/kfrlabs/terraform-provider-windows.git
 cd terraform-provider-windows
 make build
 ```
@@ -24,7 +24,7 @@ The binary will be installed into `$GOPATH/bin/terraform-provider-windows`.
 terraform {
   required_providers {
     windows = {
-      source  = "ecritel/windows"
+      source  = "kfrlabs/windows"
       version = "~> 0.1"
     }
   }

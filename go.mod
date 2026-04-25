@@ -1,4 +1,4 @@
-module github.com/ecritel/terraform-provider-windows
+module github.com/kfrlabs/terraform-provider-windows
 
 go 1.22.0
 

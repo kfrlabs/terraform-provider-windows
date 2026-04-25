@@ -37,7 +37,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"github.com/ecritel/terraform-provider-windows/internal/winclient"
+	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
 
 // ---------------------------------------------------------------------------
