@@ -17,10 +17,11 @@
 //   - lgPsHeader          — PowerShell header with Emit-OK / Emit-Err / Classify-LG
 //
 // The three-tier orphaned-SID fallback for List (EC-6, ADR-LGM-5):
-//   Tier 1 — Get-LocalGroupMember -SID (primary)
-//   Tier 2 — Win32_GroupUser WMI (orphan-resilient)
-//   Tier 3 — net localgroup (last resort text parsing)
-//   All-fail — empty slice returned, no error (conservative)
+//
+//	Tier 1 — Get-LocalGroupMember -SID (primary)
+//	Tier 2 — Win32_GroupUser WMI (orphan-resilient)
+//	Tier 3 — net localgroup (last resort text parsing)
+//	All-fail — empty slice returned, no error (conservative)
 package winclient
 
 import (

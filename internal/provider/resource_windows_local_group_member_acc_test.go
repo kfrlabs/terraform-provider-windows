@@ -9,13 +9,14 @@
 //   - Optionally WINDOWS_TEST_DOMAIN_USER: "DOMAIN\user" for domain-user tests.
 //
 // Acceptance-test identifiers:
-//   TestAccWindowsLocalGroupMember_basic        Create+Read+Delete via Administrators
-//   TestAccWindowsLocalGroupMember_importBySID  Import by group SID / member SID
-//   TestAccWindowsLocalGroupMember_importByName Import by group name / member name
-//   TestAccWindowsLocalGroupMember_groupBySID   group attribute = SID string (EC-9)
-//   TestAccWindowsLocalGroupMember_memberByUPN  member attribute = user@domain (UPN)
-//   TestAccWindowsLocalGroupMember_duplicate    EC-1: duplicate membership ExpectError
-//   TestAccWindowsLocalGroupMember_drift        EC-4: out-of-band delete + re-apply
+//
+//	TestAccWindowsLocalGroupMember_basic        Create+Read+Delete via Administrators
+//	TestAccWindowsLocalGroupMember_importBySID  Import by group SID / member SID
+//	TestAccWindowsLocalGroupMember_importByName Import by group name / member name
+//	TestAccWindowsLocalGroupMember_groupBySID   group attribute = SID string (EC-9)
+//	TestAccWindowsLocalGroupMember_memberByUPN  member attribute = user@domain (UPN)
+//	TestAccWindowsLocalGroupMember_duplicate    EC-1: duplicate membership ExpectError
+//	TestAccWindowsLocalGroupMember_drift        EC-4: out-of-band delete + re-apply
 //
 // All tests skip immediately when TF_ACC is not set so the CI unit-test
 // pass remains green without a Windows lab.
@@ -41,6 +42,8 @@ func testAccLGMPreCheck(t *testing.T) {
 }
 
 // lgmTestLocalUser returns the local user account name for acceptance tests.
+//
+//nolint:unused // called from commented skeleton blocks; will be activated when live tests are promoted
 func lgmTestLocalUser() string {
 	if u := os.Getenv("WINDOWS_TEST_LOCAL_USER"); u != "" {
 		return u

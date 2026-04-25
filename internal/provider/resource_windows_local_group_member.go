@@ -261,10 +261,10 @@ func (r *windowsLocalGroupMemberResource) Configure(
 // Create resolves the group, adds the member, and persists the full state.
 //
 // Steps (per spec §operations.create):
-//   0. Resolve group name/SID to group_sid via ResolveGroup (ADR-LGM-6).
-//   1-4. Delegated to LocalGroupMemberClient.Add (SID resolution, duplicate
-//        check, Add-LocalGroupMember, Read-back via Get).
-//   5. Set ID = "<group_sid>/<member_sid>".
+//  0. Resolve group name/SID to group_sid via ResolveGroup (ADR-LGM-6).
+//     1-4. Delegated to LocalGroupMemberClient.Add (SID resolution, duplicate
+//     check, Add-LocalGroupMember, Read-back via Get).
+//  5. Set ID = "<group_sid>/<member_sid>".
 //
 // Edge-case diagnostics:
 //   - EC-2: group not found → hard error on attribute "group"
@@ -322,8 +322,8 @@ func (r *windowsLocalGroupMemberResource) Create(
 
 	tflog.Debug(ctx, "windows_local_group_member Create: member added",
 		map[string]interface{}{
-			"group_sid":              groupSID,
-			"member_sid":             memberState.MemberSID,
+			"group_sid":               groupSID,
+			"member_sid":              memberState.MemberSID,
 			"member_principal_source": memberState.PrincipalSource,
 		})
 

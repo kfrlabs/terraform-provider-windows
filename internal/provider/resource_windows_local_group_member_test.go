@@ -14,16 +14,17 @@
 //   - Configure: nil, wrong-type, valid client.
 //
 // Edge cases covered:
-//   EC-1  member_already_exists diag (addLocalGroupMemberCreateDiag)
-//   EC-2  group_not_found diag on Create (addLocalGroupMemberCreateDiag)
-//   EC-3  member_unresolvable diag (sub_type=local)
-//   EC-4  drift: Read with absent membership → RemoveResource
-//   EC-5  drift: Read with group_not_found → RemoveResource
-//   EC-8  permission_denied diag (addLocalGroupMemberCreateDiag)
-//   EC-9  BUILTIN groups not blocked (no special validator in schema)
-//   EC-10 member_unresolvable diag (sub_type=domain)
-//   EC-11 Update is no-op
-//        ImportState: invalid ID format (various malformed strings)
+//
+//	EC-1  member_already_exists diag (addLocalGroupMemberCreateDiag)
+//	EC-2  group_not_found diag on Create (addLocalGroupMemberCreateDiag)
+//	EC-3  member_unresolvable diag (sub_type=local)
+//	EC-4  drift: Read with absent membership → RemoveResource
+//	EC-5  drift: Read with group_not_found → RemoveResource
+//	EC-8  permission_denied diag (addLocalGroupMemberCreateDiag)
+//	EC-9  BUILTIN groups not blocked (no special validator in schema)
+//	EC-10 member_unresolvable diag (sub_type=domain)
+//	EC-11 Update is no-op
+//	     ImportState: invalid ID format (various malformed strings)
 package provider
 
 import (
