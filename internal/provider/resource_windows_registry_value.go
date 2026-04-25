@@ -116,7 +116,7 @@ func windowsRegistryValueSchemaDefinition() schema.Schema {
 					hiveNormalizePlanModifier{},
 					stringplanmodifier.RequiresReplace(),
 				},
-				Validators: []validator.String{hiveEnumValidator{}},
+				Validators:  []validator.String{hiveEnumValidator{}},
 				Description: "Registry hive: HKLM, HKCU, HKCR, HKU, or HKCC (case-insensitive, normalised to uppercase). ForceNew.",
 			},
 			"path": schema.StringAttribute{
@@ -124,7 +124,7 @@ func windowsRegistryValueSchemaDefinition() schema.Schema {
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
-				Validators: []validator.String{registryPathValidator{}},
+				Validators:  []validator.String{registryPathValidator{}},
 				Description: "Subkey path under the hive (backslash-separated, no leading/trailing backslash). ForceNew.",
 			},
 			"name": schema.StringAttribute{
@@ -228,7 +228,9 @@ type registryPathValidator struct{}
 func (registryPathValidator) Description(_ context.Context) string {
 	return "registry subkey path must be non-empty, no leading/trailing backslash, no hive prefix"
 }
-func (v registryPathValidator) MarkdownDescription(ctx context.Context) string { return v.Description(ctx) }
+func (v registryPathValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
 func (registryPathValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
@@ -254,7 +256,9 @@ type hexEvenLengthValidator struct{}
 func (hexEvenLengthValidator) Description(_ context.Context) string {
 	return "value_binary must have an even number of hex characters"
 }
-func (v hexEvenLengthValidator) MarkdownDescription(ctx context.Context) string { return v.Description(ctx) }
+func (v hexEvenLengthValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
 func (hexEvenLengthValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return

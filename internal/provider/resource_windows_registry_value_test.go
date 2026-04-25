@@ -56,11 +56,11 @@ type fakeRegistryValueClient struct {
 	readErr   error
 	deleteErr error
 
-	lastSetInput   winclient.RegistryValueInput
-	lastReadHive   string
-	lastReadPath   string
-	lastReadName   string
-	deleteCalled   bool
+	lastSetInput winclient.RegistryValueInput
+	lastReadHive string
+	lastReadPath string
+	lastReadName string
+	deleteCalled bool
 }
 
 func (f *fakeRegistryValueClient) Set(_ context.Context, input winclient.RegistryValueInput) (*winclient.RegistryValueState, error) {
