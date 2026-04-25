@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_local_group` resource: manages a Windows local group (Local Users
+  and Groups) on a remote host via WinRM and PowerShell
+  (`Microsoft.PowerShell.LocalAccounts`, Windows Server 2016 / Windows 10+).
+  The Terraform resource ID is the group **SID** (stable across renames);
+  changing `name` issues `Rename-LocalGroup` in place — no resource
+  replacement. Built-in groups (SID prefix `S-1-5-32-*`) are protected against
+  deletion with a hard error. Membership management is out of scope (delegated
+  to the future `windows_local_group_member` resource). Supports import by
+  group name **or** SID (auto-detected by `S-` prefix). Structured error
+  classification: `not_found`, `already_exists`, `builtin_group`,
+  `permission_denied`, `name_conflict`, `invalid_name`, `unknown`.
+
 - `windows_hostname` resource: manage the NetBIOS computer name of a remote
   Windows host over WinRM via `Rename-Computer`. Renames are asynchronous —
   the resource never reboots on its own and surfaces `current_name`,

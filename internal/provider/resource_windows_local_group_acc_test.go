@@ -43,6 +43,9 @@ func testAccLocalGroupPreCheck(t *testing.T) {
 }
 
 // groupSuffix returns the optional group name suffix from env (default: "tf-test").
+// Used by acceptance-test skeletons; suppressed until the test bodies are promoted.
+//
+//nolint:unused
 func groupSuffix() string {
 	if s := os.Getenv("WINDOWS_LOCAL_GROUP_SUFFIX"); s != "" {
 		return s

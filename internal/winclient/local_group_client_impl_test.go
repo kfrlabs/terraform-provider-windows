@@ -52,6 +52,9 @@ func stubLGRun(fn func(ctx context.Context, c *Client, script string) (string, s
 // stubLGSequence stubs runPowerShell with a fixed ordered list of
 // (stdout, stderr, err) triples, consumed in sequence.  After the last triple,
 // every subsequent call repeats the last entry.
+// Retained for multi-call acceptance-test helpers; suppressed until used.
+//
+//nolint:unused
 func stubLGSequence(triples ...[3]any) func() {
 	i := 0
 	return stubLGRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
