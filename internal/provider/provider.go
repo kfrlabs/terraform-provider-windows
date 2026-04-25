@@ -187,6 +187,7 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewWindowsServiceResource,
+		NewWindowsFeatureResource,
 	}
 }
 
