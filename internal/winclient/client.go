@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf16"
 
@@ -95,6 +96,46 @@ func (c *Client) RunPowerShell(ctx context.Context, script string) (string, stri
 	done := make(chan result, 1)
 	go func() {
 		code, err := c.winrm.RunWithContextWithInput(ctx, cmd, &stdout, &stderr, nil)
+		done <- result{code: code, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return stdout.String(), stderr.String(), ctx.Err()
+	case r := <-done:
+		if r.err != nil {
+			return stdout.String(), stderr.String(), fmt.Errorf("winclient: powershell run: %w", r.err)
+		}
+		if r.code != 0 {
+			return stdout.String(), stderr.String(), fmt.Errorf("winclient: powershell exited with code %d", r.code)
+		}
+		return stdout.String(), stderr.String(), nil
+	}
+}
+
+// RunPowerShellWithInput executes the given PowerShell script with the supplied
+// stdin string piped to the process. This allows sensitive data (e.g. passwords)
+// to be injected via stdin rather than the script body / EncodedCommand, so the
+// plaintext never appears in WinRM trace logs.
+//
+// The PowerShell script reads from stdin via [Console]::In.ReadLine().
+func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin string) (string, string, error) {
+	if c == nil || c.winrm == nil {
+		return "", "", fmt.Errorf("winclient: nil client")
+	}
+
+	encoded := encodePowerShell(script)
+	cmd := fmt.Sprintf("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encoded)
+
+	var stdout, stderr bytes.Buffer
+	type result struct {
+		code int
+		err  error
+	}
+	done := make(chan result, 1)
+	stdinReader := strings.NewReader(stdin)
+	go func() {
+		code, err := c.winrm.RunWithContextWithInput(ctx, cmd, &stdout, &stderr, stdinReader)
 		done <- result{code: code, err: err}
 	}()
 

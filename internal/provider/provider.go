@@ -191,6 +191,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsHostnameResource,
 		NewWindowsLocalGroupResource,
 		NewWindowsLocalGroupMemberResource,
+		NewWindowsLocalUserResource,
 	}
 }
 
