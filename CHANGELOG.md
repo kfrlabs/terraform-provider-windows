@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_registry_value` resource: manages a single named value (or the
+  unnamed **Default** value) inside a Windows registry key on a remote host via
+  WinRM + PowerShell, using the `.NET Microsoft.Win32.Registry` API directly
+  for type-safe, robust access across all seven Windows registry value kinds
+  (`REG_SZ`, `REG_EXPAND_SZ`, `REG_MULTI_SZ`, `REG_DWORD`, `REG_QWORD`,
+  `REG_BINARY`, `REG_NONE`). Missing parent keys are created automatically and
+  recursively at Create time; only the targeted value is removed at Delete time.
+  `REG_DWORD` and `REG_QWORD` are expressed as decimal strings to avoid uint32
+  overflow and `float64` precision loss (ADR-RV-3). `REG_BINARY` and `REG_NONE`
+  use lowercase hex without separators (ADR-RV-4). `REG_EXPAND_SZ` reads raw
+  `%VAR%` tokens by default (`expand_environment_variables = false`) for stable
+  drift detection (ADR-RV-5). The resource ID is a composite
+  `HIVE\PATH\NAME`; the Default value (`name = ""`) has a trailing-backslash
+  ID. `hive` input is case-insensitive and normalised to uppercase (ADR-RV-6).
+  Three-method client interface (`Set`/`Read`/`Delete`) with a type-conflict
+  guard at both plan and runtime layers (ADR-RV-7, EC-3). All PowerShell
+  parameters are psQuote-escaped; no user data is raw-concatenated into scripts.
+  Structured error classification: `type_conflict`, `not_found`,
+  `permission_denied`, `invalid_input`, `unknown`. Import supported via
+  `terraform import windows_registry_value.<name> 'HIVE\PATH\NAME'`.
+
 - `windows_local_user` resource: manages a Windows local user account (SAM
   database) on a remote host via WinRM and PowerShell
   (`Microsoft.PowerShell.LocalAccounts`, Windows Server 2016 / Windows 10+).
