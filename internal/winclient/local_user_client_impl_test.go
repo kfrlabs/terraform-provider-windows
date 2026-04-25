@@ -514,10 +514,10 @@ func TestLocalUserClient_Create_WithAccountExpires(t *testing.T) {
 	})()
 
 	input := UserInput{
-		Name:               "expiring",
+		Name:                "expiring",
 		AccountNeverExpires: false,
-		AccountExpires:     "2028-12-31T23:59:59Z",
-		Enabled:            true,
+		AccountExpires:      "2028-12-31T23:59:59Z",
+		Enabled:             true,
 	}
 	us, err := lc.Create(context.Background(), input, "P@ssw0rd!")
 	if err != nil {
@@ -616,9 +616,9 @@ func TestLocalUserClient_Update_AccountNeverExpires(t *testing.T) {
 	})()
 
 	_, err := lc.Update(context.Background(), "S-1-5-21-111-222-333-1001", UserInput{
-		Name:               "alice",
+		Name:                "alice",
 		AccountNeverExpires: true,
-		Enabled:            true,
+		Enabled:             true,
 	})
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)
@@ -635,10 +635,10 @@ func TestLocalUserClient_Update_WithAccountExpires(t *testing.T) {
 	})()
 
 	_, err := lc.Update(context.Background(), "S-1-5-21-111-222-333-1001", UserInput{
-		Name:               "alice",
+		Name:                "alice",
 		AccountNeverExpires: false,
-		AccountExpires:     "2029-06-01T00:00:00Z",
-		Enabled:            true,
+		AccountExpires:      "2029-06-01T00:00:00Z",
+		Enabled:             true,
 	})
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)
@@ -654,10 +654,10 @@ func TestLocalUserClient_Update_NoExpiryChange(t *testing.T) {
 	})()
 
 	_, err := lc.Update(context.Background(), "S-1-5-21-111-222-333-1001", UserInput{
-		Name:               "alice",
+		Name:                "alice",
 		AccountNeverExpires: false,
-		AccountExpires:     "", // no change
-		Enabled:            true,
+		AccountExpires:      "", // no change
+		Enabled:             true,
 	})
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)

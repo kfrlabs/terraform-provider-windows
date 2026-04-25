@@ -6,6 +6,30 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_local_user` resource: manages a Windows local user account (SAM
+  database) on a remote host via WinRM and PowerShell
+  (`Microsoft.PowerShell.LocalAccounts`, Windows Server 2016 / Windows 10+).
+  The Terraform resource ID is the user **SID** (stable across renames);
+  changing `name` issues `Rename-LocalUser -SID` in place — no resource
+  replacement (ADR-LU-1). Supports `full_name`, `description` (48-char
+  Windows limit, EC-8), `enabled`, `password_never_expires`,
+  `user_may_not_change_password`, `account_never_expires`, and
+  `account_expires` (RFC3339, future-only at Create, EC-13). Password is
+  **Sensitive-only** in TPF 1.13.0 (write-only migration path documented for
+  TPF ≥ 1.14.0); plaintext injected via stdin — never in
+  `-EncodedCommand` payloads or WinRM trace logs (ADR-LU-3). Password
+  rotation driven by `password_wo_version` counter (EC-6). Built-in accounts
+  (RID 500/501/503/504) protected against deletion with a hard error
+  (ADR-LU-2, EC-2). `password_last_set` is read-only and does not drive
+  autonomous drift (ADR-LU-4). Import accepts SID (starts with `S-`) or SAM
+  name; post-import `password` is null (EC-11). Structured error
+  classification: `not_found`, `already_exists`, `builtin_account`,
+  `rename_conflict`, `password_policy`, `permission_denied`, `invalid_name`,
+  `unknown`. Adds `ResolveLocalUserSID` helper (symmetric to `ResolveGroup`
+  in `local_group_helpers.go`) for resolving a SAM name or SID string to a
+  canonical `*UserState` — available for future resources that need local
+  user identity resolution without duplicating PowerShell logic.
+
 - `windows_local_group_member` resource: non-authoritative single-membership
   management for Windows local groups (companion to `windows_local_group`).
   Each Terraform resource instance represents one `(group, member)` pair;
