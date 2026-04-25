@@ -299,21 +299,21 @@ try {
 			"failed to parse hostname state after Rename-Computer", jerr,
 			map[string]string{"host": h.c.cfg.Host})
 	}
-	new := payloadToState(p)
+	post := payloadToState(p)
 
 	// EC-11: if pending_name does not reflect the desired name, an external
 	// rename happened concurrently.
-	if !strings.EqualFold(new.PendingName, desired) {
-		return new, NewHostnameError(HostnameErrorConcurrent,
-			fmt.Sprintf("observed pending_name %q does not match desired %q after Rename-Computer; an external rename may have occurred", new.PendingName, desired),
+	if !strings.EqualFold(post.PendingName, desired) {
+		return post, NewHostnameError(HostnameErrorConcurrent,
+			fmt.Sprintf("observed pending_name %q does not match desired %q after Rename-Computer; an external rename may have occurred", post.PendingName, desired),
 			nil, map[string]string{
-				"desired_name":    desired,
-				"observed_pending": new.PendingName,
-				"observed_current": new.CurrentName,
+				"desired_name":     desired,
+				"observed_pending": post.PendingName,
+				"observed_current": post.CurrentName,
 				"host":             h.c.cfg.Host,
 			})
 	}
-	return new, nil
+	return post, nil
 }
 
 // Create renames the host to input.Name (idempotent).
