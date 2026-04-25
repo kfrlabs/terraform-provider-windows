@@ -188,6 +188,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 	return []func() resource.Resource{
 		NewWindowsServiceResource,
 		NewWindowsFeatureResource,
+		NewWindowsHostnameResource,
 	}
 }
 

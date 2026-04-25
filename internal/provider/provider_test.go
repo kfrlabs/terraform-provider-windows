@@ -53,8 +53,8 @@ func TestProvider_Schema(t *testing.T) {
 
 func TestProvider_ResourcesAndDataSources(t *testing.T) {
 	p := &windowsProvider{}
-	if got := len(p.Resources(context.Background())); got != 2 {
-		t.Errorf("Resources len = %d, want 2 (service + feature)", got)
+	if got := len(p.Resources(context.Background())); got != 3 {
+		t.Errorf("Resources len = %d, want 3 (service + feature + hostname)", got)
 	}
 	if got := len(p.DataSources(context.Background())); got != 0 {
 		t.Errorf("DataSources len = %d, want 0", got)
