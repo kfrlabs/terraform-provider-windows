@@ -182,10 +182,10 @@ type featureDataPayload struct {
 
 // installDataPayload mirrors the JSON returned by Install/Uninstall scripts.
 type installDataPayload struct {
-	Feature        *featureDataPayload `json:"feature"`
-	RestartNeeded  bool                `json:"restart_needed"`
-	Success        bool                `json:"success"`
-	ExitCode       string              `json:"exit_code"`
+	Feature       *featureDataPayload `json:"feature"`
+	RestartNeeded bool                `json:"restart_needed"`
+	Success       bool                `json:"success"`
+	ExitCode      string              `json:"exit_code"`
 }
 
 func toFeatureInfo(d *featureDataPayload) *FeatureInfo {

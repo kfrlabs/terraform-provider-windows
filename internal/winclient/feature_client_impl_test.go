@@ -4,15 +4,15 @@
 // scripted stdout/stderr/err triples. They cover the 9 edge cases from the
 // windows_feature spec:
 //
-//   EC-1  Unknown feature name           -> NewFeatureError(not_found) at Install
-//   EC-2  Drift (uninstalled out-of-band)-> Read returns FeatureInfo with installed=false
-//   EC-3  install_state=Removed w/o source -> source_missing at Install
-//   EC-4  Reboot required, restart=false -> resp.RestartNeeded surfaced
-//   EC-5  Insufficient permissions      -> permission_denied with admin hint
-//   EC-6  ForceNew on include_*         -> resource layer concern, asserted there
-//   EC-7  Parent feature absent         -> dependency_missing
-//   EC-8  WinRM timeout                 -> ctx.Err() -> FeatureErrorTimeout
-//   EC-9  Cmdlet unavailable (client SKU)-> unsupported_sku
+//	EC-1  Unknown feature name           -> NewFeatureError(not_found) at Install
+//	EC-2  Drift (uninstalled out-of-band)-> Read returns FeatureInfo with installed=false
+//	EC-3  install_state=Removed w/o source -> source_missing at Install
+//	EC-4  Reboot required, restart=false -> resp.RestartNeeded surfaced
+//	EC-5  Insufficient permissions      -> permission_denied with admin hint
+//	EC-6  ForceNew on include_*         -> resource layer concern, asserted there
+//	EC-7  Parent feature absent         -> dependency_missing
+//	EC-8  WinRM timeout                 -> ctx.Err() -> FeatureErrorTimeout
+//	EC-9  Cmdlet unavailable (client SKU)-> unsupported_sku
 package winclient
 
 import (
@@ -141,7 +141,7 @@ func TestMapFeatureKind(t *testing.T) {
 		"dependency_missing": FeatureErrorDependencyMissing,
 		"unsupported_sku":    FeatureErrorUnsupportedSKU,
 		"timeout":            FeatureErrorTimeout,
-		"invalid_parameter": FeatureErrorInvalidParameter,
+		"invalid_parameter":  FeatureErrorInvalidParameter,
 		"":                   FeatureErrorUnknown,
 		"weird_kind":         FeatureErrorUnknown,
 	}
@@ -440,7 +440,7 @@ func TestFeatureInstall_NotFound_EC1(t *testing.T) {
 func TestFeatureInstall_SourceMissing_EC3(t *testing.T) {
 	restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		return featErr(t, "source_missing",
-			"Feature 'Web-Server' has install_state=Removed; an SxS/WIM 'source' path is required to install it."),
+				"Feature 'Web-Server' has install_state=Removed; an SxS/WIM 'source' path is required to install it."),
 			"", nil
 	})
 	defer restore()
@@ -457,7 +457,7 @@ func TestFeatureInstall_SourceMissing_EC3(t *testing.T) {
 func TestFeatureInstall_DependencyMissing_EC7(t *testing.T) {
 	restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		return featErr(t, "dependency_missing",
-			"The feature 'Web-Mgmt-Service' depends on parent feature 'Web-Server' which is not installed."),
+				"The feature 'Web-Mgmt-Service' depends on parent feature 'Web-Server' which is not installed."),
 			"", nil
 	})
 	defer restore()

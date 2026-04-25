@@ -5,15 +5,16 @@
 // fakeFeatureClient injected into windowsFeatureResource.feat.
 //
 // The 9 spec edge cases are covered:
-//   EC-1 unknown feature   -> Create returns not_found error diag
-//   EC-2 drift removal     -> Read sees nil info, RemoveResource called
-//   EC-3 source missing    -> Create returns source_missing diag
-//   EC-4 reboot warning    -> Install reports RestartNeeded -> warning diag
-//   EC-5 permission denied -> Read returns permission_denied diag
-//   EC-6 ForceNew on include_* -> schema-level RequiresReplace asserted
-//   EC-7 dependency missing -> Create returns dependency_missing diag
-//   EC-8 timeout           -> Install returns timeout diag
-//   EC-9 unsupported SKU   -> Read returns unsupported_sku diag
+//
+//	EC-1 unknown feature   -> Create returns not_found error diag
+//	EC-2 drift removal     -> Read sees nil info, RemoveResource called
+//	EC-3 source missing    -> Create returns source_missing diag
+//	EC-4 reboot warning    -> Install reports RestartNeeded -> warning diag
+//	EC-5 permission denied -> Read returns permission_denied diag
+//	EC-6 ForceNew on include_* -> schema-level RequiresReplace asserted
+//	EC-7 dependency missing -> Create returns dependency_missing diag
+//	EC-8 timeout           -> Install returns timeout diag
+//	EC-9 unsupported SKU   -> Read returns unsupported_sku diag
 package provider
 
 import (
