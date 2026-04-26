@@ -1,0 +1,14 @@
+# gitleaks configuration — allowlist for known false positives.
+# See: https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+
+title = "terraform-provider-windows gitleaks config"
+
+[allowlist]
+  description = "project-level allowlist"
+  # credentials.go defines environment variable *names* (e.g. WINDOWS_PASSWORD).
+  # These are not secrets; the matching string is the name of the env var, not
+  # a credential value. The gosec G101 exclusion is already present in
+  # .golangci.yml; this rule covers the gitleaks hashicorp-tf-password rule.
+  paths = [
+    "internal/winclient/credentials.go",
+  ]
