@@ -17,7 +17,7 @@
 //   - Update with ForceNew    n/a — v1 has no ForceNew attributes; renames are in-place
 //   - Import                  `terraform import windows_hostname.this <machine_guid>`
 //   - Delete                  destroy is a no-op (EC-7); CheckDestroy verifies the
-//                             host still answers and current_name is unchanged
+//     host still answers and current_name is unchanged
 //
 // Every test SKIPS via testAccHostnamePreCheck when prerequisites are missing,
 // so CI without a Windows lab still produces a green build.

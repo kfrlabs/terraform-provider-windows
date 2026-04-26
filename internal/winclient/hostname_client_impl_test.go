@@ -176,7 +176,7 @@ func TestValidateNetBIOS(t *testing.T) {
 		}
 	}
 	invalid := []string{
-		"",                  // empty
+		"",                 // empty
 		"abcdefghijklmnop", // 16 chars
 		"-foo",             // leading hyphen
 		"foo-",             // trailing hyphen

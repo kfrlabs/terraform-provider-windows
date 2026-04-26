@@ -23,9 +23,9 @@ data "windows_registry_value" "product_name" {
 
 # Read a REG_EXPAND_SZ value with environment variable expansion.
 data "windows_registry_value" "windir" {
-  hive                        = "HKLM"
-  path                        = "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"
-  name                        = "windir"
+  hive                         = "HKLM"
+  path                         = "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"
+  name                         = "windir"
   expand_environment_variables = true
 }
 
