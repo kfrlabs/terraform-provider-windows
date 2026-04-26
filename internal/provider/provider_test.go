@@ -56,8 +56,8 @@ func TestProvider_ResourcesAndDataSources(t *testing.T) {
 	if got := len(p.Resources(context.Background())); got != 7 {
 		t.Errorf("Resources len = %d, want 7 (service + feature + hostname + local_group + local_group_member + local_user + registry_value)", got)
 	}
-	if got := len(p.DataSources(context.Background())); got != 0 {
-		t.Errorf("DataSources len = %d, want 0", got)
+	if got := len(p.DataSources(context.Background())); got != 7 {
+		t.Errorf("DataSources len = %d, want 7 (feature + hostname + local_group + local_group_member + local_user + registry_value + service)", got)
 	}
 }
 
