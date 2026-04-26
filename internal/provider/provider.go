@@ -193,6 +193,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsLocalGroupMemberResource,
 		NewWindowsLocalUserResource,
 		NewWindowsRegistryValueResource,
+		NewWindowsEnvironmentVariableResource,
 	}
 }
 
@@ -206,5 +207,6 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsLocalUserDataSource,
 		NewWindowsRegistryValueDataSource,
 		NewWindowsServiceDataSource,
+		NewWindowsEnvironmentVariableDataSource,
 	}
 }
