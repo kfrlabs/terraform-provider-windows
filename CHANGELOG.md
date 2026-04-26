@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_environment_variable` resource and data source: manages (or reads)
+  a single Windows environment variable (`machine` or `user` scope) on a remote
+  host via WinRM + PowerShell. Uses the `.NET Microsoft.Win32.Registry` API for
+  type-safe `REG_SZ` / `REG_EXPAND_SZ` storage (ADR-EV-1). Broadcasts
+  `WM_SETTINGCHANGE` after every mutation so newly started processes inherit the
+  change without a reboot; broadcast failure is non-fatal (ADR-EV-2). Reads
+  always use `DoNotExpandEnvironmentNames` for stable drift detection with raw
+  `%VAR%` tokens (ADR-EV-5). Import ID format: `<scope>:<name>` (e.g.
+  `machine:JAVA_HOME`). Scope `machine` requires Local Administrator; `user`
+  requires no elevation. The data source returns a Terraform error for
+  non-existent variables (no silent empty state).
+
 - Add 7 data sources mirroring resources: `windows_feature`, `windows_hostname`,
   `windows_local_group`, `windows_local_group_member`, `windows_local_user`,
   `windows_registry_value`, and `windows_service`. Each data source is read-only
