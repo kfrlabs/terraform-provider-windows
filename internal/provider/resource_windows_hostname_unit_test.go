@@ -301,10 +301,7 @@ func TestHostnameCreate_HappyPath(t *testing.T) {
 	if m.PendingName.ValueString() != "NEW-NAME" {
 		t.Errorf("PendingName = %q, want NEW-NAME", m.PendingName.ValueString())
 	}
-	// Reboot pending warning should be present.
-	if !resp.Diagnostics.HasError() && !m.RebootPending.ValueBool() {
-		// The warning doesn't make state HasError; check separately.
-	}
+	// Reboot pending warning should be present (warning does not set HasError).
 	if !m.RebootPending.ValueBool() {
 		t.Error("RebootPending should be true when pending != current")
 	}

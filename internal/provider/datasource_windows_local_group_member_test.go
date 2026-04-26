@@ -18,28 +18,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Fake member client (separate name to avoid collision with resource tests)
-// ---------------------------------------------------------------------------
-
-type fakeLocalGroupMemberClientDS struct {
-	listOut []*winclient.LocalGroupMemberState
-	listErr error
-}
-
-func (f *fakeLocalGroupMemberClientDS) Add(_ context.Context, _ winclient.LocalGroupMemberInput) (*winclient.LocalGroupMemberState, error) {
-	panic("Add not used in data source")
-}
-func (f *fakeLocalGroupMemberClientDS) Remove(_ context.Context, _, _ string) error {
-	panic("Remove not used in data source")
-}
-func (f *fakeLocalGroupMemberClientDS) Get(_ context.Context, _, _ string) (*winclient.LocalGroupMemberState, error) {
-	panic("Get not used in data source")
-}
-func (f *fakeLocalGroupMemberClientDS) List(_ context.Context, _ string) ([]*winclient.LocalGroupMemberState, error) {
-	return f.listOut, f.listErr
-}
-
-// ---------------------------------------------------------------------------
 // Metadata
 // ---------------------------------------------------------------------------
 
