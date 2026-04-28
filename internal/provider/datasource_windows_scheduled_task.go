@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
@@ -192,8 +193,8 @@ func (d *windowsScheduledTaskDataSource) Read(ctx context.Context, req datasourc
 }
 
 // dsStateToModel converts a ScheduledTaskState to the DS model.
-func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*windowsScheduledTaskDSModel, []error) {
-	var allDiags []error
+func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*windowsScheduledTaskDSModel, diag.Diagnostics) {
+	var allDiags diag.Diagnostics
 	m := &windowsScheduledTaskDSModel{
 		ID:             types.StringValue(s.Path + s.Name),
 		Name:           types.StringValue(s.Name),
@@ -213,11 +214,7 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 			LogonType: types.StringValue(s.Principal.LogonType),
 			RunLevel:  types.StringValue(s.Principal.RunLevel),
 		})
-		if d.HasError() {
-			for _, e := range d.Errors() {
-				allDiags = append(allDiags, fmt.Errorf("%s: %s", e.Summary(), e.Detail()))
-			}
-		}
+		allDiags.Append(d...)
 		m.Principal = obj
 	} else {
 		m.Principal = types.ObjectNull(scheduledTaskDSPrincipalAttrTypes)
@@ -231,19 +228,11 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 			Arguments:        types.StringValue(a.Arguments),
 			WorkingDirectory: types.StringValue(a.WorkingDirectory),
 		})
-		if d.HasError() {
-			for _, e := range d.Errors() {
-				allDiags = append(allDiags, fmt.Errorf("%s: %s", e.Summary(), e.Detail()))
-			}
-		}
+		allDiags.Append(d...)
 		actionElems[i] = obj
 	}
 	actList, d := types.ListValue(types.ObjectType{AttrTypes: scheduledTaskActionAttrTypes}, actionElems)
-	if d.HasError() {
-		for _, e := range d.Errors() {
-			allDiags = append(allDiags, fmt.Errorf("%s: %s", e.Summary(), e.Detail()))
-		}
-	}
+	allDiags.Append(d...)
 	m.Actions = actList
 
 	// Triggers
@@ -252,11 +241,7 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 		var dows attr.Value
 		if len(t.DaysOfWeek) > 0 {
 			v, d2 := types.ListValueFrom(ctx, types.StringType, t.DaysOfWeek)
-			if d2.HasError() {
-				for _, e := range d2.Errors() {
-					allDiags = append(allDiags, fmt.Errorf("%s: %s", e.Summary(), e.Detail()))
-				}
-			}
+			allDiags.Append(d2...)
 			dows = v
 		} else {
 			dows = types.ListValueMust(types.StringType, []attr.Value{})
@@ -274,19 +259,11 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 			UserID:             types.StringValue(t.UserID),
 			Subscription:       types.StringValue(t.Subscription),
 		})
-		if d2.HasError() {
-			for _, e := range d2.Errors() {
-				allDiags = append(allDiags, fmt.Errorf("%s: %s", e.Summary(), e.Detail()))
-			}
-		}
+		allDiags.Append(d2...)
 		trigElems[i] = obj
 	}
 	trigList, d2 := types.ListValue(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, trigElems)
-	if d2.HasError() {
-		for _, e := range d2.Errors() {
-			allDiags = append(allDiags, fmt.Errorf("%s: %s", e.Summary(), e.Detail()))
-		}
-	}
+	allDiags.Append(d2...)
 	m.Triggers = trigList
 
 	// Settings
@@ -303,11 +280,7 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 			WakeToRun:                  types.BoolValue(s.Settings.WakeToRun),
 			RunOnlyIfIdle:              types.BoolValue(s.Settings.RunOnlyIfIdle),
 		})
-		if d3.HasError() {
-			for _, e := range d3.Errors() {
-				allDiags = append(allDiags, fmt.Errorf("%s: %s", e.Summary(), e.Detail()))
-			}
-		}
+		allDiags.Append(d3...)
 		m.Settings = obj
 	} else {
 		m.Settings = types.ObjectNull(scheduledTaskSettingsAttrTypes)

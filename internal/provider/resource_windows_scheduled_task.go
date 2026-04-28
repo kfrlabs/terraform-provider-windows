@@ -48,8 +48,8 @@ func NewWindowsScheduledTaskResource() resource.Resource { return &windowsSchedu
 
 // windowsScheduledTaskResource is the TPF resource for windows_scheduled_task.
 type windowsScheduledTaskResource struct {
-	client    *winclient.Client
-	stClient  winclient.ScheduledTaskClient
+	client   *winclient.Client
+	stClient winclient.ScheduledTaskClient
 }
 
 // ---------------------------------------------------------------------------
@@ -162,12 +162,16 @@ type windowsScheduledTaskModel struct {
 // Validators
 // ---------------------------------------------------------------------------
 
-var scheduledTaskNameRe = regexp.MustCompile(`^[^\\]{1,238}$`)
+// scheduledTaskNameRe rejects Windows-reserved characters (\/:*?"<>|) and enforces
+// a 1-238 character length limit matching the Task Scheduler maximum.
+// Uses a double-quoted Go string so each `\\` produces one literal backslash in the
+// compiled regex pattern, making the intent explicit and gofmt-stable.
+var scheduledTaskNameRe = regexp.MustCompile("^[^\\\\/:*?\"<>|]{1,238}$")
 
 type scheduledTaskNameValidator struct{}
 
 func (v scheduledTaskNameValidator) Description(_ context.Context) string {
-	return "task name must not contain backslash and be 1-238 characters"
+	return `task name must not contain \ / : * ? " < > | and be 1-238 characters`
 }
 func (v scheduledTaskNameValidator) MarkdownDescription(ctx context.Context) string {
 	return v.Description(ctx)
@@ -179,16 +183,23 @@ func (v scheduledTaskNameValidator) ValidateString(_ context.Context, req valida
 	if !scheduledTaskNameRe.MatchString(req.ConfigValue.ValueString()) {
 		resp.Diagnostics.AddAttributeError(req.Path,
 			"Invalid task name",
-			"Task name must not contain a backslash and must be 1–238 characters long.")
+			`Task name must be 1–238 characters and must not contain any of: \ / : * ? " < > |`)
 	}
 }
 
-var scheduledTaskPathRe = regexp.MustCompile(`^\\([A-Za-z0-9_\-. ]+\\)*$`)
+// scheduledTaskPathRe validates the Task Scheduler folder path format.
+// A valid path starts with a backslash and every segment ends with a backslash,
+// e.g. "\" (root) or "\Custom\" or "\Custom\Sub\".
+// Segment content is any non-backslash sequence, allowing Unicode names, digits,
+// spaces, and punctuation — matching the actual Task Scheduler folder name rules.
+// Uses a double-quoted Go string: each `\\\\` produces one literal backslash in the
+// compiled regex pattern, keeping the escape intent transparent.
+var scheduledTaskPathRe = regexp.MustCompile("^\\\\([^\\\\]+\\\\)*$")
 
 type scheduledTaskPathValidator struct{}
 
 func (v scheduledTaskPathValidator) Description(_ context.Context) string {
-	return `task path must start and end with backslash (e.g. "\" or "\Custom\Sub\")`
+	return `task path must start with a backslash and each folder segment must end with a backslash, e.g. "\" or "\Custom\" or "\Custom\Sub\"`
 }
 func (v scheduledTaskPathValidator) MarkdownDescription(ctx context.Context) string {
 	return v.Description(ctx)
@@ -355,33 +366,33 @@ func (r *windowsScheduledTaskResource) Schema(_ context.Context, _ resource.Sche
 		MarkdownDescription: "Manages a Windows Scheduled Task via WinRM + PowerShell (ScheduledTasks module, Windows 2012+).",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Computed: true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				MarkdownDescription: "Composite ID `<TaskPath><TaskName>` (ADR-ST-2).",
 			},
 			"name": schema.StringAttribute{
-				Required: true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-				Validators: []validator.String{scheduledTaskNameValidator{}},
+				Required:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{scheduledTaskNameValidator{}},
 				MarkdownDescription: "Task leaf name. No backslash; max 238 chars. **ForceNew**.",
 			},
 			"path": schema.StringAttribute{
-				Optional: true,
-				Computed: true,
-				Default:  stringdefault.StaticString("\\"),
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-				Validators: []validator.String{scheduledTaskPathValidator{}},
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("\\"),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{scheduledTaskPathValidator{}},
 				MarkdownDescription: `Task folder path (starts and ends with "\"). Defaults to "\". **ForceNew**.`,
 			},
 			"description": schema.StringAttribute{
-				Optional: true,
-				Validators: []validator.String{stringvalidator.LengthAtMost(2048)},
+				Optional:            true,
+				Validators:          []validator.String{stringvalidator.LengthAtMost(2048)},
 				MarkdownDescription: "Human-readable task description (max 2048 chars).",
 			},
 			"enabled": schema.BoolAttribute{
-				Optional: true,
-				Computed: true,
-				Default:  booldefault.StaticBool(true),
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
 				MarkdownDescription: "Whether the task is enabled. Defaults to `true`.",
 			},
 			"state": schema.StringAttribute{
@@ -389,18 +400,18 @@ func (r *windowsScheduledTaskResource) Schema(_ context.Context, _ resource.Sche
 				MarkdownDescription: "Current operational state: Ready|Disabled|Running|Queued|Unknown.",
 			},
 			"last_run_time": schema.StringAttribute{
-				Computed: true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				MarkdownDescription: "RFC 3339 timestamp of last execution, or empty string.",
 			},
 			"last_task_result": schema.Int64Attribute{
-				Computed: true,
-				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+				Computed:            true,
+				PlanModifiers:       []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
 				MarkdownDescription: "Win32 exit code of last execution (0=success).",
 			},
 			"next_run_time": schema.StringAttribute{
-				Computed: true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				MarkdownDescription: "RFC 3339 timestamp of next scheduled run, or empty string.",
 			},
 			"principal": schema.SingleNestedAttribute{
@@ -408,22 +419,22 @@ func (r *windowsScheduledTaskResource) Schema(_ context.Context, _ resource.Sche
 				MarkdownDescription: "Security context. Omit for Windows default (SYSTEM/ServiceAccount).",
 				Attributes: map[string]schema.Attribute{
 					"user_id": schema.StringAttribute{
-						Optional: true,
-						Computed: true,
-						Default:  stringdefault.StaticString("SYSTEM"),
+						Optional:            true,
+						Computed:            true,
+						Default:             stringdefault.StaticString("SYSTEM"),
 						MarkdownDescription: "Account identifier. Defaults to `\"SYSTEM\"`.",
 					},
 					"password": schema.StringAttribute{
-						Optional:  true,
-						Sensitive: true,
+						Optional:            true,
+						Sensitive:           true,
 						MarkdownDescription: "Write-only account password (ADR-ST-3). Required when `logon_type=\"Password\"` (EC-4).",
 					},
 					"password_wo_version": schema.Int64Attribute{
-						Optional: true,
-						Computed: true,
-						Default:  int64default.StaticInt64(0),
-						Validators: []validator.Int64{int64validator.AtLeast(0)},
-						PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+						Optional:            true,
+						Computed:            true,
+						Default:             int64default.StaticInt64(0),
+						Validators:          []validator.Int64{int64validator.AtLeast(0)},
+						PlanModifiers:       []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
 						MarkdownDescription: "Increment to rotate the password without task replacement (EC-6 / ADR-ST-3).",
 					},
 					"logon_type": schema.StringAttribute{
@@ -434,18 +445,18 @@ func (r *windowsScheduledTaskResource) Schema(_ context.Context, _ resource.Sche
 						MarkdownDescription: "Authentication mode. One of: Password|S4U|Interactive|Group|ServiceAccount|InteractiveOrPassword.",
 					},
 					"run_level": schema.StringAttribute{
-						Optional: true,
-						Computed: true,
-						Default:  stringdefault.StaticString("Limited"),
-						Validators: []validator.String{stringvalidator.OneOf("Limited", "Highest")},
-						PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+						Optional:            true,
+						Computed:            true,
+						Default:             stringdefault.StaticString("Limited"),
+						Validators:          []validator.String{stringvalidator.OneOf("Limited", "Highest")},
+						PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 						MarkdownDescription: "Privilege level: `Limited` (default) or `Highest`.",
 					},
 				},
 			},
 			"actions": schema.ListNestedAttribute{
-				Required: true,
-				Validators: []validator.List{listvalidator.SizeBetween(1, 32)},
+				Required:            true,
+				Validators:          []validator.List{listvalidator.SizeBetween(1, 32)},
 				MarkdownDescription: "One or more executable actions (1-32). Executed sequentially.",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
@@ -456,8 +467,8 @@ func (r *windowsScheduledTaskResource) Schema(_ context.Context, _ resource.Sche
 				},
 			},
 			"triggers": schema.ListNestedAttribute{
-				Required: true,
-				Validators: []validator.List{listvalidator.SizeBetween(1, 48)},
+				Required:            true,
+				Validators:          []validator.List{listvalidator.SizeBetween(1, 48)},
 				MarkdownDescription: "One or more triggers (1-48). `OnEvent` uses XML injection (ADR-ST-5).",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
@@ -526,14 +537,14 @@ func (r *windowsScheduledTaskResource) Schema(_ context.Context, _ resource.Sche
 				Optional:            true,
 				MarkdownDescription: "Task-level execution settings (New-ScheduledTaskSettingsSet).",
 				Attributes: map[string]schema.Attribute{
-					"allow_demand_start":             schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Allow on-demand start."},
-					"allow_hard_terminate":           schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Allow forcible termination."},
-					"start_when_available":           schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Start on next opportunity if missed."},
-					"run_only_if_network_available":  schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Only start with network."},
-					"execution_time_limit":           schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("PT72H"), MarkdownDescription: "Max runtime (ISO 8601). `PT0S` disables."},
-					"multiple_instances":             schema.StringAttribute{
+					"allow_demand_start":            schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Allow on-demand start."},
+					"allow_hard_terminate":          schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Allow forcible termination."},
+					"start_when_available":          schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Start on next opportunity if missed."},
+					"run_only_if_network_available": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Only start with network."},
+					"execution_time_limit":          schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("PT72H"), MarkdownDescription: "Max runtime (ISO 8601). `PT0S` disables."},
+					"multiple_instances": schema.StringAttribute{
 						Optional: true, Computed: true, Default: stringdefault.StaticString("Queue"),
-						Validators: []validator.String{stringvalidator.OneOf("Parallel", "Queue", "IgnoreNew", "StopExisting")},
+						Validators:          []validator.String{stringvalidator.OneOf("Parallel", "Queue", "IgnoreNew", "StopExisting")},
 						MarkdownDescription: "Concurrent instance policy.",
 					},
 					"disallow_start_if_on_batteries": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Do not start on battery."},
