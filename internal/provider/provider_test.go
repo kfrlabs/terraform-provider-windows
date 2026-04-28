@@ -53,11 +53,11 @@ func TestProvider_Schema(t *testing.T) {
 
 func TestProvider_ResourcesAndDataSources(t *testing.T) {
 	p := &windowsProvider{}
-	if got := len(p.Resources(context.Background())); got != 8 {
-		t.Errorf("Resources len = %d, want 8 (service + feature + hostname + local_group + local_group_member + local_user + registry_value + environment_variable)", got)
+	if got := len(p.Resources(context.Background())); got != 9 {
+		t.Errorf("Resources len = %d, want 9 (service + feature + hostname + local_group + local_group_member + local_user + registry_value + environment_variable + scheduled_task)", got)
 	}
-	if got := len(p.DataSources(context.Background())); got != 8 {
-		t.Errorf("DataSources len = %d, want 8 (feature + hostname + local_group + local_group_member + local_user + registry_value + service + environment_variable)", got)
+	if got := len(p.DataSources(context.Background())); got != 9 {
+		t.Errorf("DataSources len = %d, want 9 (feature + hostname + local_group + local_group_member + local_user + registry_value + service + environment_variable + scheduled_task)", got)
 	}
 }
 
