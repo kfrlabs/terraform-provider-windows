@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_scheduled_task` resource and data source: manages the full lifecycle
+  of a Windows Scheduled Task on a remote host via WinRM + PowerShell
+  (ScheduledTasks module, Windows Server 2012+ / Windows 8+). Supports create,
+  in-place update, drift detection, deletion, and import. Features include:
+  recursive task-folder creation and pruning; configurable principal (including
+  domain accounts with semantic write-only password and `password_wo_version`
+  rotation counter, ADR-ST-3); up to 32 sequential executable actions; up to 48
+  triggers of types `Once`, `Daily`, `Weekly`, `AtLogon`, `AtStartup`, and
+  `OnEvent` (XML-injection route for OnEvent, ADR-ST-5); full task settings
+  block (`New-ScheduledTaskSettingsSet`). Cross-field validators enforce
+  password/logon-type mutual exclusion (EC-4/EC-5) and trigger type–field
+  compatibility (EC-7). Import ID format: `<TaskPath><TaskName>` (e.g.
+  `\MyFolder\MyTask`). Requires Local Administrator on the target host.
+
+
+
 - `windows_environment_variable` resource and data source: manages (or reads)
   a single Windows environment variable (`machine` or `user` scope) on a remote
   host via WinRM + PowerShell. Uses the `.NET Microsoft.Win32.Registry` API for

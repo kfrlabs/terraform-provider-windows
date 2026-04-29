@@ -194,6 +194,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsLocalUserResource,
 		NewWindowsRegistryValueResource,
 		NewWindowsEnvironmentVariableResource,
+		NewWindowsScheduledTaskResource,
 	}
 }
 
@@ -208,5 +209,6 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsRegistryValueDataSource,
 		NewWindowsServiceDataSource,
 		NewWindowsEnvironmentVariableDataSource,
+		NewWindowsScheduledTaskDataSource,
 	}
 }

@@ -118,13 +118,6 @@ func evObj(overrides map[string]tftypes.Value) tftypes.Value {
 	return tftypes.NewValue(envVarObjectType(), base)
 }
 
-// evConfig builds a tfsdk.Config for the environment variable schema.
-func evConfig(t *testing.T, overrides map[string]tftypes.Value) tfsdk.Config {
-	t.Helper()
-	s := windowsEnvVarSchemaDefinition()
-	return tfsdk.Config{Raw: evObj(overrides), Schema: s}
-}
-
 // evState builds a tfsdk.State for the environment variable schema.
 func evState(t *testing.T, overrides map[string]tftypes.Value) tfsdk.State {
 	t.Helper()
@@ -1007,6 +1000,7 @@ func TestEnvVarSentinels(t *testing.T) {
 	for _, s := range sentinels {
 		if s == nil {
 			t.Error("sentinel should not be nil")
+			continue
 		}
 		if s.Kind == "" {
 			t.Error("sentinel Kind should not be empty")
