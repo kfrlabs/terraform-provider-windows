@@ -310,18 +310,18 @@ type stPSResponse struct {
 }
 
 type stTaskPayload struct {
-	Name           string             `json:"name"`
-	Path           string             `json:"path"`
-	Description    string             `json:"description"`
-	Enabled        bool               `json:"enabled"`
-	State          string             `json:"state"`
-	LastRunTime    string             `json:"last_run_time"`
-	LastTaskResult int64              `json:"last_task_result"`
-	NextRunTime    string             `json:"next_run_time"`
+	Name           string              `json:"name"`
+	Path           string              `json:"path"`
+	Description    string              `json:"description"`
+	Enabled        bool                `json:"enabled"`
+	State          string              `json:"state"`
+	LastRunTime    string              `json:"last_run_time"`
+	LastTaskResult int64               `json:"last_task_result"`
+	NextRunTime    string              `json:"next_run_time"`
 	Principal      *stPrincipalPayload `json:"principal"`
-	Actions        []stActionPayload  `json:"actions"`
-	Triggers       []stTriggerPayload `json:"triggers"`
-	Settings       *stSettingsPayload `json:"settings"`
+	Actions        []stActionPayload   `json:"actions"`
+	Triggers       []stTriggerPayload  `json:"triggers"`
+	Settings       *stSettingsPayload  `json:"settings"`
 }
 
 type stPrincipalPayload struct {

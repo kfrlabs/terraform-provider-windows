@@ -1,3 +1,5 @@
+//go:build acceptance
+
 // Package provider — acceptance test skeletons for windows_scheduled_task data source.
 //
 // Requires TF_ACC=1 and WINDOWS_HOST to be set. Skipped automatically otherwise.

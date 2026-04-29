@@ -1,22 +1,25 @@
+//go:build acceptance
+
 // Package provider — acceptance test skeletons for windows_scheduled_task resource.
 //
 // These tests require TF_ACC=1 and a live Windows host with WinRM + ScheduledTasks.
 // They are skipped automatically in unit-test / CI-lite mode.
 //
 // Edge cases exercised (EC numbers from spec.yaml):
-//   EC-1  Root path (\) — create and read back
-//   EC-2  Recursive folder creation — sub-folder that did not exist
-//   EC-3  SYSTEM principal — no password expected
-//   EC-4  Domain user with password — sensitive, never echoed
-//   EC-5  Weekly trigger with multiple days_of_week
-//   EC-6  Multiple sequential actions
-//   EC-7  Description-only in-place update
-//   EC-8  Drift detection — task disabled out-of-band
-//   EC-9  Delete out-of-band — next plan recreates
-//   EC-10 last_run_time / next_run_time sentinel (never-run task)
-//   EC-11 Import by composite ID
-//   EC-12 on_event trigger (XML injection route)
-//   EC-13 Non-admin error surfaced clearly
+//
+//	EC-1  Root path (\) — create and read back
+//	EC-2  Recursive folder creation — sub-folder that did not exist
+//	EC-3  SYSTEM principal — no password expected
+//	EC-4  Domain user with password — sensitive, never echoed
+//	EC-5  Weekly trigger with multiple days_of_week
+//	EC-6  Multiple sequential actions
+//	EC-7  Description-only in-place update
+//	EC-8  Drift detection — task disabled out-of-band
+//	EC-9  Delete out-of-band — next plan recreates
+//	EC-10 last_run_time / next_run_time sentinel (never-run task)
+//	EC-11 Import by composite ID
+//	EC-12 on_event trigger (XML injection route)
+//	EC-13 Non-admin error surfaced clearly
 package provider
 
 import (

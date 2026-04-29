@@ -410,7 +410,7 @@ func TestBuildOnEventFragment_ContainsXMLElements(t *testing.T) {
 	// EC-12 / ADR-ST-5: on_event XML route
 	triggers := []ScheduledTaskTriggerInput{
 		{Type: "OnEvent", Subscription: "<QueryList><Query Id='0'><Select>*</Select></Query></QueryList>"},
-		{Type: "Daily"},                    // should be ignored
+		{Type: "Daily"}, // should be ignored
 		{Type: "OnEvent", Subscription: "<QueryList/>"}, // second event trigger
 	}
 	got := buildOnEventFragment("MyTask", `\`, triggers)
@@ -1110,8 +1110,8 @@ func TestSTUpdate_DescriptionOnly_UsesSetScheduledTask(t *testing.T) {
 	})()
 	input := ScheduledTaskInput{
 		Name: "MyTask", Path: `\`, Description: "new description",
-		Enabled: true,
-		Actions: []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Enabled:  true,
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
 		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
 	}
 	_, err := impl.Update(context.Background(), `\MyTask`, input)

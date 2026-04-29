@@ -21,9 +21,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -212,10 +214,10 @@ func TestScheduledTaskPathValidator_Valid(t *testing.T) {
 
 func TestScheduledTaskPathValidator_Invalid(t *testing.T) {
 	cases := []string{
-		`Custom\`,    // missing leading backslash
-		`\Custom`,    // missing trailing backslash
-		`Custom`,     // no backslashes
-		`\\Custom\`,  // double leading backslash
+		`Custom\`,   // missing leading backslash
+		`\Custom`,   // missing trailing backslash
+		`Custom`,    // no backslashes
+		`\\Custom\`, // double leading backslash
 	}
 	v := scheduledTaskPathValidator{}
 	for _, path := range cases {
@@ -533,7 +535,7 @@ func TestStateToModel_WeeklyTrigger_DaysOfWeek(t *testing.T) {
 		Triggers: []winclient.ScheduledTaskTriggerState{
 			{
 				Type: "Weekly", Enabled: true,
-				DaysOfWeek: []string{"Monday", "Wednesday", "Friday"},
+				DaysOfWeek:    []string{"Monday", "Wednesday", "Friday"},
 				WeeksInterval: 1,
 			},
 		},
@@ -573,8 +575,8 @@ func TestStateToModel_PrincipalPasswordPreserved(t *testing.T) {
 	})
 	prior := &windowsScheduledTaskModel{
 		Principal: priorPrincipal,
-		Triggers:  types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, []types.Value{}),
-		Actions:   types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskActionAttrTypes}, []types.Value{}),
+		Triggers:  types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, []attr.Value{}),
+		Actions:   types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskActionAttrTypes}, []attr.Value{}),
 		Settings:  types.ObjectNull(scheduledTaskSettingsAttrTypes),
 	}
 
@@ -587,7 +589,7 @@ func TestStateToModel_PrincipalPasswordPreserved(t *testing.T) {
 		t.Fatal("principal should not be null")
 	}
 	var pm windowsScheduledTaskPrincipalModel
-	if d := m.Principal.As(ctx, &pm, types.ObjectAsOptions{UnhandledNullAsEmpty: true}); d.HasError() {
+	if d := m.Principal.As(ctx, &pm, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); d.HasError() {
 		t.Fatalf("Principal.As: %v", d)
 	}
 	if pm.Password.ValueString() != "s3cr3t" {

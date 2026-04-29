@@ -18,17 +18,17 @@ import (
 type ScheduledTaskErrorKind string
 
 const (
-	ScheduledTaskErrorAlreadyExists    ScheduledTaskErrorKind = "already_exists"
-	ScheduledTaskErrorNotFound         ScheduledTaskErrorKind = "not_found"
-	ScheduledTaskErrorBuiltinTask      ScheduledTaskErrorKind = "builtin_task"
-	ScheduledTaskErrorInvalidPath      ScheduledTaskErrorKind = "invalid_path"
-	ScheduledTaskErrorInvalidTrigger   ScheduledTaskErrorKind = "invalid_trigger"
-	ScheduledTaskErrorInvalidAction    ScheduledTaskErrorKind = "invalid_action"
-	ScheduledTaskErrorPasswordRequired ScheduledTaskErrorKind = "password_required"
+	ScheduledTaskErrorAlreadyExists     ScheduledTaskErrorKind = "already_exists"
+	ScheduledTaskErrorNotFound          ScheduledTaskErrorKind = "not_found"
+	ScheduledTaskErrorBuiltinTask       ScheduledTaskErrorKind = "builtin_task"
+	ScheduledTaskErrorInvalidPath       ScheduledTaskErrorKind = "invalid_path"
+	ScheduledTaskErrorInvalidTrigger    ScheduledTaskErrorKind = "invalid_trigger"
+	ScheduledTaskErrorInvalidAction     ScheduledTaskErrorKind = "invalid_action"
+	ScheduledTaskErrorPasswordRequired  ScheduledTaskErrorKind = "password_required"
 	ScheduledTaskErrorPasswordForbidden ScheduledTaskErrorKind = "password_forbidden"
-	ScheduledTaskErrorPermissionDenied ScheduledTaskErrorKind = "permission_denied"
-	ScheduledTaskErrorRunning          ScheduledTaskErrorKind = "task_running"
-	ScheduledTaskErrorUnknown          ScheduledTaskErrorKind = "unknown"
+	ScheduledTaskErrorPermissionDenied  ScheduledTaskErrorKind = "permission_denied"
+	ScheduledTaskErrorRunning           ScheduledTaskErrorKind = "task_running"
+	ScheduledTaskErrorUnknown           ScheduledTaskErrorKind = "unknown"
 )
 
 // ScheduledTaskError is the structured error type returned by ScheduledTaskClient methods.
@@ -75,17 +75,17 @@ func IsScheduledTaskError(err error, kind ScheduledTaskErrorKind) bool {
 
 // Sentinel errors for errors.Is matching.
 var (
-	ErrScheduledTaskAlreadyExists    = &ScheduledTaskError{Kind: ScheduledTaskErrorAlreadyExists}
-	ErrScheduledTaskNotFound         = &ScheduledTaskError{Kind: ScheduledTaskErrorNotFound}
-	ErrScheduledTaskBuiltinTask      = &ScheduledTaskError{Kind: ScheduledTaskErrorBuiltinTask}
-	ErrScheduledTaskInvalidPath      = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidPath}
-	ErrScheduledTaskInvalidTrigger   = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidTrigger}
-	ErrScheduledTaskInvalidAction    = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidAction}
-	ErrScheduledTaskPasswordRequired = &ScheduledTaskError{Kind: ScheduledTaskErrorPasswordRequired}
+	ErrScheduledTaskAlreadyExists     = &ScheduledTaskError{Kind: ScheduledTaskErrorAlreadyExists}
+	ErrScheduledTaskNotFound          = &ScheduledTaskError{Kind: ScheduledTaskErrorNotFound}
+	ErrScheduledTaskBuiltinTask       = &ScheduledTaskError{Kind: ScheduledTaskErrorBuiltinTask}
+	ErrScheduledTaskInvalidPath       = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidPath}
+	ErrScheduledTaskInvalidTrigger    = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidTrigger}
+	ErrScheduledTaskInvalidAction     = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidAction}
+	ErrScheduledTaskPasswordRequired  = &ScheduledTaskError{Kind: ScheduledTaskErrorPasswordRequired}
 	ErrScheduledTaskPasswordForbidden = &ScheduledTaskError{Kind: ScheduledTaskErrorPasswordForbidden}
-	ErrScheduledTaskPermissionDenied = &ScheduledTaskError{Kind: ScheduledTaskErrorPermissionDenied}
-	ErrScheduledTaskRunning          = &ScheduledTaskError{Kind: ScheduledTaskErrorRunning}
-	ErrScheduledTaskUnknown          = &ScheduledTaskError{Kind: ScheduledTaskErrorUnknown}
+	ErrScheduledTaskPermissionDenied  = &ScheduledTaskError{Kind: ScheduledTaskErrorPermissionDenied}
+	ErrScheduledTaskRunning           = &ScheduledTaskError{Kind: ScheduledTaskErrorRunning}
+	ErrScheduledTaskUnknown           = &ScheduledTaskError{Kind: ScheduledTaskErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------
@@ -224,4 +224,3 @@ type ScheduledTaskClient interface {
 	Delete(ctx context.Context, id string) error
 	ImportByID(ctx context.Context, id string) (*ScheduledTaskState, error)
 }
-
