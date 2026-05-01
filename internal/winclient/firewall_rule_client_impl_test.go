@@ -405,14 +405,15 @@ func TestBuildFirewallParams_EnabledFalse(t *testing.T) {
 
 func TestBuildFirewallParams_NilEnabled(t *testing.T) {
 	input := FirewallRuleInput{
-		Name:        "RULE-NIL",
-		DisplayName: "Nil Enabled",
+		Name:        "RULE-NOENA",
+		DisplayName: "No Enabled Field",
 		Direction:   "Inbound",
 		Action:      "Allow",
 		PolicyStore: "PersistentStore",
 	}
-	got := buildFirewallParams("create", "RULE-NIL", "PersistentStore", input)
-	if strings.Contains(got, "Enabled") {
+	got := buildFirewallParams("create", "RULE-NOENA", "PersistentStore", input)
+	// "Enabled = $true" or "Enabled = $false" must NOT appear when Enabled is nil.
+	if strings.Contains(got, "Enabled = $") {
 		t.Error("nil Enabled should not add Enabled key to params")
 	}
 }
