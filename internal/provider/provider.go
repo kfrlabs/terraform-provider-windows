@@ -196,6 +196,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsEnvironmentVariableResource,
 		NewWindowsScheduledTaskResource,
 		NewWindowsFirewallRuleResource,
+		NewWindowsWingetPackageResource,
 	}
 }
 
