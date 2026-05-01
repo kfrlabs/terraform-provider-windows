@@ -154,25 +154,25 @@ func TestFirewallProtocolValidator_UnknownSkipped(t *testing.T) {
 func fwSchemaObjectType() tftypes.Object {
 	listStr := tftypes.List{ElementType: tftypes.String}
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"id":                   tftypes.String,
-		"name":                 tftypes.String,
-		"display_name":         tftypes.String,
-		"description":          tftypes.String,
-		"enabled":              tftypes.Bool,
-		"direction":            tftypes.String,
-		"action":               tftypes.String,
-		"profile":              listStr,
+		"id":                    tftypes.String,
+		"name":                  tftypes.String,
+		"display_name":          tftypes.String,
+		"description":           tftypes.String,
+		"enabled":               tftypes.Bool,
+		"direction":             tftypes.String,
+		"action":                tftypes.String,
+		"profile":               listStr,
 		"edge_traversal_policy": tftypes.String,
-		"group":                tftypes.String,
-		"policy_store":         tftypes.String,
-		"protocol":             tftypes.String,
-		"local_port":           listStr,
-		"remote_port":          listStr,
-		"local_address":        listStr,
-		"remote_address":       listStr,
-		"program":              tftypes.String,
-		"service":              tftypes.String,
-		"interface_type":       tftypes.String,
+		"group":                 tftypes.String,
+		"policy_store":          tftypes.String,
+		"protocol":              tftypes.String,
+		"local_port":            listStr,
+		"remote_port":           listStr,
+		"local_address":         listStr,
+		"remote_address":        listStr,
+		"program":               tftypes.String,
+		"service":               tftypes.String,
+		"interface_type":        tftypes.String,
 	}}
 }
 
@@ -185,25 +185,25 @@ func buildFWConfig(t *testing.T, overrides map[string]tftypes.Value) tfsdk.Confi
 	nullList := tftypes.NewValue(listStr, nil)
 
 	defaults := map[string]tftypes.Value{
-		"id":                   tftypes.NewValue(tftypes.String, nil),
-		"name":                 tftypes.NewValue(tftypes.String, "TEST-RULE"),
-		"display_name":         tftypes.NewValue(tftypes.String, "Test Rule"),
-		"description":          tftypes.NewValue(tftypes.String, nil),
-		"enabled":              tftypes.NewValue(tftypes.Bool, nil),
-		"direction":            tftypes.NewValue(tftypes.String, "Inbound"),
-		"action":               tftypes.NewValue(tftypes.String, "Allow"),
-		"profile":              nullList,
+		"id":                    tftypes.NewValue(tftypes.String, nil),
+		"name":                  tftypes.NewValue(tftypes.String, "TEST-RULE"),
+		"display_name":          tftypes.NewValue(tftypes.String, "Test Rule"),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"enabled":               tftypes.NewValue(tftypes.Bool, nil),
+		"direction":             tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":                tftypes.NewValue(tftypes.String, "Allow"),
+		"profile":               nullList,
 		"edge_traversal_policy": tftypes.NewValue(tftypes.String, nil),
-		"group":                tftypes.NewValue(tftypes.String, nil),
-		"policy_store":         tftypes.NewValue(tftypes.String, nil),
-		"protocol":             tftypes.NewValue(tftypes.String, nil),
-		"local_port":           nullList,
-		"remote_port":          nullList,
-		"local_address":        nullList,
-		"remote_address":       nullList,
-		"program":              tftypes.NewValue(tftypes.String, nil),
-		"service":              tftypes.NewValue(tftypes.String, nil),
-		"interface_type":       tftypes.NewValue(tftypes.String, nil),
+		"group":                 tftypes.NewValue(tftypes.String, nil),
+		"policy_store":          tftypes.NewValue(tftypes.String, nil),
+		"protocol":              tftypes.NewValue(tftypes.String, nil),
+		"local_port":            nullList,
+		"remote_port":           nullList,
+		"local_address":         nullList,
+		"remote_address":        nullList,
+		"program":               tftypes.NewValue(tftypes.String, nil),
+		"service":               tftypes.NewValue(tftypes.String, nil),
+		"interface_type":        tftypes.NewValue(tftypes.String, nil),
 	}
 	for k, v := range overrides {
 		defaults[k] = v
@@ -823,5 +823,3 @@ func TestFirewallRuleResource_ConfigValidators(t *testing.T) {
 		t.Errorf("expected 2 ConfigValidators (CV-1 + CV-2), got %d", len(validators))
 	}
 }
-
-
