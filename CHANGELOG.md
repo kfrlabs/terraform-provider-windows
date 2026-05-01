@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_firewall_rule` resource: manages the full lifecycle of a Windows
+  Defender Firewall with Advanced Security rule on a remote host via WinRM +
+  PowerShell (`NetSecurity` module). Supports create, in-place update, drift
+  detection, deletion, and import. Covers all 19 rule attributes including root
+  properties (`direction`, `action`, `profile`, `edge_traversal_policy`,
+  `group`, `policy_store`) and filter sub-objects (`protocol`, `local_port`,
+  `remote_port`, `local_address`, `remote_address`, `program`, `service`,
+  `interface_type`) retrieved via the `Get-NetFirewall*Filter` pipeline.
+  Enum fields are normalised to canonical English values regardless of host
+  locale (InvariantCulture pinning, ADR-FR-5). Empty filter lists are
+  normalised to `["Any"]` to prevent permadiff (ADR-FR-6). Cross-field
+  validators enforce profile exclusivity (CV-1) and port/protocol compatibility
+  (CV-2). `name`, `group`, and `policy_store` are ForceNew. `GroupPolicy` and
+  `RSOP` stores are read-only and return an explicit diagnostic. Import ID
+  format: `<name>` (PersistentStore assumed) or `<policy_store>/<name>`.
+  Requires Local Administrator on the target host.
+
 - `windows_scheduled_task` resource and data source: manages the full lifecycle
   of a Windows Scheduled Task on a remote host via WinRM + PowerShell
   (ScheduledTasks module, Windows Server 2012+ / Windows 8+). Supports create,
