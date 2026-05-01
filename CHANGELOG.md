@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_firewall_rule` data source: reads the observed state of a Windows
+  Defender Firewall rule by its stable technical `name` (InstanceID). Mirrors
+  the resource schema in read-only form (no plan modifiers, no defaults beyond
+  an implicit `policy_store = "PersistentStore"` applied at Read time). Returns
+  an explicit error diagnostic when the rule is not found in the target policy
+  store. Reuses the resource's `listFromStrings` helper and the
+  `*winclient.FirewallRuleError` enrichment path for typed diagnostics.
+
 - `windows_firewall_rule` resource: manages the full lifecycle of a Windows
   Defender Firewall with Advanced Security rule on a remote host via WinRM +
   PowerShell (`NetSecurity` module). Supports create, in-place update, drift
