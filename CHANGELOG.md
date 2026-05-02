@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_winget_package` resource: manages the full lifecycle (install /
+  update / uninstall) of a Windows software package via the Microsoft Windows
+  Package Manager (`winget`) using the `Microsoft.WinGet.Client` PowerShell
+  module over WinRM. Supports create, in-place version update, drift detection,
+  deletion, and import. Package scope is always `SystemOrUnknown` (machine-level)
+  with silent mode enforced and agreements auto-accepted. Covers 7 attributes:
+  `package_id` (ForceNew), `source` (default `winget`; ForceNew), `version`
+  (optional pinned version; in-place update), `override` (ForceNew; no control
+  chars), `id` (composite `<source>:<package_id>`), `installed_version`
+  (observed), and `name` (observed). Handles 9 error kinds with typed
+  diagnostics: `module_missing`, `already_installed`, `version_not_available`,
+  `blocked_by_policy`, `permission_denied`, `source_unreachable` (1 retry),
+  `catalog_error`, `resource_in_use` (3× back-off retry), and `unknown`.
+  Import format: `<source>:<package_id>` (first-colon split).
+
 - `windows_firewall_rule` data source: reads the observed state of a Windows
   Defender Firewall rule by its stable technical `name` (InstanceID). Mirrors
   the resource schema in read-only form (no plan modifiers, no defaults beyond

@@ -252,7 +252,7 @@ func (r *windowsWingetPackageResource) Create(ctx context.Context, req resource.
 	input := winclient.WingetPackageInput{
 		PackageID: plan.PackageID.ValueString(),
 		Source:    plan.Source.ValueString(),
-		Version:   plan.Version.ValueString(), // empty string when null → "latest"
+		Version:   plan.Version.ValueString(),  // empty string when null → "latest"
 		Override:  plan.Override.ValueString(), // empty string when null → no override
 	}
 

@@ -114,13 +114,13 @@ func TestWingetOverrideValidator_ControlChars(t *testing.T) {
 	v := wingetOverrideValidator{}
 	// C0 control characters
 	for _, bad := range []string{
-		"\x00",   // NUL
-		"\x01",   // SOH
-		"\x09",   // TAB — also a control char
-		"\x0A",   // LF
-		"\x0D",   // CR
-		"\x1F",   // US
-		"\x7F",   // DEL
+		"\x00", // NUL
+		"\x01", // SOH
+		"\x09", // TAB — also a control char
+		"\x0A", // LF
+		"\x0D", // CR
+		"\x1F", // US
+		"\x7F", // DEL
 		"foo\x01bar",
 		"line1\nline2",
 	} {
@@ -345,13 +345,13 @@ func TestWingetPackageResource_ConfigValidators(t *testing.T) {
 // package schema.
 func wpSchemaObjectType() tftypes.Object {
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"id":               tftypes.String,
-		"package_id":       tftypes.String,
-		"version":          tftypes.String,
-		"source":           tftypes.String,
-		"override":         tftypes.String,
+		"id":                tftypes.String,
+		"package_id":        tftypes.String,
+		"version":           tftypes.String,
+		"source":            tftypes.String,
+		"override":          tftypes.String,
 		"installed_version": tftypes.String,
-		"name":             tftypes.String,
+		"name":              tftypes.String,
 	}}
 }
 
@@ -362,13 +362,13 @@ func TestWingetPackageResource_ImportState_Valid(t *testing.T) {
 	schemaResp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
 	rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, nil),
-		"package_id":       tftypes.NewValue(tftypes.String, nil),
-		"version":          tftypes.NewValue(tftypes.String, nil),
-		"source":           tftypes.NewValue(tftypes.String, nil),
-		"override":         tftypes.NewValue(tftypes.String, nil),
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
-		"name":             tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
 	})
 
 	req := resource.ImportStateRequest{ID: "winget:Microsoft.VisualStudioCode"}
@@ -406,13 +406,13 @@ func TestWingetPackageResource_ImportState_NoColon(t *testing.T) {
 	schemaResp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
 	rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, nil),
-		"package_id":       tftypes.NewValue(tftypes.String, nil),
-		"version":          tftypes.NewValue(tftypes.String, nil),
-		"source":           tftypes.NewValue(tftypes.String, nil),
-		"override":         tftypes.NewValue(tftypes.String, nil),
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
-		"name":             tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
 	})
 	req := resource.ImportStateRequest{ID: "wingetMicrosoftVisualStudioCode"}
 	resp := &resource.ImportStateResponse{
@@ -441,13 +441,13 @@ func TestWingetPackageResource_ImportState_EmptySource(t *testing.T) {
 	schemaResp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
 	rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, nil),
-		"package_id":       tftypes.NewValue(tftypes.String, nil),
-		"version":          tftypes.NewValue(tftypes.String, nil),
-		"source":           tftypes.NewValue(tftypes.String, nil),
-		"override":         tftypes.NewValue(tftypes.String, nil),
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
-		"name":             tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
 	})
 	req := resource.ImportStateRequest{ID: ":Microsoft.VisualStudioCode"}
 	resp := &resource.ImportStateResponse{
@@ -467,13 +467,13 @@ func TestWingetPackageResource_ImportState_EmptyPackageID(t *testing.T) {
 	schemaResp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
 	rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, nil),
-		"package_id":       tftypes.NewValue(tftypes.String, nil),
-		"version":          tftypes.NewValue(tftypes.String, nil),
-		"source":           tftypes.NewValue(tftypes.String, nil),
-		"override":         tftypes.NewValue(tftypes.String, nil),
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
-		"name":             tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
 	})
 	req := resource.ImportStateRequest{ID: "winget:"}
 	resp := &resource.ImportStateResponse{
@@ -493,13 +493,13 @@ func TestWingetPackageResource_ImportState_EmptyID(t *testing.T) {
 	schemaResp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
 	rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, nil),
-		"package_id":       tftypes.NewValue(tftypes.String, nil),
-		"version":          tftypes.NewValue(tftypes.String, nil),
-		"source":           tftypes.NewValue(tftypes.String, nil),
-		"override":         tftypes.NewValue(tftypes.String, nil),
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
-		"name":             tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
 	})
 	req := resource.ImportStateRequest{ID: ""}
 	resp := &resource.ImportStateResponse{
@@ -521,13 +521,13 @@ func TestWingetPackageResource_ImportState_ColonInPackageID(t *testing.T) {
 	schemaResp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
 	rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, nil),
-		"package_id":       tftypes.NewValue(tftypes.String, nil),
-		"version":          tftypes.NewValue(tftypes.String, nil),
-		"source":           tftypes.NewValue(tftypes.String, nil),
-		"override":         tftypes.NewValue(tftypes.String, nil),
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
-		"name":             tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
 	})
 	req := resource.ImportStateRequest{ID: "winget:Foo:Bar:Baz"}
 	resp := &resource.ImportStateResponse{
