@@ -6,6 +6,25 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_legacy_package` resource: manages the full lifecycle (install /
+  update / uninstall) of Windows software distributed as legacy installers —
+  Windows Installer `.msi` packages (via `msiexec.exe`) and `.exe` wrappers
+  (InstallShield, NSIS, Inno Setup) via `Start-Process` — over WinRM.
+  Complements `windows_winget_package` for software not available via winget
+  or shipped as a local/internal binary. Source resolution from local
+  `source_path` or fetched `source_url` (mutually exclusive, schema-enforced),
+  with mandatory checksum verification (`sha256` / `sha1` / `md5`) before
+  exec. MSI ProductCode is auto-extracted at Create when `product_id` is
+  omitted. Detection reads both 64-bit and `Wow6432Node` Uninstall registry
+  hives; EXE installs are located by `display_name_pattern` (wildcard /
+  regex against `DisplayName`) or via an explicit `uninstall_command`. Default
+  `valid_exit_codes = [0, 3010]` (3010 = soft reboot). In-place updates for
+  `valid_exit_codes`, `timeout_seconds`, `log_path`, `environment` (marked
+  sensitive — may carry license keys / proxy creds); all other attributes are
+  ForceNew. Import supported by ProductCode GUID (MSI) or exact DisplayName
+  (EXE). Drift on manual uninstall removes the resource from state and
+  triggers re-create on next apply.
+
 - `windows_winget_package` resource: manages the full lifecycle (install /
   update / uninstall) of a Windows software package via the Microsoft Windows
   Package Manager (`winget`) using the `Microsoft.WinGet.Client` PowerShell
