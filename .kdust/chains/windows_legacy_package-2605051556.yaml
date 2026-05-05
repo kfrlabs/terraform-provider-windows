@@ -1,0 +1,11 @@
+chain: terraform-provider-windows
+resource: windows_legacy_package
+branch: kdust/chain/windows_legacy_package-2605051556
+started_at: 2026-05-05T15:56:00Z
+description: Install/update/uninstall Windows legacy MSI and EXE installers from local path or URL, with checksum, registry-based detection, and configurable exit codes.
+workers:
+  - win-spec-analyst
+  - schema-architect
+  - provider-coder
+  - test-engineer
+  - quality-gate
