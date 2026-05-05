@@ -93,7 +93,9 @@ func (l *LegacyPackageClientImpl) runEnvelope(ctx context.Context, op string, pa
 		}
 	}
 	full := lpHeader + "\n" + script
-	stdout, stderr, err := l.c.RunPowerShellWithInput(ctx, full, string(stdin))
+	// Route through the package-level runPSInput seam (also used by local_user.go)
+	// so unit tests can stub the WinRM transport without a real host.
+	stdout, stderr, err := runPSInput(ctx, l.c, full, string(stdin))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, &LegacyPackageError{
