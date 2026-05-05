@@ -114,13 +114,13 @@ function Invoke-LpProcess {
 `
 
 // lpCreateBody runs the full install pipeline:
-//   1) Resolve the installer (download via Invoke-WebRequest if source_url).
-//   2) Verify the checksum (Get-FileHash).
-//   3) For MSI: extract the ProductCode via WindowsInstaller.Installer COM
-//      and reject if it conflicts with a user-supplied product_id.
-//   4) Build the argument list and execute under a timeout.
-//   5) Validate the exit code against valid_exit_codes (default [0,3010]).
-//   6) Read back the state from the Uninstall registry hives.
+//  1. Resolve the installer (download via Invoke-WebRequest if source_url).
+//  2. Verify the checksum (Get-FileHash).
+//  3. For MSI: extract the ProductCode via WindowsInstaller.Installer COM
+//     and reject if it conflicts with a user-supplied product_id.
+//  4. Build the argument list and execute under a timeout.
+//  5. Validate the exit code against valid_exit_codes (default [0,3010]).
+//  6. Read back the state from the Uninstall registry hives.
 const lpCreateBody = `
 $cfg = Read-LpInput
 $installerType = [string]$cfg.installer_type
@@ -397,9 +397,10 @@ Emit-OK ([ordered]@{
 //
 // MSI path: msiexec /x <ProductCode> /qn /norestart [+ uninstall_args].
 // EXE path: prefer the user-supplied uninstall_command; otherwise parse
-//           QuietUninstallString / UninstallString from the matched key,
-//           splitting executable and inline arguments on the first quoted
-//           token boundary, then append uninstall_args.
+//
+//	QuietUninstallString / UninstallString from the matched key,
+//	splitting executable and inline arguments on the first quoted
+//	token boundary, then append uninstall_args.
 const lpDeleteBody = `
 $cfg = Read-LpInput
 $id = [string]$cfg.id

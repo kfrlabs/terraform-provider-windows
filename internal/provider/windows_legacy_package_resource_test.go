@@ -379,5 +379,3 @@ func TestApplyState_KeepsUserLogPathWhenRemoteEmpty(t *testing.T) {
 		t.Errorf("LogPath should be preserved when remote.LogPath empty: %q", m.LogPath.ValueString())
 	}
 }
-
-
