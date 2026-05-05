@@ -16,11 +16,15 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -329,8 +333,7 @@ func (r *windowsLegacyPackageResource) Configure(_ context.Context, req resource
 		return
 	}
 	r.client = c
-	// ProviderCoder will instantiate the concrete LegacyPackageClient impl here:
-	//   r.lp = winclient.NewLegacyPackageClient(c)
+	r.lp = winclient.NewLegacyPackageClient(c)
 }
 
 // ConfigValidators enforces cross-attribute spec rules:
@@ -349,27 +352,268 @@ func (r *windowsLegacyPackageResource) ConfigValidators(_ context.Context) []res
 }
 
 // ---------------------------------------------------------------------------
-// CRUD stubs — ProviderCoder fills these in.
+// CRUD handlers
 // ---------------------------------------------------------------------------
 
-const lpNotImpl = "will be implemented by ProviderCoder"
+// Create runs the installer end-to-end: source resolution (local path or URL
+// download), checksum verification, MSI ProductCode extraction (when needed),
+// installer execution under timeout, exit-code validation, and state read-
+// back from the Uninstall registry hives.
+func (r *windowsLegacyPackageResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan windowsLegacyPackageModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-func (r *windowsLegacyPackageResource) Create(_ context.Context, _ resource.CreateRequest, resp *resource.CreateResponse) {
-	resp.Diagnostics.AddError("not implemented", "Create "+lpNotImpl)
+	input, d := r.modelToInput(ctx, plan)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// installer_type=exe requires display_name_pattern OR uninstall_command
+	// (cross-attribute conditional rule, validated at apply time because TPF
+	// lacks a native conditional validator on a sibling enum value).
+	if input.InstallerType == "exe" && input.DisplayNamePattern == "" && input.UninstallCommand == "" {
+		resp.Diagnostics.AddError(
+			"Invalid configuration",
+			"installer_type=\"exe\" requires either display_name_pattern or uninstall_command to be set.",
+		)
+		return
+	}
+
+	state, err := r.lp.Create(ctx, input)
+	if err != nil {
+		addLPDiag(&resp.Diagnostics, err, "Create")
+		return
+	}
+	if state == nil {
+		resp.Diagnostics.AddError(
+			"windows_legacy_package Create returned no state",
+			"The installer reported success but the package could not be detected in the Uninstall registry hives.",
+		)
+		return
+	}
+
+	r.applyState(&plan, state)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *windowsLegacyPackageResource) Read(_ context.Context, _ resource.ReadRequest, resp *resource.ReadResponse) {
-	resp.Diagnostics.AddError("not implemented", "Read "+lpNotImpl)
+// Read refreshes the computed attributes from the Uninstall registry hives.
+// When the entry is gone (manual uninstall, drift), the resource is removed
+// from state so Terraform schedules re-create on the next apply.
+func (r *windowsLegacyPackageResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state windowsLegacyPackageModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	id := state.ID.ValueString()
+	if id == "" {
+		// Nothing to refresh (fresh import edge-case).
+		return
+	}
+
+	remote, err := r.lp.Read(ctx, id)
+	if err != nil {
+		addLPDiag(&resp.Diagnostics, err, "Read")
+		return
+	}
+	if remote == nil {
+		// Drift: the package was removed out of band.
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
+	r.applyState(&state, remote)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *windowsLegacyPackageResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("not implemented", "Update "+lpNotImpl)
+// Update applies the in-place mutable attributes (valid_exit_codes,
+// timeout_seconds, log_path, environment). All other attributes are ForceNew
+// at the schema level and never reach this method. No Windows action is
+// required: the new values affect future invocations only. The current
+// observed state is refreshed via the client's Read helper to keep the
+// computed attributes consistent.
+func (r *windowsLegacyPackageResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan windowsLegacyPackageModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	var prior windowsLegacyPackageModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	input, d := r.modelToInput(ctx, plan)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	id := prior.ID.ValueString()
+	remote, err := r.lp.Update(ctx, id, input)
+	if err != nil {
+		addLPDiag(&resp.Diagnostics, err, "Update")
+		return
+	}
+	// Preserve the stable identifier and the user-set log_path / product_id
+	// from the plan so the in-place update is reflected in state.
+	plan.ID = prior.ID
+	if plan.ProductID.IsUnknown() || plan.ProductID.IsNull() {
+		plan.ProductID = prior.ProductID
+	}
+	if remote != nil {
+		// Refresh observable computed attributes from the registry.
+		plan.InstalledVersion = types.StringValue(remote.InstalledVersion)
+		plan.Installed = types.BoolValue(remote.Installed)
+		plan.InstallDate = types.StringValue(remote.InstallDate)
+	} else {
+		// Package not detected — preserve prior computed values to avoid
+		// nullifying state on a transient registry hiccup.
+		plan.InstalledVersion = prior.InstalledVersion
+		plan.Installed = prior.Installed
+		plan.InstallDate = prior.InstallDate
+	}
+	// log_path is updatable in place: keep the planned value (auto-generated
+	// log paths are treated as UseStateForUnknown by the schema).
+	if plan.LogPath.IsUnknown() {
+		plan.LogPath = prior.LogPath
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *windowsLegacyPackageResource) Delete(_ context.Context, _ resource.DeleteRequest, resp *resource.DeleteResponse) {
-	resp.Diagnostics.AddError("not implemented", "Delete "+lpNotImpl)
+// Delete uninstalls the package. MSI uses msiexec /x; EXE prefers
+// uninstall_command and falls back to the registry UninstallString
+// (QuietUninstallString preferred). Idempotent: a missing entry is treated
+// as success.
+func (r *windowsLegacyPackageResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state windowsLegacyPackageModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	id := state.ID.ValueString()
+	if id == "" {
+		return
+	}
+	if err := r.lp.Delete(ctx, id); err != nil {
+		addLPDiag(&resp.Diagnostics, err, "Delete")
+		return
+	}
 }
 
-func (r *windowsLegacyPackageResource) ImportState(_ context.Context, _ resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resp.Diagnostics.AddError("not implemented", "ImportState "+lpNotImpl)
+// ImportState seeds the state with the supplied id (ProductCode GUID for MSI
+// or exact DisplayName for EXE). The next Read populates all computed
+// attributes. User-set configuration attributes (source_*, install_args, ...)
+// are unknown at import time and must be re-supplied via the Terraform config
+// to avoid plan drift.
+func (r *windowsLegacyPackageResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"Import ID must be a non-empty MSI ProductCode GUID (e.g. \"{01234567-89AB-CDEF-0123-456789ABCDEF}\") or the exact EXE DisplayName.",
+		)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// modelToInput converts the Terraform plan/state model into the LegacyPackageInput
+// consumed by the winclient. List/map values are unmarshalled element-by-element
+// to preserve typed semantics; null and unknown collections are flattened to
+// empty slices/maps so the JSON payload is stable.
+func (r *windowsLegacyPackageResource) modelToInput(ctx context.Context, m windowsLegacyPackageModel) (winclient.LegacyPackageInput, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	in := winclient.LegacyPackageInput{
+		Name:               m.Name.ValueString(),
+		InstallerType:      m.InstallerType.ValueString(),
+		SourcePath:         m.SourcePath.ValueString(),
+		SourceURL:          m.SourceURL.ValueString(),
+		Checksum:           m.Checksum.ValueString(),
+		InsecureSkipVerify: m.InsecureSkipVerify.ValueBool(),
+		ProductID:          m.ProductID.ValueString(),
+		DisplayNamePattern: m.DisplayNamePattern.ValueString(),
+		UninstallCommand:   m.UninstallCommand.ValueString(),
+		WorkingDirectory:   m.WorkingDirectory.ValueString(),
+		LogPath:            m.LogPath.ValueString(),
+		TimeoutSeconds:     m.TimeoutSeconds.ValueInt64(),
+	}
+
+	if !m.InstallArgs.IsNull() && !m.InstallArgs.IsUnknown() {
+		var v []string
+		diags.Append(m.InstallArgs.ElementsAs(ctx, &v, false)...)
+		in.InstallArgs = v
+	}
+	if !m.UninstallArgs.IsNull() && !m.UninstallArgs.IsUnknown() {
+		var v []string
+		diags.Append(m.UninstallArgs.ElementsAs(ctx, &v, false)...)
+		in.UninstallArgs = v
+	}
+	if !m.ValidExitCodes.IsNull() && !m.ValidExitCodes.IsUnknown() {
+		var v []int64
+		diags.Append(m.ValidExitCodes.ElementsAs(ctx, &v, false)...)
+		in.ValidExitCodes = v
+	}
+	if !m.Environment.IsNull() && !m.Environment.IsUnknown() {
+		v := map[string]string{}
+		diags.Append(m.Environment.ElementsAs(ctx, &v, false)...)
+		in.Environment = v
+	}
+	return in, diags
+}
+
+// applyState writes the observed remote state into the Terraform model,
+// keeping the user-supplied attributes untouched.
+func (r *windowsLegacyPackageResource) applyState(m *windowsLegacyPackageModel, s *winclient.LegacyPackageState) {
+	m.ID = types.StringValue(s.ID)
+	m.ProductID = types.StringValue(s.ProductID)
+	if s.LogPath != "" {
+		m.LogPath = types.StringValue(s.LogPath)
+	} else if m.LogPath.IsNull() || m.LogPath.IsUnknown() {
+		m.LogPath = types.StringValue("")
+	}
+	m.InstalledVersion = types.StringValue(s.InstalledVersion)
+	m.Installed = types.BoolValue(s.Installed)
+	m.InstallDate = types.StringValue(s.InstallDate)
+}
+
+// addLPDiag translates a *winclient.LegacyPackageError into a Terraform error
+// diagnostic. Context entries are appended in deterministic (sorted) order.
+func addLPDiag(diags *diag.Diagnostics, err error, op string) {
+	var le *winclient.LegacyPackageError
+	if errors.As(err, &le) {
+		summary := fmt.Sprintf("windows_legacy_package %s error [%s]", op, le.Kind)
+		detail := le.Message
+		if le.Cause != nil {
+			detail += ": " + le.Cause.Error()
+		}
+		if len(le.Context) > 0 {
+			keys := make([]string, 0, len(le.Context))
+			for k := range le.Context {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			parts := make([]string, 0, len(keys))
+			for _, k := range keys {
+				parts = append(parts, k+"="+le.Context[k])
+			}
+			detail += "\n\nContext: " + strings.Join(parts, ", ")
+		}
+		diags.AddError(summary, detail)
+		return
+	}
+	diags.AddError(
+		fmt.Sprintf("windows_legacy_package %s unexpected error", op),
+		err.Error(),
+	)
 }
