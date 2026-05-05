@@ -189,6 +189,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsServiceResource,
 		NewWindowsFeatureResource,
 		NewWindowsHostnameResource,
+		NewWindowsLegacyPackageResource,
 		NewWindowsLocalGroupResource,
 		NewWindowsLocalGroupMemberResource,
 		NewWindowsLocalUserResource,
