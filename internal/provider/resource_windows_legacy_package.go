@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -35,6 +36,27 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
+)
+
+// ---------------------------------------------------------------------------
+// Pre-compiled regular expressions used by the schema validators.
+// ---------------------------------------------------------------------------
+
+var (
+	// name: 1-128 chars, alnum / dot / underscore / hyphen.
+	lpNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+	// source_path: absolute Windows path (drive letter + colon + backslash).
+	lpSourcePathRe = regexp.MustCompile(`^[A-Za-z]:\\.+`)
+
+	// source_url: http or https URL.
+	lpSourceURLRe = regexp.MustCompile(`^https?://`)
+
+	// checksum: <algo>:<hex>.
+	lpChecksumRe = regexp.MustCompile(`^(sha256|sha1|md5):[0-9a-fA-F]+$`)
+
+	// product_id: GUID enclosed in braces.
+	lpProductIDRe = regexp.MustCompile(`^\{[0-9A-Fa-f-]{36}\}$`)
 )
 
 // ---------------------------------------------------------------------------
