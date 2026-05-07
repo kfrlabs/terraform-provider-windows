@@ -115,6 +115,7 @@ func localUserObjectType() tftypes.Object {
 		"full_name":                    tftypes.String,
 		"description":                  tftypes.String,
 		"password":                     tftypes.String,
+		"password_wo":                  tftypes.String,
 		"password_wo_version":          tftypes.Number,
 		"enabled":                      tftypes.Bool,
 		"password_never_expires":       tftypes.Bool,
@@ -136,6 +137,7 @@ func luObj(overrides map[string]tftypes.Value) tftypes.Value {
 		"full_name":                    tftypes.NewValue(tftypes.String, ""),
 		"description":                  tftypes.NewValue(tftypes.String, ""),
 		"password":                     tftypes.NewValue(tftypes.String, "P@ssw0rd!"),
+		"password_wo":                  tftypes.NewValue(tftypes.String, nil),
 		"password_wo_version":          tftypes.NewValue(tftypes.Number, nil),
 		"enabled":                      tftypes.NewValue(tftypes.Bool, true),
 		"password_never_expires":       tftypes.NewValue(tftypes.Bool, false),
@@ -209,7 +211,7 @@ func TestLocalUserSchema_HasRequiredAttributes(t *testing.T) {
 	s := windowsLocalUserSchemaDefinition()
 	want := []string{
 		"id", "sid", "name", "full_name", "description", "password",
-		"password_wo_version", "enabled", "password_never_expires",
+		"password_wo", "password_wo_version", "enabled", "password_never_expires",
 		"user_may_not_change_password", "account_never_expires",
 		"account_expires", "last_logon", "password_last_set", "principal_source",
 	}
@@ -228,6 +230,75 @@ func TestLocalUserSchema_PasswordIsSensitive(t *testing.T) {
 	}
 	if !pwAttr.Sensitive {
 		t.Error("password attribute must be Sensitive (ADR-LU-3)")
+	}
+}
+
+// TestLocalUserSchema_PasswordIsDeprecated locks the deprecation contract on
+// the legacy state-persisted `password`. Tier 3 introduced `password_wo` as
+// the recommended successor; the deprecation message is the only surface
+// where Terraform CLI tells operators to migrate.
+func TestLocalUserSchema_PasswordIsDeprecated(t *testing.T) {
+	s := windowsLocalUserSchemaDefinition()
+	pwAttr, ok := s.Attributes["password"].(rschema.StringAttribute)
+	if !ok {
+		t.Fatalf("password attr is not StringAttribute")
+	}
+	if pwAttr.DeprecationMessage == "" {
+		t.Error("password must carry a non-empty DeprecationMessage pointing at password_wo")
+	}
+	if !strings.Contains(pwAttr.DeprecationMessage, "password_wo") {
+		t.Errorf("DeprecationMessage must mention `password_wo`, got: %q", pwAttr.DeprecationMessage)
+	}
+}
+
+// TestLocalUserSchema_PasswordWoIsWriteOnly is the load-bearing assertion of
+// Tier 3 on this resource. The framework guarantees that a WriteOnly+
+// Sensitive attribute is dropped from state by resp.State.Set; if either
+// flag regresses, we silently leak the plaintext into terraform.tfstate.
+func TestLocalUserSchema_PasswordWoIsWriteOnly(t *testing.T) {
+	s := windowsLocalUserSchemaDefinition()
+	pwAttr, ok := s.Attributes["password_wo"].(rschema.StringAttribute)
+	if !ok {
+		t.Fatalf("password_wo attr is not StringAttribute")
+	}
+	if !pwAttr.WriteOnly {
+		t.Error("password_wo must be WriteOnly (Tier 3 contract: no state persistence)")
+	}
+	if !pwAttr.Sensitive {
+		t.Error("password_wo must be Sensitive in addition to WriteOnly")
+	}
+	if !pwAttr.Optional {
+		t.Error("password_wo must be Optional (mutually exclusive with password)")
+	}
+	if pwAttr.Required {
+		t.Error("password_wo must NOT be Required (creates a hard incompatibility with the legacy `password` path)")
+	}
+}
+
+// TestLocalUserConfigValidators_ConflictsPasswordAndPasswordWo asserts that
+// the resource declares the cross-attribute exclusion. Without it, a user
+// could set both attributes and the provider would silently pick one,
+// leaking plaintext into state via the legacy field while the operator
+// believed they were on the WriteOnly path.
+func TestLocalUserConfigValidators_ConflictsPasswordAndPasswordWo(t *testing.T) {
+	r := &windowsLocalUserResource{}
+	validators := r.ConfigValidators(context.Background())
+	if len(validators) == 0 {
+		t.Fatal("expected at least one ConfigValidator (password vs password_wo conflict)")
+	}
+	// Smoke check via Description — we don't introspect the validator's
+	// internal state because resourcevalidator.Conflicting is opaque; the
+	// description is the public contract.
+	found := false
+	for _, v := range validators {
+		desc := v.Description(context.Background())
+		if strings.Contains(desc, "password") && strings.Contains(desc, "password_wo") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("no ConfigValidator description mentions both `password` and `password_wo` together")
 	}
 }
 

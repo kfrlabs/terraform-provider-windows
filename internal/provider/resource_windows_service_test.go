@@ -51,7 +51,7 @@ func TestSchema_HasRequiredAttributes(t *testing.T) {
 	wantAttrs := []string{
 		"id", "name", "display_name", "description", "binary_path",
 		"start_type", "status", "current_status", "service_account",
-		"service_password", "dependencies",
+		"service_password", "service_password_wo", "dependencies",
 	}
 	for _, k := range wantAttrs {
 		if _, ok := s.Attributes[k]; !ok {
@@ -65,6 +65,28 @@ func TestSchema_HasRequiredAttributes(t *testing.T) {
 	}
 	if !pwAttr.IsSensitive() {
 		t.Error("service_password must be Sensitive")
+	}
+	// Tier 3: legacy service_password must carry a deprecation message.
+	depAttr, ok := s.Attributes["service_password"].(interface{ GetDeprecationMessage() string })
+	if !ok {
+		t.Fatalf("service_password attr does not implement GetDeprecationMessage()")
+	}
+	if dep := depAttr.GetDeprecationMessage(); dep == "" || !strings.Contains(dep, "service_password_wo") {
+		t.Errorf("service_password must be deprecated and point at service_password_wo, got: %q", dep)
+	}
+	// Tier 3: service_password_wo must be WriteOnly + Sensitive.
+	woAttr, ok := s.Attributes["service_password_wo"].(interface {
+		IsSensitive() bool
+		IsWriteOnly() bool
+	})
+	if !ok {
+		t.Fatalf("service_password_wo attr missing IsSensitive/IsWriteOnly")
+	}
+	if !woAttr.IsWriteOnly() {
+		t.Error("service_password_wo must be WriteOnly (Tier 3 contract: no state persistence)")
+	}
+	if !woAttr.IsSensitive() {
+		t.Error("service_password_wo must be Sensitive")
 	}
 }
 
@@ -118,29 +140,31 @@ func buildValidatorConfig(t *testing.T, account, password *string) tfsdk.Config 
 	}
 
 	obj := tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"id":               tftypes.String,
-		"name":             tftypes.String,
-		"display_name":     tftypes.String,
-		"description":      tftypes.String,
-		"binary_path":      tftypes.String,
-		"start_type":       tftypes.String,
-		"status":           tftypes.String,
-		"current_status":   tftypes.String,
-		"service_account":  tftypes.String,
-		"service_password": tftypes.String,
-		"dependencies":     tftypes.List{ElementType: tftypes.String},
+		"id":                  tftypes.String,
+		"name":                tftypes.String,
+		"display_name":        tftypes.String,
+		"description":         tftypes.String,
+		"binary_path":         tftypes.String,
+		"start_type":          tftypes.String,
+		"status":              tftypes.String,
+		"current_status":      tftypes.String,
+		"service_account":     tftypes.String,
+		"service_password":    tftypes.String,
+		"service_password_wo": tftypes.String,
+		"dependencies":        tftypes.List{ElementType: tftypes.String},
 	}}, map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, nil),
-		"name":             tftypes.NewValue(tftypes.String, "svc"),
-		"display_name":     tftypes.NewValue(tftypes.String, nil),
-		"description":      tftypes.NewValue(tftypes.String, nil),
-		"binary_path":      tftypes.NewValue(tftypes.String, `C:\x.exe`),
-		"start_type":       tftypes.NewValue(tftypes.String, nil),
-		"status":           tftypes.NewValue(tftypes.String, nil),
-		"current_status":   tftypes.NewValue(tftypes.String, nil),
-		"service_account":  val(account),
-		"service_password": val(password),
-		"dependencies":     tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"id":                  tftypes.NewValue(tftypes.String, nil),
+		"name":                tftypes.NewValue(tftypes.String, "svc"),
+		"display_name":        tftypes.NewValue(tftypes.String, nil),
+		"description":         tftypes.NewValue(tftypes.String, nil),
+		"binary_path":         tftypes.NewValue(tftypes.String, `C:\x.exe`),
+		"start_type":          tftypes.NewValue(tftypes.String, nil),
+		"status":              tftypes.NewValue(tftypes.String, nil),
+		"current_status":      tftypes.NewValue(tftypes.String, nil),
+		"service_account":     val(account),
+		"service_password":    val(password),
+		"service_password_wo": tftypes.NewValue(tftypes.String, nil),
+		"dependencies":        tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	return tfsdk.Config{
@@ -349,11 +373,22 @@ func TestConfigure_ValidClient(t *testing.T) {
 func TestConfigValidators(t *testing.T) {
 	r := &windowsServiceResource{}
 	vs := r.ConfigValidators(context.Background())
-	if len(vs) != 1 {
-		t.Fatalf("expected 1 validator, got %d", len(vs))
+	// Tier 3: 2 validators are now expected.
+	//   - serviceAccountPasswordValidator (EC-4 / EC-11)
+	//   - resourcevalidator.Conflicting(service_password, service_password_wo)
+	if len(vs) != 2 {
+		t.Fatalf("expected 2 validators, got %d", len(vs))
 	}
+	// First validator must remain the serviceAccountPasswordValidator —
+	// downstream tests assert on its diagnostics by type.
 	if _, ok := vs[0].(serviceAccountPasswordValidator); !ok {
-		t.Errorf("validator type = %T", vs[0])
+		t.Errorf("validator[0] type = %T, want serviceAccountPasswordValidator", vs[0])
+	}
+	// Second validator must mention both attributes in its description so
+	// `terraform validate` produces an actionable error when both are set.
+	desc := vs[1].Description(context.Background())
+	if !strings.Contains(desc, "service_password") || !strings.Contains(desc, "service_password_wo") {
+		t.Errorf("validator[1] description must reference both service_password and service_password_wo, got: %q", desc)
 	}
 }
 
@@ -439,17 +474,18 @@ func (f *fakeSvcClient) PauseService(_ context.Context, _ string) error { f.paus
 // objectType mirrors the resource schema as a tftypes.Object shape.
 func serviceObjectType() tftypes.Object {
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"id":               tftypes.String,
-		"name":             tftypes.String,
-		"display_name":     tftypes.String,
-		"description":      tftypes.String,
-		"binary_path":      tftypes.String,
-		"start_type":       tftypes.String,
-		"status":           tftypes.String,
-		"current_status":   tftypes.String,
-		"service_account":  tftypes.String,
-		"service_password": tftypes.String,
-		"dependencies":     tftypes.List{ElementType: tftypes.String},
+		"id":                  tftypes.String,
+		"name":                tftypes.String,
+		"display_name":        tftypes.String,
+		"description":         tftypes.String,
+		"binary_path":         tftypes.String,
+		"start_type":          tftypes.String,
+		"status":              tftypes.String,
+		"current_status":      tftypes.String,
+		"service_account":     tftypes.String,
+		"service_password":    tftypes.String,
+		"service_password_wo": tftypes.String,
+		"dependencies":        tftypes.List{ElementType: tftypes.String},
 	}}
 }
 
@@ -457,17 +493,18 @@ func serviceObjectType() tftypes.Object {
 // represented as null.
 func svcObj(overrides map[string]tftypes.Value) tftypes.Value {
 	base := map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, nil),
-		"name":             tftypes.NewValue(tftypes.String, nil),
-		"display_name":     tftypes.NewValue(tftypes.String, nil),
-		"description":      tftypes.NewValue(tftypes.String, nil),
-		"binary_path":      tftypes.NewValue(tftypes.String, nil),
-		"start_type":       tftypes.NewValue(tftypes.String, nil),
-		"status":           tftypes.NewValue(tftypes.String, nil),
-		"current_status":   tftypes.NewValue(tftypes.String, nil),
-		"service_account":  tftypes.NewValue(tftypes.String, nil),
-		"service_password": tftypes.NewValue(tftypes.String, nil),
-		"dependencies":     tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"id":                  tftypes.NewValue(tftypes.String, nil),
+		"name":                tftypes.NewValue(tftypes.String, nil),
+		"display_name":        tftypes.NewValue(tftypes.String, nil),
+		"description":         tftypes.NewValue(tftypes.String, nil),
+		"binary_path":         tftypes.NewValue(tftypes.String, nil),
+		"start_type":          tftypes.NewValue(tftypes.String, nil),
+		"status":              tftypes.NewValue(tftypes.String, nil),
+		"current_status":      tftypes.NewValue(tftypes.String, nil),
+		"service_account":     tftypes.NewValue(tftypes.String, nil),
+		"service_password":    tftypes.NewValue(tftypes.String, nil),
+		"service_password_wo": tftypes.NewValue(tftypes.String, nil),
+		"dependencies":        tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	}
 	for k, v := range overrides {
 		base[k] = v

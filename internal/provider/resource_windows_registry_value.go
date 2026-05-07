@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -460,6 +461,13 @@ func (r *windowsRegistryValueResource) Create(ctx context.Context, req resource.
 		return
 	}
 
+	tflog.Debug(ctx, "windows_registry_value Create", map[string]interface{}{
+		"hive": plan.Hive.ValueString(),
+		"path": plan.Path.ValueString(),
+		"name": plan.Name.ValueString(),
+		"type": plan.Type.ValueString(),
+	})
+
 	input, err := rvModelToInput(&plan)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid registry value input", err.Error())
@@ -492,6 +500,12 @@ func (r *windowsRegistryValueResource) Read(ctx context.Context, req resource.Re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	tflog.Debug(ctx, "windows_registry_value Read", map[string]interface{}{
+		"hive": state.Hive.ValueString(),
+		"path": state.Path.ValueString(),
+		"name": state.Name.ValueString(),
+	})
 
 	rv, err := r.client.Read(ctx,
 		state.Hive.ValueString(),
@@ -535,6 +549,13 @@ func (r *windowsRegistryValueResource) Update(ctx context.Context, req resource.
 	}
 	plan.ID = state.ID
 
+	tflog.Debug(ctx, "windows_registry_value Update", map[string]interface{}{
+		"hive": plan.Hive.ValueString(),
+		"path": plan.Path.ValueString(),
+		"name": plan.Name.ValueString(),
+		"type": plan.Type.ValueString(),
+	})
+
 	input, err := rvModelToInput(&plan)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid registry value input", err.Error())
@@ -567,6 +588,12 @@ func (r *windowsRegistryValueResource) Delete(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	tflog.Debug(ctx, "windows_registry_value Delete", map[string]interface{}{
+		"hive": state.Hive.ValueString(),
+		"path": state.Path.ValueString(),
+		"name": state.Name.ValueString(),
+	})
 
 	if err := r.client.Delete(ctx, state.Hive.ValueString(), state.Path.ValueString(), state.Name.ValueString()); err != nil {
 		addRVDiag(&resp.Diagnostics, "Delete", err)

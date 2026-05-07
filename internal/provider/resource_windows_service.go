@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -25,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -56,17 +58,23 @@ var builtinAccountRe = regexp.MustCompile(`(?i)^(LocalSystem$|NT AUTHORITY\\)`)
 // live Windows read: the Read handler copies the value from prior state
 // (semantic write-only, ADR SS6).
 type windowsServiceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	DisplayName     types.String `tfsdk:"display_name"`
-	Description     types.String `tfsdk:"description"`
-	BinaryPath      types.String `tfsdk:"binary_path"`
-	StartType       types.String `tfsdk:"start_type"`
-	Status          types.String `tfsdk:"status"`
-	CurrentStatus   types.String `tfsdk:"current_status"`
-	ServiceAccount  types.String `tfsdk:"service_account"`
+	ID             types.String `tfsdk:"id"`
+	Name           types.String `tfsdk:"name"`
+	DisplayName    types.String `tfsdk:"display_name"`
+	Description    types.String `tfsdk:"description"`
+	BinaryPath     types.String `tfsdk:"binary_path"`
+	StartType      types.String `tfsdk:"start_type"`
+	Status         types.String `tfsdk:"status"`
+	CurrentStatus  types.String `tfsdk:"current_status"`
+	ServiceAccount types.String `tfsdk:"service_account"`
+	// ServicePassword is the legacy state-persisted password (Sensitive).
+	// DEPRECATED in favour of ServicePasswordWO (Tier 3, TPF v1.14+).
 	ServicePassword types.String `tfsdk:"service_password"`
-	Dependencies    types.List   `tfsdk:"dependencies"`
+	// ServicePasswordWO is WriteOnly: never persisted in state. Read from
+	// req.Plan during Create/Update; the framework drops it on
+	// resp.State.Set(). Mutually exclusive with ServicePassword.
+	ServicePasswordWO types.String `tfsdk:"service_password_wo"`
+	Dependencies      types.List   `tfsdk:"dependencies"`
 }
 
 // Metadata sets the resource type name.
@@ -153,9 +161,24 @@ func windowsServiceSchemaDefinition() schema.Schema {
 				Description: "Account under which the service runs. Defaults to LocalSystem.",
 			},
 			"service_password": schema.StringAttribute{
-				Optional:    true,
-				Sensitive:   true,
-				Description: "Password for service_account. Sensitive and semantic write-only; not read back from Windows.",
+				Optional:           true,
+				Sensitive:          true,
+				DeprecationMessage: "Use `service_password_wo` instead. The `service_password` attribute persists the plaintext in `terraform.tfstate` (sensitive but readable by anyone with state access). `service_password_wo` is a WriteOnly attribute (TPF v1.14+) and is never written to state. This attribute will be removed in v2.x.",
+				MarkdownDescription: "**Deprecated, use `service_password_wo`.** Password for `service_account`. Sensitive and semantic write-only on the Windows side (not read back), " +
+					"but **persisted as a Sensitive value in `terraform.tfstate`** under the legacy attribute. " +
+					"For a no-state-leak alternative see `service_password_wo`.",
+			},
+			"service_password_wo": schema.StringAttribute{
+				Optional:  true,
+				Sensitive: true,
+				WriteOnly: true,
+				MarkdownDescription: "Write-only password for `service_account` (TPF v1.14+). " +
+					"Same Windows-side semantics as `service_password` (sent to `Set-Service` / SCM " +
+					"on every Create / Update), **but the plaintext is never persisted in " +
+					"`terraform.tfstate`** \u2014 the framework drops it from state automatically.\n\n" +
+					"Mutually exclusive with `service_password`. Because the WriteOnly value is " +
+					"re-read from configuration on every plan, no separate version counter is " +
+					"required for rotation: change the value and re-apply.",
 			},
 			"dependencies": schema.ListAttribute{
 				ElementType: types.StringType,
@@ -184,9 +207,25 @@ func (r *windowsServiceResource) Configure(_ context.Context, req resource.Confi
 	r.svc = winclient.NewServiceClient(c)
 }
 
-// ConfigValidators wires up the EC-4 / EC-11 cross-field validator.
+// ConfigValidators wires up the cross-field validators.
+//
+//   - serviceAccountPasswordValidator: enforces EC-4 / EC-11 (a password
+//     requires a non-built-in service_account) on whichever credential
+//     attribute the operator picked (`service_password` or
+//     `service_password_wo`).
+//   - resourcevalidator.Conflicting on (service_password,
+//     service_password_wo): at most one of the two may be set per
+//     configuration block. Without this, an operator could silently leak
+//     plaintext via the legacy field while believing they were on the
+//     WriteOnly path.
 func (r *windowsServiceResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
-	return []resource.ConfigValidator{serviceAccountPasswordValidator{}}
+	return []resource.ConfigValidator{
+		serviceAccountPasswordValidator{},
+		resourcevalidator.Conflicting(
+			path.MatchRoot("service_password"),
+			path.MatchRoot("service_password_wo"),
+		),
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -212,6 +251,13 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	tflog.Debug(ctx, "windows_service Create", map[string]interface{}{
+		"name":            plan.Name.ValueString(),
+		"start_type":      plan.StartType.ValueString(),
+		"service_account": plan.ServiceAccount.ValueString(),
+		"desired_status":  plan.Status.ValueString(),
+	})
+
 	deps, diags := listToStrings(ctx, plan.Dependencies)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -226,7 +272,7 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 		StartType:       plan.StartType.ValueString(),
 		DesiredStatus:   plan.Status.ValueString(),
 		ServiceAccount:  plan.ServiceAccount.ValueString(),
-		ServicePassword: plan.ServicePassword.ValueString(),
+		ServicePassword: effectiveServicePassword(plan),
 		Dependencies:    deps,
 	}
 
@@ -253,6 +299,8 @@ func (r *windowsServiceResource) Read(ctx context.Context, req resource.ReadRequ
 	if name == "" {
 		name = state.ID.ValueString()
 	}
+
+	tflog.Debug(ctx, "windows_service Read", map[string]interface{}{"name": name})
 
 	obs, err := r.svc.Read(ctx, name)
 	if err != nil {
@@ -298,6 +346,14 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 		name = prior.Name.ValueString()
 	}
 
+	tflog.Debug(ctx, "windows_service Update", map[string]interface{}{
+		"name":            name,
+		"start_type":      plan.StartType.ValueString(),
+		"service_account": plan.ServiceAccount.ValueString(),
+		"desired_status":  plan.Status.ValueString(),
+		"prior_status":    prior.Status.ValueString(),
+	})
+
 	input := winclient.ServiceInput{
 		Name:            name,
 		DisplayName:     plan.DisplayName.ValueString(),
@@ -305,7 +361,7 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 		StartType:       plan.StartType.ValueString(),
 		DesiredStatus:   plan.Status.ValueString(),
 		ServiceAccount:  plan.ServiceAccount.ValueString(),
-		ServicePassword: plan.ServicePassword.ValueString(),
+		ServicePassword: effectiveServicePassword(plan),
 		Dependencies:    deps,
 	}
 
@@ -330,6 +386,7 @@ func (r *windowsServiceResource) Delete(ctx context.Context, req resource.Delete
 	if name == "" {
 		name = state.ID.ValueString()
 	}
+	tflog.Debug(ctx, "windows_service Delete", map[string]interface{}{"name": name})
 	if err := r.svc.Delete(ctx, name); err != nil {
 		addServiceDiag(&resp.Diagnostics, "Delete windows_service failed", err)
 		return
@@ -379,8 +436,15 @@ func modelFromState(s *winclient.ServiceState, prior windowsServiceModel) window
 	// status is desired state (never observed).
 	out.Status = prior.Status
 
-	// service_password is never read from Windows (SS6).
+	// service_password is never read from Windows (SS6). Carry the prior
+	// state value through unchanged on the legacy attribute.
 	out.ServicePassword = prior.ServicePassword
+	// service_password_wo is WriteOnly: the framework strips it from state
+	// regardless of what we set here, so the explicit assignment is for
+	// clarity only. Carry the plan/config value through during the
+	// in-memory phase of Create/Update so any downstream consumer reading
+	// `final` before resp.State.Set() observes the user-supplied value.
+	out.ServicePasswordWO = prior.ServicePasswordWO
 
 	// dependencies
 	depVals := make([]attr.Value, 0, len(s.Dependencies))
@@ -439,6 +503,13 @@ func (v serviceAccountPasswordValidator) MarkdownDescription(_ context.Context) 
 }
 
 // ValidateResource applies the rules at plan time.
+//
+// The validator fires whenever EITHER credential attribute is set
+// (`service_password` legacy OR `service_password_wo` WriteOnly) and
+// reports diagnostics on the specific attribute the operator used so
+// the error pointer in `terraform plan` is accurate. The Conflicting
+// validator on the same pair guarantees at most one is non-null when
+// this function runs.
 func (v serviceAccountPasswordValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var data windowsServiceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -446,24 +517,61 @@ func (v serviceAccountPasswordValidator) ValidateResource(ctx context.Context, r
 		return
 	}
 
-	if data.ServicePassword.IsNull() || data.ServicePassword.IsUnknown() {
+	pwAttr, set := credentialAttrSet(data)
+	if !set {
 		return
 	}
 
 	if data.ServiceAccount.IsNull() || data.ServiceAccount.IsUnknown() || data.ServiceAccount.ValueString() == "" {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("service_password"),
-			"service_password requires service_account (EC-4)",
-			"service_password is set but service_account is null or empty. Provide a non-built-in service_account (e.g. DOMAIN\\svc-app or .\\localuser) when using service_password.",
+			path.Root(pwAttr),
+			pwAttr+" requires service_account (EC-4)",
+			pwAttr+" is set but service_account is null or empty. Provide a non-built-in service_account (e.g. DOMAIN\\svc-app or .\\localuser) when using "+pwAttr+".",
 		)
 		return
 	}
 
 	if builtinAccountRe.MatchString(data.ServiceAccount.ValueString()) {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("service_password"),
-			"service_password must not be used with built-in accounts (EC-11)",
+			path.Root(pwAttr),
+			pwAttr+" must not be used with built-in accounts (EC-11)",
 			"service_account '"+data.ServiceAccount.ValueString()+"' is a built-in account. Built-in accounts (LocalSystem, NT AUTHORITY\\*) do not accept a password; passing one causes SCM error 87.",
 		)
 	}
+}
+
+// credentialAttrSet returns ("service_password_wo", true) or
+// ("service_password", true) when the corresponding attribute is set in
+// configuration. Returns ("", false) when neither is set. The order of
+// checks does not matter for correctness because the Conflicting
+// ConfigValidator guarantees at most one is non-null at this point; the
+// order is for diagnostic-pointer routing only.
+func credentialAttrSet(m windowsServiceModel) (string, bool) {
+	if !m.ServicePasswordWO.IsNull() && !m.ServicePasswordWO.IsUnknown() && m.ServicePasswordWO.ValueString() != "" {
+		return "service_password_wo", true
+	}
+	if !m.ServicePassword.IsNull() && !m.ServicePassword.IsUnknown() && m.ServicePassword.ValueString() != "" {
+		return "service_password", true
+	}
+	return "", false
+}
+
+// effectiveServicePassword returns the plaintext to forward to the
+// underlying winclient.ServiceClient at Create / Update time, picking
+// whichever of `service_password` (legacy) or `service_password_wo`
+// (WriteOnly) the operator set. Returns "" when neither is set, which
+// preserves the pre-Tier-3 behaviour (the SCM call interprets an empty
+// password as "no password change" depending on context).
+//
+// Callable from Plan-typed inputs only: WriteOnly attributes are read
+// from req.Plan during Create / Update (the framework populates them
+// before stripping on State write). Reading from req.State would
+// always return null for the WriteOnly field.
+func effectiveServicePassword(m windowsServiceModel) string {
+	if !m.ServicePasswordWO.IsNull() && !m.ServicePasswordWO.IsUnknown() {
+		if v := m.ServicePasswordWO.ValueString(); v != "" {
+			return v
+		}
+	}
+	return m.ServicePassword.ValueString()
 }

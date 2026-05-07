@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -35,15 +36,17 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
 
 // Framework interface assertions.
 var (
-	_ resource.Resource                = (*windowsLocalUserResource)(nil)
-	_ resource.ResourceWithConfigure   = (*windowsLocalUserResource)(nil)
-	_ resource.ResourceWithImportState = (*windowsLocalUserResource)(nil)
+	_ resource.Resource                     = (*windowsLocalUserResource)(nil)
+	_ resource.ResourceWithConfigure        = (*windowsLocalUserResource)(nil)
+	_ resource.ResourceWithImportState      = (*windowsLocalUserResource)(nil)
+	_ resource.ResourceWithConfigValidators = (*windowsLocalUserResource)(nil)
 )
 
 // NewWindowsLocalUserResource is the constructor registered in provider.go.
@@ -64,8 +67,21 @@ type windowsLocalUserResource struct {
 // windowsLocalUserModel is the Terraform state/plan model for windows_local_user.
 // Field tags match the snake_case attribute names in the schema.
 //
-// Password is stored as Sensitive; it is preserved verbatim from prior state
-// on every Read (Windows cannot return the plaintext, ADR-LU-3).
+// Password handling — two mutually-exclusive paths (TPF v1.14+ WriteOnly):
+//
+//   - `password` (legacy, deprecated): Sensitive but persisted in state. The
+//     value lands in `terraform.tfstate` (encrypted at rest by the backend
+//     when so configured, but readable by anyone with state access).
+//     Preserved verbatim from prior state on every Read because Windows
+//     cannot return the plaintext (ADR-LU-3).
+//   - `password_wo` (recommended, WriteOnly since Tier 3): the value
+//     transits via Config/Plan but is **never written to state**. Triggers
+//     rotation through the existing `password_wo_version` counter, which
+//     IS persisted (the version, not the password).
+//
+// At most one of the two attributes may be set per the ConfigValidator on
+// the resource. Both share the same `password_wo_version` mechanism for
+// rotation detection during Update.
 type windowsLocalUserModel struct {
 	ID                       types.String `tfsdk:"id"`
 	SID                      types.String `tfsdk:"sid"`
@@ -73,6 +89,7 @@ type windowsLocalUserModel struct {
 	FullName                 types.String `tfsdk:"full_name"`
 	Description              types.String `tfsdk:"description"`
 	Password                 types.String `tfsdk:"password"`
+	PasswordWO               types.String `tfsdk:"password_wo"`
 	PasswordWoVersion        types.Int64  `tfsdk:"password_wo_version"`
 	Enabled                  types.Bool   `tfsdk:"enabled"`
 	PasswordNeverExpires     types.Bool   `tfsdk:"password_never_expires"`
@@ -327,15 +344,35 @@ func windowsLocalUserSchemaDefinition() schema.Schema {
 
 			// ---- Credentials ----
 			"password": schema.StringAttribute{
-				Optional:  true,
-				Sensitive: true,
-				MarkdownDescription: "Password for the user account. Must satisfy the local password policy " +
-					"(minimum length, complexity). Required at Create; if omitted the provider raises " +
+				Optional:           true,
+				Sensitive:          true,
+				DeprecationMessage: "Use `password_wo` instead. The `password` attribute persists the plaintext in `terraform.tfstate` (sensitive but readable by anyone with state access). `password_wo` is a WriteOnly attribute (TPF v1.14+) and is never written to state. Both share the existing `password_wo_version` counter for rotation. This attribute will be removed in v2.x.",
+				MarkdownDescription: "**Deprecated, use `password_wo`.** Password for the user account. Must satisfy the local password policy " +
+					"(minimum length, complexity). Required at Create unless `password_wo` is set; if both are omitted the provider raises " +
 					"a diagnostic error before calling `New-LocalUser`.\n\n" +
 					"The plaintext is injected via stdin inside the PowerShell script and **never " +
-					"appears in WinRM trace logs or provider diagnostics** (ADR-LU-3, EC-6).\n\n" +
+					"appears in WinRM trace logs or provider diagnostics** (ADR-LU-3, EC-6) — but it " +
+					"**does land in `terraform.tfstate`** as a Sensitive value. For a no-state-leak " +
+					"alternative, see `password_wo`.\n\n" +
 					"After `terraform import`, this attribute is `null`. Set it in HCL before " +
 					"the next apply (EC-11).",
+			},
+			"password_wo": schema.StringAttribute{
+				Optional:  true,
+				Sensitive: true,
+				WriteOnly: true,
+				MarkdownDescription: "Write-only password for the user account (TPF v1.14+ WriteOnly). " +
+					"Same semantics as `password` regarding stdin injection and Windows password " +
+					"policy, **but the plaintext is never persisted in `terraform.tfstate`** — " +
+					"the framework drops it from state automatically.\n\n" +
+					"Because the value is not in state, Terraform cannot detect changes to the " +
+					"password content. Rotation is driven exclusively by `password_wo_version`: " +
+					"increment the version and re-apply with the new password value. The provider " +
+					"calls `Set-LocalUser -Password` whenever the version changes between prior " +
+					"state and current plan.\n\n" +
+					"Mutually exclusive with `password`. After `terraform import`, this attribute " +
+					"is `null`; set it together with a fresh `password_wo_version` before the next " +
+					"apply (EC-11).",
 			},
 			"password_wo_version": schema.Int64Attribute{
 				Optional: true,
@@ -421,6 +458,26 @@ func windowsLocalUserSchemaDefinition() schema.Schema {
 	}
 }
 
+// ConfigValidators enforces cross-attribute invariants that cannot be
+// expressed at the per-attribute level.
+//
+// Currently:
+//
+//   - `password` and `password_wo` are mutually exclusive. A user must pick
+//     ONE rotation strategy: legacy state-persisted (`password`, deprecated)
+//     or write-only (`password_wo`, recommended). Both being set is a
+//     configuration error caught at plan time.
+func (r *windowsLocalUserResource) ConfigValidators(
+	_ context.Context,
+) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		resourcevalidator.Conflicting(
+			path.MatchRoot("password"),
+			path.MatchRoot("password_wo"),
+		),
+	}
+}
+
 // Configure extracts the *winclient.Client from provider data and constructs
 // a LocalUserClientImpl.
 func (r *windowsLocalUserResource) Configure(
@@ -461,6 +518,12 @@ func (r *windowsLocalUserResource) Create(
 		return
 	}
 
+	tflog.Debug(ctx, "windows_local_user Create", map[string]interface{}{
+		"name":                plan.Name.ValueString(),
+		"enabled":             plan.Enabled.ValueBool(),
+		"password_wo_version": plan.PasswordWoVersion.ValueInt64(),
+	})
+
 	// EC-13: account_expires must be in the future at Create time.
 	if !plan.AccountExpires.IsNull() && !plan.AccountExpires.IsUnknown() {
 		expStr := plan.AccountExpires.ValueString()
@@ -481,14 +544,19 @@ func (r *windowsLocalUserResource) Create(
 		}
 	}
 
-	// Require password at Create time.
-	password := plan.Password.ValueString()
-	if plan.Password.IsNull() || password == "" {
+	// Require password at Create time. Accept either the legacy `password`
+	// attribute or the WriteOnly `password_wo` (mutually exclusive — see
+	// ConfigValidators). The framework populates both fields of `plan` from
+	// the user configuration; for `password_wo` the value is dropped from
+	// state by resp.State.Set() automatically.
+	password, attrPath := effectiveLocalUserPassword(plan)
+	if password == "" {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("password"),
+			attrPath,
 			"password is required at Create time",
 			"Windows requires a password for local user accounts. "+
-				"Set the password attribute in your configuration.",
+				"Set either `password` (deprecated, persisted in state) or "+
+				"`password_wo` (WriteOnly, never persisted) in your configuration.",
 		)
 		return
 	}
@@ -503,9 +571,35 @@ func (r *windowsLocalUserResource) Create(
 
 	next := stateFromUser(us)
 	next.Password = plan.Password
+	// PasswordWO is intentionally NOT copied: WriteOnly attributes are
+	// dropped from state by the framework. Setting it on `next` would be a
+	// no-op but is omitted for clarity.
 	next.PasswordWoVersion = plan.PasswordWoVersion
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
+}
+
+// effectiveLocalUserPassword returns the plaintext password to use for
+// Create / Update along with the schema path that holds it (used for
+// targeted diagnostics). At most one of `password` and `password_wo` may
+// be non-null per the ConfigValidator, so the order of checks is purely
+// for diagnostic-message routing — it does not introduce ambiguity.
+//
+// Returns ("", path.Root("password")) when neither attribute is set, so
+// the legacy attribute path is reported by default for back-compat with
+// existing diagnostic-message tests.
+func effectiveLocalUserPassword(m windowsLocalUserModel) (string, path.Path) {
+	if !m.PasswordWO.IsNull() && !m.PasswordWO.IsUnknown() {
+		if v := m.PasswordWO.ValueString(); v != "" {
+			return v, path.Root("password_wo")
+		}
+	}
+	if !m.Password.IsNull() && !m.Password.IsUnknown() {
+		if v := m.Password.ValueString(); v != "" {
+			return v, path.Root("password")
+		}
+	}
+	return "", path.Root("password")
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +625,11 @@ func (r *windowsLocalUserResource) Read(
 	if sid == "" {
 		sid = state.ID.ValueString()
 	}
+
+	tflog.Debug(ctx, "windows_local_user Read", map[string]interface{}{
+		"sid":  sid,
+		"name": state.Name.ValueString(),
+	})
 
 	us, err := r.user.Read(ctx, sid)
 	if err != nil {
@@ -585,6 +684,15 @@ func (r *windowsLocalUserResource) Update(
 		sid = prior.ID.ValueString()
 	}
 
+	tflog.Debug(ctx, "windows_local_user Update", map[string]interface{}{
+		"sid":                       sid,
+		"prior_name":                prior.Name.ValueString(),
+		"plan_name":                 plan.Name.ValueString(),
+		"plan_enabled":              plan.Enabled.ValueBool(),
+		"plan_password_wo_version":  plan.PasswordWoVersion.ValueInt64(),
+		"prior_password_wo_version": prior.PasswordWoVersion.ValueInt64(),
+	})
+
 	// Step 1: Rename if name changed (case-insensitive comparison, EC-5).
 	if !strings.EqualFold(plan.Name.ValueString(), prior.Name.ValueString()) {
 		if err := r.user.Rename(ctx, sid, plan.Name.ValueString()); err != nil {
@@ -603,20 +711,34 @@ func (r *windowsLocalUserResource) Update(
 	}
 
 	// Step 3: Password rotation (EC-6).
-	// Trigger: password_wo_version changed OR password value changed OR
-	// password is set in plan but was null in prior state (post-import).
+	//
+	// Detection rules — fire a Set-LocalUser -Password whenever any of
+	// the following is true:
+	//
+	//   a) password_wo_version changed between prior state and plan.
+	//      This is the canonical rotation signal and works for BOTH the
+	//      legacy `password` attribute and the WriteOnly `password_wo`
+	//      (because the WriteOnly value is null in state, version-based
+	//      detection is the only viable channel for it).
+	//   b) `password` value changed in plan vs prior state. Legacy path
+	//      only; meaningless for `password_wo` (always null in state).
+	//   c) `password` was just introduced (null in prior state, non-null
+	//      in plan). Covers post-import recovery (EC-11) for the legacy
+	//      attribute. The WriteOnly equivalent is also covered through
+	//      version bumping.
 	needsPasswordRotation := !plan.PasswordWoVersion.Equal(prior.PasswordWoVersion) ||
 		(!plan.Password.IsNull() && !plan.Password.Equal(prior.Password)) ||
 		(!plan.Password.IsNull() && prior.Password.IsNull())
 
 	if needsPasswordRotation {
-		pw := plan.Password.ValueString()
+		pw, attrPath := effectiveLocalUserPassword(plan)
 		if pw == "" {
 			resp.Diagnostics.AddAttributeError(
-				path.Root("password"),
+				attrPath,
 				"password required for rotation",
 				"password_wo_version changed or password value changed, "+
-					"but the password attribute is empty. Set a non-empty password.",
+					"but neither `password` nor `password_wo` is set. "+
+					"Provide a non-empty value on one of them.",
 			)
 			return
 		}
@@ -685,6 +807,11 @@ func (r *windowsLocalUserResource) Delete(
 	if sid == "" {
 		sid = state.ID.ValueString()
 	}
+
+	tflog.Debug(ctx, "windows_local_user Delete", map[string]interface{}{
+		"sid":  sid,
+		"name": state.Name.ValueString(),
+	})
 
 	if err := r.user.Delete(ctx, sid); err != nil {
 		addLocalUserDiag(&resp.Diagnostics, "Delete windows_local_user failed", err)

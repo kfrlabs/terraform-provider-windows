@@ -6,6 +6,68 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **WriteOnly credential attributes (Tier 3, TPF v1.14.1)** on every
+  resource that previously persisted plaintext passwords in
+  `terraform.tfstate`:
+  - `windows_local_user.password_wo` (paired with the existing
+    `password_wo_version` rotation counter).
+  - `windows_service.service_password_wo` (paired with the legacy
+    `service_password`; no version counter is needed because the
+    WriteOnly value is re-read from configuration on every plan and
+    forwarded to `Set-Service` unconditionally — re-supplying the same
+    value is naturally idempotent).
+  - `windows_scheduled_task.principal.password_wo` (re-uses the
+    existing `principal.password_wo_version` counter as the rotation
+    trigger; the Update path was already version-gated so no
+    server-side change was needed).
+
+  All three new attributes are declared with `WriteOnly: true,
+  Sensitive: true` and are **never written to `terraform.tfstate`** —
+  the framework strips the value from state automatically after each
+  CRUD response. They are mutually exclusive with their legacy
+  state-persisted counterpart (`resourcevalidator.Conflicting` at the
+  resource level for `local_user` / `service`, inline check inside
+  `scheduledTaskPrincipalCrossFieldValidator` for `scheduled_task`
+  because the attributes live inside a nested block).
+
+  The legacy `password` / `service_password` / `principal.password`
+  attributes are now flagged with a `DeprecationMessage` pointing at
+  the WriteOnly replacement; `terraform plan` will surface the
+  deprecation warning on every run until the operator migrates. The
+  attributes themselves remain functional — removal is scheduled for
+  v2.x.
+
+  Migration is one-line per credential and does not require a state
+  rewrite:
+
+  ```hcl
+  # Before (legacy, persisted in state)
+  resource "windows_local_user" "svc" {
+    name     = "svc-app"
+    password = var.svc_password   # <- persisted
+  }
+
+  # After (Tier 3, never persisted)
+  resource "windows_local_user" "svc" {
+    name                = "svc-app"
+    password_wo         = var.svc_password   # <- WriteOnly
+    password_wo_version = 1                  # increment to rotate
+  }
+  ```
+
+- **Structured `tflog.Debug` instrumentation on every CRUD hot path**
+  for the eight resources that previously had zero `tflog` coverage
+  (`windows_service`, `windows_scheduled_task`, `windows_registry_value`,
+  `windows_local_user`, `windows_local_group`, `windows_feature`,
+  `windows_legacy_package`, `windows_winget_package`). Payloads always
+  include the natural identifier (name, id, sid, hive+path+name, or
+  package_id+source) and never include sensitive values — passwords
+  are represented exclusively by their `password_wo_version` counter.
+  Notable: `windows_scheduled_task` Update logs a computed
+  `password_rotated` boolean so operators can audit credential
+  rotations from the log stream alone (no provider-level trace
+  required).
+
 - GitHub Actions CI pipeline (`.github/workflows/`):
   - `test.yml`: build + `go vet` matrix on Go 1.22 / 1.23, unit tests
     with race detector and coverage upload, and `golangci-lint v1.61`

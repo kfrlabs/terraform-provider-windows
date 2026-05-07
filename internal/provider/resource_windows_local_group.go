@@ -32,6 +32,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -322,6 +323,8 @@ func (r *windowsLocalGroupResource) Create(
 		Description: plan.Description.ValueString(),
 	}
 
+	tflog.Debug(ctx, "windows_local_group Create", map[string]interface{}{"name": input.Name})
+
 	gs, err := r.grp.Create(ctx, input)
 	if err != nil {
 		addLocalGroupDiag(&resp.Diagnostics, "Create windows_local_group failed", err)
@@ -351,6 +354,11 @@ func (r *windowsLocalGroupResource) Read(
 	if sid == "" {
 		sid = state.ID.ValueString()
 	}
+
+	tflog.Debug(ctx, "windows_local_group Read", map[string]interface{}{
+		"sid":  sid,
+		"name": state.Name.ValueString(),
+	})
 
 	gs, err := r.grp.Read(ctx, sid)
 	if err != nil {
@@ -402,6 +410,12 @@ func (r *windowsLocalGroupResource) Update(
 		Description: plan.Description.ValueString(),
 	}
 
+	tflog.Debug(ctx, "windows_local_group Update", map[string]interface{}{
+		"sid":        sid,
+		"prior_name": prior.Name.ValueString(),
+		"plan_name":  plan.Name.ValueString(),
+	})
+
 	gs, err := r.grp.Update(ctx, sid, input)
 	if err != nil {
 		addLocalGroupDiag(&resp.Diagnostics, "Update windows_local_group failed", err)
@@ -439,6 +453,11 @@ func (r *windowsLocalGroupResource) Delete(
 	if sid == "" {
 		sid = state.ID.ValueString()
 	}
+
+	tflog.Debug(ctx, "windows_local_group Delete", map[string]interface{}{
+		"sid":  sid,
+		"name": state.Name.ValueString(),
+	})
 
 	if err := r.grp.Delete(ctx, sid); err != nil {
 		addLocalGroupDiag(&resp.Diagnostics, "Delete windows_local_group failed", err)

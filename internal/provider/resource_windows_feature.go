@@ -24,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -219,6 +220,13 @@ func (r *windowsFeatureResource) Create(ctx context.Context, req resource.Create
 		Restart:                plan.Restart.ValueBool(),
 	}
 
+	tflog.Debug(ctx, "windows_feature Create", map[string]interface{}{
+		"name":                     in.Name,
+		"include_sub_features":     in.IncludeSubFeatures,
+		"include_management_tools": in.IncludeManagementTools,
+		"restart":                  in.Restart,
+	})
+
 	info, result, err := r.feat.Install(ctx, in)
 	if err != nil {
 		addFeatureDiag(&resp.Diagnostics, "Create windows_feature failed", err)
@@ -241,6 +249,7 @@ func (r *windowsFeatureResource) Read(ctx context.Context, req resource.ReadRequ
 	if name == "" {
 		name = state.ID.ValueString()
 	}
+	tflog.Debug(ctx, "windows_feature Read", map[string]interface{}{"name": name})
 	info, err := r.feat.Read(ctx, name)
 	if err != nil {
 		addFeatureDiag(&resp.Diagnostics, "Read windows_feature failed", err)
@@ -281,6 +290,12 @@ func (r *windowsFeatureResource) Update(ctx context.Context, req resource.Update
 		Source:                 plan.Source.ValueString(),
 		Restart:                plan.Restart.ValueBool(),
 	}
+	tflog.Debug(ctx, "windows_feature Update", map[string]interface{}{
+		"name":                     name,
+		"include_sub_features":     in.IncludeSubFeatures,
+		"include_management_tools": in.IncludeManagementTools,
+		"restart":                  in.Restart,
+	})
 	info, result, err := r.feat.Install(ctx, in)
 	if err != nil {
 		addFeatureDiag(&resp.Diagnostics, "Update windows_feature failed", err)
@@ -314,6 +329,10 @@ func (r *windowsFeatureResource) Delete(ctx context.Context, req resource.Delete
 		IncludeManagementTools: state.IncludeManagementTools.ValueBool(),
 		Restart:                state.Restart.ValueBool(),
 	}
+	tflog.Debug(ctx, "windows_feature Delete", map[string]interface{}{
+		"name":    name,
+		"restart": in.Restart,
+	})
 	_, result, err := r.feat.Uninstall(ctx, in)
 	if err != nil {
 		if winclient.IsFeatureError(err, winclient.FeatureErrorNotFound) {
