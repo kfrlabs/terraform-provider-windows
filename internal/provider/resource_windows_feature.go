@@ -52,17 +52,17 @@ type windowsFeatureResource struct {
 
 // windowsFeatureModel is the Terraform state/plan model for windows_feature.
 type windowsFeatureModel struct {
-	ID                     types.String `tfsdk:"id"`
-	Name                   types.String `tfsdk:"name"`
-	DisplayName            types.String `tfsdk:"display_name"`
-	Description            types.String `tfsdk:"description"`
-	Installed              types.Bool   `tfsdk:"installed"`
-	IncludeSubFeatures     types.Bool   `tfsdk:"include_sub_features"`
-	IncludeManagementTools types.Bool   `tfsdk:"include_management_tools"`
-	Source                 types.String `tfsdk:"source"`
-	Restart                types.Bool   `tfsdk:"restart"`
-	RestartPending         types.Bool   `tfsdk:"restart_pending"`
-	InstallState           types.String `tfsdk:"install_state"`
+	ID                     types.String   `tfsdk:"id"`
+	Name                   types.String   `tfsdk:"name"`
+	DisplayName            types.String   `tfsdk:"display_name"`
+	Description            types.String   `tfsdk:"description"`
+	Installed              types.Bool     `tfsdk:"installed"`
+	IncludeSubFeatures     types.Bool     `tfsdk:"include_sub_features"`
+	IncludeManagementTools types.Bool     `tfsdk:"include_management_tools"`
+	Source                 types.String   `tfsdk:"source"`
+	Restart                types.Bool     `tfsdk:"restart"`
+	RestartPending         types.Bool     `tfsdk:"restart_pending"`
+	InstallState           types.String   `tfsdk:"install_state"`
 	Timeouts               timeouts.Value `tfsdk:"timeouts"`
 }
 

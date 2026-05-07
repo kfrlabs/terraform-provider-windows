@@ -13,7 +13,8 @@
 //     IIS WMSvc traces, and any host-side Set-PSDebug/Start-Transcript output
 //     (mirrors the pattern documented in ADR-LU-3 for windows_local_user).
 //   - All other user-supplied strings are interpolated only through psQuote
-//     (single-quoted PowerShell literal with embedded "''" escape).
+//     (single-quoted PowerShell literal where every embedded apostrophe is
+//     doubled, per the PowerShell single-quoted-string escape rule).
 //   - The password value is NEVER copied into ServiceError context or logged.
 //   - All scripts are rendered as UTF-16LE / base64 via the underlying Client
 //     (-EncodedCommand); no shell metacharacters ever reach cmd.exe.
