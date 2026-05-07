@@ -49,6 +49,29 @@ func stubRun(fn func(ctx context.Context, c *Client, script string) (string, str
 	return func() { runPowerShell = prev }
 }
 
+// stubRunInput replaces the package-level runPSInput hook (used by Create /
+// Update for stdin-based service_password injection) with a deterministic
+// fake. It returns a restorer closure the caller must defer.
+func stubRunInput(fn func(ctx context.Context, c *Client, script, stdin string) (string, string, error)) func() {
+	prev := runPSInput
+	runPSInput = fn
+	return func() { runPSInput = prev }
+}
+
+// stubBothPS replaces BOTH runPowerShell and runPSInput with the same script
+// handler (stdin is silently ignored). This is the convenience helper for
+// tests that drive Create / Update through the stdin path but don't need to
+// inspect the stdin payload itself.
+func stubBothPS(fn func(ctx context.Context, c *Client, script string) (string, string, error)) func() {
+	prevA := runPowerShell
+	prevB := runPSInput
+	runPowerShell = fn
+	runPSInput = func(ctx context.Context, c *Client, script, _ string) (string, string, error) {
+		return fn(ctx, c, script)
+	}
+	return func() { runPowerShell = prevA; runPSInput = prevB }
+}
+
 func okEnvelope(t *testing.T, data any) string {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{"ok": true, "data": data})
@@ -349,7 +372,7 @@ func fakeState(name string) map[string]any {
 
 func TestCreate_HappyPath(t *testing.T) {
 	calls := 0
-	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		calls++
 		if !strings.Contains(script, `'C:\svc.exe'`) {
 			t.Errorf("script missing quoted binary path")
@@ -374,7 +397,7 @@ func TestCreate_HappyPath(t *testing.T) {
 }
 
 func TestCreate_AlreadyExists_EC1(t *testing.T) {
-	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		return errEnvelope(t, "already_exists", "service 'svc' already exists"), "", nil
 	})
 	defer restore()
@@ -387,7 +410,7 @@ func TestCreate_AlreadyExists_EC1(t *testing.T) {
 }
 
 func TestCreate_InvalidParameter_EC11_NoPasswordLeak(t *testing.T) {
-	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		return errEnvelope(t, "invalid_parameter", "The parameter is incorrect (87)"), "", nil
 	})
 	defer restore()
@@ -405,9 +428,86 @@ func TestCreate_InvalidParameter_EC11_NoPasswordLeak(t *testing.T) {
 	}
 }
 
+// TestCreate_PasswordInjectedViaStdin_NotInScriptBody verifies the security
+// invariant: service_password is delivered over stdin, never embedded in the
+// PowerShell -EncodedCommand payload.
+//
+// Regression guard: this test would have caught the pre-Tier-1 leak where
+// $password was rendered with psQuote and shipped as part of the encoded
+// command (visible to WinRM trace logs and any host-side Start-Transcript).
+func TestCreate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
+	const secret = "P@ssw0rd!Sup3rS3cret#42"
+	var capturedScript, capturedStdin string
+
+	// Only stub runPSInput — Create must take the stdin path.
+	restore := stubRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		capturedScript = script
+		capturedStdin = stdin
+		return okEnvelope(t, fakeState("svc")), "", nil
+	})
+	defer restore()
+
+	s := NewServiceClient(newTestClient(t))
+	_, err := s.Create(context.Background(), ServiceInput{
+		Name: "svc", BinaryPath: `C:\svc.exe`,
+		ServiceAccount:  `DOMAIN\svc-acct`,
+		ServicePassword: secret,
+	})
+	if err != nil {
+		t.Fatalf("Create err: %v", err)
+	}
+
+	if strings.Contains(capturedScript, secret) {
+		t.Fatalf("SECURITY: service_password leaked in PS script body:\n%s", capturedScript)
+	}
+	if !strings.Contains(capturedScript, "[Console]::In.ReadLine()") {
+		t.Errorf("script does not read password from stdin (no ReadLine call)")
+	}
+	if !strings.Contains(capturedStdin, secret) {
+		t.Errorf("password not piped on stdin; stdin=%q", capturedStdin)
+	}
+	if !strings.HasSuffix(capturedStdin, "\n") {
+		t.Errorf("stdin must end with newline so ReadLine returns; got %q", capturedStdin)
+	}
+}
+
+// TestUpdate_PasswordInjectedViaStdin_NotInScriptBody mirrors the Create test
+// for the Update path.
+func TestUpdate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
+	const secret = "Rotat3d#PWD!2026"
+	var capturedScript, capturedStdin string
+
+	restore := stubRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		capturedScript = script
+		capturedStdin = stdin
+		return okEnvelope(t, fakeState("svc")), "", nil
+	})
+	defer restore()
+
+	s := NewServiceClient(newTestClient(t))
+	_, err := s.Update(context.Background(), "svc", ServiceInput{
+		ServiceAccount:  `DOMAIN\svc-acct`,
+		ServicePassword: secret,
+		StartType:       "Automatic",
+	})
+	if err != nil {
+		t.Fatalf("Update err: %v", err)
+	}
+
+	if strings.Contains(capturedScript, secret) {
+		t.Fatalf("SECURITY: service_password leaked in PS script body:\n%s", capturedScript)
+	}
+	if !strings.Contains(capturedScript, "[Console]::In.ReadLine()") {
+		t.Errorf("script does not read password from stdin (no ReadLine call)")
+	}
+	if !strings.Contains(capturedStdin, secret) {
+		t.Errorf("password not piped on stdin; stdin=%q", capturedStdin)
+	}
+}
+
 func TestCreate_ReconcileRunning(t *testing.T) {
 	step := 0
-	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		step++
 		switch step {
 		case 1:
@@ -503,7 +603,7 @@ func TestRead_NotFoundViaKind(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestUpdate_HappyPath(t *testing.T) {
-	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		return okEnvelope(t, fakeState("svc")), "", nil
 	})
 	defer restore()
@@ -523,7 +623,7 @@ func TestUpdate_HappyPath(t *testing.T) {
 
 func TestUpdate_ClearsDependencies(t *testing.T) {
 	var captured string
-	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		captured = script
 		return okEnvelope(t, fakeState("svc")), "", nil
 	})
@@ -541,7 +641,7 @@ func TestUpdate_ClearsDependencies(t *testing.T) {
 }
 
 func TestUpdate_NotFound(t *testing.T) {
-	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		return errEnvelope(t, "not_found", "no such"), "", nil
 	})
 	defer restore()

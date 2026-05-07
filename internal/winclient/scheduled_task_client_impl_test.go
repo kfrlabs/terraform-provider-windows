@@ -56,6 +56,27 @@ func stubSTRun(fn func(ctx context.Context, c *Client, script string) (string, s
 	return func() { runSTPS = prev }
 }
 
+// stubSTRunInput replaces runSTPSInput (the stdin-aware sibling, used by
+// Create / Update when principal.password is set) for the duration of a test.
+func stubSTRunInput(fn func(ctx context.Context, c *Client, script, stdin string) (string, string, error)) func() {
+	prev := runSTPSInput
+	runSTPSInput = fn
+	return func() { runSTPSInput = prev }
+}
+
+// stubSTBoth replaces BOTH runSTPS and runSTPSInput with the same script
+// handler (stdin is silently ignored). Convenience for tests that drive
+// Create / Update through the stdin path but don't need to inspect stdin.
+func stubSTBoth(fn func(ctx context.Context, c *Client, script string) (string, string, error)) func() {
+	prevA := runSTPS
+	prevB := runSTPSInput
+	runSTPS = fn
+	runSTPSInput = func(ctx context.Context, c *Client, script, _ string) (string, string, error) {
+		return fn(ctx, c, script)
+	}
+	return func() { runSTPS = prevA; runSTPSInput = prevB }
+}
+
 func stOKEnvelope(t *testing.T, data any) string {
 	if t != nil {
 		t.Helper()
@@ -966,7 +987,8 @@ func TestSTCreate_PasswordSensitive_NotInErrorContext(t *testing.T) {
 	// EC-4: password must never appear in error context
 	_, impl := newSTTestClient(t)
 	pw := "s3cr3tP@ssword"
-	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	// Create-with-password takes the stdin path → stub both transports.
+	defer stubSTBoth(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return stErrEnvelope(t, "permission_denied", "Access is denied"), "", nil
 	})()
 	input := ScheduledTaskInput{
@@ -993,6 +1015,87 @@ func TestSTCreate_PasswordSensitive_NotInErrorContext(t *testing.T) {
 		if strings.Contains(ste.Message, pw) {
 			t.Error("password should not appear in error message")
 		}
+	}
+}
+
+// TestSTCreate_PasswordInjectedViaStdin_NotInScriptBody is the regression
+// guard for the Tier-1 fix: principal.password must NEVER appear inside the
+// generated PowerShell script body (which is shipped over WinRM as a
+// -EncodedCommand payload, traceable by host-side WinRM/IIS-WMSvc logs).
+// It must be delivered exclusively over stdin.
+func TestSTCreate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
+	const secret = "S3cr3t#Pwd!ForSchedTask"
+	var capturedScript, capturedStdin string
+
+	_, impl := newSTTestClient(t)
+	// Stub ONLY the stdin transport — Create-with-password must use it.
+	defer stubSTRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		capturedScript = script
+		capturedStdin = stdin
+		return buildMinimalPayloadJSON(t, "PwTask", `\`), "", nil
+	})()
+
+	pw := secret
+	input := ScheduledTaskInput{
+		Name: "PwTask", Path: `\`, Enabled: true,
+		Principal: &ScheduledTaskPrincipalInput{
+			UserID: `DOMAIN\svc`, Password: &pw, LogonType: "Password",
+		},
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	}
+	if _, err := impl.Create(context.Background(), input); err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+
+	if strings.Contains(capturedScript, secret) {
+		t.Fatalf("SECURITY: principal.password leaked in PS script body:\n%s", capturedScript)
+	}
+	if !strings.Contains(capturedScript, "[Console]::In.ReadLine()") {
+		t.Errorf("script does not read password from stdin (no ReadLine call)")
+	}
+	if !strings.Contains(capturedStdin, secret) {
+		t.Errorf("password not piped on stdin; stdin=%q", capturedStdin)
+	}
+	if !strings.HasSuffix(capturedStdin, "\n") {
+		t.Errorf("stdin must end with newline so ReadLine returns; got %q", capturedStdin)
+	}
+}
+
+// TestSTUpdate_PasswordInjectedViaStdin_NotInScriptBody mirrors the Create
+// regression guard for the Update path.
+func TestSTUpdate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
+	const secret = "Rotat3d!ForSchedTask#42"
+	var capturedScript, capturedStdin string
+
+	_, impl := newSTTestClient(t)
+	defer stubSTRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		capturedScript = script
+		capturedStdin = stdin
+		return buildMinimalPayloadJSON(t, "PwTask", `\`), "", nil
+	})()
+
+	pw := secret
+	input := ScheduledTaskInput{
+		Name: "PwTask", Path: `\`, Enabled: true,
+		Principal: &ScheduledTaskPrincipalInput{
+			UserID: `DOMAIN\svc`, Password: &pw, LogonType: "Password",
+		},
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	}
+	if _, err := impl.Update(context.Background(), `\PwTask`, input); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+
+	if strings.Contains(capturedScript, secret) {
+		t.Fatalf("SECURITY: principal.password leaked in PS script body:\n%s", capturedScript)
+	}
+	if !strings.Contains(capturedScript, "[Console]::In.ReadLine()") {
+		t.Errorf("script does not read password from stdin (no ReadLine call)")
+	}
+	if !strings.Contains(capturedStdin, secret) {
+		t.Errorf("password not piped on stdin; stdin=%q", capturedStdin)
 	}
 }
 

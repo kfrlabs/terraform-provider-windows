@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **`windows_service` and `windows_scheduled_task`: stop embedding plaintext
+  passwords in PowerShell `-EncodedCommand` payloads.** Both resources used to
+  render `service_password` / `principal.password` into the script body via
+  `psQuote`, which meant the cleartext was visible to anyone with access to
+  WinRM trace logs, IIS WMSvc traces, or any host-side `Set-PSDebug` /
+  `Start-Transcript` output on the target. The script body is now scrubbed of
+  password values: the plaintext is piped over stdin and read by the script
+  through `[Console]::In.ReadLine()` (mirrors the existing `ADR-LU-3` pattern
+  used by `windows_local_user`). Regression-guard unit tests assert the
+  password is absent from the rendered script and present on stdin
+  (`TestCreate_PasswordInjectedViaStdin_NotInScriptBody` and the equivalent
+  Update / scheduled-task variants). No state-format or schema change; no
+  user action required.
+
 ### Added
 
 - `windows_legacy_package` resource: manages the full lifecycle (install /

@@ -5,7 +5,12 @@
 // OnEvent triggers are injected via raw task XML (ADR-ST-5).
 //
 // Security invariants:
-//   - All user-supplied strings are passed through psQuote (single-quoted PS literals).
+//   - All user-supplied strings are passed through psQuote (single-quoted PS literals)
+//     EXCEPT principal.password, which is never embedded in the script body.
+//   - principal.password is injected on stdin via runSTEnvelopeWithInput and read by
+//     the script through [Console]::In.ReadLine(), keeping the plaintext out of
+//     the WinRM -EncodedCommand payload, WinRM trace logs, IIS WMSvc traces, and
+//     any host-side Set-PSDebug/Start-Transcript output (mirrors ADR-LU-3).
 //   - Passwords are never logged or included in error context (ADR-ST-3).
 //   - All scripts are transmitted via -EncodedCommand (UTF-16LE base64).
 package winclient
@@ -372,9 +377,62 @@ var runSTPS = func(ctx context.Context, c *Client, script string) (string, strin
 	return c.RunPowerShell(ctx, script)
 }
 
+// runSTPSInput is the stdin-aware sibling of runSTPS, used for principal.password
+// injection. Tests can override it independently of runSTPS.
+var runSTPSInput = func(ctx context.Context, c *Client, script, stdin string) (string, string, error) {
+	return c.RunPowerShellWithInput(ctx, script, stdin)
+}
+
 func (c *ScheduledTaskClientImpl) runSTEnvelope(ctx context.Context, op, id, script string) (*stPSResponse, error) {
 	full := psSTHeader + "\n" + script
 	stdout, stderr, err := runSTPS(ctx, c.c, full)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
+				fmt.Sprintf("operation %q for %q timed out or was cancelled", op, id),
+				ctx.Err(),
+				map[string]string{"op": op, "id": id, "host": c.c.cfg.Host})
+		}
+		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
+			fmt.Sprintf("transport error during %q", op),
+			err,
+			map[string]string{"op": op, "id": id, "host": c.c.cfg.Host,
+				"stderr": truncate(stderr, 2048), "stdout": truncate(stdout, 2048)})
+	}
+	line := extractLastJSONLine(stdout)
+	if line == "" {
+		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
+			fmt.Sprintf("no JSON envelope from %q", op), nil,
+			map[string]string{"op": op, "id": id,
+				"stderr": truncate(stderr, 2048), "stdout": truncate(stdout, 2048)})
+	}
+	var resp stPSResponse
+	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
+		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
+			fmt.Sprintf("invalid JSON from %q", op), jerr,
+			map[string]string{"op": op, "id": id, "stdout": truncate(stdout, 2048)})
+	}
+	if !resp.OK {
+		kind := mapSTKind(resp.Kind)
+		ctx2 := resp.Context
+		if ctx2 == nil {
+			ctx2 = map[string]string{}
+		}
+		ctx2["op"] = op
+		ctx2["id"] = id
+		ctx2["host"] = c.c.cfg.Host
+		return &resp, NewScheduledTaskError(kind, resp.Message, nil, ctx2)
+	}
+	return &resp, nil
+}
+
+// runSTEnvelopeWithInput is the stdin-aware sibling of runSTEnvelope. It is used
+// by Create / Update when principal.password is set, so that the plaintext is
+// piped over stdin instead of embedded in the script body. The stdin value is
+// NEVER copied into error context or logs.
+func (c *ScheduledTaskClientImpl) runSTEnvelopeWithInput(ctx context.Context, op, id, script, stdin string) (*stPSResponse, error) {
+	full := psSTHeader + "\n" + script
+	stdout, stderr, err := runSTPSInput(ctx, c.c, full, stdin)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
@@ -831,7 +889,12 @@ if ($null -ne %s -and %s -ne '') { $_stRegParams['Description'] = %s }
 		psQuote(input.Description), psQuote(input.Description), psQuote(input.Description)))
 
 	if input.Principal != nil && input.Principal.Password != nil {
-		sb.WriteString(fmt.Sprintf("$_stRegParams['Password'] = %s\n", psQuote(*input.Principal.Password)))
+		// principal.password is read from stdin (never embedded in the script
+		// body, see ADR-LU-3 / ADR-ST-3). The Go side dispatches via
+		// runSTEnvelopeWithInput when this branch is taken.
+		sb.WriteString("$_stRegPassword = [Console]::In.ReadLine()\n")
+		sb.WriteString("if ($null -eq $_stRegPassword) { $_stRegPassword = '' }\n")
+		sb.WriteString("$_stRegParams['Password'] = $_stRegPassword\n")
 	}
 
 	if hasNonEventTrigger(input.Triggers) {
@@ -857,7 +920,14 @@ try {
 	// Read-back
 	sb.WriteString(fmt.Sprintf("Read-TaskState %s %s\n", psQuote(input.Name), psQuote(input.Path)))
 
-	resp, err := c.runSTEnvelope(ctx, "create", id, sb.String())
+	var resp *stPSResponse
+	var err error
+	if input.Principal != nil && input.Principal.Password != nil {
+		// Inject password via stdin — never present in the script body.
+		resp, err = c.runSTEnvelopeWithInput(ctx, "create", id, sb.String(), *input.Principal.Password+"\n")
+	} else {
+		resp, err = c.runSTEnvelope(ctx, "create", id, sb.String())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -909,7 +979,10 @@ $_stSetParams['Description'] = %s
 `, psQuote(taskName), psQuote(taskPath), psQuote(input.Description)))
 
 	if input.Principal != nil && input.Principal.Password != nil {
-		sb.WriteString(fmt.Sprintf("$_stSetParams['Password'] = %s\n", psQuote(*input.Principal.Password)))
+		// principal.password is read from stdin (see Create for rationale).
+		sb.WriteString("$_stSetPassword = [Console]::In.ReadLine()\n")
+		sb.WriteString("if ($null -eq $_stSetPassword) { $_stSetPassword = '' }\n")
+		sb.WriteString("$_stSetParams['Password'] = $_stSetPassword\n")
 	}
 
 	if hasNonEventTrigger(input.Triggers) {
@@ -935,7 +1008,14 @@ try {
 	// Read-back
 	sb.WriteString(fmt.Sprintf("Read-TaskState %s %s\n", psQuote(taskName), psQuote(taskPath)))
 
-	resp, err := c.runSTEnvelope(ctx, "update", id, sb.String())
+	var resp *stPSResponse
+	var err error
+	if input.Principal != nil && input.Principal.Password != nil {
+		// Inject password via stdin — never present in the script body.
+		resp, err = c.runSTEnvelopeWithInput(ctx, "update", id, sb.String(), *input.Principal.Password+"\n")
+	} else {
+		resp, err = c.runSTEnvelope(ctx, "update", id, sb.String())
+	}
 	if err != nil {
 		return nil, err
 	}
