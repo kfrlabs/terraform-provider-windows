@@ -36,6 +36,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -517,6 +518,12 @@ func (r *windowsLocalUserResource) Create(
 		return
 	}
 
+	tflog.Debug(ctx, "windows_local_user Create", map[string]interface{}{
+		"name":                plan.Name.ValueString(),
+		"enabled":             plan.Enabled.ValueBool(),
+		"password_wo_version": plan.PasswordWoVersion.ValueInt64(),
+	})
+
 	// EC-13: account_expires must be in the future at Create time.
 	if !plan.AccountExpires.IsNull() && !plan.AccountExpires.IsUnknown() {
 		expStr := plan.AccountExpires.ValueString()
@@ -619,6 +626,11 @@ func (r *windowsLocalUserResource) Read(
 		sid = state.ID.ValueString()
 	}
 
+	tflog.Debug(ctx, "windows_local_user Read", map[string]interface{}{
+		"sid":  sid,
+		"name": state.Name.ValueString(),
+	})
+
 	us, err := r.user.Read(ctx, sid)
 	if err != nil {
 		addLocalUserDiag(&resp.Diagnostics, "Read windows_local_user failed", err)
@@ -671,6 +683,15 @@ func (r *windowsLocalUserResource) Update(
 	if sid == "" {
 		sid = prior.ID.ValueString()
 	}
+
+	tflog.Debug(ctx, "windows_local_user Update", map[string]interface{}{
+		"sid":                       sid,
+		"prior_name":                prior.Name.ValueString(),
+		"plan_name":                 plan.Name.ValueString(),
+		"plan_enabled":              plan.Enabled.ValueBool(),
+		"plan_password_wo_version":  plan.PasswordWoVersion.ValueInt64(),
+		"prior_password_wo_version": prior.PasswordWoVersion.ValueInt64(),
+	})
 
 	// Step 1: Rename if name changed (case-insensitive comparison, EC-5).
 	if !strings.EqualFold(plan.Name.ValueString(), prior.Name.ValueString()) {
@@ -786,6 +807,11 @@ func (r *windowsLocalUserResource) Delete(
 	if sid == "" {
 		sid = state.ID.ValueString()
 	}
+
+	tflog.Debug(ctx, "windows_local_user Delete", map[string]interface{}{
+		"sid":  sid,
+		"name": state.Name.ValueString(),
+	})
 
 	if err := r.user.Delete(ctx, sid); err != nil {
 		addLocalUserDiag(&resp.Diagnostics, "Delete windows_local_user failed", err)

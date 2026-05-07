@@ -28,6 +28,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -283,6 +284,12 @@ func (r *windowsWingetPackageResource) Create(ctx context.Context, req resource.
 		Override:  plan.Override.ValueString(), // empty string when null → no override
 	}
 
+	tflog.Debug(ctx, "windows_winget_package Create", map[string]interface{}{
+		"package_id": input.PackageID,
+		"source":     input.Source,
+		"version":    input.Version,
+	})
+
 	state, err := r.wp.Install(ctx, input)
 	if err != nil {
 		addWPDiag(&resp.Diagnostics, err, "Create")
@@ -321,6 +328,11 @@ func (r *windowsWingetPackageResource) Read(ctx context.Context, req resource.Re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	tflog.Debug(ctx, "windows_winget_package Read", map[string]interface{}{
+		"package_id": state.PackageID.ValueString(),
+		"source":     state.Source.ValueString(),
+	})
 
 	remote, err := r.wp.Read(ctx, state.PackageID.ValueString(), state.Source.ValueString())
 	if err != nil {
@@ -373,6 +385,14 @@ func (r *windowsWingetPackageResource) Update(ctx context.Context, req resource.
 		Version:   plan.Version.ValueString(), // "" when cleared → "latest"
 	}
 
+	tflog.Debug(ctx, "windows_winget_package Update", map[string]interface{}{
+		"package_id":    input.PackageID,
+		"source":        input.Source,
+		"plan_version":  input.Version,
+		"prior_version": state.Version.ValueString(),
+		"installed_now": state.InstalledVersion.ValueString(),
+	})
+
 	remote, err := r.wp.Update(ctx, input)
 	if err != nil {
 		addWPDiag(&resp.Diagnostics, err, "Update")
@@ -418,6 +438,11 @@ func (r *windowsWingetPackageResource) Delete(ctx context.Context, req resource.
 	}
 	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
 	defer cancel()
+
+	tflog.Debug(ctx, "windows_winget_package Delete", map[string]interface{}{
+		"package_id": state.PackageID.ValueString(),
+		"source":     state.Source.ValueString(),
+	})
 
 	result, err := r.wp.Uninstall(ctx, state.PackageID.ValueString(), state.Source.ValueString())
 	if err != nil {

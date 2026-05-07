@@ -33,6 +33,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -661,6 +662,12 @@ func (r *windowsScheduledTaskResource) Create(ctx context.Context, req resource.
 	ctx, cancel := context.WithTimeout(ctx, createTimeout)
 	defer cancel()
 
+	tflog.Debug(ctx, "windows_scheduled_task Create", map[string]interface{}{
+		"name":    plan.Name.ValueString(),
+		"path":    plan.Path.ValueString(),
+		"enabled": plan.Enabled.ValueBool(),
+	})
+
 	input, diags := modelToInput(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -695,6 +702,7 @@ func (r *windowsScheduledTaskResource) Read(ctx context.Context, req resource.Re
 	}
 
 	id := current.ID.ValueString()
+	tflog.Debug(ctx, "windows_scheduled_task Read", map[string]interface{}{"id": id})
 	state, err := r.stClient.Read(ctx, id)
 	if err != nil {
 		resp.Diagnostics.Append(scheduledTaskErrDiag("Read", err)...)
@@ -754,12 +762,20 @@ func (r *windowsScheduledTaskResource) Update(ctx context.Context, req resource.
 		resp.Diagnostics.Append(currentState.Principal.As(ctx, &sp, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true})...)
 		statePwVersion = sp.PasswordWoVersion.ValueInt64()
 	}
-	if planPwVersion == statePwVersion && planInput.Principal != nil {
+	pwBumped := planPwVersion != statePwVersion
+	if !pwBumped && planInput.Principal != nil {
 		// No bump: clear password so it's not re-sent
 		planInput.Principal.Password = nil
 	}
 
 	id := currentState.ID.ValueString()
+	tflog.Debug(ctx, "windows_scheduled_task Update", map[string]interface{}{
+		"id":               id,
+		"name":             plan.Name.ValueString(),
+		"plan_pw_version":  planPwVersion,
+		"state_pw_version": statePwVersion,
+		"password_rotated": pwBumped,
+	})
 	state, err := r.stClient.Update(ctx, id, planInput)
 	if err != nil {
 		resp.Diagnostics.Append(scheduledTaskErrDiag("Update", err)...)
@@ -793,6 +809,11 @@ func (r *windowsScheduledTaskResource) Delete(ctx context.Context, req resource.
 	}
 	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
 	defer cancel()
+
+	tflog.Debug(ctx, "windows_scheduled_task Delete", map[string]interface{}{
+		"id":   state.ID.ValueString(),
+		"name": state.Name.ValueString(),
+	})
 
 	err := r.stClient.Delete(ctx, state.ID.ValueString())
 	if err != nil && !winclient.IsScheduledTaskError(err, winclient.ScheduledTaskErrorNotFound) {

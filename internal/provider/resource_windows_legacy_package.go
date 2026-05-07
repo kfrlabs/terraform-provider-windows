@@ -36,6 +36,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -420,6 +421,14 @@ func (r *windowsLegacyPackageResource) Create(ctx context.Context, req resource.
 		return
 	}
 
+	tflog.Debug(ctx, "windows_legacy_package Create", map[string]interface{}{
+		"installer_type":  input.InstallerType,
+		"source_path":     input.SourcePath,
+		"source_url":      input.SourceURL,
+		"product_id":      plan.ProductID.ValueString(),
+		"display_pattern": input.DisplayNamePattern,
+	})
+
 	// installer_type=exe requires display_name_pattern OR uninstall_command
 	// (cross-attribute conditional rule, validated at apply time because TPF
 	// lacks a native conditional validator on a sibling enum value).
@@ -462,6 +471,8 @@ func (r *windowsLegacyPackageResource) Read(ctx context.Context, req resource.Re
 		// Nothing to refresh (fresh import edge-case).
 		return
 	}
+
+	tflog.Debug(ctx, "windows_legacy_package Read", map[string]interface{}{"id": id})
 
 	remote, err := r.lp.Read(ctx, id)
 	if err != nil {
@@ -511,6 +522,10 @@ func (r *windowsLegacyPackageResource) Update(ctx context.Context, req resource.
 	}
 
 	id := prior.ID.ValueString()
+	tflog.Debug(ctx, "windows_legacy_package Update", map[string]interface{}{
+		"id":             id,
+		"installer_type": input.InstallerType,
+	})
 	remote, err := r.lp.Update(ctx, id, input)
 	if err != nil {
 		addLPDiag(&resp.Diagnostics, err, "Update")
@@ -565,6 +580,10 @@ func (r *windowsLegacyPackageResource) Delete(ctx context.Context, req resource.
 	if id == "" {
 		return
 	}
+	tflog.Debug(ctx, "windows_legacy_package Delete", map[string]interface{}{
+		"id":             id,
+		"installer_type": state.InstallerType.ValueString(),
+	})
 	if err := r.lp.Delete(ctx, id); err != nil {
 		addLPDiag(&resp.Diagnostics, err, "Delete")
 		return

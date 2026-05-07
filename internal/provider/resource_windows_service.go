@@ -26,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -250,6 +251,13 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	tflog.Debug(ctx, "windows_service Create", map[string]interface{}{
+		"name":            plan.Name.ValueString(),
+		"start_type":      plan.StartType.ValueString(),
+		"service_account": plan.ServiceAccount.ValueString(),
+		"desired_status":  plan.Status.ValueString(),
+	})
+
 	deps, diags := listToStrings(ctx, plan.Dependencies)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -291,6 +299,8 @@ func (r *windowsServiceResource) Read(ctx context.Context, req resource.ReadRequ
 	if name == "" {
 		name = state.ID.ValueString()
 	}
+
+	tflog.Debug(ctx, "windows_service Read", map[string]interface{}{"name": name})
 
 	obs, err := r.svc.Read(ctx, name)
 	if err != nil {
@@ -336,6 +346,14 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 		name = prior.Name.ValueString()
 	}
 
+	tflog.Debug(ctx, "windows_service Update", map[string]interface{}{
+		"name":            name,
+		"start_type":      plan.StartType.ValueString(),
+		"service_account": plan.ServiceAccount.ValueString(),
+		"desired_status":  plan.Status.ValueString(),
+		"prior_status":    prior.Status.ValueString(),
+	})
+
 	input := winclient.ServiceInput{
 		Name:            name,
 		DisplayName:     plan.DisplayName.ValueString(),
@@ -368,6 +386,7 @@ func (r *windowsServiceResource) Delete(ctx context.Context, req resource.Delete
 	if name == "" {
 		name = state.ID.ValueString()
 	}
+	tflog.Debug(ctx, "windows_service Delete", map[string]interface{}{"name": name})
 	if err := r.svc.Delete(ctx, name); err != nil {
 		addServiceDiag(&resp.Diagnostics, "Delete windows_service failed", err)
 		return
