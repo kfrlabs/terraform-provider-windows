@@ -12,10 +12,22 @@ PowerShell. This resource can create, update (in place), reconfigure, control
 the runtime state (Running / Stopped / Paused), delete and import a Windows
 service.
 
-~> **Note — write-only password.** `service_password` is treated as a semantic
-write-only attribute: it is sent to Windows on create/update but is **never**
-read back. Terraform keeps the value you provided in state; rotating the
-password on the host out-of-band will not trigger drift.
+~> **Note — credential attributes (Tier 3).** Two mutually-exclusive
+attributes carry the service-account password:
+
+- **`service_password_wo`** (recommended, TPF v1.14+ WriteOnly) — sent to
+  Windows on every Create / Update but **never persisted in
+  `terraform.tfstate`**. The framework strips the value from state
+  automatically.
+- **`service_password`** (legacy, deprecated) — semantic write-only on the
+  Windows side but the plaintext **is persisted in `terraform.tfstate`**
+  (Sensitive but readable by anyone with state-file access). `terraform
+  plan` emits a deprecation warning on every run while this attribute is
+  set; it will be removed in v2.x.
+
+Both attributes share the same Windows-side semantics. The provider rejects
+the dual-set configuration at plan time
+(`resourcevalidator.Conflicting`).
 
 ~> **ForceNew attributes.** Changing `name` or `binary_path` destroys and
 recreates the service.
@@ -73,10 +85,22 @@ resource "windows_service" "app" {
 - `service_account` (String) Account under which the service runs. Defaults
   to `LocalSystem`. Domain accounts use the `DOMAIN\user` syntax; local
   accounts use `.\user`.
-- `service_password` (String, Sensitive) Password for `service_account`.
-  Semantic write-only: sent to Windows but never read back. Cannot be used
-  with built-in accounts (`LocalSystem`, `NT AUTHORITY\*`) — doing so is
-  rejected at plan time (EC-11).
+- `service_password` (String, Sensitive, **Deprecated**) Legacy password
+  attribute. Persists the plaintext in `terraform.tfstate`. Mutually
+  exclusive with `service_password_wo`. **Use `service_password_wo`
+  instead** — same Windows-side semantics, never persisted in state. This
+  attribute is scheduled for removal in v2.x.
+- `service_password_wo` (String, Sensitive, **WriteOnly**) Password for
+  `service_account`, declared as a TPF v1.14+ WriteOnly attribute. **Never
+  persisted in `terraform.tfstate`** — the framework strips the value
+  automatically on every CRUD response. Re-supply the same value on every
+  apply that should preserve the credential; rotating the password on the
+  host out-of-band will not trigger drift (the provider has no prior
+  observation to compare against). Requires Terraform CLI ≥ 1.11.
+- Both `service_password` and `service_password_wo` cannot be paired with
+  a built-in account (`LocalSystem`, `NT AUTHORITY\*`) — doing so is
+  rejected at plan time (EC-11). Setting both is rejected at plan time
+  (`resourcevalidator.Conflicting`).
 - `dependencies` (List of String) Ordered list of short service names this
   service depends on.
 
@@ -88,9 +112,12 @@ resource "windows_service" "app" {
 
 ## Cross-field validation
 
-- **EC-4** — `service_password` requires a non-empty `service_account`.
-- **EC-11** — `service_password` must not be paired with a built-in account
-  (`LocalSystem`, `NT AUTHORITY\*`).
+- **EC-4** — `service_password` / `service_password_wo` requires a
+  non-empty `service_account`.
+- **EC-11** — `service_password` / `service_password_wo` must not be paired
+  with a built-in account (`LocalSystem`, `NT AUTHORITY\*`).
+- **Conflicting** — `service_password` and `service_password_wo` cannot be
+  set simultaneously.
 
 Both rules are enforced at plan time.
 

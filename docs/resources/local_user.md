@@ -172,22 +172,38 @@ resource "windows_local_user" "svc_backup" {
 
 ### Optional
 
-- `password` (String, Sensitive) Password for the account. Must satisfy the local password
-  policy (minimum length, complexity). Required at Create; if omitted the provider raises
-  a diagnostic error before calling `New-LocalUser`.
+- `password` (String, Sensitive, **Deprecated**) Legacy password attribute. Persists the
+  plaintext value inside `terraform.tfstate` (Sensitive but readable by anyone with
+  state-file access). Mutually exclusive with `password_wo`.
+
+  **Use `password_wo` instead** — same Windows-side semantics, never persisted in state.
+  This attribute remains functional for backward compatibility and is scheduled for
+  removal in v2.x. `terraform plan` emits a deprecation warning on every run while
+  this attribute is set.
 
   The plaintext is injected via **stdin** inside the PowerShell script and **never appears
   in WinRM trace logs or provider diagnostics** (ADR-LU-3, EC-6).
 
-  After `terraform import`, this attribute is `null`. Set it in HCL before the next apply.
-  A future minor version will replace this attribute with a native write-only attribute
-  once TPF ≥ 1.14.0 write-only support is stable (migration path: rename attribute, no
-  state migration needed).
+- `password_wo` (String, Sensitive, **WriteOnly**) Password for the account
+  (TPF v1.14+ WriteOnly attribute). Must satisfy the local password policy
+  (minimum length, complexity). **Never persisted in `terraform.tfstate`** —
+  the framework strips the value automatically on every CRUD response.
+
+  Mutually exclusive with `password` (`resourcevalidator.Conflicting` rejects
+  the dual-set configuration at plan time). Re-supply the same value on
+  every apply that should preserve the credential; rotation is driven by
+  `password_wo_version`.
+
+  Requires Terraform CLI ≥ 1.11 (the WriteOnly contract was introduced in
+  TPF v1.14.0 / Terraform CLI v1.11). Older CLI versions reject the attribute
+  at plan time with a clear error message.
 
 - `password_wo_version` (Number) Monotonically increasing version counter for password
   rotation (EC-6). When this value changes between plan and apply, the provider calls
-  `Set-LocalUser -Password` regardless of whether the `password` value itself changed.
-  Conventionally starts at `1`. Must be a positive integer if set.
+  `Set-LocalUser -Password` regardless of whether the `password` / `password_wo`
+  value itself changed. Conventionally starts at `1`. Must be a positive integer
+  if set. Shared by both credential attributes — increment to force a rotation
+  even when the WriteOnly value is re-supplied unchanged.
 
 - `full_name` (String) Display name of the user (`-FullName`). Optional; defaults to `""`.
   Updated in place via `Set-LocalUser -FullName`.

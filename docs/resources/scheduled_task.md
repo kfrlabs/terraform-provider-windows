@@ -22,9 +22,23 @@ Key behaviours:
   ScheduledTasks PS module cannot set the `Subscription` property directly.
 - The composite ID is `<TaskPath><TaskName>`, e.g. `\MyFolder\MyTask`.
 
-~> **Note — write-only password.** `principal.password` is transmitted to
-Windows on create/update but is **never** read back from the host. Rotating
-the password out-of-band will not appear as drift.
+~> **Note — credential attributes (Tier 3).** Two mutually-exclusive
+attributes carry the principal password:
+
+- **`principal.password_wo`** (recommended, TPF v1.14+ WriteOnly) — sent to
+  Windows on every Create / Update but **never persisted in
+  `terraform.tfstate`**. Pair with `principal.password_wo_version` to
+  rotate the credential.
+- **`principal.password`** (legacy, deprecated) — transmitted to Windows
+  on Create / Update; semantic write-only on the Windows side but the
+  plaintext **is persisted in `terraform.tfstate`**. `terraform plan`
+  emits a deprecation warning on every run while this attribute is set;
+  it will be removed in v2.x.
+
+Both attributes share `principal.password_wo_version` as the rotation
+counter — Update only re-sends the credential when the counter is bumped
+between plan and prior state. The provider rejects the dual-set
+configuration at plan time.
 
 ~> **ForceNew attributes.** Changing `name` or `path` destroys and recreates
 the task.
@@ -161,11 +175,21 @@ resource "windows_scheduled_task" "disk_alert" {
 Optional:
 
 - `user_id` (String) Account identifier. Defaults to `"SYSTEM"`.
-- `password` (String, **Sensitive**) Write-only account password. Required
-  when `logon_type = "Password"`. Must not be set for `Interactive`, `S4U`,
-  `Group`, or `ServiceAccount` logon types (EC-4/EC-5).
+- `password` (String, **Sensitive**, **Deprecated**) Legacy account
+  password. Persists the plaintext in `terraform.tfstate`. Mutually
+  exclusive with `password_wo`. **Use `password_wo` instead.** Required
+  (one of `password` / `password_wo`) when `logon_type = "Password"`. Must
+  not be set for `Interactive`, `S4U`, `Group`, or `ServiceAccount` logon
+  types (EC-4/EC-5).
+- `password_wo` (String, **Sensitive**, **WriteOnly**) Account password
+  declared as a TPF v1.14+ WriteOnly attribute. **Never persisted in
+  `terraform.tfstate`** — the framework strips the value automatically on
+  every CRUD response. Same `logon_type` constraints as `password`.
+  Requires Terraform CLI ≥ 1.11.
 - `password_wo_version` (Int64) Increment to rotate the credential without
-  replacing the task. Defaults to `0`.
+  replacing the task. Drives both `password` and `password_wo`: when this
+  counter changes between plan and state, the Update path re-sends the
+  credential to Windows. Defaults to `0`.
 - `logon_type` (String) Authentication mode. One of: `Password`, `S4U`,
   `Interactive`, `Group`, `ServiceAccount`, `InteractiveOrPassword`.
 - `run_level` (String) Privilege level: `Limited` (default) or `Highest`.
@@ -242,6 +266,7 @@ terraform import windows_scheduled_task.backup '\Daily-Backup'
 terraform import windows_scheduled_task.reports '\Company\Finance\Weekly-Reports'
 ```
 
-~> **Note** Write-only attributes (`principal.password`, `principal.password_wo_version`)
-are not populated on import. Set them in your configuration and run
-`terraform apply` to push the credentials.
+~> **Note** Credential attributes (`principal.password`, `principal.password_wo`,
+`principal.password_wo_version`) are not populated on import. Set them in
+your configuration and run `terraform apply` to push the credentials.
+Prefer `principal.password_wo` to keep the value out of `terraform.tfstate`.
