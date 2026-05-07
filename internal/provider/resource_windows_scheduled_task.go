@@ -68,6 +68,7 @@ type windowsScheduledTaskResource struct {
 var scheduledTaskPrincipalAttrTypes = map[string]attr.Type{
 	"user_id":             types.StringType,
 	"password":            types.StringType,
+	"password_wo":         types.StringType,
 	"password_wo_version": types.Int64Type,
 	"logon_type":          types.StringType,
 	"run_level":           types.StringType,
@@ -111,8 +112,12 @@ var scheduledTaskSettingsAttrTypes = map[string]attr.Type{
 // ---------------------------------------------------------------------------
 
 type windowsScheduledTaskPrincipalModel struct {
-	UserID            types.String `tfsdk:"user_id"`
-	Password          types.String `tfsdk:"password"`
+	UserID types.String `tfsdk:"user_id"`
+	// Password (legacy, DEPRECATED): plaintext persisted in state (Sensitive).
+	Password types.String `tfsdk:"password"`
+	// PasswordWO (Tier 3, TPF v1.14+): WriteOnly, never persisted in state.
+	// Mutually exclusive with Password.
+	PasswordWO        types.String `tfsdk:"password_wo"`
 	PasswordWoVersion types.Int64  `tfsdk:"password_wo_version"`
 	LogonType         types.String `tfsdk:"logon_type"`
 	RunLevel          types.String `tfsdk:"run_level"`
@@ -260,18 +265,42 @@ func (v scheduledTaskPrincipalCrossFieldValidator) ValidateResource(
 		return
 	}
 	logonType := principal.LogonType.ValueString()
-	if logonType == "Password" && principal.Password.IsNull() {
+
+	// Tier 3: enforce mutual exclusion between password (legacy) and
+	// password_wo (WriteOnly) inside the principal block. Cannot use
+	// resourcevalidator.Conflicting at the top level because the
+	// attributes are nested inside a SingleNestedAttribute; resolved
+	// inline here against the As-decoded principal model.
+	pwSet := !principal.Password.IsNull() && !principal.Password.IsUnknown()
+	pwWoSet := !principal.PasswordWO.IsNull() && !principal.PasswordWO.IsUnknown()
+	if pwSet && pwWoSet {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("principal").AtName("password_wo"),
+			"Conflicting attributes",
+			"`principal.password` and `principal.password_wo` are mutually exclusive. "+
+				"Pick one: `password_wo` (recommended, never persisted in state) "+
+				"or `password` (legacy, persisted as Sensitive in state).")
+		return
+	}
+
+	// EC-4: when logon_type=Password, EITHER credential attribute must be set.
+	if logonType == "Password" && !pwSet && !pwWoSet {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("principal").AtName("password"),
 			"Missing required attribute",
-			`password is required when logon_type is "Password" (EC-4).`)
+			`password (or password_wo) is required when logon_type is "Password" (EC-4).`)
 	}
+	// EC-5: forbidden logon types must have neither credential attribute.
 	for _, forbidden := range []string{"Interactive", "S4U", "Group", "ServiceAccount"} {
-		if logonType == forbidden && !principal.Password.IsNull() {
+		if logonType == forbidden && (pwSet || pwWoSet) {
+			attrName := "password"
+			if pwWoSet {
+				attrName = "password_wo"
+			}
 			resp.Diagnostics.AddAttributeError(
-				path.Root("principal").AtName("password"),
+				path.Root("principal").AtName(attrName),
 				"Conflicting attributes",
-				fmt.Sprintf(`password must not be set when logon_type is %q (EC-5).`, logonType))
+				fmt.Sprintf(`%s must not be set when logon_type is %q (EC-5).`, attrName, logonType))
 			break
 		}
 	}
@@ -435,9 +464,24 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						MarkdownDescription: "Account identifier. Defaults to `\"SYSTEM\"`.",
 					},
 					"password": schema.StringAttribute{
-						Optional:            true,
-						Sensitive:           true,
-						MarkdownDescription: "Write-only account password (ADR-ST-3). Required when `logon_type=\"Password\"` (EC-4).",
+						Optional:           true,
+						Sensitive:          true,
+						DeprecationMessage: "Use `password_wo` instead. The `password` attribute persists the plaintext in `terraform.tfstate` (Sensitive but readable by anyone with state access). `password_wo` is a WriteOnly attribute (TPF v1.14+) and is never written to state. Both share the existing `password_wo_version` counter for rotation. This attribute will be removed in v2.x.",
+						MarkdownDescription: "**Deprecated, use `password_wo`.** Account password (ADR-ST-3). Required when `logon_type=\"Password\"` (EC-4). " +
+							"Sensitive on the wire **but persisted in `terraform.tfstate`**.",
+					},
+					"password_wo": schema.StringAttribute{
+						Optional:  true,
+						Sensitive: true,
+						WriteOnly: true,
+						MarkdownDescription: "Write-only account password (TPF v1.14+ WriteOnly). " +
+							"Same Windows-side semantics as `password` (ADR-ST-3) but **the plaintext " +
+							"is never persisted in `terraform.tfstate`** \u2014 the framework drops it " +
+							"from state automatically.\n\n" +
+							"Mutually exclusive with `password`. Rotation is driven exclusively by " +
+							"`password_wo_version`: increment the version and re-apply with the new " +
+							"value. The provider re-registers the principal whenever the version " +
+							"changes between prior state and current plan.",
 					},
 					"password_wo_version": schema.Int64Attribute{
 						Optional:            true,
@@ -804,7 +848,18 @@ func modelToInput(ctx context.Context, m *windowsScheduledTaskModel) (winclient.
 			LogonType:         pm.LogonType.ValueString(),
 			RunLevel:          pm.RunLevel.ValueString(),
 		}
-		if !pm.Password.IsNull() && !pm.Password.IsUnknown() {
+		// Tier 3: pick whichever credential attribute the operator set.
+		// The cross-field validator (scheduledTaskPrincipalCrossFieldValidator)
+		// guarantees at most one of password / password_wo is non-null at
+		// this point, so the order of checks is for routing only. password_wo
+		// takes precedence when both happen to be set in tests that bypass
+		// the validator.
+		if !pm.PasswordWO.IsNull() && !pm.PasswordWO.IsUnknown() {
+			pw := pm.PasswordWO.ValueString()
+			if pw != "" {
+				p.Password = &pw
+			}
+		} else if !pm.Password.IsNull() && !pm.Password.IsUnknown() {
 			pw := pm.Password.ValueString()
 			p.Password = &pw
 		}
@@ -1008,12 +1063,21 @@ func buildPrincipalModel(ctx context.Context, s *winclient.ScheduledTaskPrincipa
 		pm.UserID = types.StringValue("SYSTEM")
 	}
 
-	// password: write-only — preserve from prior
+	// password (legacy): semantic write-only — preserve from prior model so
+	// the value does not vanish from state on Read. Windows never returns
+	// the plaintext.
 	pm.Password = types.StringNull()
+	// password_wo (Tier 3 WriteOnly): never preserved by us. The framework
+	// strips WriteOnly attributes from state on resp.State.Set; explicitly
+	// nulling it here documents the intent and protects against accidental
+	// preservation if `priorModel` carries a non-null value (it should not,
+	// but defensive zeroing keeps the contract obvious).
+	pm.PasswordWO = types.StringNull()
 	if priorHasPrincipal {
 		var prior windowsScheduledTaskPrincipalModel
 		if d := priorModel.Principal.As(ctx, &prior, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); !d.HasError() {
 			pm.Password = prior.Password
+			// pm.PasswordWO stays null on purpose — see comment above.
 		}
 	}
 
