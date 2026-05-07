@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- GitHub Actions CI pipeline (`.github/workflows/`):
+  - `test.yml`: build + `go vet` matrix on Go 1.22 / 1.23, unit tests
+    with race detector and coverage upload, and `golangci-lint v1.61`
+    using the existing `.golangci.yml` ruleset. Triggered on every push
+    to `main` and on pull requests.
+  - `docs.yml`: regenerates `docs/` via `go generate ./...`
+    (tfplugindocs) and fails the run if the worktree drifts. Acts as a
+    hard gate against schema changes that forget to refresh the
+    Markdown shipped to the Registry. Path-filtered to provider /
+    examples / templates / tooling changes.
+  - Acceptance tests (`TF_ACC=1`) are deliberately not run in CI — they
+    require a live Windows host over WinRM and belong in a separate
+    self-hosted runner / lab pipeline.
+- `.github/dependabot.yml`: weekly grouped Go-module and
+  GitHub-Actions updates. Major bumps on `terraform-plugin-framework`
+  and `terraform-plugin-go` are explicitly ignored (manual review
+  required because of breaking-change cadence).
+- `.github/pull_request_template.md`: enforces a contributor checklist
+  covering unit tests, linting, doc regeneration, CHANGELOG entry, and
+  TF_ACC validation when applicable.
+
 ### Security
 
 - **`windows_service` and `windows_scheduled_task`: stop embedding plaintext

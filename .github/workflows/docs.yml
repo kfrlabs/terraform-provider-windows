@@ -1,0 +1,54 @@
+# Documentation drift gate: regenerates docs/ from the live provider schema
+# (tfplugindocs) and fails the build if the worktree is dirty afterwards.
+#
+# Forces every PR that mutates a Schema(...) function or an example
+# under examples/ to also commit the regenerated Markdown.
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "internal/provider/**"
+      - "examples/**"
+      - "templates/**"
+      - "generate.go"
+      - "tools/**"
+      - "go.mod"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: tfplugindocs drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go generate ./...
+        run: go generate ./...
+
+      - name: detect drift
+        run: |
+          if ! git diff --quiet -- docs/; then
+            echo "::error::docs/ is out of sync with the provider schema."
+            echo "Run 'make docs' (or 'go generate ./...') locally and commit the result."
+            git --no-pager diff --stat -- docs/
+            git --no-pager diff -- docs/ | head -200
+            exit 1
+          fi
+          echo "docs/ is in sync \u2713"

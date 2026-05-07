@@ -1,0 +1,43 @@
+# Automated dependency updates.
+#
+#   - Go modules: weekly, grouped to avoid PR spam. Patch + minor only.
+#     Major bumps require human review (Plugin Framework breaking changes).
+#   - GitHub Actions: weekly, pin to SHA recommended downstream but kept
+#     on tags here for readability; Dependabot updates them in lockstep.
+
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Paris"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "go"]
+    groups:
+      hashicorp-tf:
+        patterns:
+          - "github.com/hashicorp/terraform-plugin-*"
+      test-deps:
+        patterns:
+          - "github.com/stretchr/*"
+          - "github.com/google/go-cmp"
+    ignore:
+      # Major bumps on the framework are breaking; flag manually.
+      - dependency-name: "github.com/hashicorp/terraform-plugin-framework"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "github.com/hashicorp/terraform-plugin-go"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Paris"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "ci"]
