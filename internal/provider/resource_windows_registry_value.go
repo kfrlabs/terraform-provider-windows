@@ -111,7 +111,19 @@ func windowsRegistryValueSchemaDefinition() schema.Schema {
 			},
 			"hive": schema.StringAttribute{
 				Required: true,
-				Computed: true,
+				// Note: `Computed` was previously set alongside `Required` here, which
+				// is invalid at the framework level (`Required` means the user MUST
+				// supply the value; `Computed` means the provider MAY set it; they
+				// are mutually exclusive). Terraform itself rejected the schema with
+				// "cannot set both Computed and Required", which had been masked
+				// because the schema was never round-tripped through `terraform
+				// providers schema -json` — tfplugindocs (Tier 2) is what surfaced
+				// the bug.
+				//
+				// The plan modifier `hiveNormalizePlanModifier` does not need
+				// `Computed`: plan modifiers operate on the *planned* value
+				// (whether user-supplied or computed) and can rewrite it. The
+				// uppercase-normalisation contract is preserved end-to-end.
 				PlanModifiers: []planmodifier.String{
 					hiveNormalizePlanModifier{},
 					stringplanmodifier.RequiresReplace(),

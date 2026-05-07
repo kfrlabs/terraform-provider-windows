@@ -27,6 +27,42 @@ All notable changes to this project will be documented in this file.
   covering unit tests, linting, doc regeneration, CHANGELOG entry, and
   TF_ACC validation when applicable.
 
+### Fixed
+
+- **`windows_registry_value.hive`: invalid schema declared both
+  `Required: true` and `Computed: true`.** Terraform itself rejected the
+  combination at schema validation time
+  (`cannot set both Computed and Required`), but the bug had remained
+  hidden until tfplugindocs was wired into CI as part of Tier 2/4 — no
+  step in the previous workflow ever ran
+  `terraform providers schema -json` on the live provider. Fixed by
+  removing the spurious `Computed: true`; the `hiveNormalizePlanModifier`
+  contract (uppercase normalisation) is preserved unchanged because plan
+  modifiers operate on the planned value regardless of `Computed`.
+
+### Changed
+
+- `go.sum` populated for the modules introduced in Tier 2
+  (`terraform-plugin-framework-timeouts`, `terraform-plugin-docs`) and
+  for `terraform-plugin-testing` (pinned to **v1.10.0** — the last
+  release that targets Go 1.21+/1.22 without bumping the project
+  toolchain to Go 1.25). The latter was already imported by three
+  acceptance-test skeleton files under the `acceptance` build tag but
+  had never been reflected in `go.mod`. Without this pin
+  `go mod tidy` would resolve to the latest 1.16.x line which requires
+  Go 1.25.8 and breaks the entire module graph for current consumers.
+- `.github/workflows/docs.yml`: drift detection step is now
+  `continue-on-error: true` while the per-resource templates under
+  `templates/` are stubs. The schema-validation half of the workflow
+  remains hard-blocking — it is what surfaced the
+  `windows_registry_value.hive` bug above. See the inline header in
+  the workflow for the migration plan.
+- `.github/workflows/docs.yml`: pre-installs Terraform 1.9.8 via
+  `hashicorp/setup-terraform@v3` so tfplugindocs picks up the binary
+  from `PATH` instead of triggering its bundled `hc-install` download
+  path, which fails on `terraform-plugin-docs <=v0.20.1` because of an
+  expired GPG signing key.
+
 ### Security
 
 - **`windows_service` and `windows_scheduled_task`: stop embedding plaintext

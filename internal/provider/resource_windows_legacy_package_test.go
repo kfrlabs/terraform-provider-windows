@@ -57,6 +57,7 @@ func TestLegacyPackageResource_Schema_AllAttributes(t *testing.T) {
 		"valid_exit_codes", "working_directory",
 		"timeout_seconds", "log_path", "environment",
 		"installed_version", "installed", "install_date",
+		"timeouts",
 	}
 	for _, k := range want {
 		if _, ok := resp.Schema.Attributes[k]; !ok {
