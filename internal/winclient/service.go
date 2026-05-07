@@ -6,9 +6,15 @@
 // Windows locale (see psHeader below).
 //
 // Security invariants:
-//   - service_password is interpolated only through psQuote (single-quoted
-//     PowerShell literal with embedded "”" escape). It is NEVER concatenated
-//     raw into scripts and NEVER logged or copied into ServiceError.
+//   - service_password is NEVER interpolated into the PowerShell script body.
+//     It is injected on stdin via runEnvelopeWithInput / RunPowerShellWithInput
+//     and read by the script through [Console]::In.ReadLine(). This keeps the
+//     plaintext out of the WinRM -EncodedCommand payload, WinRM trace logs,
+//     IIS WMSvc traces, and any host-side Set-PSDebug/Start-Transcript output
+//     (mirrors the pattern documented in ADR-LU-3 for windows_local_user).
+//   - All other user-supplied strings are interpolated only through psQuote
+//     (single-quoted PowerShell literal with embedded "''" escape).
+//   - The password value is NEVER copied into ServiceError context or logged.
 //   - All scripts are rendered as UTF-16LE / base64 via the underlying Client
 //     (-EncodedCommand); no shell metacharacters ever reach cmd.exe.
 package winclient
@@ -118,6 +124,64 @@ type psResponse struct {
 func (s *ServiceClient) runEnvelope(ctx context.Context, op, name, script string) (*psResponse, error) {
 	full := psHeader + "\n" + script
 	stdout, stderr, err := runPowerShell(ctx, s.c, full)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, NewServiceError(ServiceErrorTimeout,
+				fmt.Sprintf("operation %q timed out or was cancelled", op),
+				ctxErr, map[string]string{
+					"operation": op, "name": name, "host": s.c.cfg.Host,
+				})
+		}
+		return nil, NewServiceError(ServiceErrorUnknown,
+			fmt.Sprintf("powershell transport error during %q", op),
+			err, map[string]string{
+				"operation": op, "name": name, "host": s.c.cfg.Host,
+				"stderr": truncate(stderr, 2048),
+				"stdout": truncate(stdout, 2048),
+			})
+	}
+
+	line := extractLastJSONLine(stdout)
+	if line == "" {
+		return nil, NewServiceError(ServiceErrorUnknown,
+			fmt.Sprintf("no JSON envelope returned from %q", op), nil,
+			map[string]string{
+				"operation": op, "name": name, "host": s.c.cfg.Host,
+				"stderr": truncate(stderr, 2048),
+				"stdout": truncate(stdout, 2048),
+			})
+	}
+	var resp psResponse
+	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
+		return nil, NewServiceError(ServiceErrorUnknown,
+			fmt.Sprintf("invalid JSON envelope from %q", op), jerr,
+			map[string]string{
+				"operation": op, "name": name, "host": s.c.cfg.Host,
+				"stdout": truncate(stdout, 2048),
+			})
+	}
+	if !resp.OK {
+		kind := mapKind(resp.Kind)
+		ctxMap := resp.Context
+		if ctxMap == nil {
+			ctxMap = map[string]string{}
+		}
+		ctxMap["operation"] = op
+		ctxMap["name"] = name
+		ctxMap["host"] = s.c.cfg.Host
+		return &resp, NewServiceError(kind, resp.Message, nil, ctxMap)
+	}
+	return &resp, nil
+}
+
+// runEnvelopeWithInput is the stdin-aware sibling of runEnvelope. It is used
+// by Create / Update to inject service_password via stdin instead of the
+// script body. The stdin value is NEVER copied into error context or logs.
+//
+// Transport / parsing semantics are identical to runEnvelope.
+func (s *ServiceClient) runEnvelopeWithInput(ctx context.Context, op, name, script, stdin string) (*psResponse, error) {
+	full := psHeader + "\n" + script
+	stdout, stderr, err := runPSInput(ctx, s.c, full, stdin)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, NewServiceError(ServiceErrorTimeout,
@@ -388,7 +452,9 @@ try {
   $stype   = ` + psQuote(newSvcStart) + `
   $finalStart = ` + psQuote(startType) + `
   $account = ` + psQuote(input.ServiceAccount) + `
-  $password = ` + psQuote(input.ServicePassword) + `
+  # service_password is read from stdin (never embedded in the script body, see ADR-LU-3 pattern).
+  $password = [Console]::In.ReadLine()
+  if ($null -eq $password) { $password = '' }
   $deps     = ` + psQuoteList(input.Dependencies) + `
 
   # EC-1 pre-existence check
@@ -436,7 +502,10 @@ try {
 }
 `
 
-	resp, err := s.runEnvelope(ctx, "Create", input.Name, script)
+	// service_password is piped on stdin; passing "" + "\n" when no password
+	// is required is intentional and harmless (the script reads "" from stdin
+	// and skips the credential branch).
+	resp, err := s.runEnvelopeWithInput(ctx, "Create", input.Name, script, input.ServicePassword+"\n")
 	if err != nil {
 		return nil, err
 	}
@@ -538,7 +607,9 @@ try {
   $stype    = ` + psQuote(setSvcStart) + `
   $finalStart = ` + psQuote(startType) + `
   $account  = ` + psQuote(input.ServiceAccount) + `
-  $password = ` + psQuote(input.ServicePassword) + `
+  # service_password is read from stdin (never embedded in the script body, see ADR-LU-3 pattern).
+  $password = [Console]::In.ReadLine()
+  if ($null -eq $password) { $password = '' }
   $depsMode = ` + psQuote(depsMode) + `
   $depArg   = ` + psQuote(depArg) + `
 
@@ -581,7 +652,9 @@ try {
   Emit-Err $kind $msg @{}
 }
 `
-	resp, err := s.runEnvelope(ctx, "Update", name, script)
+	// service_password is piped on stdin; passing "" + "\n" when no password
+	// is required is intentional and harmless (see Create).
+	resp, err := s.runEnvelopeWithInput(ctx, "Update", name, script, input.ServicePassword+"\n")
 	if err != nil {
 		return nil, err
 	}
