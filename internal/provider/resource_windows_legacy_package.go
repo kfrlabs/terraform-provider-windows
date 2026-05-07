@@ -95,26 +95,26 @@ type windowsLegacyPackageResource struct {
 // ---------------------------------------------------------------------------
 
 type windowsLegacyPackageModel struct {
-	ID                 types.String `tfsdk:"id"`
-	Name               types.String `tfsdk:"name"`
-	InstallerType      types.String `tfsdk:"installer_type"`
-	SourcePath         types.String `tfsdk:"source_path"`
-	SourceURL          types.String `tfsdk:"source_url"`
-	Checksum           types.String `tfsdk:"checksum"`
-	InsecureSkipVerify types.Bool   `tfsdk:"insecure_skip_verify"`
-	ProductID          types.String `tfsdk:"product_id"`
-	DisplayNamePattern types.String `tfsdk:"display_name_pattern"`
-	InstallArgs        types.List   `tfsdk:"install_args"`
-	UninstallArgs      types.List   `tfsdk:"uninstall_args"`
-	UninstallCommand   types.String `tfsdk:"uninstall_command"`
-	ValidExitCodes     types.List   `tfsdk:"valid_exit_codes"`
-	WorkingDirectory   types.String `tfsdk:"working_directory"`
-	TimeoutSeconds     types.Int64  `tfsdk:"timeout_seconds"`
-	LogPath            types.String `tfsdk:"log_path"`
-	Environment        types.Map    `tfsdk:"environment"`
-	InstalledVersion   types.String `tfsdk:"installed_version"`
-	Installed          types.Bool   `tfsdk:"installed"`
-	InstallDate        types.String `tfsdk:"install_date"`
+	ID                 types.String   `tfsdk:"id"`
+	Name               types.String   `tfsdk:"name"`
+	InstallerType      types.String   `tfsdk:"installer_type"`
+	SourcePath         types.String   `tfsdk:"source_path"`
+	SourceURL          types.String   `tfsdk:"source_url"`
+	Checksum           types.String   `tfsdk:"checksum"`
+	InsecureSkipVerify types.Bool     `tfsdk:"insecure_skip_verify"`
+	ProductID          types.String   `tfsdk:"product_id"`
+	DisplayNamePattern types.String   `tfsdk:"display_name_pattern"`
+	InstallArgs        types.List     `tfsdk:"install_args"`
+	UninstallArgs      types.List     `tfsdk:"uninstall_args"`
+	UninstallCommand   types.String   `tfsdk:"uninstall_command"`
+	ValidExitCodes     types.List     `tfsdk:"valid_exit_codes"`
+	WorkingDirectory   types.String   `tfsdk:"working_directory"`
+	TimeoutSeconds     types.Int64    `tfsdk:"timeout_seconds"`
+	LogPath            types.String   `tfsdk:"log_path"`
+	Environment        types.Map      `tfsdk:"environment"`
+	InstalledVersion   types.String   `tfsdk:"installed_version"`
+	Installed          types.Bool     `tfsdk:"installed"`
+	InstallDate        types.String   `tfsdk:"install_date"`
 	Timeouts           timeouts.Value `tfsdk:"timeouts"`
 }
 

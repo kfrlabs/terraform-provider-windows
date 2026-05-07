@@ -1,0 +1,90 @@
+# Continuous Integration: build / vet / lint / unit-tests on every push and PR.
+#
+# Acceptance tests (TF_ACC=1) are NOT executed here: they require a live
+# Windows host reachable over WinRM and a valid set of credentials. They
+# are expected to run on a self-hosted runner or against a dedicated lab.
+#
+# Matrix: keep at least one Go minor version trailing the toolchain pinned
+# in go.mod so that consumers vendoring older toolchains still build cleanly.
+
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build & vet (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.22", "1.23"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: go mod download
+        run: go mod download
+
+      - name: go build
+        run: go build -v ./...
+
+      - name: go vet
+        run: go vet ./...
+
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Use the toolchain pinned in go.mod for the canonical test run.
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test -short
+        run: go test -short -race -timeout 120s -coverprofile=coverage.out ./...
+
+      - name: upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.61
+          # .golangci.yml at the repo root drives the rule set.
+          args: --timeout=5m

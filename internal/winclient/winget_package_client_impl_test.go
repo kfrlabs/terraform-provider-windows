@@ -1160,7 +1160,7 @@ func TestWPNewClient_StoredCorrectly(t *testing.T) {
 	}
 	wp := NewWingetPackageClient(c)
 	if wp == nil {
-		t.Error("NewWingetPackageClient should return non-nil")
+		t.Fatal("NewWingetPackageClient should return non-nil")
 	}
 	if wp.c != c {
 		t.Error("client not stored correctly")
