@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -25,6 +27,12 @@ import (
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
+
+// featureDefaultTimeout is the fallback per-operation timeout when the user
+// does not provide a `timeouts {}` block. Some Server roles (e.g.
+// AD-Domain-Services with sub-features and management tools) can take 10+
+// minutes to install, so the default is generous.
+const featureDefaultTimeout = 30 * time.Minute
 
 // Framework interface assertions.
 var (
@@ -55,6 +63,7 @@ type windowsFeatureModel struct {
 	Restart                types.Bool   `tfsdk:"restart"`
 	RestartPending         types.Bool   `tfsdk:"restart_pending"`
 	InstallState           types.String `tfsdk:"install_state"`
+	Timeouts               timeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the resource type name ("windows_feature").
@@ -63,8 +72,8 @@ func (r *windowsFeatureResource) Metadata(_ context.Context, req resource.Metada
 }
 
 // Schema returns the complete TPF schema.
-func (r *windowsFeatureResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = windowsFeatureSchemaDefinition()
+func (r *windowsFeatureResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = windowsFeatureSchemaDefinition(ctx)
 }
 
 // windowsFeatureSchemaDefinition returns the windows_feature schema.
@@ -72,7 +81,7 @@ func (r *windowsFeatureResource) Schema(_ context.Context, _ resource.SchemaRequ
 // ForceNew (RequiresReplace) on name, include_sub_features and
 // include_management_tools because Install-WindowsFeature cannot retroactively
 // shrink the feature tree once those switches have been applied.
-func windowsFeatureSchemaDefinition() schema.Schema {
+func windowsFeatureSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages installation/uninstallation of a Windows Server role or feature " +
 			"on a remote host via WinRM and PowerShell. Backed by Get/Install/Uninstall-WindowsFeature " +
@@ -150,6 +159,13 @@ func windowsFeatureSchemaDefinition() schema.Schema {
 					stringvalidator.OneOf("Installed", "Available", "Removed"),
 				},
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -188,6 +204,13 @@ func (r *windowsFeatureResource) Create(ctx context.Context, req resource.Create
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	createTimeout, diags := plan.Timeouts.Create(ctx, featureDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 	in := winclient.FeatureInput{
 		Name:                   plan.Name.ValueString(),
 		IncludeSubFeatures:     plan.IncludeSubFeatures.ValueBool(),
@@ -240,6 +263,13 @@ func (r *windowsFeatureResource) Update(ctx context.Context, req resource.Update
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	updateTimeout, diags := plan.Timeouts.Update(ctx, featureDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 	name := plan.Name.ValueString()
 	if name == "" {
 		name = prior.Name.ValueString()
@@ -268,6 +298,13 @@ func (r *windowsFeatureResource) Delete(ctx context.Context, req resource.Delete
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, featureDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 	name := state.Name.ValueString()
 	if name == "" {
 		name = state.ID.ValueString()
@@ -312,6 +349,9 @@ func modelFromFeature(info *winclient.FeatureInfo, prior windowsFeatureModel) wi
 		IncludeManagementTools: prior.IncludeManagementTools,
 		Source:                 prior.Source,
 		Restart:                prior.Restart,
+		// Preserve the user-configured per-operation timeouts across the
+		// projection (Set overwrites the full state object).
+		Timeouts: prior.Timeouts,
 	}
 	if out.IncludeSubFeatures.IsNull() || out.IncludeSubFeatures.IsUnknown() {
 		out.IncludeSubFeatures = types.BoolValue(false)

@@ -21,7 +21,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -37,6 +39,13 @@ import (
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
+
+// lpDefaultTimeout is the fallback per-operation timeout when the user does
+// not provide a `timeouts {}` block. Note: this is the *Terraform-level*
+// wall-clock budget for the whole CRUD round-trip; the per-installer
+// subprocess timeout remains controlled by the existing `timeout_seconds`
+// attribute (kept for backwards compatibility).
+const lpDefaultTimeout = 30 * time.Minute
 
 // ---------------------------------------------------------------------------
 // Pre-compiled regular expressions used by the schema validators.
@@ -106,6 +115,7 @@ type windowsLegacyPackageModel struct {
 	InstalledVersion   types.String `tfsdk:"installed_version"`
 	Installed          types.Bool   `tfsdk:"installed"`
 	InstallDate        types.String `tfsdk:"install_date"`
+	Timeouts           timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +126,7 @@ func (r *windowsLegacyPackageResource) Metadata(_ context.Context, req resource.
 	resp.TypeName = req.ProviderTypeName + "_legacy_package"
 }
 
-func (r *windowsLegacyPackageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages legacy Windows installers (.msi via msiexec; .exe via Start-Process) over WinRM.",
 		MarkdownDescription: "Installs, updates and uninstalls Windows software distributed as legacy installers " +
@@ -334,6 +344,14 @@ func (r *windowsLegacyPackageResource) Schema(_ context.Context, _ resource.Sche
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+
+			// Per-operation timeouts (Terraform-level wall-clock budget,
+			// distinct from the installer-process `timeout_seconds`).
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -387,6 +405,14 @@ func (r *windowsLegacyPackageResource) Create(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	createTimeout, dt := plan.Timeouts.Create(ctx, lpDefaultTimeout)
+	resp.Diagnostics.Append(dt...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	input, d := r.modelToInput(ctx, plan)
 	resp.Diagnostics.Append(d...)
@@ -470,6 +496,14 @@ func (r *windowsLegacyPackageResource) Update(ctx context.Context, req resource.
 		return
 	}
 
+	updateTimeout, dt := plan.Timeouts.Update(ctx, lpDefaultTimeout)
+	resp.Diagnostics.Append(dt...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	input, d := r.modelToInput(ctx, plan)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
@@ -519,6 +553,14 @@ func (r *windowsLegacyPackageResource) Delete(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	deleteTimeout, dt := state.Timeouts.Delete(ctx, lpDefaultTimeout)
+	resp.Diagnostics.Append(dt...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	id := state.ID.ValueString()
 	if id == "" {
 		return

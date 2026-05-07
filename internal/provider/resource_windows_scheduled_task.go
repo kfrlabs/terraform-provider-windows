@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -34,6 +36,13 @@ import (
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
+
+// stDefaultTimeout is the fallback per-operation timeout when the user does
+// not provide a `timeouts {}` block. Scheduled-task CRUD over WinRM is fast
+// (PowerShell module Register-/Set-/Unregister-ScheduledTask), so 5 minutes
+// is more than enough for nominal cases while still bounding pathological
+// hangs (e.g. WinRM degradation, slow DC for principals).
+const stDefaultTimeout = 5 * time.Minute
 
 // Framework interface assertions.
 var (
@@ -143,19 +152,20 @@ type windowsScheduledTaskSettingsModel struct {
 }
 
 type windowsScheduledTaskModel struct {
-	ID             types.String `tfsdk:"id"`
-	Name           types.String `tfsdk:"name"`
-	Path           types.String `tfsdk:"path"`
-	Description    types.String `tfsdk:"description"`
-	Enabled        types.Bool   `tfsdk:"enabled"`
-	State          types.String `tfsdk:"state"`
-	LastRunTime    types.String `tfsdk:"last_run_time"`
-	LastTaskResult types.Int64  `tfsdk:"last_task_result"`
-	NextRunTime    types.String `tfsdk:"next_run_time"`
-	Principal      types.Object `tfsdk:"principal"`
-	Actions        types.List   `tfsdk:"actions"`
-	Triggers       types.List   `tfsdk:"triggers"`
-	Settings       types.Object `tfsdk:"settings"`
+	ID             types.String   `tfsdk:"id"`
+	Name           types.String   `tfsdk:"name"`
+	Path           types.String   `tfsdk:"path"`
+	Description    types.String   `tfsdk:"description"`
+	Enabled        types.Bool     `tfsdk:"enabled"`
+	State          types.String   `tfsdk:"state"`
+	LastRunTime    types.String   `tfsdk:"last_run_time"`
+	LastTaskResult types.Int64    `tfsdk:"last_task_result"`
+	NextRunTime    types.String   `tfsdk:"next_run_time"`
+	Principal      types.Object   `tfsdk:"principal"`
+	Actions        types.List     `tfsdk:"actions"`
+	Triggers       types.List     `tfsdk:"triggers"`
+	Settings       types.Object   `tfsdk:"settings"`
+	Timeouts       timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +371,7 @@ func (r *windowsScheduledTaskResource) Metadata(_ context.Context, req resource.
 }
 
 // Schema returns the full TPF schema.
-func (r *windowsScheduledTaskResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages a Windows Scheduled Task via WinRM + PowerShell (ScheduledTasks module, Windows 2012+).",
 		Attributes: map[string]schema.Attribute{
@@ -553,6 +563,13 @@ func (r *windowsScheduledTaskResource) Schema(_ context.Context, _ resource.Sche
 					"run_only_if_idle":               schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Only run when idle."},
 				},
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -591,6 +608,14 @@ func (r *windowsScheduledTaskResource) Create(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	createTimeout, dt := plan.Timeouts.Create(ctx, stDefaultTimeout)
+	resp.Diagnostics.Append(dt...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	input, diags := modelToInput(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
@@ -657,6 +682,14 @@ func (r *windowsScheduledTaskResource) Update(ctx context.Context, req resource.
 		return
 	}
 
+	updateTimeout, dt := plan.Timeouts.Update(ctx, stDefaultTimeout)
+	resp.Diagnostics.Append(dt...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	// Detect password bump (ADR-ST-3 / EC-6)
 	planInput, diags := modelToInput(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
@@ -709,6 +742,14 @@ func (r *windowsScheduledTaskResource) Delete(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	deleteTimeout, dt := state.Timeouts.Delete(ctx, stDefaultTimeout)
+	resp.Diagnostics.Append(dt...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	err := r.stClient.Delete(ctx, state.ID.ValueString())
 	if err != nil && !winclient.IsScheduledTaskError(err, winclient.ScheduledTaskErrorNotFound) {
 		resp.Diagnostics.Append(scheduledTaskErrDiag("Delete", err)...)
@@ -856,6 +897,12 @@ func stateToModel(ctx context.Context, s *winclient.ScheduledTaskState, priorMod
 		LastRunTime:    types.StringValue(s.LastRunTime),
 		LastTaskResult: types.Int64Value(s.LastTaskResult),
 		NextRunTime:    types.StringValue(s.NextRunTime),
+	}
+
+	// Preserve user-configured per-operation timeouts across the projection
+	// (resp.State.Set overwrites the full state object).
+	if priorModel != nil {
+		m.Timeouts = priorModel.Timeouts
 	}
 
 	// description: map empty string to null (Optional-only field)
