@@ -55,14 +55,15 @@ func TestWingetPackageResource_Schema_AllAttributes(t *testing.T) {
 	wantAttrs := []string{
 		"id", "package_id", "version", "source", "override",
 		"installed_version", "name",
+		"timeouts",
 	}
 	for _, k := range wantAttrs {
 		if _, ok := s.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
 		}
 	}
-	if len(s.Attributes) != 7 {
-		t.Errorf("expected 7 attributes, got %d", len(s.Attributes))
+	if len(s.Attributes) != 8 {
+		t.Errorf("expected 8 attributes, got %d", len(s.Attributes))
 	}
 }
 
@@ -342,7 +343,7 @@ func TestWingetPackageResource_ConfigValidators(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // wpSchemaObjectType returns the tftypes.Object type matching the winget
-// package schema.
+// package schema (including the `timeouts` block).
 func wpSchemaObjectType() tftypes.Object {
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 		"id":                tftypes.String,
@@ -352,7 +353,23 @@ func wpSchemaObjectType() tftypes.Object {
 		"override":          tftypes.String,
 		"installed_version": tftypes.String,
 		"name":              tftypes.String,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// wpNullTimeoutsValue returns the tftypes.Value that represents an absent
+// `timeouts {}` block (matches the Object shape produced by
+// timeouts.Attributes).
+func wpNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
 }
 
 func TestWingetPackageResource_ImportState_Valid(t *testing.T) {
@@ -369,6 +386,7 @@ func TestWingetPackageResource_ImportState_Valid(t *testing.T) {
 		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
 		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
 	})
 
 	req := resource.ImportStateRequest{ID: "winget:Microsoft.VisualStudioCode"}
@@ -413,6 +431,7 @@ func TestWingetPackageResource_ImportState_NoColon(t *testing.T) {
 		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
 		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
 	})
 	req := resource.ImportStateRequest{ID: "wingetMicrosoftVisualStudioCode"}
 	resp := &resource.ImportStateResponse{
@@ -448,6 +467,7 @@ func TestWingetPackageResource_ImportState_EmptySource(t *testing.T) {
 		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
 		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
 	})
 	req := resource.ImportStateRequest{ID: ":Microsoft.VisualStudioCode"}
 	resp := &resource.ImportStateResponse{
@@ -474,6 +494,7 @@ func TestWingetPackageResource_ImportState_EmptyPackageID(t *testing.T) {
 		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
 		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
 	})
 	req := resource.ImportStateRequest{ID: "winget:"}
 	resp := &resource.ImportStateResponse{
@@ -500,6 +521,7 @@ func TestWingetPackageResource_ImportState_EmptyID(t *testing.T) {
 		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
 		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
 	})
 	req := resource.ImportStateRequest{ID: ""}
 	resp := &resource.ImportStateResponse{
@@ -528,6 +550,7 @@ func TestWingetPackageResource_ImportState_ColonInPackageID(t *testing.T) {
 		"override":          tftypes.NewValue(tftypes.String, nil),
 		"installed_version": tftypes.NewValue(tftypes.String, nil),
 		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
 	})
 	req := resource.ImportStateRequest{ID: "winget:Foo:Bar:Baz"}
 	resp := &resource.ImportStateResponse{

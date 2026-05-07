@@ -15,7 +15,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -29,6 +31,11 @@ import (
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
+
+// wpDefaultTimeout is the fallback per-operation timeout when the user does
+// not provide a `timeouts {}` block. winget package operations frequently
+// involve large downloads + MSI/MSIX execution, so the default is generous.
+const wpDefaultTimeout = 30 * time.Minute
 
 // ---------------------------------------------------------------------------
 // Interface assertions
@@ -72,6 +79,9 @@ type windowsWingetPackageModel struct {
 	// Computed observability attributes populated from Get-WinGetPackage.
 	InstalledVersion types.String `tfsdk:"installed_version"`
 	Name             types.String `tfsdk:"name"`
+
+	// Per-operation timeouts (Create / Update / Delete). See wpDefaultTimeout.
+	Timeouts timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -84,7 +94,7 @@ func (r *windowsWingetPackageResource) Metadata(_ context.Context, req resource.
 }
 
 // Schema returns the complete TPF schema for the windows_winget_package resource.
-func (r *windowsWingetPackageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the install / update / uninstall lifecycle of a Windows " +
 			"software package via the Microsoft Windows Package Manager (`winget`) using the " +
@@ -207,6 +217,14 @@ func (r *windowsWingetPackageResource) Schema(_ context.Context, _ resource.Sche
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+
+			// ---- Per-operation timeouts (terraform-plugin-framework-timeouts) ----
+
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -248,6 +266,15 @@ func (r *windowsWingetPackageResource) Create(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Apply per-operation timeout (defaults to wpDefaultTimeout when unset).
+	createTimeout, diags := plan.Timeouts.Create(ctx, wpDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	input := winclient.WingetPackageInput{
 		PackageID: plan.PackageID.ValueString(),
@@ -332,6 +359,14 @@ func (r *windowsWingetPackageResource) Update(ctx context.Context, req resource.
 		return
 	}
 
+	updateTimeout, diags := plan.Timeouts.Update(ctx, wpDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	input := winclient.WingetPackageInput{
 		PackageID: plan.PackageID.ValueString(),
 		Source:    plan.Source.ValueString(),
@@ -375,6 +410,14 @@ func (r *windowsWingetPackageResource) Delete(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, wpDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	result, err := r.wp.Uninstall(ctx, state.PackageID.ValueString(), state.Source.ValueString())
 	if err != nil {

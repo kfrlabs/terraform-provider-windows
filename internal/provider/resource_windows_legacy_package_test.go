@@ -288,6 +288,11 @@ func lpNullRawState() tftypes.Value {
 		"installed_version":    str,
 		"installed":            b,
 		"install_date":         str,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"update": str,
+			"delete": str,
+		}},
 	}}, map[string]tftypes.Value{
 		"id":                   tftypes.NewValue(str, nil),
 		"name":                 tftypes.NewValue(str, nil),
@@ -309,6 +314,11 @@ func lpNullRawState() tftypes.Value {
 		"installed_version":    tftypes.NewValue(str, nil),
 		"installed":            tftypes.NewValue(b, nil),
 		"install_date":         tftypes.NewValue(str, nil),
+		"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"update": str,
+			"delete": str,
+		}}, nil),
 	})
 }
 

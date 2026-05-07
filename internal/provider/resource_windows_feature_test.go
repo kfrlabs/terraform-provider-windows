@@ -49,7 +49,7 @@ func TestFeatureMetadata(t *testing.T) {
 }
 
 func TestFeatureSchema_HasRequiredAttributes(t *testing.T) {
-	s := windowsFeatureSchemaDefinition()
+	s := windowsFeatureSchemaDefinition(context.Background())
 	want := []string{
 		"id", "name", "display_name", "description", "installed",
 		"include_sub_features", "include_management_tools", "source",
@@ -74,7 +74,7 @@ func TestFeatureSchema_ResourceLevelCall(t *testing.T) {
 // EC-6: name / include_sub_features / include_management_tools must use
 // RequiresReplace plan modifiers.
 func TestFeatureSchema_ForceNewAttributes_EC6(t *testing.T) {
-	s := windowsFeatureSchemaDefinition()
+	s := windowsFeatureSchemaDefinition(context.Background())
 
 	matchesReplace := func(desc string) bool {
 		l := strings.ToLower(desc)
@@ -343,7 +343,22 @@ func featureObjectType() tftypes.Object {
 		"restart":                  tftypes.Bool,
 		"restart_pending":          tftypes.Bool,
 		"install_state":            tftypes.String,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// featureNullTimeoutsValue is the zero (absent) value for the `timeouts {}`
+// nested attribute, matching the shape declared in featureObjectType.
+func featureNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
 }
 
 func featObj(overrides map[string]tftypes.Value) tftypes.Value {
@@ -359,6 +374,7 @@ func featObj(overrides map[string]tftypes.Value) tftypes.Value {
 		"restart":                  tftypes.NewValue(tftypes.Bool, false),
 		"restart_pending":          tftypes.NewValue(tftypes.Bool, nil),
 		"install_state":            tftypes.NewValue(tftypes.String, nil),
+		"timeouts":                 featureNullTimeoutsValue(),
 	}
 	for k, v := range overrides {
 		base[k] = v
@@ -384,7 +400,7 @@ func TestFeatureCreate_Handler_HappyPath(t *testing.T) {
 	}
 	r := &windowsFeatureResource{feat: fake}
 
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -419,7 +435,7 @@ func TestFeatureCreate_Handler_RestartWarning_EC4(t *testing.T) {
 		installRes: &winclient.InstallResult{Success: true, RestartNeeded: true, ExitCode: "SuccessRestartRequired"},
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -445,7 +461,7 @@ func TestFeatureCreate_Handler_NotFound_EC1(t *testing.T) {
 			"Feature 'Bogus' was not found", nil, map[string]string{"name": "Bogus"}),
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -467,7 +483,7 @@ func TestFeatureCreate_Handler_SourceMissing_EC3(t *testing.T) {
 			"install_state=Removed; provide source", nil, nil),
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -492,7 +508,7 @@ func TestFeatureCreate_Handler_DependencyMissing_EC7(t *testing.T) {
 			"depends on Web-Server", nil, nil),
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -514,7 +530,7 @@ func TestFeatureCreate_Handler_Timeout_EC8(t *testing.T) {
 			"timed out installing Web-Server", context.DeadlineExceeded, nil),
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -533,7 +549,7 @@ func TestFeatureCreate_Handler_Timeout_EC8(t *testing.T) {
 func TestFeatureRead_Handler_HappyPath(t *testing.T) {
 	fake := &fakeFeatureClient{readOut: okFeatureInfo()}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -556,7 +572,7 @@ func TestFeatureRead_Handler_HappyPath(t *testing.T) {
 func TestFeatureRead_Handler_DriftRemoved_EC2(t *testing.T) {
 	fake := &fakeFeatureClient{readOut: nil, readErr: nil}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -582,7 +598,7 @@ func TestFeatureRead_Handler_PermissionDenied_EC5(t *testing.T) {
 			"Access is denied (Local Administrator on the target host is required.)", nil, nil),
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -605,7 +621,7 @@ func TestFeatureRead_Handler_UnsupportedSKU_EC9(t *testing.T) {
 			"ServerManager not available; use Enable-WindowsOptionalFeature", nil, nil),
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -631,7 +647,7 @@ func TestFeatureUpdate_Handler_HappyPath(t *testing.T) {
 		installRes: &winclient.InstallResult{Success: true},
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -665,7 +681,7 @@ func TestFeatureDelete_Handler_HappyPath(t *testing.T) {
 		uninstRes: &winclient.InstallResult{Success: true, ExitCode: "Success"},
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -692,7 +708,7 @@ func TestFeatureDelete_Handler_AlreadyAbsent_NotFound(t *testing.T) {
 		uninstErr: winclient.NewFeatureError(winclient.FeatureErrorNotFound, "gone", nil, nil),
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -714,7 +730,7 @@ func TestFeatureDelete_Handler_RestartWarning(t *testing.T) {
 		uninstRes: &winclient.InstallResult{Success: true, RestartNeeded: true, ExitCode: "SuccessRestartRequired"},
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -740,7 +756,7 @@ func TestFeatureDelete_Handler_PermissionDenied(t *testing.T) {
 		uninstErr: winclient.NewFeatureError(winclient.FeatureErrorPermission, "denied", nil, nil),
 	}
 	r := &windowsFeatureResource{feat: fake}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: featObj(map[string]tftypes.Value{
@@ -763,7 +779,7 @@ func TestFeatureDelete_Handler_PermissionDenied(t *testing.T) {
 
 func TestFeatureImportState_Handler(t *testing.T) {
 	r := &windowsFeatureResource{}
-	schemaDef := windowsFeatureSchemaDefinition()
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: featObj(nil)},
 	}

@@ -22,6 +22,27 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Per-operation `timeouts {}` block on the four long-running resources —
+  `windows_winget_package`, `windows_legacy_package`, `windows_feature` and
+  `windows_scheduled_task` — backed by
+  `terraform-plugin-framework-timeouts`. Users can now bound the wall-clock
+  duration of `Create`, `Update` and `Delete` independently of the
+  provider-level WinRM transport timeout. Defaults: 30 minutes for the three
+  package/feature resources (large downloads, MSI/MSIX execution,
+  AD-Domain-Services with sub-features), 5 minutes for scheduled tasks
+  (CRUD via the `ScheduledTasks` PowerShell module is fast). The block is
+  Optional+Computed; absent configuration keeps the default. Note: on
+  `windows_legacy_package` the new wall-clock budget is layered on top of
+  the existing installer-process `timeout_seconds` attribute; both are
+  preserved (different scopes, not redundant).
+
+- `tools/tools.go` and `generate.go` to pin and invoke
+  `terraform-plugin-docs` (`tfplugindocs`). `make docs` (alias for
+  `go generate ./...`) regenerates the registry-rendered documentation
+  under `docs/` directly from the live provider schema, including the new
+  `timeouts {}` blocks. The `tools` build tag keeps the generator out of
+  the production binary.
+
 - `windows_legacy_package` resource: manages the full lifecycle (install /
   update / uninstall) of Windows software distributed as legacy installers —
   Windows Installer `.msi` packages (via `msiexec.exe`) and `.exe` wrappers
