@@ -53,8 +53,7 @@ func NewWindowsFirewallRuleResource() resource.Resource {
 
 // windowsFirewallRuleResource is the TPF resource type for windows_firewall_rule.
 type windowsFirewallRuleResource struct {
-	client *winclient.Client
-	fw     winclient.WindowsFirewallRuleClient
+	fw winclient.WindowsFirewallRuleClient
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +326,6 @@ func (r *windowsFirewallRuleResource) Configure(_ context.Context, req resource.
 		)
 		return
 	}
-	r.client = client
 	r.fw = winclient.NewFirewallRuleClient(client)
 }
 

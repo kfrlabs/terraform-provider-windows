@@ -10,13 +10,13 @@
 //
 // Acceptance-test identifiers:
 //
-//	TestAccWindowsLocalGroupMember_basic        Create+Read+Delete via Administrators
-//	TestAccWindowsLocalGroupMember_importBySID  Import by group SID / member SID
-//	TestAccWindowsLocalGroupMember_importByName Import by group name / member name
-//	TestAccWindowsLocalGroupMember_groupBySID   group attribute = SID string (EC-9)
-//	TestAccWindowsLocalGroupMember_memberByUPN  member attribute = user@domain (UPN)
-//	TestAccWindowsLocalGroupMember_duplicate    EC-1: duplicate membership ExpectError
-//	TestAccWindowsLocalGroupMember_drift        EC-4: out-of-band delete + re-apply
+//	TestAccWindowsLocalGroupMember_Basic        Create+Read+Delete via Administrators
+//	TestAccWindowsLocalGroupMember_ImportBySID  Import by group SID / member SID
+//	TestAccWindowsLocalGroupMember_ImportByName Import by group name / member name
+//	TestAccWindowsLocalGroupMember_GroupBySID   group attribute = SID string (EC-9)
+//	TestAccWindowsLocalGroupMember_MemberByUPN  member attribute = user@domain (UPN)
+//	TestAccWindowsLocalGroupMember_Duplicate    EC-1: duplicate membership ExpectError
+//	TestAccWindowsLocalGroupMember_Drift        EC-4: out-of-band delete + re-apply
 //
 // All tests skip immediately when TF_ACC is not set so the CI unit-test
 // pass remains green without a Windows lab.
@@ -60,14 +60,14 @@ func lgmTestDomainUser() string {
 // Acceptance tests (skeletons)
 // ---------------------------------------------------------------------------
 
-// TestAccWindowsLocalGroupMember_basic verifies the minimal lifecycle:
+// TestAccWindowsLocalGroupMember_Basic verifies the minimal lifecycle:
 //  1. Apply adds local user to Administrators group.
 //  2. Plan after apply is empty (idempotency).
 //  3. Destroy removes the membership.
 //  4. CheckDestroy confirms membership is gone.
 //
 // Alignment: EC-9 (BUILTIN group support), EC-12 (non-authoritative).
-func TestAccWindowsLocalGroupMember_basic(t *testing.T) {
+func TestAccWindowsLocalGroupMember_Basic(t *testing.T) {
 	testAccLGMPreCheck(t)
 	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
 	/*
@@ -94,9 +94,9 @@ func TestAccWindowsLocalGroupMember_basic(t *testing.T) {
 	*/
 }
 
-// TestAccWindowsLocalGroupMember_importBySID verifies terraform import using
+// TestAccWindowsLocalGroupMember_ImportBySID verifies terraform import using
 // the composite SID/SID import ID format (ADR-LGM-1).
-func TestAccWindowsLocalGroupMember_importBySID(t *testing.T) {
+func TestAccWindowsLocalGroupMember_ImportBySID(t *testing.T) {
 	testAccLGMPreCheck(t)
 	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
 	/*
@@ -124,9 +124,9 @@ func TestAccWindowsLocalGroupMember_importBySID(t *testing.T) {
 	*/
 }
 
-// TestAccWindowsLocalGroupMember_importByName verifies terraform import using
+// TestAccWindowsLocalGroupMember_ImportByName verifies terraform import using
 // the human-readable "GroupName/MemberName" import ID format.
-func TestAccWindowsLocalGroupMember_importByName(t *testing.T) {
+func TestAccWindowsLocalGroupMember_ImportByName(t *testing.T) {
 	testAccLGMPreCheck(t)
 	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
 	/*
@@ -148,9 +148,9 @@ func TestAccWindowsLocalGroupMember_importByName(t *testing.T) {
 	*/
 }
 
-// TestAccWindowsLocalGroupMember_groupBySID verifies that the group attribute
+// TestAccWindowsLocalGroupMember_GroupBySID verifies that the group attribute
 // accepts a SID string (EC-9: BUILTIN group by SID).
-func TestAccWindowsLocalGroupMember_groupBySID(t *testing.T) {
+func TestAccWindowsLocalGroupMember_GroupBySID(t *testing.T) {
 	testAccLGMPreCheck(t)
 	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
 	/*
@@ -169,9 +169,9 @@ func TestAccWindowsLocalGroupMember_groupBySID(t *testing.T) {
 	*/
 }
 
-// TestAccWindowsLocalGroupMember_memberByUPN verifies that the member attribute
+// TestAccWindowsLocalGroupMember_MemberByUPN verifies that the member attribute
 // accepts a UPN-format identity (user@domain.tld).
-func TestAccWindowsLocalGroupMember_memberByUPN(t *testing.T) {
+func TestAccWindowsLocalGroupMember_MemberByUPN(t *testing.T) {
 	testAccLGMPreCheck(t)
 	if lgmTestDomainUser() == "" {
 		t.Skip("WINDOWS_TEST_DOMAIN_USER not set; skipping UPN test")
@@ -195,9 +195,9 @@ func TestAccWindowsLocalGroupMember_memberByUPN(t *testing.T) {
 	*/
 }
 
-// TestAccWindowsLocalGroupMember_duplicate verifies EC-1: attempting to create
+// TestAccWindowsLocalGroupMember_Duplicate verifies EC-1: attempting to create
 // a duplicate membership produces a hard error with an import hint.
-func TestAccWindowsLocalGroupMember_duplicate(t *testing.T) {
+func TestAccWindowsLocalGroupMember_Duplicate(t *testing.T) {
 	testAccLGMPreCheck(t)
 	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
 	/*
@@ -216,10 +216,10 @@ func TestAccWindowsLocalGroupMember_duplicate(t *testing.T) {
 	*/
 }
 
-// TestAccWindowsLocalGroupMember_drift verifies EC-4: when the membership is
+// TestAccWindowsLocalGroupMember_Drift verifies EC-4: when the membership is
 // deleted outside Terraform, the next plan detects drift and re-creates it on
 // apply.
-func TestAccWindowsLocalGroupMember_drift(t *testing.T) {
+func TestAccWindowsLocalGroupMember_Drift(t *testing.T) {
 	testAccLGMPreCheck(t)
 	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
 	/*

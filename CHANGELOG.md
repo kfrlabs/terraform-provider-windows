@@ -13,6 +13,11 @@ All notable changes to this project will be documented in this file.
   unified the `schema` import alias in `datasource_windows_environment_variable.go`,
   moved `windowsScheduledTaskDSModel` and friends from `resource_windows_scheduled_task.go` to
   `datasource_windows_scheduled_task.go`, and sorted `provider.DataSources()` alphabetically.
+- Resources normalization: renamed hostname test files to match the project convention
+  (`*_test.go` for unit, `*_acc_test.go` for acceptance), removed the unused `client *winclient.Client`
+  field from 9 resources whose Configure stored it without ever reading it back, aligned
+  `windows_local_group_member` acceptance test names to `TestAccWindows<R>_<PascalCase>`,
+  and sorted `provider.Resources()` alphabetically.
 
 ### Data Sources
 

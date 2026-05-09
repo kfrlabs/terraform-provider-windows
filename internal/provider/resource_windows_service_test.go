@@ -336,8 +336,8 @@ func TestConfigure_NilProviderData_NoOp(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Errorf("nil ProviderData should be a no-op, got %v", resp.Diagnostics)
 	}
-	if r.client != nil {
-		t.Error("client should remain nil")
+	if r.svc != nil {
+		t.Error("svc should remain nil")
 	}
 }
 
@@ -361,8 +361,8 @@ func TestConfigure_ValidClient(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Errorf("unexpected diagnostics: %v", resp.Diagnostics)
 	}
-	if r.client != c || r.svc == nil {
-		t.Error("Configure must populate client and svc")
+	if r.svc == nil {
+		t.Error("Configure must populate svc")
 	}
 }
 

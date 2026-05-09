@@ -56,8 +56,7 @@ func NewWindowsLocalUserResource() resource.Resource {
 
 // windowsLocalUserResource is the TPF resource type for windows_local_user.
 type windowsLocalUserResource struct {
-	client *winclient.Client
-	user   winclient.LocalUserClient
+	user winclient.LocalUserClient
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +493,6 @@ func (r *windowsLocalUserResource) Configure(
 		)
 		return
 	}
-	r.client = c
 	r.user = winclient.NewLocalUserClient(c)
 }
 

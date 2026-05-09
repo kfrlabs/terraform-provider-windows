@@ -56,8 +56,7 @@ func NewWindowsWingetPackageResource() resource.Resource {
 
 // windowsWingetPackageResource is the TPF resource type for windows_winget_package.
 type windowsWingetPackageResource struct {
-	client *winclient.Client
-	wp     winclient.WingetPackageClient
+	wp winclient.WingetPackageClient
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +243,6 @@ func (r *windowsWingetPackageResource) Configure(_ context.Context, req resource
 		)
 		return
 	}
-	r.client = c
 	r.wp = winclient.NewWingetPackageClient(c)
 }
 

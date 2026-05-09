@@ -186,17 +186,17 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 // The list is empty at bootstrap and filled in by follow-up KDust tasks.
 func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewWindowsServiceResource,
+		NewWindowsEnvironmentVariableResource,
 		NewWindowsFeatureResource,
+		NewWindowsFirewallRuleResource,
 		NewWindowsHostnameResource,
 		NewWindowsLegacyPackageResource,
 		NewWindowsLocalGroupResource,
 		NewWindowsLocalGroupMemberResource,
 		NewWindowsLocalUserResource,
 		NewWindowsRegistryValueResource,
-		NewWindowsEnvironmentVariableResource,
 		NewWindowsScheduledTaskResource,
-		NewWindowsFirewallRuleResource,
+		NewWindowsServiceResource,
 		NewWindowsWingetPackageResource,
 	}
 }

@@ -215,8 +215,8 @@ func TestLegacyPackageResource_Configure_NilProviderData(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("nil ProviderData should be a no-op, got: %v", resp.Diagnostics)
 	}
-	if r.client != nil || r.lp != nil {
-		t.Error("client/lp should remain nil")
+	if r.lp != nil {
+		t.Error("lp should remain nil")
 	}
 }
 
@@ -239,9 +239,6 @@ func TestLegacyPackageResource_Configure_HappyPath(t *testing.T) {
 	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
-	}
-	if r.client != c {
-		t.Error("client not stored")
 	}
 	if r.lp == nil {
 		t.Error("lp client not constructed")

@@ -51,8 +51,7 @@ func NewWindowsLocalGroupResource() resource.Resource {
 
 // windowsLocalGroupResource is the TPF resource type for windows_local_group.
 type windowsLocalGroupResource struct {
-	client *winclient.Client
-	grp    winclient.WindowsLocalGroupClient
+	grp winclient.WindowsLocalGroupClient
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +295,6 @@ func (r *windowsLocalGroupResource) Configure(
 		)
 		return
 	}
-	r.client = c
 	r.grp = winclient.NewLocalGroupClient(c)
 }
 
