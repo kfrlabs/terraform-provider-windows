@@ -22,6 +22,7 @@ import (
 	datasourceschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -148,11 +149,85 @@ func (d *windowsWingetPackageDataSource) Configure(_ context.Context, req dataso
 	d.client = winclient.NewWingetPackageClient(c)
 }
 
-// Read fetches the winget package state from the remote Windows host.
-// STUB — to be implemented by the provider-coder follow-up task.
-func (d *windowsWingetPackageDataSource) Read(_ context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	resp.Diagnostics.AddError(
-		"not implemented",
-		"windows_winget_package data source Read is not implemented yet.",
-	)
+// Read fetches the winget package state from the remote Windows host by
+// calling the twin resource's WingetPackageClient.Read. The lookup key is
+// (package_id, source) where an unset/empty `source` defaults to `"winget"`
+// (echoed back as Computed). A nil state from the client triggers a
+// `not_found` diagnostic (data sources never silently clear state). Typed
+// *winclient.WingetPackageError values are surfaced via addWPDiag, mirroring
+// the resource Read path so module_missing / source_unreachable / transport
+// errors propagate the same context.
+//
+// id formula (per spec.operations.read.notes): `"<source>:<package_id>"`,
+// with the effective source after defaulting.
+func (d *windowsWingetPackageDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config windowsWingetPackageDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	packageID := config.PackageID.ValueString()
+
+	// Default source to "winget" when unset/null/empty (spec DS attr default).
+	source := config.Source.ValueString()
+	if config.Source.IsNull() || config.Source.IsUnknown() || source == "" {
+		source = "winget"
+	}
+
+	tflog.Debug(ctx, "windows_winget_package data source Read", map[string]interface{}{
+		"package_id": packageID,
+		"source":     source,
+	})
+
+	remote, err := d.client.Read(ctx, packageID, source)
+	if err != nil {
+		addWPDiag(&resp.Diagnostics, err, "data source Read")
+		return
+	}
+
+	// Data-source not_found: NEVER clear state — surface an explicit error
+	// (anti-drift rule for data sources, distinct from the resource Read path
+	// which removes the resource on EC-3).
+	if remote == nil {
+		resp.Diagnostics.AddError(
+			fmt.Sprintf("windows_winget_package not_found: %s:%s", source, packageID),
+			fmt.Sprintf(
+				"Winget package %q is not installed and not available from source %q on the target host.",
+				packageID, source,
+			),
+		)
+		return
+	}
+
+	// Compute the effective source echoed back to state. The client may have
+	// detected an ARP-only entry and reported Source="" — preserve that signal.
+	effectiveSource := source
+	if remote.Source != "" {
+		effectiveSource = remote.Source
+	} else if remote.InstalledVersion != "" && remote.Source == "" {
+		// ARP-only match: the client signals this with an empty Source.
+		effectiveSource = ""
+	}
+
+	// available_version is not currently surfaced by WingetPackageState; the
+	// client Read pipeline only returns the installed version. Echo empty
+	// strings / false flags rather than fabricating data.
+	out := windowsWingetPackageDataSourceModel{
+		ID:                types.StringValue(source + ":" + packageID),
+		PackageID:         types.StringValue(packageID),
+		Source:            types.StringValue(effectiveSource),
+		Name:              types.StringValue(remote.Name),
+		InstalledVersion:  types.StringValue(remote.InstalledVersion),
+		AvailableVersion:  types.StringValue(""),
+		IsInstalled:       types.BoolValue(remote.InstalledVersion != ""),
+		IsUpdateAvailable: types.BoolValue(false),
+	}
+
+	tflog.Debug(ctx, "windows_winget_package data source Read end", map[string]interface{}{
+		"id":           out.ID.ValueString(),
+		"is_installed": out.IsInstalled.ValueBool(),
+	})
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &out)...)
 }
