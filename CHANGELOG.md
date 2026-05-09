@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Data Sources
+
+#### Added
+
+- `windows_winget_package` data source: read-only lookup of a single
+  winget-managed package on a remote Windows host via WinRM and the
+  `Microsoft.WinGet.Client` PowerShell module. Reuses the twin resource's
+  `winclient.WingetPackageClient.Read` pipeline (Equals(Id) filter,
+  ARP-only detection, single retry on `source_unreachable`) and surfaces
+  an explicit `not_found` Terraform error when the package is absent
+  from both the catalog and ARP — data sources never silently
+  produce empty state.
+
 ### Added
 
 - **WriteOnly credential attributes (Tier 3, TPF v1.14.1)** on every
