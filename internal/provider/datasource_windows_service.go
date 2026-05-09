@@ -31,8 +31,7 @@ func NewWindowsServiceDataSource() datasource.DataSource {
 
 // windowsServiceDataSource is the TPF data source type for windows_service.
 type windowsServiceDataSource struct {
-	client *winclient.Client
-	svc    winclient.WindowsServiceClient
+	svc winclient.WindowsServiceClient
 }
 
 // windowsServiceDataSourceModel is the Terraform state model for the
@@ -115,7 +114,6 @@ func (d *windowsServiceDataSource) Configure(_ context.Context, req datasource.C
 		)
 		return
 	}
-	d.client = c
 	d.svc = winclient.NewServiceClient(c)
 }
 

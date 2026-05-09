@@ -33,8 +33,7 @@ func NewWindowsLocalUserDataSource() datasource.DataSource {
 
 // windowsLocalUserDataSource is the TPF data source type for windows_local_user.
 type windowsLocalUserDataSource struct {
-	client *winclient.Client
-	user   winclient.LocalUserClient
+	user winclient.LocalUserClient
 }
 
 // windowsLocalUserDataSourceModel is the Terraform state model for the
@@ -152,7 +151,6 @@ func (d *windowsLocalUserDataSource) Configure(_ context.Context, req datasource
 		)
 		return
 	}
-	d.client = c
 	d.user = winclient.NewLocalUserClient(c)
 }
 

@@ -33,8 +33,7 @@ func NewWindowsLocalGroupDataSource() datasource.DataSource {
 
 // windowsLocalGroupDataSource is the TPF data source type for windows_local_group.
 type windowsLocalGroupDataSource struct {
-	client *winclient.Client
-	grp    winclient.WindowsLocalGroupClient
+	grp winclient.WindowsLocalGroupClient
 }
 
 // windowsLocalGroupDataSourceModel is the Terraform state model for the
@@ -105,7 +104,6 @@ func (d *windowsLocalGroupDataSource) Configure(_ context.Context, req datasourc
 		)
 		return
 	}
-	d.client = c
 	d.grp = winclient.NewLocalGroupClient(c)
 }
 

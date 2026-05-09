@@ -12,9 +12,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
-// TestAccWindowsScheduledTaskDS_Read verifies the data source can read a task
+// TestAccWindowsScheduledTaskDataSource_Basic verifies the data source can read a task
 // created by the resource.
-func TestAccWindowsScheduledTaskDS_Read(t *testing.T) {
+func TestAccWindowsScheduledTaskDataSource_Basic(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("TF_ACC not set")
 	}
@@ -57,9 +57,9 @@ data "windows_scheduled_task" "test" {
 	})
 }
 
-// TestAccWindowsScheduledTaskDS_NotFound verifies the data source returns an error
+// TestAccWindowsScheduledTaskDataSource_NotFound verifies the data source returns an error
 // when the task does not exist.
-func TestAccWindowsScheduledTaskDS_NotFound(t *testing.T) {
+func TestAccWindowsScheduledTaskDataSource_NotFound(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("TF_ACC not set")
 	}
@@ -83,9 +83,9 @@ data "windows_scheduled_task" "not_found" {
 	})
 }
 
-// TestAccWindowsScheduledTaskDS_SystemTask verifies a built-in Windows task can be
+// TestAccWindowsScheduledTaskDataSource_SystemTask verifies a built-in Windows task can be
 // read by the data source (read-only, no create).
-func TestAccWindowsScheduledTaskDS_SystemTask(t *testing.T) {
+func TestAccWindowsScheduledTaskDataSource_SystemTask(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("TF_ACC not set")
 	}

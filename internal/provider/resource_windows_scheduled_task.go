@@ -1210,33 +1210,3 @@ func scheduledTaskErrDiag(op string, err error) diag.Diagnostics {
 // Ensure unused import for tfsdk is referenced (it's used transitively).
 var _ tfsdk.Config
 var _ strings.Builder
-
-// windowsScheduledTaskDSPrincipalModel is the data source variant (no password).
-type windowsScheduledTaskDSPrincipalModel struct {
-	UserID    types.String `tfsdk:"user_id"`
-	LogonType types.String `tfsdk:"logon_type"`
-	RunLevel  types.String `tfsdk:"run_level"`
-}
-
-var scheduledTaskDSPrincipalAttrTypes = map[string]attr.Type{
-	"user_id":    types.StringType,
-	"logon_type": types.StringType,
-	"run_level":  types.StringType,
-}
-
-// windowsScheduledTaskDSModel is the data source root model.
-type windowsScheduledTaskDSModel struct {
-	ID             types.String `tfsdk:"id"`
-	Name           types.String `tfsdk:"name"`
-	Path           types.String `tfsdk:"path"`
-	Description    types.String `tfsdk:"description"`
-	Enabled        types.Bool   `tfsdk:"enabled"`
-	State          types.String `tfsdk:"state"`
-	LastRunTime    types.String `tfsdk:"last_run_time"`
-	LastTaskResult types.Int64  `tfsdk:"last_task_result"`
-	NextRunTime    types.String `tfsdk:"next_run_time"`
-	Principal      types.Object `tfsdk:"principal"`
-	Actions        types.List   `tfsdk:"actions"`
-	Triggers       types.List   `tfsdk:"triggers"`
-	Settings       types.Object `tfsdk:"settings"`
-}
