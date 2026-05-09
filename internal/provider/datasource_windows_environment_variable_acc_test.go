@@ -149,10 +149,10 @@ func TestAccWindowsEnvironmentVariableDataSource_ExpandTrue(t *testing.T) {
 // DS-AT-4 — Missing variable returns a Terraform error
 // ---------------------------------------------------------------------------
 
-// TestAccWindowsEnvironmentVariableDataSource_Missing verifies that looking up
+// TestAccWindowsEnvironmentVariableDataSource_NotFound verifies that looking up
 // a non-existent environment variable produces a Terraform error (not a silent
 // empty result).
-func TestAccWindowsEnvironmentVariableDataSource_Missing(t *testing.T) {
+func TestAccWindowsEnvironmentVariableDataSource_NotFound(t *testing.T) {
 	testAccEnvVarDSPreCheck(t)
 	t.Skip("SKELETON: requires a live Windows target")
 	/*

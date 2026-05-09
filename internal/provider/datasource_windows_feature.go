@@ -32,8 +32,7 @@ func NewWindowsFeatureDataSource() datasource.DataSource {
 
 // windowsFeatureDataSource is the TPF data source type for windows_feature.
 type windowsFeatureDataSource struct {
-	client *winclient.Client
-	feat   winclient.WindowsFeatureClient
+	feat winclient.WindowsFeatureClient
 }
 
 // windowsFeatureDataSourceModel is the Terraform state model for the
@@ -106,7 +105,6 @@ func (d *windowsFeatureDataSource) Configure(_ context.Context, req datasource.C
 		)
 		return
 	}
-	d.client = c
 	d.feat = winclient.NewFeatureClient(c)
 }
 

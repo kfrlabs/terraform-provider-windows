@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+#### Changed
+
+- Data sources normalization: aligned acceptance test naming to `TestAccWindows<R>DataSource_<Case>`,
+  removed the unused `client *winclient.Client` field from data sources that only need their typed sub-client,
+  unified the `schema` import alias in `datasource_windows_environment_variable.go`,
+  moved `windowsScheduledTaskDSModel` and friends from `resource_windows_scheduled_task.go` to
+  `datasource_windows_scheduled_task.go`, and sorted `provider.DataSources()` alphabetically.
+
 ### Data Sources
 
 #### Added

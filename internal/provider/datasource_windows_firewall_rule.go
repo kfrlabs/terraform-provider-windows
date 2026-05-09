@@ -38,8 +38,7 @@ func NewWindowsFirewallRuleDataSource() datasource.DataSource {
 
 // windowsFirewallRuleDataSource is the TPF data source type for windows_firewall_rule.
 type windowsFirewallRuleDataSource struct {
-	client *winclient.Client
-	fw     winclient.WindowsFirewallRuleClient
+	fw winclient.WindowsFirewallRuleClient
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +190,6 @@ func (d *windowsFirewallRuleDataSource) Configure(_ context.Context, req datasou
 		)
 		return
 	}
-	d.client = c
 	d.fw = winclient.NewFirewallRuleClient(c)
 }
 

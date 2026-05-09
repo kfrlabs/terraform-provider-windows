@@ -30,8 +30,7 @@ func NewWindowsHostnameDataSource() datasource.DataSource {
 
 // windowsHostnameDataSource is the TPF data source type for windows_hostname.
 type windowsHostnameDataSource struct {
-	client *winclient.Client
-	hn     winclient.WindowsHostnameClient
+	hn winclient.WindowsHostnameClient
 }
 
 // windowsHostnameDataSourceModel is the Terraform state model for the
@@ -99,7 +98,6 @@ func (d *windowsHostnameDataSource) Configure(_ context.Context, req datasource.
 		)
 		return
 	}
-	d.client = c
 	d.hn = winclient.NewHostnameClient(c)
 }
 

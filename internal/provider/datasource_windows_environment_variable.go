@@ -13,7 +13,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
-	datasourceschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -44,36 +44,36 @@ func (d *windowsEnvVarDataSource) Metadata(_ context.Context, req datasource.Met
 
 // Schema returns the TPF schema for the windows_environment_variable data source.
 func (d *windowsEnvVarDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
-	resp.Schema = datasourceschema.Schema{
+	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads a single Windows environment variable (`machine` or `user` scope) " +
 			"from a remote host via WinRM + PowerShell. Returns the stored value verbatim " +
 			"(unexpanded) and the registry kind (`expand`). " +
 			"Returns a Terraform error if the variable does not exist.",
 
-		Attributes: map[string]datasourceschema.Attribute{
-			"id": datasourceschema.StringAttribute{
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Composite ID `\"<scope>:<name>\"`. Populated by the provider.",
 			},
-			"name": datasourceschema.StringAttribute{
+			"name": schema.StringAttribute{
 				Required: true,
 				Validators: []validator.String{
 					envVarNameValidator{},
 				},
 				MarkdownDescription: "Windows environment variable name to look up.",
 			},
-			"value": datasourceschema.StringAttribute{
+			"value": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Verbatim value as stored in the registry (unexpanded `%VAR%` tokens).",
 			},
-			"scope": datasourceschema.StringAttribute{
+			"scope": schema.StringAttribute{
 				Required: true,
 				Validators: []validator.String{
 					stringvalidator.OneOf("machine", "user"),
 				},
 				MarkdownDescription: "Scope to look up: `\"machine\"` or `\"user\"`.",
 			},
-			"expand": datasourceschema.BoolAttribute{
+			"expand": schema.BoolAttribute{
 				Computed:            true,
 				MarkdownDescription: "`true` when the registry value kind is `REG_EXPAND_SZ`; `false` when `REG_SZ`.",
 			},

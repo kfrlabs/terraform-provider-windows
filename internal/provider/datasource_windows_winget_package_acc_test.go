@@ -38,10 +38,10 @@ func testAccWingetPackageDSPreCheck(t *testing.T) {
 // DS-AT-1 — Basic happy-path lookup
 // ---------------------------------------------------------------------------
 
-// TestAccWindowsWingetPackageDataSource_basic verifies that an existing
+// TestAccWindowsWingetPackageDataSource_Basic verifies that an existing
 // winget-managed package can be read by id and that the computed attributes
 // (id, name, installed_version, is_installed) are populated.
-func TestAccWindowsWingetPackageDataSource_basic(t *testing.T) {
+func TestAccWindowsWingetPackageDataSource_Basic(t *testing.T) {
 	testAccWingetPackageDSPreCheck(t)
 	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target with Microsoft.PowerShell installed via winget")
 	/*
@@ -81,7 +81,7 @@ func TestAccWindowsWingetPackageDataSource_basic(t *testing.T) {
 // DS-AT-2 — source attribute defaults to "winget" when omitted
 // ---------------------------------------------------------------------------
 
-func TestAccWindowsWingetPackageDataSource_basic_default_source(t *testing.T) {
+func TestAccWindowsWingetPackageDataSource_BasicDefaultSource(t *testing.T) {
 	testAccWingetPackageDSPreCheck(t)
 	t.Skip("SKELETON: requires a live Windows target")
 	/*
@@ -114,10 +114,10 @@ func TestAccWindowsWingetPackageDataSource_basic_default_source(t *testing.T) {
 // DS-AT-3 — Not-found returns a Terraform error (not silent empty state)
 // ---------------------------------------------------------------------------
 
-// TestAccWindowsWingetPackageDataSource_notFound verifies that looking up a
+// TestAccWindowsWingetPackageDataSource_NotFound verifies that looking up a
 // non-existent winget package id produces a Terraform error matching
 // 'not_found' (per spec: "data sources must not produce empty state").
-func TestAccWindowsWingetPackageDataSource_notFound(t *testing.T) {
+func TestAccWindowsWingetPackageDataSource_NotFound(t *testing.T) {
 	testAccWingetPackageDSPreCheck(t)
 	t.Skip("SKELETON: requires a live Windows target")
 	/*
