@@ -214,5 +214,6 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsEnvironmentVariableDataSource,
 		NewWindowsScheduledTaskDataSource,
 		NewWindowsFirewallRuleDataSource,
+		NewWindowsWingetPackageDataSource,
 	}
 }
