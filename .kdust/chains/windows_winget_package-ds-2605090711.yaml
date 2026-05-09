@@ -1,0 +1,12 @@
+chain: terraform-provider-windows
+resource: windows_winget_package
+kind: datasource
+branch: kdust/chain/windows_winget_package-ds-2605090711
+started_at: 2026-05-09T07:11:43Z
+description: Read-only data source mirroring windows_winget_package; looks up a single winget-managed package on a Windows host via WinRM/Microsoft.WinGet.Client.
+workers:
+  - win-spec-analyst
+  - schema-architect
+  - provider-coder
+  - test-engineer
+  - quality-gate
