@@ -21,3 +21,7 @@ work/
 *.tfstate
 *.tfstate.backup
 crash.log
+
+# Go build caches (container-managed)
+.gocache/
+.gomodcache/
