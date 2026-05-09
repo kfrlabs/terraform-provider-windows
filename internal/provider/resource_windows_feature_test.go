@@ -286,8 +286,8 @@ func TestFeatureConfigure_Valid(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
 	}
-	if r.client != c || r.feat == nil {
-		t.Error("Configure must populate client and feat")
+	if r.feat == nil {
+		t.Error("Configure must populate feat")
 	}
 }
 

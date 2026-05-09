@@ -472,9 +472,6 @@ func TestLocalGroupConfigure_Valid(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
 	}
-	if r.client != c {
-		t.Error("Configure must populate client field")
-	}
 	if r.grp == nil {
 		t.Error("Configure must populate grp field with a LocalGroupClient")
 	}

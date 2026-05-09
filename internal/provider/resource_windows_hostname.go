@@ -42,8 +42,7 @@ func NewWindowsHostnameResource() resource.Resource { return &windowsHostnameRes
 
 // windowsHostnameResource is the TPF resource type for windows_hostname.
 type windowsHostnameResource struct {
-	client *winclient.Client
-	hn     winclient.WindowsHostnameClient
+	hn winclient.WindowsHostnameClient
 }
 
 // windowsHostnameModel is the Terraform state/plan model for the
@@ -195,7 +194,6 @@ func (r *windowsHostnameResource) Configure(_ context.Context, req resource.Conf
 		)
 		return
 	}
-	r.client = c
 	r.hn = winclient.NewHostnameClient(c)
 }
 

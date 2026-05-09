@@ -87,8 +87,7 @@ func NewWindowsLegacyPackageResource() resource.Resource {
 
 // windowsLegacyPackageResource is the TPF resource type for windows_legacy_package.
 type windowsLegacyPackageResource struct {
-	client *winclient.Client
-	lp     winclient.LegacyPackageClient
+	lp winclient.LegacyPackageClient
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +372,6 @@ func (r *windowsLegacyPackageResource) Configure(_ context.Context, req resource
 		)
 		return
 	}
-	r.client = c
 	r.lp = winclient.NewLegacyPackageClient(c)
 }
 

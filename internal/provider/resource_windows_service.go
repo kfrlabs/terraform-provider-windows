@@ -44,8 +44,7 @@ func NewWindowsServiceResource() resource.Resource { return &windowsServiceResou
 
 // windowsServiceResource is the TPF resource type for windows_service.
 type windowsServiceResource struct {
-	client *winclient.Client
-	svc    winclient.WindowsServiceClient
+	svc winclient.WindowsServiceClient
 }
 
 // builtinAccountRe matches Windows built-in service accounts that must not
@@ -203,7 +202,6 @@ func (r *windowsServiceResource) Configure(_ context.Context, req resource.Confi
 		)
 		return
 	}
-	r.client = c
 	r.svc = winclient.NewServiceClient(c)
 }
 

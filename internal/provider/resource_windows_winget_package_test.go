@@ -290,8 +290,8 @@ func TestWingetPackageResource_Configure_NilProviderData(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Errorf("nil ProviderData should not produce an error: %v", resp.Diagnostics)
 	}
-	if r.client != nil {
-		t.Error("client should be nil when ProviderData is nil")
+	if r.wp != nil {
+		t.Error("wp should be nil when ProviderData is nil")
 	}
 }
 
@@ -316,9 +316,6 @@ func TestWingetPackageResource_Configure_HappyPath(t *testing.T) {
 	r.Configure(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error: %v", resp.Diagnostics)
-	}
-	if r.client == nil {
-		t.Error("client should be set after Configure")
 	}
 	if r.wp == nil {
 		t.Error("wp (WingetPackageClient) should be set after Configure")

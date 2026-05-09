@@ -58,7 +58,6 @@ func NewWindowsScheduledTaskResource() resource.Resource { return &windowsSchedu
 
 // windowsScheduledTaskResource is the TPF resource for windows_scheduled_task.
 type windowsScheduledTaskResource struct {
-	client   *winclient.Client
 	stClient winclient.ScheduledTaskClient
 }
 
@@ -638,7 +637,6 @@ func (r *windowsScheduledTaskResource) Configure(_ context.Context, req resource
 			fmt.Sprintf("Expected *winclient.Client, got %T", req.ProviderData))
 		return
 	}
-	r.client = c
 	r.stClient = winclient.NewScheduledTaskClient(c)
 }
 

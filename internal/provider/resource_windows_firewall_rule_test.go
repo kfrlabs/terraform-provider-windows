@@ -807,9 +807,6 @@ func TestFirewallRuleResource_Configure_HappyPath(t *testing.T) {
 	if r.fw == nil {
 		t.Error("fw should be set after Configure")
 	}
-	if r.client != c {
-		t.Error("client should be stored")
-	}
 }
 
 // ---------------------------------------------------------------------------

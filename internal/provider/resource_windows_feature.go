@@ -47,8 +47,7 @@ func NewWindowsFeatureResource() resource.Resource { return &windowsFeatureResou
 
 // windowsFeatureResource is the TPF resource type for windows_feature.
 type windowsFeatureResource struct {
-	client *winclient.Client
-	feat   winclient.WindowsFeatureClient
+	feat winclient.WindowsFeatureClient
 }
 
 // windowsFeatureModel is the Terraform state/plan model for windows_feature.
@@ -184,7 +183,6 @@ func (r *windowsFeatureResource) Configure(_ context.Context, req resource.Confi
 		)
 		return
 	}
-	r.client = c
 	r.feat = winclient.NewFeatureClient(c)
 }
 
