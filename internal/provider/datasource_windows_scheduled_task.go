@@ -287,7 +287,6 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 	return m, allDiags
 }
 
-
 // windowsScheduledTaskDSPrincipalModel is the data source variant (no password).
 type windowsScheduledTaskDSPrincipalModel struct {
 	UserID    types.String `tfsdk:"user_id"`
