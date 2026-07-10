@@ -209,7 +209,7 @@ func (v scheduledTaskNameValidator) ValidateString(_ context.Context, req valida
 // spaces, and punctuation — matching the actual Task Scheduler folder name rules.
 // Uses a double-quoted Go string: each `\\\\` produces one literal backslash in the
 // compiled regex pattern, keeping the escape intent transparent.
-var scheduledTaskPathRe = regexp.MustCompile("^\\\\([^\\\\]+\\\\)*$")
+var scheduledTaskPathRe = regexp.MustCompile(`^\\([^\\]+\\)*$`)
 
 type scheduledTaskPathValidator struct{}
 
