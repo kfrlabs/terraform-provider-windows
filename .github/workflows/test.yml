@@ -4,8 +4,9 @@
 # Windows host reachable over WinRM and a valid set of credentials. They
 # are expected to run on a self-hosted runner or against a dedicated lab.
 #
-# Matrix: keep at least one Go minor version trailing the toolchain pinned
-# in go.mod so that consumers vendoring older toolchains still build cleanly.
+# Matrix: track the Go floor declared in go.mod (currently 1.25). Older
+# minors are not buildable under GOTOOLCHAIN=local once the go directive
+# moves past them, so keep the matrix at or above that floor.
 
 name: test
 
@@ -29,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ["1.22", "1.23"]
+        go: ["1.25"]
     steps:
       - uses: actions/checkout@v6
 
