@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_scheduled_task`: folder creation called a non-existent COM method
+  `CreateSubFolder` on `ITaskFolder`, so creating any task in a non-root folder
+  failed with `[System.__ComObject] does not contain a method named
+  'CreateSubFolder'`. `Ensure-TaskFolder` now uses the correct
+  `ITaskFolder::CreateFolder`, which builds the entire nested folder tree in a
+  single call; the creation stays idempotent via a `GetFolder` guard. This also
+  unblocks `TestAccWindowsScheduledTaskDataSource_Basic`/`_NotFound`, which share
+  the folder fixture. Mock-based unit tests could not catch this COM-runtime
+  bug; a script-level regression guard now pins the correct method. (#54)
 - `windows_local_group_member`: fixed an unterminated PowerShell regex
   literal (`'^-+`) in the member-listing script. The missing closing
   quote swallowed the rest of the script, so every read failed with a
