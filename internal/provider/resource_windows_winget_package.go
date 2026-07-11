@@ -135,7 +135,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(1, 255),
 					stringvalidator.RegexMatches(
-						regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9._+\\-]*$"),
+						regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+\-]*$`),
 						"must start with an alphanumeric character and contain only "+
 							"alphanumeric characters, dots (.), underscores (_), "+
 							"plus signs (+), and hyphens (-)",
@@ -155,7 +155,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(1, 128),
 					stringvalidator.RegexMatches(
-						regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9._+\\-]*$"),
+						regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+\-]*$`),
 						"must start with an alphanumeric character and contain only "+
 							"alphanumeric characters, dots (.), underscores (_), "+
 							"plus signs (+), and hyphens (-)",

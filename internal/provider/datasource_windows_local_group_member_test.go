@@ -128,7 +128,7 @@ func TestLocalGroupMemberDSConfigure_OK(t *testing.T) {
 // property enforced by the var block in the source file, but we double-check
 // the interface at runtime.
 func TestLocalGroupMemberDS_IsDataSourceOnly(t *testing.T) {
-	ds := NewWindowsLocalGroupMemberDataSource()
+	var ds any = NewWindowsLocalGroupMemberDataSource()
 	if _, ok := ds.(datasource.DataSource); !ok {
 		t.Error("expected datasource.DataSource implementation")
 	}

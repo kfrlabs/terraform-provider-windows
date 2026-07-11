@@ -88,7 +88,7 @@ func (r *windowsRegistryValueResource) ConfigValidators(_ context.Context) []res
 
 // registryPathRegex validates path format (EC-6c/d/e).
 // Regex: ^[^\\\x00]+(\\[^\\\x00]+)*$
-var registryPathRegex = regexp.MustCompile("^[^\\\\\\x00]+(\\\\[^\\\\\\x00]+)*$")
+var registryPathRegex = regexp.MustCompile(`^[^\\\x00]+(\\[^\\\x00]+)*$`)
 
 // knownHiveAbbreviations used to detect hive prefix in path (EC-6b).
 var knownHiveAbbreviations = []string{
@@ -149,7 +149,7 @@ func windowsRegistryValueSchemaDefinition() schema.Schema {
 				},
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
-						regexp.MustCompile("^[^\\x00]*$"),
+						regexp.MustCompile(`^[^\x00]*$`),
 						"value name must not contain NUL bytes",
 					),
 				},

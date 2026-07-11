@@ -403,7 +403,7 @@ func TestNewWindowsServiceResource_NotNil(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestNameRegex(t *testing.T) {
-	re := regexp.MustCompile("^[A-Za-z0-9_\\-\\.]{1,256}$")
+	re := regexp.MustCompile(`^[A-Za-z0-9_\-\.]{1,256}$`)
 	ok := []string{"MyService", "my-svc", "my.svc", "a", "svc_01"}
 	ko := []string{"", "a b", "slash/name", "percent%", strings.Repeat("a", 257)}
 	for _, n := range ok {

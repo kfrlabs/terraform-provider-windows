@@ -173,7 +173,7 @@ func TestAddLPDiag_StructuredErrorWithContext(t *testing.T) {
 	algoIdx := strings.Index(detail, "algo=")
 	hostIdx := strings.Index(detail, "host=")
 	opIdx := strings.Index(detail, "operation=")
-	if algoIdx < 0 || hostIdx < 0 || opIdx < 0 || !(algoIdx < hostIdx && hostIdx < opIdx) {
+	if algoIdx < 0 || hostIdx < 0 || opIdx < 0 || algoIdx >= hostIdx || hostIdx >= opIdx {
 		t.Errorf("context not sorted alphabetically: algo=%d host=%d operation=%d in %q", algoIdx, hostIdx, opIdx, detail)
 	}
 }

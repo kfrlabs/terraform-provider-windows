@@ -517,11 +517,7 @@ func stPayloadToState(p *stTaskPayload) *ScheduledTaskState {
 	}
 	s.Actions = make([]ScheduledTaskActionState, len(p.Actions))
 	for i, a := range p.Actions {
-		s.Actions[i] = ScheduledTaskActionState{
-			Execute:          a.Execute,
-			Arguments:        a.Arguments,
-			WorkingDirectory: a.WorkingDirectory,
-		}
+		s.Actions[i] = ScheduledTaskActionState(a)
 	}
 	s.Triggers = make([]ScheduledTaskTriggerState, len(p.Triggers))
 	for i, t := range p.Triggers {
