@@ -12,7 +12,7 @@ All common tasks go through the `GNUmakefile` (`Makefile` is an identical copy):
 | --- | --- |
 | `make build` | `go install ./...` |
 | `make test` | Short unit tests: `go test -short ./... -timeout 30s` |
-| `make testacc` | Acceptance tests: `TF_ACC=1 go test ./... -v -timeout 120m` |
+| `make testacc` | Acceptance tests: `TF_ACC=1 go test -tags acceptance ./... -v -timeout 120m` |
 | `make lint` | `golangci-lint run` |
 | `make fmt` | `gofmt -s -w .` + `terraform fmt -recursive examples/` |
 | `make docs` | Regenerate `docs/` via `tfplugindocs` (`go generate ./...`) |
@@ -23,7 +23,7 @@ go test ./internal/provider/ -run TestWindowsFeatureResource -v
 go test ./internal/winclient/ -run TestFeatureClient -v
 ```
 
-Acceptance tests require `TF_ACC=1` plus `WINDOWS_HOST`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD` and a reachable Windows target; without them they skip. Unit tests never touch WinRM.
+Acceptance tests require `TF_ACC=1` plus `WINDOWS_HOST`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD` and a reachable Windows target; without them they skip. They also live behind the `acceptance` build tag (`-tags acceptance`) and share `testAccProtoV6ProviderFactories` from `internal/provider/acc_test_helper.go`; the default `make test` build never compiles them. The `testacc-windows` workflow (`.github/workflows/testacc-windows.yml`, `workflow_dispatch`) runs them on a GitHub-hosted `windows-latest` runner that targets its own local WinRM. Unit tests never touch WinRM.
 
 Enabled linters (`.golangci.yml`): `errcheck`, `gofmt` (simplify), `gosec`, `govet`, `ineffassign`, `staticcheck`, `unused`. `_test.go` files are excluded from `errcheck`/`gosec`.
 

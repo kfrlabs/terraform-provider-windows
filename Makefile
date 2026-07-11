@@ -18,7 +18,7 @@ test:
 	go test -short ./... -timeout 30s
 
 testacc:
-	TF_ACC=1 go test ./... -v -timeout 120m
+	TF_ACC=1 go test -tags acceptance ./... -v -timeout 120m
 
 lint:
 	golangci-lint run
