@@ -1,0 +1,108 @@
+# On-demand acceptance (functional) tests against a GitHub-hosted Windows runner.
+#
+# Unlike test.yml (build/vet/unit/lint on ubuntu), this workflow runs the real
+# acceptance suite (TF_ACC=1, build tag `acceptance`) that drives the provider
+# over WinRM. It needs a live Windows target, so it runs on `windows-latest`
+# and turns the runner INTO its own target: it provisions a dedicated local
+# admin, enables WinRM, and points WINDOWS_HOST at the runner itself. Fully
+# ephemeral, no external host, no repository secrets.
+#
+# Manual only (workflow_dispatch). Coverage today: the data-source suites and
+# the windows_scheduled_task resource actually run; the remaining resource
+# acceptance tests are still skeletons and self-skip.
+
+name: testacc-windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_filter:
+        description: "Value passed to `go test -run` (regexp). Default runs the whole acceptance suite."
+        required: false
+        default: ".*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testacc-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: acceptance (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          # Canonical toolchain: track the version pinned in go.mod.
+          go-version-file: go.mod
+          cache: true
+
+      # Provision the runner as its own WinRM target. A dedicated local admin
+      # with a random password is used instead of the runner account so no
+      # ambient credential is exposed. The provider defaults to NTLM/Negotiate
+      # over HTTP:5985; Basic+AllowUnencrypted is enabled too as a fallback
+      # (harmless on an ephemeral, non-exposed loopback target).
+      - name: Configure local WinRM target
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $user = 'tfacc'
+          # Alphanumeric core (avoids chars that would confuse $GITHUB_ENV
+          # parsing) plus a fixed suffix guaranteeing password complexity.
+          $chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+          $core  = -join (1..20 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+          $pass  = "$core-aB3z"
+          Write-Host "::add-mask::$pass"
+          $secure = ConvertTo-SecureString $pass -AsPlainText -Force
+
+          if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $user -Password $secure
+          } else {
+            New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -AccountNeverExpires | Out-Null
+          }
+          Add-LocalGroupMember -Group 'Administrators' -Member $user -ErrorAction SilentlyContinue
+
+          Enable-PSRemoting -Force -SkipNetworkProfileCheck | Out-Null
+          Set-Item -Path WSMan:\localhost\Service\Auth\Basic     -Value $true
+          Set-Item -Path WSMan:\localhost\Service\Auth\Negotiate -Value $true
+          Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
+
+          # Let a local admin present a full token over the network (UAC token
+          # filtering otherwise strips admin rights), and relax the NTLM
+          # loopback check so Negotiate to the machine name succeeds.
+          New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' `
+            -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
+            -Name DisableLoopbackCheck -Value 1 -PropertyType DWord -Force | Out-Null
+
+          Restart-Service WinRM
+
+          # Target the machine name rather than 127.0.0.1 to avoid NTLM
+          # loopback quirks. Hand credentials to later steps via GITHUB_ENV.
+          "WINDOWS_HOST=$env:COMPUTERNAME" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WINDOWS_USERNAME=$user"         | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WINDOWS_PASSWORD=$pass"         | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: WinRM smoke test
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $secure = ConvertTo-SecureString $env:WINDOWS_PASSWORD -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential(
+            "$env:WINDOWS_HOST\$env:WINDOWS_USERNAME", $secure)
+          $out = Invoke-Command -ComputerName $env:WINDOWS_HOST -Credential $cred `
+            -Authentication Negotiate -ScriptBlock { $env:COMPUTERNAME }
+          Write-Host "WinRM reachable, remote hostname: $out"
+
+      - name: go test (acceptance)
+        env:
+          TF_ACC: "1"
+        run: |
+          go test -tags acceptance ./internal/provider/ -v -timeout 120m -run "${{ inputs.run_filter }}"
