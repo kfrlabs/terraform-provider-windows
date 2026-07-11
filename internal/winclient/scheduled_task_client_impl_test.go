@@ -1119,6 +1119,15 @@ func TestSTCreate_RecursiveFolderCreation(t *testing.T) {
 	if !strings.Contains(capturedScript, "Ensure-TaskFolder") {
 		t.Errorf("expected Ensure-TaskFolder call in script, got: %s", capturedScript[:min(500, len(capturedScript))])
 	}
+	// Regression guard for #54: ITaskFolder exposes CreateFolder, not the
+	// non-existent CreateSubFolder. The mock cannot exercise the COM call, so
+	// assert on the emitted script to keep the wrong method from creeping back.
+	if !strings.Contains(capturedScript, "CreateFolder(") {
+		t.Errorf("expected ITaskFolder::CreateFolder call in script")
+	}
+	if strings.Contains(capturedScript, "CreateSubFolder") {
+		t.Errorf("script uses non-existent COM method CreateSubFolder (#54)")
+	}
 }
 
 func TestSTCreate_RootPath_NoDoubleBackslash(t *testing.T) {

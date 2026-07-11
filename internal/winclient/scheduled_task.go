@@ -262,18 +262,11 @@ function Ensure-TaskFolder([string]$FolderPath) {
   try {
     $svc = New-Object -ComObject 'Schedule.Service'
     $svc.Connect()
-    $segments = ($FolderPath.Trim('\') -split '\\') | Where-Object { $_ -ne '' }
-    $curPath = ''
-    foreach ($seg in $segments) {
-      $curPath = $curPath + '\' + $seg
-      $folder = $null
-      try { $folder = $svc.GetFolder($curPath) } catch {}
-      if ($null -eq $folder) {
-        $parentPath = if ($curPath.IndexOf('\', 1) -lt 0) { '\' } else { $curPath.Substring(0, $curPath.LastIndexOf('\')) }
-        $parent = $svc.GetFolder($parentPath)
-        $parent.CreateSubFolder($seg, '') | Out-Null
-      }
-    }
+    # ITaskFolder::CreateFolder builds the entire folder tree in one call when
+    # given a multi-level path, so no segment-by-segment loop is needed. Guard
+    # with GetFolder first to stay idempotent when the folder already exists.
+    try { $svc.GetFolder($FolderPath) | Out-Null }
+    catch { $svc.GetFolder('\').CreateFolder($FolderPath, $null) | Out-Null }
   } catch {
     Emit-Err 'unknown' ('Folder creation failed: ' + $_.Exception.Message) @{ path = $FolderPath }
     exit 0
