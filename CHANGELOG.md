@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_local_group_member`: fixed an unterminated PowerShell regex
+  literal (`'^-+`) in the member-listing script. The missing closing
+  quote swallowed the rest of the script, so every read failed with a
+  `WinRM transport error` (`Unexpected token 'The' ...`). Any read of the
+  resource or data source was inoperative on the host; unit tests (mocks)
+  did not catch it. Now `'^-+'` is properly closed. (#53)
 - `windows_feature` data-source acceptance test: `TestAccWindowsFeatureDataSource_NotFound`
   had `ExpectError: nil` while the data source deliberately raises a diagnostic
   for a missing feature, so the framework treated the expected error as a
