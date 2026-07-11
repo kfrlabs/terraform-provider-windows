@@ -1,40 +1,29 @@
 //go:build acceptance
 
-// Package provider — acceptance-test skeletons for windows_local_group_member.
+// Package provider — acceptance tests for windows_local_group_member.
 //
-// Requires (when promoted from skeleton to live test):
+// Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows target (>=2016/Win10) with WinRM enabled and local
-//     Administrator rights over WinRM.
-//   - A pre-existing local user account: WINDOWS_TEST_LOCAL_USER (default: "testlgmuser")
-//   - Optionally WINDOWS_TEST_DOMAIN_USER: "DOMAIN\user" for domain-user tests.
+//   - A Windows target with WinRM enabled and Local Administrator rights.
 //
-// Acceptance-test identifiers:
-//
-//	TestAccWindowsLocalGroupMember_Basic        Create+Read+Delete via Administrators
-//	TestAccWindowsLocalGroupMember_ImportBySID  Import by group SID / member SID
-//	TestAccWindowsLocalGroupMember_ImportByName Import by group name / member name
-//	TestAccWindowsLocalGroupMember_GroupBySID   group attribute = SID string (EC-9)
-//	TestAccWindowsLocalGroupMember_MemberByUPN  member attribute = user@domain (UPN)
-//	TestAccWindowsLocalGroupMember_Duplicate    EC-1: duplicate membership ExpectError
-//	TestAccWindowsLocalGroupMember_Drift        EC-4: out-of-band delete + re-apply
-//
-// All tests skip immediately when TF_ACC is not set so the CI unit-test
-// pass remains green without a Windows lab.
+// Each test provisions its own local group and local user, then adds the user
+// to the group, so it is fully self-contained and safe to run repeatedly.
+// All member attributes are ForceNew (there is no in-place update path).
 package provider
 
 import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
-// testAccLGMPreCheck centralises the env-var guard for the local_group_member suite.
-func testAccLGMPreCheck(t *testing.T) {
+func testAccLocalGroupMemberPreCheck(t *testing.T) {
 	t.Helper()
 	if os.Getenv("TF_ACC") == "" {
-		t.Skip("TF_ACC not set; skipping acceptance test (requires live Windows host)")
+		t.Skip("TF_ACC not set; skipping acceptance test")
 	}
 	for _, v := range []string{"WINDOWS_HOST", "WINDOWS_USERNAME", "WINDOWS_PASSWORD"} {
 		if os.Getenv(v) == "" {
@@ -43,274 +32,102 @@ func testAccLGMPreCheck(t *testing.T) {
 	}
 }
 
-// lgmTestLocalUser returns the local user account name for acceptance tests.
-//
-//nolint:unused // called from commented skeleton blocks; will be activated when live tests are promoted
-func lgmTestLocalUser() string {
-	if u := os.Getenv("WINDOWS_TEST_LOCAL_USER"); u != "" {
-		return u
-	}
-	return "testlgmuser"
+// lgmFixture returns HCL that provisions a group + user and adds the user to
+// the group. suffix keeps names unique on shared lab hosts.
+func lgmFixture(suffix string) string {
+	return fmt.Sprintf(`
+resource "windows_local_group" "g" {
+  name = "grp-lgm-%[1]s"
 }
 
-// lgmTestDomainUser returns the domain user for UPN/domain tests (may be empty).
-func lgmTestDomainUser() string {
-	return os.Getenv("WINDOWS_TEST_DOMAIN_USER")
+resource "windows_local_user" "u" {
+  name     = "usr-lgm-%[1]s"
+  password = "P@ssw0rd-Acc-Lgm-%[1]s!"
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance tests (skeletons)
-// ---------------------------------------------------------------------------
+resource "windows_local_group_member" "m" {
+  group  = windows_local_group.g.name
+  member = windows_local_user.u.name
+}
+`, suffix)
+}
 
-// TestAccWindowsLocalGroupMember_Basic verifies the minimal lifecycle:
-//  1. Apply adds local user to Administrators group.
-//  2. Plan after apply is empty (idempotency).
-//  3. Destroy removes the membership.
-//  4. CheckDestroy confirms membership is gone.
-//
-// Alignment: EC-9 (BUILTIN group support), EC-12 (non-authoritative).
+// TestAccWindowsLocalGroupMember_Basic — add a local user to a local group,
+// verify SIDs are resolved, and confirm idempotency.
 func TestAccWindowsLocalGroupMember_Basic(t *testing.T) {
-	testAccLGMPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
-	/*
-		resource.Test(t, resource.TestCase{
-			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			CheckDestroy:             testAccCheckLGMDestroyed("S-1-5-32-544", lgmTestLocalUser()),
-			Steps: []resource.TestStep{
-				{
-					Config: testAccLGMConfigBasic(lgmTestLocalUser()),
-					Check: resource.ComposeTestCheckFunc(
-						resource.TestCheckResourceAttr("windows_local_group_member.test", "group", "Administrators"),
-						resource.TestCheckResourceAttr("windows_local_group_member.test", "member", lgmTestLocalUser()),
-						resource.TestCheckResourceAttrSet("windows_local_group_member.test", "group_sid"),
-						resource.TestCheckResourceAttrSet("windows_local_group_member.test", "member_sid"),
-						resource.TestMatchResourceAttr("windows_local_group_member.test", "group_sid",
-							regexp.MustCompile(`^S-1-5-32-544)),
-						resource.TestMatchResourceAttr("windows_local_group_member.test", "member_sid",
-							regexp.MustCompile(`^S-1-5-21-`)),
-						resource.TestCheckResourceAttr("windows_local_group_member.test", "member_principal_source", "Local"),
-					),
-				},
+	testAccLocalGroupMemberPreCheck(t)
+
+	cfg := lgmFixture(groupSuffix())
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_local_group_member.m", "group", "grp-lgm-"+groupSuffix()),
+					resource.TestCheckResourceAttr("windows_local_group_member.m", "member", "usr-lgm-"+groupSuffix()),
+					resource.TestCheckResourceAttrSet("windows_local_group_member.m", "group_sid"),
+					resource.TestCheckResourceAttrSet("windows_local_group_member.m", "member_sid"),
+					resource.TestCheckResourceAttrSet("windows_local_group_member.m", "member_principal_source"),
+					// id is the composite "<group_sid>/<member_sid>".
+					resource.TestCheckResourceAttrSet("windows_local_group_member.m", "id"),
+				),
 			},
-		})
-	*/
+			{
+				Config:   cfg,
+				PlanOnly: true,
+			},
+		},
+	})
 }
 
-// TestAccWindowsLocalGroupMember_ImportBySID verifies terraform import using
-// the composite SID/SID import ID format (ADR-LGM-1).
-func TestAccWindowsLocalGroupMember_ImportBySID(t *testing.T) {
-	testAccLGMPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
-	/*
-		resource.Test(t, resource.TestCase{
-			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{
-				{
-					Config: testAccLGMConfigBasic(lgmTestLocalUser()),
-				},
-				{
-					ResourceName: "windows_local_group_member.test",
-					ImportState:  true,
-					ImportStateIdFunc: func(s *terraform.State) (string, error) {
-						rs := s.RootModule().Resources["windows_local_group_member.test"]
-						if rs == nil {
-							return "", fmt.Errorf("resource not found in state")
-						}
-						return rs.Primary.Attributes["group_sid"] + "/" + rs.Primary.Attributes["member_sid"], nil
-					},
-					ImportStateVerify:       true,
-					ImportStateVerifyIgnore: []string{"member"},
-				},
-			},
-		})
-	*/
+// TestAccWindowsLocalGroupMember_BuiltinGroup — adding a user to a BUILTIN
+// group (Administrators) is supported (no BUILTIN-delete guard here).
+func TestAccWindowsLocalGroupMember_BuiltinGroup(t *testing.T) {
+	testAccLocalGroupMemberPreCheck(t)
+
+	suffix := groupSuffix()
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "windows_local_user" "u" {
+  name     = "usr-lgm-adm-%[1]s"
+  password = "P@ssw0rd-Acc-Adm-%[1]s!"
 }
 
-// TestAccWindowsLocalGroupMember_ImportByName verifies terraform import using
-// the human-readable "GroupName/MemberName" import ID format.
-func TestAccWindowsLocalGroupMember_ImportByName(t *testing.T) {
-	testAccLGMPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
-	/*
-		resource.Test(t, resource.TestCase{
-			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{
-				{
-					Config: testAccLGMConfigBasic(lgmTestLocalUser()),
-				},
-				{
-					ResourceName:            "windows_local_group_member.test",
-					ImportState:             true,
-					ImportStateId:           fmt.Sprintf("Administrators/%s", lgmTestLocalUser()),
-					ImportStateVerify:       true,
-					ImportStateVerifyIgnore: []string{"member"},
-				},
-			},
-		})
-	*/
-}
-
-// TestAccWindowsLocalGroupMember_GroupBySID verifies that the group attribute
-// accepts a SID string (EC-9: BUILTIN group by SID).
-func TestAccWindowsLocalGroupMember_GroupBySID(t *testing.T) {
-	testAccLGMPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
-	/*
-		resource.Test(t, resource.TestCase{
-			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{
-				{
-					Config: testAccLGMConfigGroupBySID(lgmTestLocalUser()),
-					Check: resource.ComposeTestCheckFunc(
-						resource.TestCheckResourceAttr("windows_local_group_member.bysid",
-							"group_sid", "S-1-5-32-544"),
-					),
-				},
-			},
-		})
-	*/
-}
-
-// TestAccWindowsLocalGroupMember_MemberByUPN verifies that the member attribute
-// accepts a UPN-format identity (user@domain.tld).
-func TestAccWindowsLocalGroupMember_MemberByUPN(t *testing.T) {
-	testAccLGMPreCheck(t)
-	if lgmTestDomainUser() == "" {
-		t.Skip("WINDOWS_TEST_DOMAIN_USER not set; skipping UPN test")
-	}
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
-	/*
-		resource.Test(t, resource.TestCase{
-			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{
-				{
-					Config: testAccLGMConfigMemberByUPN(lgmTestDomainUser()),
-					Check: resource.ComposeTestCheckFunc(
-						resource.TestCheckResourceAttr("windows_local_group_member.upn",
-							"member", lgmTestDomainUser()),
-						resource.TestCheckResourceAttr("windows_local_group_member.upn",
-							"member_principal_source", "ActiveDirectory"),
-					),
-				},
-			},
-		})
-	*/
-}
-
-// TestAccWindowsLocalGroupMember_Duplicate verifies EC-1: attempting to create
-// a duplicate membership produces a hard error with an import hint.
-func TestAccWindowsLocalGroupMember_Duplicate(t *testing.T) {
-	testAccLGMPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
-	/*
-		resource.Test(t, resource.TestCase{
-			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{
-				{
-					Config: testAccLGMConfigBasic(lgmTestLocalUser()),
-				},
-				{
-					Config:      testAccLGMConfigDuplicate(lgmTestLocalUser()),
-					ExpectError: regexp.MustCompile(`member_already_exists|already a member|EC-1`),
-				},
-			},
-		})
-	*/
-}
-
-// TestAccWindowsLocalGroupMember_Drift verifies EC-4: when the membership is
-// deleted outside Terraform, the next plan detects drift and re-creates it on
-// apply.
-func TestAccWindowsLocalGroupMember_Drift(t *testing.T) {
-	testAccLGMPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target")
-	/*
-		resource.Test(t, resource.TestCase{
-			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{
-				{
-					Config: testAccLGMConfigBasic(lgmTestLocalUser()),
-					Check: resource.ComposeTestCheckFunc(
-						resource.TestCheckResourceAttrSet("windows_local_group_member.test", "member_sid"),
-					),
-				},
-				{
-					// After manually removing membership out-of-band, the RefreshState
-					// step verifies drift is detected (state should report resource absent).
-					RefreshState:       true,
-					ExpectNonEmptyPlan: true,
-				},
-			},
-		})
-	*/
-}
-
-// ---------------------------------------------------------------------------
-// Config template helpers (used by acceptance tests above when promoted)
-// ---------------------------------------------------------------------------
-
-// testAccLGMConfigBasic returns a minimal config adding a local user to
-// Administrators.
-//
-//nolint:unused
-func testAccLGMConfigBasic(localUser string) string {
-	return fmt.Sprintf(`
-resource "windows_local_group_member" "test" {
+resource "windows_local_group_member" "adm" {
   group  = "Administrators"
-  member = %q
+  member = windows_local_user.u.name
 }
-`, localUser)
-}
-
-// testAccLGMConfigGroupBySID returns a config using the BUILTIN SID for the group.
-//
-//nolint:unused
-func testAccLGMConfigGroupBySID(localUser string) string {
-	return fmt.Sprintf(`
-resource "windows_local_group_member" "bysid" {
-  group  = "S-1-5-32-544"
-  member = %q
-}
-`, localUser)
+`, suffix),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_local_group_member.adm", "group", "Administrators"),
+					resource.TestCheckResourceAttrSet("windows_local_group_member.adm", "member_sid"),
+				),
+			},
+		},
+	})
 }
 
-// testAccLGMConfigMemberByUPN returns a config using a UPN as member identity.
-//
-//nolint:unused
-func testAccLGMConfigMemberByUPN(upnUser string) string {
-	return fmt.Sprintf(`
-resource "windows_local_group_member" "upn" {
-  group  = "Administrators"
-  member = %q
-}
-`, upnUser)
-}
+// TestAccWindowsLocalGroupMember_Import — import by "<group>/<member>".
+func TestAccWindowsLocalGroupMember_Import(t *testing.T) {
+	testAccLocalGroupMemberPreCheck(t)
 
-// testAccLGMConfigDuplicate returns two resource blocks for the same (group, member)
-// pair, which should trigger EC-1.
-//
-//nolint:unused
-func testAccLGMConfigDuplicate(localUser string) string {
-	return fmt.Sprintf(`
-resource "windows_local_group_member" "test" {
-  group  = "Administrators"
-  member = %q
-}
-
-resource "windows_local_group_member" "dup" {
-  group      = "Administrators"
-  member     = %q
-  depends_on = [windows_local_group_member.test]
-}
-`, localUser, localUser)
-}
-
-// testAccCheckLGMDestroyed is a placeholder CheckDestroy function for
-// acceptance tests. Real implementation would use winclient to confirm absence.
-//
-//nolint:unused
-func testAccCheckLGMDestroyed(_ string, _ string) func(interface{}) error {
-	return func(_ interface{}) error {
-		return nil // replaced with real check when promoting from skeleton
-	}
+	suffix := groupSuffix()
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: lgmFixture(suffix),
+			},
+			{
+				ResourceName:      "windows_local_group_member.m",
+				ImportState:       true,
+				ImportStateId:     fmt.Sprintf("grp-lgm-%[1]s/usr-lgm-%[1]s", suffix),
+				ImportStateVerify: false, // member is re-resolved to a SID-backed form on import
+			},
+		},
+	})
 }

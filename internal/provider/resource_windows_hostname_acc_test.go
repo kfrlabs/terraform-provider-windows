@@ -1,33 +1,27 @@
 //go:build acceptance
 
-// Package provider — acceptance-test skeleton for windows_hostname.
+// Package provider — acceptance tests for windows_hostname.
 //
 // Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
 //   - A workgroup (NOT domain-joined) Windows target with WinRM and Local
-//     Administrator rights
-//   - WINDOWS_HOSTNAME_TARGET (optional): NetBIOS name to rename to;
-//     defaults to "TFTEST-RENAME"
+//     Administrator rights.
 //
-// Coverage outline (skeleton; promoted to full resource.TestCase suites once
-// terraform-plugin-testing is added to the module):
-//
-//   - Create + Read           windows_hostname.this name=<target>, current_name + pending_name
-//   - Read drift              an out-of-band Rename-Computer is detected at next plan
-//   - Update in-place         changing `name` issues Rename-Computer (no replace)
-//   - Update with ForceNew    n/a — v1 has no ForceNew attributes; renames are in-place
-//   - Import                  `terraform import windows_hostname.this <machine_guid>`
-//   - Delete                  destroy is a no-op (EC-7); CheckDestroy verifies the
-//     host still answers and current_name is unchanged
-//
-// Every test SKIPS via testAccHostnamePreCheck when prerequisites are missing,
-// so CI without a Windows lab still produces a green build.
+// SAFETY: applying windows_hostname renames the machine (Rename-Computer) and
+// requires a reboot to take effect. That is destructive on a shared/lab host,
+// so the create/update/drift lifecycle scenarios below remain SKELETONS gated
+// on WINDOWS_HOSTNAME_ALLOW_RENAME=1 and are left unimplemented. Only the
+// plan-time schema-validation tests are executed here — they never mutate the
+// host because the error is raised before any WinRM call.
 package provider
 
 import (
 	"os"
+	"regexp"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 // testAccHostnamePreCheck centralises the env-var guard for the hostname suite.
@@ -43,61 +37,104 @@ func testAccHostnamePreCheck(t *testing.T) {
 	}
 }
 
-// TestAccWindowsHostname_Basic is the baseline create+read+destroy scenario.
-// Verifies that Rename-Computer queues a pending rename and that the
-// resource surfaces current_name / pending_name / reboot_pending.
+// hostnameConfig renders a minimal windows_hostname resource with the given name.
+func hostnameConfig(name string) string {
+	return `
+resource "windows_hostname" "this" {
+  name = "` + name + `"
+}
+`
+}
+
+// --- Non-destructive plan-time validation (EC-1) -----------------------------
+// These assert that invalid NetBIOS names are rejected before any rename is
+// attempted, so they are safe to run against any host.
+
+// TestAccWindowsHostname_InvalidTooLong rejects names longer than 15 chars.
+func TestAccWindowsHostname_InvalidTooLong(t *testing.T) {
+	testAccHostnamePreCheck(t)
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      hostnameConfig("THIS-NAME-IS-WAY-TOO-LONG"),
+				ExpectError: regexp.MustCompile(`(?i)length|15`),
+				PlanOnly:    true,
+			},
+		},
+	})
+}
+
+// TestAccWindowsHostname_InvalidNumeric rejects purely numeric names.
+func TestAccWindowsHostname_InvalidNumeric(t *testing.T) {
+	testAccHostnamePreCheck(t)
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      hostnameConfig("123456"),
+				ExpectError: regexp.MustCompile(`(?i)numeric|NetBIOS`),
+				PlanOnly:    true,
+			},
+		},
+	})
+}
+
+// TestAccWindowsHostname_InvalidLeadingHyphen rejects names starting with "-".
+func TestAccWindowsHostname_InvalidLeadingHyphen(t *testing.T) {
+	testAccHostnamePreCheck(t)
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      hostnameConfig("-badname"),
+				ExpectError: regexp.MustCompile(`(?i)NetBIOS|hyphen|match`),
+				PlanOnly:    true,
+			},
+		},
+	})
+}
+
+// --- Destructive lifecycle scenarios (SKELETON) ------------------------------
+// Implementing these renames the machine and needs a reboot; they are kept as
+// skeletons and only run when an operator explicitly opts in with a disposable
+// host via WINDOWS_HOSTNAME_ALLOW_RENAME=1.
+
+func skipUnlessRenameAllowed(t *testing.T) {
+	t.Helper()
+	if os.Getenv("WINDOWS_HOSTNAME_ALLOW_RENAME") != "1" {
+		t.Skip("WINDOWS_HOSTNAME_ALLOW_RENAME != 1 — refusing to rename the host")
+	}
+}
+
+// TestAccWindowsHostname_Basic — create+read: Rename-Computer queues a pending
+// rename and surfaces current_name / pending_name / reboot_pending.
 func TestAccWindowsHostname_Basic(t *testing.T) {
 	testAccHostnamePreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live workgroup Windows host")
+	skipUnlessRenameAllowed(t)
+	t.Skip("SKELETON: destructive rename — implement against a disposable host")
 }
 
-// TestAccWindowsHostname_UpdateInPlace asserts that changing `name` triggers
-// an in-place Update (no destroy-recreate), and that machine_id stays stable.
+// TestAccWindowsHostname_UpdateInPlace — changing name issues an in-place
+// Rename-Computer (no destroy-recreate); machine_id stays stable.
 func TestAccWindowsHostname_UpdateInPlace(t *testing.T) {
 	testAccHostnamePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsHostname_Basic")
+	skipUnlessRenameAllowed(t)
+	t.Skip("SKELETON: destructive rename — see TestAccWindowsHostname_Basic")
 }
 
-// TestAccWindowsHostname_ToggleForce asserts that toggling `force` alone, when
-// already at the desired name, does NOT trigger a Rename-Computer call (EC-2 /
-// EC-8). The Update plan should be empty after the first apply.
-func TestAccWindowsHostname_ToggleForce(t *testing.T) {
-	testAccHostnamePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsHostname_Basic")
-}
-
-// TestAccWindowsHostname_Import covers `terraform import windows_hostname.this
-// <machine_guid>` followed by a Read that backfills current_name / pending_name.
-func TestAccWindowsHostname_Import(t *testing.T) {
-	testAccHostnamePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsHostname_Basic")
-}
-
-// TestAccWindowsHostname_DriftDetection performs an out-of-band rename via
-// Rename-Computer on the host and verifies the next `terraform plan` surfaces
-// the drift (pending_name changed) so an apply restores `name`.
+// TestAccWindowsHostname_DriftDetection — an out-of-band Rename-Computer is
+// detected at the next plan (pending_name changed).
 func TestAccWindowsHostname_DriftDetection(t *testing.T) {
 	testAccHostnamePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsHostname_Basic")
+	skipUnlessRenameAllowed(t)
+	t.Skip("SKELETON: destructive rename — see TestAccWindowsHostname_Basic")
 }
 
-// TestAccWindowsHostname_DeleteIsNoOp verifies destroy removes the resource
-// from state but does NOT change current_name on the host (EC-7).
+// TestAccWindowsHostname_DeleteIsNoOp — destroy removes the resource from state
+// but does NOT change current_name on the host (EC-7).
 func TestAccWindowsHostname_DeleteIsNoOp(t *testing.T) {
 	testAccHostnamePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsHostname_Basic")
-}
-
-// TestAccWindowsHostname_DomainJoinedRejected asserts that a domain-joined
-// host is rejected at runtime (EC-5) with HostnameErrorDomainJoined.
-func TestAccWindowsHostname_DomainJoinedRejected(t *testing.T) {
-	testAccHostnamePreCheck(t)
-	t.Skip("SKELETON: requires a domain-joined target; see TestAccWindowsHostname_Basic")
-}
-
-// TestAccWindowsHostname_InvalidName asserts schema-level validation (EC-1):
-// purely numeric / leading-hyphen / >15-char names are rejected at plan time.
-func TestAccWindowsHostname_InvalidName(t *testing.T) {
-	testAccHostnamePreCheck(t)
-	t.Skip("SKELETON: schema validators are unit-tested elsewhere; this acceptance check requires terraform-plugin-testing")
+	skipUnlessRenameAllowed(t)
+	t.Skip("SKELETON: destructive rename — see TestAccWindowsHostname_Basic")
 }
