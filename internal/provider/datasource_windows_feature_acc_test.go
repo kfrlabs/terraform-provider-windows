@@ -8,6 +8,7 @@ package provider
 
 import (
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -63,7 +64,7 @@ data "windows_feature" "missing" {
   name = "FeatureThatDoesNotExist-ZZZ"
 }
 `,
-				ExpectError: nil, // plan-time read returns error during apply
+				ExpectError: regexp.MustCompile(`No Windows feature named .* was found`),
 			},
 		},
 	})
