@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_firewall_rule`: Create/Update no longer fail with
+  `Cannot convert value "True" to type ...NetSecurity.Enabled`. The `-Enabled`
+  parameter is an enum, not a `[bool]`, so the generated PowerShell now emits
+  the `'True'`/`'False'` string tokens instead of `$true`/`$false`. (#40)
 - winclient transport: PowerShell scripts are no longer inlined on the command
   line via `-EncodedCommand`. Only a fixed bootstrap is passed on the command
   line; the real script (UTF-16LE base64) is streamed on stdin, keeping the

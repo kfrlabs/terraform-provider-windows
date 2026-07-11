@@ -317,10 +317,12 @@ func buildFirewallParams(op, name, policyStore string, input FirewallRuleInput) 
 		sb.WriteString(fmt.Sprintf("  Description = %s\n", psQuote(input.Description)))
 	}
 	if input.Enabled != nil {
+		// -Enabled is the NetSecurity.Enabled enum, not a [bool]: PowerShell
+		// rejects $true/$false and requires the "True"/"False" string tokens.
 		if *input.Enabled {
-			sb.WriteString("  Enabled = $true\n")
+			sb.WriteString("  Enabled = 'True'\n")
 		} else {
-			sb.WriteString("  Enabled = $false\n")
+			sb.WriteString("  Enabled = 'False'\n")
 		}
 	}
 	if len(input.Profile) > 0 {
