@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_local_user` data-source acceptance tests: the `_ByName` and
+  `_BySID` fixtures built names as `"tf-acc-ds-name-"`/`"tf-acc-ds-sid-"`
+  plus the default `tf-test` suffix, yielding 22- and 21-character names
+  that exceeded the schema's `LengthBetween(1, 20)` on `name`, so the plan
+  failed before reaching WinRM (`Invalid Attribute Value Length`). The
+  prefixes are now `"ds-name-"`/`"ds-sid-"` (15/14 chars resolved), keeping
+  the names unique and within the limit. (#55)
 - `windows_scheduled_task`: folder creation called a non-existent COM method
   `CreateSubFolder` on `ITaskFolder`, so creating any task in a non-root folder
   failed with `[System.__ComObject] does not contain a method named
