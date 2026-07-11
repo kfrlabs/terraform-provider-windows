@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_local_user` acceptance tests: the data-source suites no longer
+  assume the built-in `Administrator` account (name / well-known RID-500 SID),
+  which is disabled/renamed on GitHub-hosted `windows-latest` runners. Both
+  `TestAccWindowsLocalUserDataSource_ByName` and `_BySID` now provision their
+  own throwaway local user via the sibling resource and look it up through the
+  data source, referencing the fixture's attributes (including the SID
+  Windows assigns) so the tests are host-agnostic. (#42)
 - `windows_scheduled_task` acceptance tests: corrected stale HCL that used
   singular `action {}` / `trigger {}` blocks. `actions`, `triggers`, and
   `principal` are nested attributes in the current schema and must use
