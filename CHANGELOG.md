@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_feature` data-source acceptance test: `TestAccWindowsFeatureDataSource_NotFound`
+  had `ExpectError: nil` while the data source deliberately raises a diagnostic
+  for a missing feature, so the framework treated the expected error as a
+  failure. The step now matches the provider's actual detail wording via
+  `regexp.MustCompile("No Windows feature named .* was found")`, mirroring the
+  not-found idiom used by the sibling `firewall_rule` / `environment_variable`
+  data-source tests. (#43)
 - `windows_local_user` acceptance tests: the data-source suites no longer
   assume the built-in `Administrator` account (name / well-known RID-500 SID),
   which is disabled/renamed on GitHub-hosted `windows-latest` runners. Both
