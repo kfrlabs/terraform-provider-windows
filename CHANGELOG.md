@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- winclient transport: PowerShell scripts are no longer inlined on the command
+  line via `-EncodedCommand`. Only a fixed bootstrap is passed on the command
+  line; the real script (UTF-16LE base64) is streamed on stdin, keeping the
+  command line at a constant ~600 chars. This resolves `The command line is too
+  long.` failures on larger scripts — notably the `windows_service`,
+  `windows_firewall_rule`, `windows_local_group_member` and
+  `windows_registry_value` data-source reads — while preserving UTF-16LE
+  fidelity for non-ASCII values. (#39)
+
 ### Internal
 
 #### Changed

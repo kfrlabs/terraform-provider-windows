@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -77,16 +78,21 @@ func New(cfg Config) (*Client, error) {
 // included — callers must not log it).
 func (c *Client) Config() Config { return c.cfg }
 
-// RunPowerShell executes the given PowerShell script on the remote host
-// using -EncodedCommand (UTF-16LE base64) and returns its stdout and stderr.
-// It honours the provided context for cancellation.
+// RunPowerShell executes the given PowerShell script on the remote host and
+// returns its stdout and stderr. It honours the provided context for
+// cancellation.
+//
+// The script is not placed on the command line: only a fixed bootstrap is
+// passed via -EncodedCommand, and the real script (UTF-16LE base64) is streamed
+// on stdin, so the command line stays a constant ~600 chars regardless of script
+// size. This keeps us under Windows' ~8191-char command-line limit (#39) while
+// preserving exact UTF-16LE fidelity for non-ASCII values.
 func (c *Client) RunPowerShell(ctx context.Context, script string) (string, string, error) {
 	if c == nil || c.winrm == nil {
 		return "", "", fmt.Errorf("winclient: nil client")
 	}
 
-	encoded := encodePowerShell(script)
-	cmd := fmt.Sprintf("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encoded)
+	cmd := bootstrapCommand()
 
 	var stdout, stderr bytes.Buffer
 	type result struct {
@@ -94,8 +100,9 @@ func (c *Client) RunPowerShell(ctx context.Context, script string) (string, stri
 		err  error
 	}
 	done := make(chan result, 1)
+	stdin := composeStdin(script, "")
 	go func() {
-		code, err := c.winrm.RunWithContextWithInput(ctx, cmd, &stdout, &stderr, nil)
+		code, err := c.winrm.RunWithContextWithInput(ctx, cmd, &stdout, &stderr, stdin)
 		done <- result{code: code, err: err}
 	}()
 
@@ -115,17 +122,18 @@ func (c *Client) RunPowerShell(ctx context.Context, script string) (string, stri
 
 // RunPowerShellWithInput executes the given PowerShell script with the supplied
 // stdin string piped to the process. This allows sensitive data (e.g. passwords)
-// to be injected via stdin rather than the script body / EncodedCommand, so the
-// plaintext never appears in WinRM trace logs.
+// to be injected via stdin rather than the script body, so the plaintext never
+// appears in the encoded command or WinRM trace logs.
 //
-// The PowerShell script reads from stdin via [Console]::In.ReadLine().
+// Transport matches RunPowerShell: a fixed bootstrap decodes the real script
+// from the first stdin line, then the script itself reads the caller's input
+// from the remainder via [Console]::In.ReadLine() / ReadToEnd().
 func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin string) (string, string, error) {
 	if c == nil || c.winrm == nil {
 		return "", "", fmt.Errorf("winclient: nil client")
 	}
 
-	encoded := encodePowerShell(script)
-	cmd := fmt.Sprintf("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encoded)
+	cmd := bootstrapCommand()
 
 	var stdout, stderr bytes.Buffer
 	type result struct {
@@ -133,7 +141,7 @@ func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin strin
 		err  error
 	}
 	done := make(chan result, 1)
-	stdinReader := strings.NewReader(stdin)
+	stdinReader := composeStdin(script, stdin)
 	go func() {
 		code, err := c.winrm.RunWithContextWithInput(ctx, cmd, &stdout, &stderr, stdinReader)
 		done <- result{code: code, err: err}
@@ -151,6 +159,32 @@ func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin strin
 		}
 		return stdout.String(), stderr.String(), nil
 	}
+}
+
+// psBootstrap is the constant script passed via -EncodedCommand. It reads a
+// single base64 (UTF-16LE) line from stdin, decodes it to the real script, and
+// executes it. Because the large payload travels on stdin rather than the
+// command line, the command line stays a fixed ~600 chars — well under Windows'
+// ~8191-char limit (#39). Errors are surfaced by the invoked script's own JSON
+// envelope; a failed decode throws (ErrorActionPreference=Stop) and exits non-zero.
+const psBootstrap = `$ErrorActionPreference='Stop'
+$b64=[Console]::In.ReadLine()
+$code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($b64))
+& ([ScriptBlock]::Create($code))`
+
+// bootstrapCommand builds the fixed powershell.exe invocation. It does not
+// depend on the script being run, so its length is constant.
+func bootstrapCommand() string {
+	return fmt.Sprintf("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encodePowerShell(psBootstrap))
+}
+
+// composeStdin lays out the stdin stream the bootstrap expects: the base64
+// (UTF-16LE) script as the first line, then any caller-supplied input as the
+// remainder. The bootstrap consumes the first line; the script then reads input
+// from the rest via [Console]::In.ReadLine() / ReadToEnd(). base64 uses the
+// standard alphabet (no newlines), so it is always exactly one line.
+func composeStdin(script, input string) io.Reader {
+	return strings.NewReader(encodePowerShell(script) + "\n" + input)
 }
 
 // encodePowerShell encodes a script as UTF-16LE base64, matching the
