@@ -358,7 +358,7 @@ func TestBuildFirewallParams_CreateWithOptionalFields(t *testing.T) {
 
 	for _, want := range []string{
 		"'My description'",
-		"$true",
+		"Enabled = 'True'",
 		"@('Domain','Private')",
 		"'MyGroup'",
 		"'TCP'",
@@ -398,8 +398,8 @@ func TestBuildFirewallParams_EnabledFalse(t *testing.T) {
 		PolicyStore: "PersistentStore",
 	}
 	got := buildFirewallParams("create", "RULE-DIS", "PersistentStore", input)
-	if !strings.Contains(got, "$false") {
-		t.Errorf("expected $false for Enabled=false: %s", got)
+	if !strings.Contains(got, "Enabled = 'False'") {
+		t.Errorf("expected Enabled = 'False' for Enabled=false: %s", got)
 	}
 }
 
@@ -412,8 +412,8 @@ func TestBuildFirewallParams_NilEnabled(t *testing.T) {
 		PolicyStore: "PersistentStore",
 	}
 	got := buildFirewallParams("create", "RULE-NOENA", "PersistentStore", input)
-	// "Enabled = $true" or "Enabled = $false" must NOT appear when Enabled is nil.
-	if strings.Contains(got, "Enabled = $") {
+	// No "Enabled =" key must appear when Enabled is nil.
+	if strings.Contains(got, "Enabled =") {
 		t.Error("nil Enabled should not add Enabled key to params")
 	}
 }
