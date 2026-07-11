@@ -288,7 +288,7 @@ try {
     $inSect  = $false
     foreach ($line in $output) {
         $s = [string]$line
-        if ($s -match '^-+)                 { $inSect = $true;  continue }
+        if ($s -match '^-+')                   { $inSect = $true;  continue }
         if ($s -match 'The command completed') { break }
         if (-not $inSect)                     { continue }
         $name = $s.Trim()
