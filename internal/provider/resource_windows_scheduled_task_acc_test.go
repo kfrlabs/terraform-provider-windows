@@ -52,14 +52,14 @@ resource "windows_scheduled_task" "root" {
   name    = "TF-Test-Root"
   path    = "\\"
   enabled = true
-  action {
-    execute = "C:\\Windows\\System32\\cmd.exe"
+  actions = [{
+    execute   = "C:\\Windows\\System32\\cmd.exe"
     arguments = "/c echo root"
-  }
-  trigger {
+  }]
+  triggers = [{
     type           = "Daily"
     start_boundary = "2026-01-01T06:00:00Z"
-  }
+  }]
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
@@ -76,14 +76,14 @@ resource "windows_scheduled_task" "root" {
   name    = "TF-Test-Root"
   path    = "\\"
   enabled = true
-  action {
-    execute = "C:\\Windows\\System32\\cmd.exe"
+  actions = [{
+    execute   = "C:\\Windows\\System32\\cmd.exe"
     arguments = "/c echo root"
-  }
-  trigger {
+  }]
+  triggers = [{
     type           = "Daily"
     start_boundary = "2026-01-01T06:00:00Z"
-  }
+  }]
 }
 `,
 				PlanOnly: true,
@@ -104,14 +104,14 @@ func TestAccWindowsScheduledTask_RecursiveFolder(t *testing.T) {
 			{
 				Config: `
 resource "windows_scheduled_task" "deep" {
-  name    = "TF-Deep-Task"
-  path    = "\\TF\\Tests\\Deep\\"
-  enabled = true
-  action { execute = "cmd.exe" }
-  trigger {
+  name     = "TF-Deep-Task"
+  path     = "\\TF\\Tests\\Deep\\"
+  enabled  = true
+  actions  = [{ execute = "cmd.exe" }]
+  triggers = [{
     type           = "Daily"
     start_boundary = "2026-01-01T00:00:00Z"
-  }
+  }]
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
@@ -137,17 +137,17 @@ resource "windows_scheduled_task" "sys" {
   name    = "TF-System-Task"
   path    = "\\TF\\"
   enabled = true
-  principal {
+  principal = {
     user_id    = "SYSTEM"
     logon_type = "ServiceAccount"
     run_level  = "Highest"
   }
-  action { execute = "cmd.exe" }
-  trigger { type = "AtStartup" }
+  actions  = [{ execute = "cmd.exe" }]
+  triggers = [{ type = "AtStartup" }]
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("windows_scheduled_task.sys", "principal.0.user_id", "SYSTEM"),
+					resource.TestCheckResourceAttr("windows_scheduled_task.sys", "principal.user_id", "SYSTEM"),
 				),
 			},
 		},
@@ -174,17 +174,17 @@ resource "windows_scheduled_task" "pwd" {
   name    = "TF-Password-Task"
   path    = "\\TF\\"
   enabled = true
-  principal {
-    user_id              = %q
-    logon_type           = "Password"
-    password             = %q
-    password_wo_version  = 1
+  principal = {
+    user_id             = %q
+    logon_type          = "Password"
+    password            = %q
+    password_wo_version = 1
   }
-  action { execute = "cmd.exe" }
-  trigger {
+  actions  = [{ execute = "cmd.exe" }]
+  triggers = [{
     type           = "Daily"
     start_boundary = "2026-01-01T00:00:00Z"
-  }
+  }]
 }
 `, svcUser, svcPwd),
 				Check: resource.ComposeTestCheckFunc(
@@ -210,17 +210,17 @@ resource "windows_scheduled_task" "weekly" {
   name    = "TF-Weekly-Task"
   path    = "\\TF\\"
   enabled = true
-  action { execute = "cmd.exe" }
-  trigger {
+  actions = [{ execute = "cmd.exe" }]
+  triggers = [{
     type           = "Weekly"
     start_boundary = "2026-01-05T08:00:00Z"
     days_of_week   = ["Monday", "Wednesday", "Friday"]
     weeks_interval = 1
-  }
+  }]
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("windows_scheduled_task.weekly", "trigger.0.type", "Weekly"),
+					resource.TestCheckResourceAttr("windows_scheduled_task.weekly", "triggers.0.type", "Weekly"),
 				),
 			},
 		},
@@ -242,15 +242,17 @@ resource "windows_scheduled_task" "multi_action" {
   name    = "TF-Multi-Action"
   path    = "\\TF\\"
   enabled = true
-  action { execute = "cmd.exe"; arguments = "/c echo first" }
-  action { execute = "pwsh.exe"; arguments = "-Command Write-Host second" }
-  trigger { type = "AtStartup" }
+  actions = [
+    { execute = "cmd.exe", arguments = "/c echo first" },
+    { execute = "pwsh.exe", arguments = "-Command Write-Host second" },
+  ]
+  triggers = [{ type = "AtStartup" }]
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("windows_scheduled_task.multi_action", "action.#", "2"),
-					resource.TestCheckResourceAttr("windows_scheduled_task.multi_action", "action.0.execute", "cmd.exe"),
-					resource.TestCheckResourceAttr("windows_scheduled_task.multi_action", "action.1.execute", "pwsh.exe"),
+					resource.TestCheckResourceAttr("windows_scheduled_task.multi_action", "actions.#", "2"),
+					resource.TestCheckResourceAttr("windows_scheduled_task.multi_action", "actions.0.execute", "cmd.exe"),
+					resource.TestCheckResourceAttr("windows_scheduled_task.multi_action", "actions.1.execute", "pwsh.exe"),
 				),
 			},
 		},
@@ -270,8 +272,8 @@ resource "windows_scheduled_task" "desc_update" {
   path        = "\\TF\\"
   description = %q
   enabled     = true
-  action { execute = "cmd.exe" }
-  trigger { type = "AtStartup" }
+  actions     = [{ execute = "cmd.exe" }]
+  triggers    = [{ type = "AtStartup" }]
 }
 `
 	resource.Test(t, resource.TestCase{
@@ -306,11 +308,11 @@ func TestAccWindowsScheduledTask_DriftDetection(t *testing.T) {
 			{
 				Config: `
 resource "windows_scheduled_task" "drift" {
-  name    = "TF-Drift-Task"
-  path    = "\\TF\\"
-  enabled = true
-  action { execute = "cmd.exe" }
-  trigger { type = "AtStartup" }
+  name     = "TF-Drift-Task"
+  path     = "\\TF\\"
+  enabled  = true
+  actions  = [{ execute = "cmd.exe" }]
+  triggers = [{ type = "AtStartup" }]
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
@@ -338,11 +340,11 @@ func TestAccWindowsScheduledTask_ImportByID(t *testing.T) {
 			{
 				Config: `
 resource "windows_scheduled_task" "importable" {
-  name    = "TF-Import-Task"
-  path    = "\\TF\\"
-  enabled = true
-  action { execute = "cmd.exe" }
-  trigger { type = "AtStartup" }
+  name     = "TF-Import-Task"
+  path     = "\\TF\\"
+  enabled  = true
+  actions  = [{ execute = "cmd.exe" }]
+  triggers = [{ type = "AtStartup" }]
 }
 `,
 			},
@@ -371,8 +373,8 @@ resource "windows_scheduled_task" "on_event" {
   name    = "TF-OnEvent-Task"
   path    = "\\TF\\"
   enabled = true
-  action { execute = "cmd.exe" }
-  trigger {
+  actions = [{ execute = "cmd.exe" }]
+  triggers = [{
     type         = "OnEvent"
     subscription = <<-XML
       <QueryList>
@@ -381,11 +383,11 @@ resource "windows_scheduled_task" "on_event" {
         </Query>
       </QueryList>
     XML
-  }
+  }]
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("windows_scheduled_task.on_event", "trigger.0.type", "OnEvent"),
+					resource.TestCheckResourceAttr("windows_scheduled_task.on_event", "triggers.0.type", "OnEvent"),
 				),
 			},
 		},
