@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_scheduled_task` acceptance tests: corrected stale HCL that used
+  singular `action {}` / `trigger {}` blocks. `actions`, `triggers`, and
+  `principal` are nested attributes in the current schema and must use
+  assignment syntax (`actions = [{ ... }]`, `principal = { ... }`), not block
+  syntax — the block form fails config validation with `Blocks of type ... are
+  not expected here` / `argument ... is required`. Updated the affected
+  `TestCheckResourceAttr` state paths accordingly (e.g. `principal.user_id`,
+  `actions.0.execute`). (#41)
 - `windows_firewall_rule`: Create/Update no longer fail with
   `Cannot convert value "True" to type ...NetSecurity.Enabled`. The `-Enabled`
   parameter is an enum, not a `[bool]`, so the generated PowerShell now emits

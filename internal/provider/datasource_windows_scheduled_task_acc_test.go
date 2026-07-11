@@ -32,11 +32,11 @@ resource "windows_scheduled_task" "ds_source" {
   path        = "\\TF\\"
   description = "data source test"
   enabled     = true
-  action { execute = "cmd.exe" }
-  trigger {
+  actions     = [{ execute = "cmd.exe" }]
+  triggers = [{
     type           = "Daily"
     start_boundary = "2026-01-01T08:00:00Z"
-  }
+  }]
 }
 
 data "windows_scheduled_task" "test" {
