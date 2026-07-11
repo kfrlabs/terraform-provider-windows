@@ -1,42 +1,26 @@
 //go:build acceptance
 
-// Package provider — acceptance-test skeleton for windows_service.
+// Package provider — acceptance tests for windows_service.
 //
-// These tests require:
+// Requires:
 //   - TF_ACC=1
-//   - A reachable Windows host with WinRM enabled
-//   - Env vars: WINDOWS_HOST, WINDOWS_USERNAME, WINDOWS_PASSWORD,
-//     WINDOWS_USE_HTTPS (optional), WINDOWS_AUTH_TYPE (optional)
-//   - A harmless binary path to manage a throw-away service
-//     (e.g. C:\Windows\System32\svchost.exe)
+//   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
+//   - A Windows target with WinRM enabled and Local Administrator rights.
 //
-// The suite covers:
-//   - Create + Read + check attributes
-//   - Update in-place (display_name, description, start_type)
-//   - Update with ForceNew (binary_path change triggers replace)
-//   - Drift detection: running a second plan after a manual sc.exe config
-//     change must detect the drift
-//   - Import by name
-//   - Delete (CheckDestroy verifies Get-Service fails)
-//
-// On CI without a Windows host, every test skips via testAccPreCheck. This
-// file intentionally depends ONLY on the terraform-plugin-framework test
-// helpers that ship transitively with the framework; it does NOT import
-// `terraform-plugin-testing` to avoid a new module dependency in this PR.
-//
-// When the project later adds `terraform-plugin-testing`, this file can be
-// promoted to full TestCase-driven acceptance tests using resource.TestCase.
+// The tests create a DISPOSABLE service named "tf-acc-svc-*" pointing at
+// cmd.exe with start_type=Manual/Disabled and no desired `status`
+// ("observe-only"), so Windows registers the service in the SCM but never
+// tries to start the (non-service) binary. The service is removed on destroy.
 package provider
 
 import (
 	"os"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
-// testAccPreCheck centralises the env-var guard used by every acceptance test.
-// It SKIPS (does not fail) when prerequisites are missing, so CI environments
-// without a Windows lab still produce a green build.
-func testAccPreCheck(t *testing.T) {
+func testAccServicePreCheck(t *testing.T) {
 	t.Helper()
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("TF_ACC not set; skipping acceptance test")
@@ -48,43 +32,101 @@ func testAccPreCheck(t *testing.T) {
 	}
 }
 
-// TestAccWindowsService_Basic is the baseline create+read+destroy scenario.
-// Skeleton only: requires terraform-plugin-testing to be fully fleshed out.
+// TestAccWindowsService_Basic — create a disposable service + read + idempotency.
 func TestAccWindowsService_Basic(t *testing.T) {
-	testAccPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows host")
+	testAccServicePreCheck(t)
+
+	cfg := `
+resource "windows_service" "acc" {
+  name         = "tf-acc-svc-basic"
+  display_name = "TF Acc Service Basic"
+  description  = "created by acceptance test"
+  binary_path  = "C:\\Windows\\System32\\cmd.exe"
+  start_type   = "Manual"
+}
+`
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_service.acc", "id", "tf-acc-svc-basic"),
+					resource.TestCheckResourceAttr("windows_service.acc", "name", "tf-acc-svc-basic"),
+					resource.TestCheckResourceAttr("windows_service.acc", "display_name", "TF Acc Service Basic"),
+					resource.TestCheckResourceAttr("windows_service.acc", "start_type", "Manual"),
+					resource.TestCheckResourceAttrSet("windows_service.acc", "current_status"),
+				),
+			},
+			{
+				Config:   cfg,
+				PlanOnly: true,
+			},
+		},
+	})
 }
 
-// TestAccWindowsService_UpdateInPlace asserts that changing display_name,
-// description, start_type or service_account triggers an in-place Update.
+// TestAccWindowsService_UpdateInPlace — display_name, description and
+// start_type update in place (name/binary_path are the ForceNew identity).
 func TestAccWindowsService_UpdateInPlace(t *testing.T) {
-	testAccPreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsService_Basic")
+	testAccServicePreCheck(t)
+
+	cfg := func(display, desc, startType string) string {
+		return `
+resource "windows_service" "upd" {
+  name         = "tf-acc-svc-update"
+  display_name = "` + display + `"
+  description  = "` + desc + `"
+  binary_path  = "C:\\Windows\\System32\\cmd.exe"
+  start_type   = "` + startType + `"
+}
+`
+	}
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg("Before", "before", "Manual"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_service.upd", "display_name", "Before"),
+					resource.TestCheckResourceAttr("windows_service.upd", "start_type", "Manual"),
+				),
+			},
+			{
+				Config: cfg("After", "after", "Disabled"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_service.upd", "display_name", "After"),
+					resource.TestCheckResourceAttr("windows_service.upd", "description", "after"),
+					resource.TestCheckResourceAttr("windows_service.upd", "start_type", "Disabled"),
+				),
+			},
+		},
+	})
 }
 
-// TestAccWindowsService_ForceNew asserts that changing binary_path or name
-// forces a destroy-recreate cycle (ForceNew attributes).
-func TestAccWindowsService_ForceNew(t *testing.T) {
-	testAccPreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsService_Basic")
-}
-
-// TestAccWindowsService_Import covers `terraform import windows_service.foo bar`.
+// TestAccWindowsService_Import — import an existing service by name (== id).
 func TestAccWindowsService_Import(t *testing.T) {
-	testAccPreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsService_Basic")
-}
+	testAccServicePreCheck(t)
 
-// TestAccWindowsService_DriftDetection performs a manual sc.exe config change
-// out-of-band and verifies the next plan surfaces the drift.
-func TestAccWindowsService_DriftDetection(t *testing.T) {
-	testAccPreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsService_Basic")
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "windows_service" "imp" {
+  name         = "tf-acc-svc-import"
+  display_name = "TF Acc Service Import"
+  binary_path  = "C:\\Windows\\System32\\cmd.exe"
+  start_type   = "Manual"
 }
-
-// TestAccWindowsService_DeleteIdempotent verifies Destroy is a no-op after a
-// manual `sc.exe delete` (EC-6 / 1060 idempotency).
-func TestAccWindowsService_DeleteIdempotent(t *testing.T) {
-	testAccPreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsService_Basic")
+`,
+			},
+			{
+				ResourceName:      "windows_service.imp",
+				ImportState:       true,
+				ImportStateId:     "tf-acc-svc-import",
+				ImportStateVerify: false, // binary_path / write-only fields differ after import
+			},
+		},
+	})
 }

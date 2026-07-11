@@ -1,25 +1,28 @@
 //go:build acceptance
 
-// Package provider — acceptance-test skeleton for windows_feature.
+// Package provider — acceptance tests for windows_feature.
 //
 // Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows Server target with WinRM and Local Administrator rights
-//   - A safe feature to install/uninstall (e.g. Telnet-Client or RSAT-AD-PowerShell)
+//   - A Windows *Server* target (Install-WindowsFeature / Get-WindowsFeature)
+//     with WinRM enabled and Local Administrator rights. The testacc-windows
+//     workflow's windows-latest runner (Server) satisfies this.
+//   - WINDOWS_FEATURE_NAME (optional): feature to install/uninstall; defaults
+//     to "Telnet-Client" — a lightweight feature whose payload ships on disk
+//     (no -Source, no reboot).
 //
-// Coverage outline (skeleton; populate when terraform-plugin-testing is added):
-//   - Create + Read with installed=true / install_state=Installed
-//   - Update in-place: source / restart attribute changes
-//   - Update with ForceNew: include_sub_features / include_management_tools
-//   - Drift: Uninstall feature out-of-band -> next plan recreates resource
-//   - Import: `terraform import windows_feature.x Telnet-Client`
-//   - Delete: CheckDestroy verifies Get-WindowsFeature reports not Installed
+// Declaring the resource installs the feature; destroy uninstalls it. The
+// default feature is intentionally trivial so the create/destroy cycle is fast
+// and reversible.
 package provider
 
 import (
+	"fmt"
 	"os"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 func testAccFeaturePreCheck(t *testing.T) {
@@ -34,30 +37,68 @@ func testAccFeaturePreCheck(t *testing.T) {
 	}
 }
 
+// featureName returns the feature under test (default: Telnet-Client).
+func featureName() string {
+	if n := os.Getenv("WINDOWS_FEATURE_NAME"); n != "" {
+		return n
+	}
+	return "Telnet-Client"
+}
+
+// TestAccWindowsFeature_Basic — install a feature, read back Installed state,
+// and confirm idempotency.
 func TestAccWindowsFeature_Basic(t *testing.T) {
 	testAccFeaturePreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows Server host")
+
+	name := featureName()
+	cfg := fmt.Sprintf(`
+resource "windows_feature" "acc" {
+  name    = %q
+  restart = false
+}
+`, name)
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_feature.acc", "id", name),
+					resource.TestCheckResourceAttr("windows_feature.acc", "name", name),
+					resource.TestCheckResourceAttr("windows_feature.acc", "installed", "true"),
+					resource.TestCheckResourceAttr("windows_feature.acc", "install_state", "Installed"),
+				),
+			},
+			{
+				Config:   cfg,
+				PlanOnly: true,
+			},
+		},
+	})
 }
 
-func TestAccWindowsFeature_UpdateInPlace(t *testing.T) {
-	testAccFeaturePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsFeature_Basic")
-}
-
-// EC-6 ForceNew: changing include_sub_features / include_management_tools must
-// trigger a destroy-recreate cycle.
-func TestAccWindowsFeature_ForceNew(t *testing.T) {
-	testAccFeaturePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsFeature_Basic")
-}
-
+// TestAccWindowsFeature_Import — import an installed feature by its name (== id).
 func TestAccWindowsFeature_Import(t *testing.T) {
 	testAccFeaturePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsFeature_Basic")
-}
 
-// EC-2 drift: out-of-band Uninstall-WindowsFeature must be detected at refresh.
-func TestAccWindowsFeature_DriftDetection(t *testing.T) {
-	testAccFeaturePreCheck(t)
-	t.Skip("SKELETON: see TestAccWindowsFeature_Basic")
+	name := featureName()
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "windows_feature" "imp" {
+  name    = %q
+  restart = false
+}
+`, name),
+			},
+			{
+				ResourceName:      "windows_feature.imp",
+				ImportState:       true,
+				ImportStateId:     name,
+				ImportStateVerify: false, // include_* / restart inputs are not read back
+			},
+		},
+	})
 }
