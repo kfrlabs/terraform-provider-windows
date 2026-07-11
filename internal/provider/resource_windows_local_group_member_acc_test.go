@@ -1,3 +1,5 @@
+//go:build acceptance
+
 // Package provider — acceptance-test skeletons for windows_local_group_member.
 //
 // Requires (when promoted from skeleton to live test):

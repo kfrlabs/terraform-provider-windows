@@ -1,3 +1,5 @@
+//go:build acceptance
+
 // Package provider — acceptance-test skeletons for windows_registry_value.
 //
 // Requires (all must be set to activate acceptance tests):

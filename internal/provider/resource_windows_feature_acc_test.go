@@ -1,3 +1,5 @@
+//go:build acceptance
+
 // Package provider — acceptance-test skeleton for windows_feature.
 //
 // Requires:

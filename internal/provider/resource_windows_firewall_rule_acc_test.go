@@ -1,3 +1,5 @@
+//go:build acceptance
+
 // Package provider — acceptance-test skeleton for windows_firewall_rule.
 //
 // These tests require:

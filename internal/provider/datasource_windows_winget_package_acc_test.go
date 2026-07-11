@@ -1,3 +1,5 @@
+//go:build acceptance
+
 // Package provider — acceptance-test skeletons for windows_winget_package data source.
 //
 // Requires (all must be set to activate acceptance tests):
