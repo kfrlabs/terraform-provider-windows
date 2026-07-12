@@ -8,6 +8,7 @@ package provider
 
 import (
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -65,7 +66,7 @@ data "windows_registry_value" "missing" {
   name = "NoSuchValue"
 }
 `,
-				ExpectError: nil,
+				ExpectError: regexp.MustCompile(`No registry value named .* was found`),
 			},
 		},
 	})

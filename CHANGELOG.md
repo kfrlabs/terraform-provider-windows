@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Data-source `_NotFound` acceptance tests for `windows_registry_value`,
+  `windows_service`, and `windows_scheduled_task` left `ExpectError: nil`
+  while deliberately exercising a *not found* case. The provider returned the
+  expected error, but with no error `regexp` the step treated it as a failure.
+  Each test now sets an `ExpectError` regex targeting that data source's
+  not-found diagnostic (e.g. `No Windows service named .* was found`), so the
+  tests pass in `testacc-windows`. Test-only fix. (#56)
 - `windows_local_user` data-source acceptance tests: the `_ByName` and
   `_BySID` fixtures built names as `"tf-acc-ds-name-"`/`"tf-acc-ds-sid-"`
   plus the default `tf-test` suffix, yielding 22- and 21-character names
