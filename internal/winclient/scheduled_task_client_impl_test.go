@@ -1128,6 +1128,14 @@ func TestSTCreate_RecursiveFolderCreation(t *testing.T) {
 	if strings.Contains(capturedScript, "CreateSubFolder") {
 		t.Errorf("script uses non-existent COM method CreateSubFolder (#54)")
 	}
+	// Regression guard for #61: a trailing backslash (e.g. path "\A\B\C\")
+	// makes ITaskFolder::CreateFolder fail with ERROR_INVALID_NAME
+	// (0x8007007B). Ensure-TaskFolder must normalise the path via TrimEnd
+	// before the COM call; the mock cannot exercise COM, so assert on the
+	// emitted script.
+	if !strings.Contains(capturedScript, `$FolderPath = $FolderPath.TrimEnd('\')`) {
+		t.Errorf("Ensure-TaskFolder does not trim trailing backslash from folder path (#61)")
+	}
 }
 
 func TestSTCreate_RootPath_NoDoubleBackslash(t *testing.T) {
