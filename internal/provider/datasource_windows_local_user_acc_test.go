@@ -56,7 +56,7 @@ data "windows_local_user" "lookup" {
 // looks it up by name through the data source.
 func TestAccWindowsLocalUserDataSource_ByName(t *testing.T) {
 	testAccLocalUserDSPreCheck(t)
-	name := "tf-acc-ds-name-" + userSuffix()
+	name := "ds-name-" + userSuffix()
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
@@ -79,7 +79,7 @@ func TestAccWindowsLocalUserDataSource_ByName(t *testing.T) {
 // computed sid avoids any machine-specific or well-known-SID assumption.
 func TestAccWindowsLocalUserDataSource_BySID(t *testing.T) {
 	testAccLocalUserDSPreCheck(t)
-	name := "tf-acc-ds-sid-" + userSuffix()
+	name := "ds-sid-" + userSuffix()
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
