@@ -7,6 +7,7 @@ package provider
 
 import (
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -77,7 +78,7 @@ data "windows_scheduled_task" "not_found" {
   path = "\\"
 }
 `,
-				ExpectError: nil, // expecting an apply error; set regexp if needed
+				ExpectError: regexp.MustCompile(`Scheduled task not found`),
 			},
 		},
 	})

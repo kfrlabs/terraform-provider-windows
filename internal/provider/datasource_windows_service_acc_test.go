@@ -8,6 +8,7 @@ package provider
 
 import (
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -62,7 +63,7 @@ data "windows_service" "missing" {
   name = "ServiceThatDoesNotExistZZZ"
 }
 `,
-				ExpectError: nil,
+				ExpectError: regexp.MustCompile(`No Windows service named .* was found`),
 			},
 		},
 	})
