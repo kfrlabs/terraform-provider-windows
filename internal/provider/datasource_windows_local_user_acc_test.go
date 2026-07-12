@@ -43,7 +43,7 @@ func testAccLocalUserDSFixtureConfig(name, lookup string) string {
 	return `
 resource "windows_local_user" "fixture" {
   name     = "` + name + `"
-  password = "P@ssw0rd-Acc-` + name + `!"
+  password = "P@ssw0rd-Acc-Fixture!"
 }
 
 data "windows_local_user" "lookup" {

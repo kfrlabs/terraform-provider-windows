@@ -52,11 +52,11 @@ func TestAccWindowsLocalUser_Basic(t *testing.T) {
 	cfg := fmt.Sprintf(`
 resource "windows_local_user" "test" {
   name        = %q
-  password    = "P@ssw0rd-Acc-%s!"
+  password    = "P@ssw0rd-Acc-Basic!"
   full_name   = "TF Acc User"
   description = "created by acceptance test"
 }
-`, name, name)
+`, name)
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
@@ -90,11 +90,11 @@ func TestAccWindowsLocalUser_DisabledAndFlags(t *testing.T) {
 				Config: fmt.Sprintf(`
 resource "windows_local_user" "flags" {
   name                   = %q
-  password               = "P@ssw0rd-Acc-%s!"
+  password               = "P@ssw0rd-Acc-Flags!"
   enabled                = false
   password_never_expires = true
 }
-`, name, name),
+`, name),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("windows_local_user.flags", "enabled", "false"),
 					resource.TestCheckResourceAttr("windows_local_user.flags", "password_never_expires", "true"),

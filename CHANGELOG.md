@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_local_user` acceptance fixtures embedded the account name in the
+  password literal (`"P@ssw0rd-Acc-" + name + "!"`). Windows password-complexity
+  policy rejects any password containing the user's samAccountName, so create
+  failed with `InvalidPasswordException` before the resource/data source was
+  ever read (seen on `TestAccWindowsLocalUserDataSource_ByName` and `_BySID`).
+  The data-source fixture and the two resource fixtures that still interpolated
+  `name` now use fixed complexity-satisfying literals; the password is never
+  asserted (ADR-LU-3). Test-only fix. (#62)
 - `windows_scheduled_task`: creating a task in a non-root folder whose `path`
   carried a trailing backslash (e.g. `"\\TF\\"`) failed with `The filename,
   directory name, or volume label syntax is incorrect. (Exception from HRESULT:
