@@ -258,7 +258,11 @@ function Read-TaskState([string]$TaskName, [string]$TaskPath) {
 }
 
 function Ensure-TaskFolder([string]$FolderPath) {
-  if ($FolderPath -eq '\') { return }
+  # ITaskFolder::CreateFolder rejects a trailing backslash (ERROR_INVALID_NAME,
+  # 0x8007007B), so normalise first; Remove-EmptyFolder already does this. The
+  # root path '\' trims to '' and needs no folder created.
+  $FolderPath = $FolderPath.TrimEnd('\')
+  if ($FolderPath -eq '') { return }
   try {
     $svc = New-Object -ComObject 'Schedule.Service'
     $svc.Connect()

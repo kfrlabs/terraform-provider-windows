@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_scheduled_task`: creating a task in a non-root folder whose `path`
+  carried a trailing backslash (e.g. `"\\TF\\"`) failed with `The filename,
+  directory name, or volume label syntax is incorrect. (Exception from HRESULT:
+  0x8007007B)` — `ITaskFolder::CreateFolder` rejects a folder name ending in a
+  backslash. `Ensure-TaskFolder` now normalises the path with `TrimEnd('\')`
+  before the `GetFolder`/`CreateFolder` calls (matching `Remove-EmptyFolder`),
+  keeping the root path a no-op. Regressed after #54. This also unblocks
+  `TestAccWindowsScheduledTaskDataSource_Basic`, which uses a trailing-backslash
+  fixture path. (#61)
 - Data-source `_NotFound` acceptance tests for `windows_registry_value`,
   `windows_service`, and `windows_scheduled_task` left `ExpectError: nil`
   while deliberately exercising a *not found* case. The provider returned the
