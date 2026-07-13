@@ -1143,18 +1143,21 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 		dows = types.ListNull(types.StringType)
 	}
 
-	// days_interval / weeks_interval: Computed — use Windows value; 0 -> null
+	// days_interval / weeks_interval: Computed — use Windows value; 0 -> null.
+	// Only preserve a prior value when it is known: on a create prior == plan,
+	// and an unset Optional+Computed interval is Unknown there. A Computed
+	// attribute must never stay Unknown after apply, so resolve those to null.
 	var di, wi types.Int64
 	if t.DaysInterval > 0 {
 		di = types.Int64Value(t.DaysInterval)
-	} else if prior != nil {
-		di = prior.DaysInterval // preserve Unknown/null from plan
+	} else if prior != nil && !prior.DaysInterval.IsUnknown() {
+		di = prior.DaysInterval // preserve known null/value from state
 	} else {
 		di = types.Int64Null()
 	}
 	if t.WeeksInterval > 0 {
 		wi = types.Int64Value(t.WeeksInterval)
-	} else if prior != nil {
+	} else if prior != nil && !prior.WeeksInterval.IsUnknown() {
 		wi = prior.WeeksInterval
 	} else {
 		wi = types.Int64Null()
