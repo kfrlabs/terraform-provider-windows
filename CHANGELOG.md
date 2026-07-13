@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `TestAccWindowsLocalGroupMemberDataSource_Basic` hardcoded a lookup of the
+  built-in `Administrator` account in the `Administrators` group. That account
+  is disabled/renamed on GitHub-hosted `windows-latest` runners, so the data
+  source read failed with `member "Administrator" not found in group
+  "Administrators"`. The test now provisions its own throwaway group, user, and
+  membership via the sibling resources and looks the pair up through the data
+  source (mirroring the `windows_local_user` data-source fixtures), keeping it
+  host-agnostic. Test-only fix. (#63)
 - `windows_local_user` acceptance fixtures embedded the account name in the
   password literal (`"P@ssw0rd-Acc-" + name + "!"`). Windows password-complexity
   policy rejects any password containing the user's samAccountName, so create
