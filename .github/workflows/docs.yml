@@ -65,7 +65,7 @@ jobs:
       # hood. Pre-installing the CLI avoids the buggy auto-download path
       # in terraform-plugin-docs <=0.20.1 (expired GPG signing key when
       # the tool tries to fetch Terraform from releases.hashicorp.com).
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.9.8
           terraform_wrapper: false
