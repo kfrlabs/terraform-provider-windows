@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_scheduled_task`: on a trigger type where an interval is not
+  applicable (e.g. `weeks_interval` on a `Daily` trigger, `days_interval` on a
+  `Weekly` trigger), the Computed attribute could stay `unknown` after apply,
+  causing Terraform to reject the result with `Provider returned invalid result
+  object after apply`. On a create the prior model *is* the plan, where an unset
+  `Optional+Computed` interval is `unknown`; `buildTriggerObject` copied that
+  `unknown` when Windows reported the interval as `0`. It now only preserves a
+  prior interval value when it is *known* and otherwise resolves to `null`.
+  Applies symmetrically to `days_interval` and `weeks_interval`. (#70)
 - `TestAccWindowsLocalGroupMemberDataSource_Basic` hardcoded a lookup of the
   built-in `Administrator` account in the `Administrators` group. That account
   is disabled/renamed on GitHub-hosted `windows-latest` runners, so the data

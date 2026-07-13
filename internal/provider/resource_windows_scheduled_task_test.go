@@ -611,3 +611,81 @@ func TestStateToModel_SubFolderPath(t *testing.T) {
 		t.Errorf("Path = %q, want \\MyFolder\\", m.Path.ValueString())
 	}
 }
+
+// TestBuildTriggerObject_UnknownIntervalResolvesToNull is a regression test for #70.
+// On a create, the prior model is the plan, where an unset Optional+Computed interval
+// is Unknown. When Windows reports the interval as not applicable (0), a Computed
+// attribute must resolve to null — never stay Unknown, which Terraform rejects
+// ("provider returned invalid result object after apply").
+func TestBuildTriggerObject_UnknownIntervalResolvesToNull(t *testing.T) {
+	ctx := context.Background()
+
+	readTrigger := func(v attr.Value) windowsScheduledTaskTriggerModel {
+		t.Helper()
+		obj, ok := v.(types.Object)
+		if !ok {
+			t.Fatalf("expected types.Object, got %T", v)
+		}
+		var tm windowsScheduledTaskTriggerModel
+		if d := obj.As(ctx, &tm, basetypes.ObjectAsOptions{}); d.HasError() {
+			t.Fatalf("obj.As: %v", d)
+		}
+		return tm
+	}
+
+	t.Run("Daily_weeks_interval_unknown", func(t *testing.T) {
+		// prior == plan: weeks_interval unset -> Unknown; Windows returns 0.
+		prior := &windowsScheduledTaskTriggerModel{
+			DaysInterval:  types.Int64Value(1),
+			WeeksInterval: types.Int64Unknown(),
+		}
+		st := winclient.ScheduledTaskTriggerState{Type: "Daily", Enabled: true, DaysInterval: 1, WeeksInterval: 0}
+		v, d := buildTriggerObject(ctx, st, prior)
+		if d.HasError() {
+			t.Fatalf("diags: %v", d)
+		}
+		tm := readTrigger(v)
+		if tm.WeeksInterval.IsUnknown() {
+			t.Error("weeks_interval must not be Unknown after apply")
+		}
+		if !tm.WeeksInterval.IsNull() {
+			t.Errorf("weeks_interval = %v, want null", tm.WeeksInterval)
+		}
+	})
+
+	t.Run("Weekly_days_interval_unknown", func(t *testing.T) {
+		prior := &windowsScheduledTaskTriggerModel{
+			DaysInterval:  types.Int64Unknown(),
+			WeeksInterval: types.Int64Value(1),
+		}
+		st := winclient.ScheduledTaskTriggerState{Type: "Weekly", Enabled: true, DaysInterval: 0, WeeksInterval: 1}
+		v, d := buildTriggerObject(ctx, st, prior)
+		if d.HasError() {
+			t.Fatalf("diags: %v", d)
+		}
+		tm := readTrigger(v)
+		if tm.DaysInterval.IsUnknown() {
+			t.Error("days_interval must not be Unknown after apply")
+		}
+		if !tm.DaysInterval.IsNull() {
+			t.Errorf("days_interval = %v, want null", tm.DaysInterval)
+		}
+	})
+
+	t.Run("known_prior_null_preserved", func(t *testing.T) {
+		// A known prior value (null) is still preserved when Windows returns 0.
+		prior := &windowsScheduledTaskTriggerModel{
+			DaysInterval:  types.Int64Null(),
+			WeeksInterval: types.Int64Null(),
+		}
+		st := winclient.ScheduledTaskTriggerState{Type: "Daily", Enabled: true, DaysInterval: 0, WeeksInterval: 0}
+		v, d := buildTriggerObject(ctx, st, prior)
+		if d.HasError() {
+			t.Fatalf("diags: %v", d)
+		}
+		tm := readTrigger(v)
+		if !tm.DaysInterval.IsNull() || !tm.WeeksInterval.IsNull() {
+			t.Errorf("intervals = (%v, %v), want (null, null)", tm.DaysInterval, tm.WeeksInterval)
+		}
+	})
+}
