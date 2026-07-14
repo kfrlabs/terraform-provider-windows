@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_scheduled_task`: trigger datetime boundaries (`start_boundary`,
+  `end_boundary`) could come back from `Get-ScheduledTask` with a `+00:00`
+  offset (e.g. `2026-01-01T08:00:00+00:00`) while the plan held the canonical
+  `Z` form, causing Terraform to reject the apply with `Provider produced
+  inconsistent result after apply` even though both denote the same instant. The
+  `winclient` layer now canonicalizes every datetime it maps into state
+  (`start_boundary`, `end_boundary`, and the read-only `last_run_time` /
+  `next_run_time`) to UTC RFC3339 `Z` via a new `normalizeDT` helper in
+  `stPayloadToState`, mirroring the PowerShell `Format-DT` behaviour. (#72)
 - `windows_scheduled_task`: on a trigger type where an interval is not
   applicable (e.g. `weeks_interval` on a `Daily` trigger, `days_interval` on a
   `Weekly` trigger), the Computed attribute could stay `unknown` after apply,

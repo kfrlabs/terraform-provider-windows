@@ -1382,3 +1382,56 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func TestNormalizeDT(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"2026-01-01T08:00:00+00:00", "2026-01-01T08:00:00Z"}, // the #72 bug: +00:00 -> Z
+		{"2026-01-01T08:00:00Z", "2026-01-01T08:00:00Z"},      // already canonical, idempotent
+		{"2026-01-01T09:00:00+01:00", "2026-01-01T08:00:00Z"}, // non-UTC offset folded to UTC
+		{"", ""},                             // empty passes through
+		{"not-a-datetime", "not-a-datetime"}, // unparseable passes through unchanged
+	}
+	for _, tc := range cases {
+		if got := normalizeDT(tc.in); got != tc.want {
+			t.Errorf("normalizeDT(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// Regression for #72: a boundary reported by Get-ScheduledTask as "+00:00" must
+// be canonicalized to "...Z" at the payload->state mapping so plan and post-apply
+// state compare equal. Also covers the task-root LastRunTime/NextRunTime fields.
+func TestStPayloadToState_NormalizesBoundaryOffset(t *testing.T) {
+	p := &stTaskPayload{
+		Name:        "MyTask",
+		Path:        `\`,
+		LastRunTime: "2026-01-01T00:00:00+00:00",
+		NextRunTime: "2026-02-01T00:00:00+00:00",
+		Triggers: []stTriggerPayload{
+			{
+				Type:          "Daily",
+				Enabled:       true,
+				StartBoundary: "2026-01-01T08:00:00+00:00",
+				EndBoundary:   "2027-01-01T08:00:00+00:00",
+			},
+		},
+	}
+	s := stPayloadToState(p)
+	if s == nil || len(s.Triggers) != 1 {
+		t.Fatalf("expected one trigger, got %+v", s)
+	}
+	if got := s.Triggers[0].StartBoundary; got != "2026-01-01T08:00:00Z" {
+		t.Errorf("StartBoundary = %q, want 2026-01-01T08:00:00Z", got)
+	}
+	if got := s.Triggers[0].EndBoundary; got != "2027-01-01T08:00:00Z" {
+		t.Errorf("EndBoundary = %q, want 2027-01-01T08:00:00Z", got)
+	}
+	if got := s.LastRunTime; got != "2026-01-01T00:00:00Z" {
+		t.Errorf("LastRunTime = %q, want 2026-01-01T00:00:00Z", got)
+	}
+	if got := s.NextRunTime; got != "2026-02-01T00:00:00Z" {
+		t.Errorf("NextRunTime = %q, want 2026-02-01T00:00:00Z", got)
+	}
+}

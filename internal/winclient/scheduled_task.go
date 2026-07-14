@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Compile-time assertion.
@@ -491,6 +492,22 @@ func mapSTKind(k string) ScheduledTaskErrorKind {
 // payloadToState
 // ---------------------------------------------------------------------------
 
+// normalizeDT canonicalizes an RFC3339 datetime to UTC "...Z" form so that plan
+// and post-apply state compare equal (e.g. "+00:00" -> "Z"). Get-ScheduledTask
+// can report offsets as "+00:00"; Terraform requires strict plan<->apply string
+// equality, so we re-emit the canonical form here (mirrors the PowerShell
+// Format-DT helper). Empty or unparseable values are returned unchanged.
+func normalizeDT(s string) string {
+	if s == "" {
+		return s
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 func stPayloadToState(p *stTaskPayload) *ScheduledTaskState {
 	if p == nil {
 		return nil
@@ -501,9 +518,9 @@ func stPayloadToState(p *stTaskPayload) *ScheduledTaskState {
 		Description:    p.Description,
 		Enabled:        p.Enabled,
 		State:          p.State,
-		LastRunTime:    p.LastRunTime,
+		LastRunTime:    normalizeDT(p.LastRunTime),
 		LastTaskResult: p.LastTaskResult,
-		NextRunTime:    p.NextRunTime,
+		NextRunTime:    normalizeDT(p.NextRunTime),
 	}
 	if p.Principal != nil {
 		s.Principal = &ScheduledTaskPrincipalState{
@@ -525,8 +542,8 @@ func stPayloadToState(p *stTaskPayload) *ScheduledTaskState {
 		s.Triggers[i] = ScheduledTaskTriggerState{
 			Type:               t.Type,
 			Enabled:            t.Enabled,
-			StartBoundary:      t.StartBoundary,
-			EndBoundary:        t.EndBoundary,
+			StartBoundary:      normalizeDT(t.StartBoundary),
+			EndBoundary:        normalizeDT(t.EndBoundary),
 			ExecutionTimeLimit: t.ExecutionTimeLimit,
 			Delay:              t.Delay,
 			DaysInterval:       t.DaysInterval,
