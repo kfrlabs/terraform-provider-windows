@@ -50,6 +50,7 @@ data "windows_scheduled_task" "test" {
 					resource.TestCheckResourceAttr("data.windows_scheduled_task.test", "path", `\TF\`),
 					resource.TestCheckResourceAttr("data.windows_scheduled_task.test", "description", "data source test"),
 					resource.TestCheckResourceAttr("data.windows_scheduled_task.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("data.windows_scheduled_task.test", "triggers.0.start_boundary", "2026-01-01T08:00:00Z"),
 					resource.TestCheckResourceAttrSet("data.windows_scheduled_task.test", "id"),
 					resource.TestCheckResourceAttrSet("data.windows_scheduled_task.test", "state"),
 				),
