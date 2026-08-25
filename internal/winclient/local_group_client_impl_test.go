@@ -30,10 +30,11 @@ import (
 func newLGTestClient(t *testing.T) *Client {
 	t.Helper()
 	c, err := New(Config{
-		Host:     "winlg01",
-		Username: "u",
-		Password: "p",
-		Timeout:  30 * time.Second,
+		Host:                  "winlg01",
+		Username:              "u",
+		Password:              "p",
+		Timeout:               30 * time.Second,
+		InsecureIgnoreHostKey: true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -20,7 +20,7 @@ import (
 
 func lpNewClient(t *testing.T) (*Client, *LegacyPackageClientImpl) {
 	t.Helper()
-	c, err := New(Config{Host: "winlp01", Username: "u", Password: "p", Timeout: 30 * time.Second})
+	c, err := New(Config{Host: "winlp01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

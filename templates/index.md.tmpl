@@ -13,4 +13,48 @@ description: |-
 
 {{ tffile "examples/provider/provider.tf" }}
 
+## Authentication
+
+The provider offers every configured credential to the server, in the usual
+OpenSSH order:
+
+1. **Public key** — `private_key` (PEM inline) or `private_key_path`. Add
+   `private_key_passphrase` when the key is encrypted.
+2. **ssh-agent** — used automatically when `SSH_AUTH_SOCK` is set. Force it on
+   or off with `use_agent`.
+3. **Password** — `password`.
+
+Prefer keys: a password is replayable by whoever observes it, and the target's
+OpenSSH Server can be configured to refuse password authentication entirely.
+
+Every attribute has an environment fallback (`WINDOWS_PRIVATE_KEY`,
+`WINDOWS_PRIVATE_KEY_PATH`, `WINDOWS_PRIVATE_KEY_PASSPHRASE`,
+`WINDOWS_USE_AGENT`, `WINDOWS_PASSWORD`), which keeps secrets out of `.tf`
+files and out of Terraform state.
+
+## Host key verification
+
+The provider verifies the server's host key **by default**. Without it,
+authentication proves who you are to the server but nothing about who answered,
+so an interposed host could collect your credentials and every PowerShell
+payload the provider sends.
+
+Pick one of:
+
+- **`known_hosts_path`** — an OpenSSH `known_hosts` file. Defaults to
+  `~/.ssh/known_hosts`. Populate it with
+  `ssh-keyscan <host> >> ~/.ssh/known_hosts`.
+- **`host_key`** — the expected public key inline, as printed by `ssh-keyscan`
+  (`ssh-ed25519 AAAAC3Nz...`). Use this in CI and Terraform Cloud, where no
+  `known_hosts` file exists.
+
+If neither is usable the provider **fails closed** rather than connecting
+without verification. Verify the fingerprint out of band the first time; after
+that, a mismatch is reported as a possible man-in-the-middle rather than a
+routine error.
+
+`insecure_ignore_host_key = true` disables verification entirely. It emits a
+warning on every plan and apply, and should be reserved for disposable hosts on
+a trusted network.
+
 {{ .SchemaMarkdown | trimspace }}

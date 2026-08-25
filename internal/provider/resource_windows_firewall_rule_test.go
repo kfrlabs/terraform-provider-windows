@@ -791,9 +791,10 @@ func TestFirewallRuleResource_Configure_WrongType(t *testing.T) {
 func TestFirewallRuleResource_Configure_HappyPath(t *testing.T) {
 	r := &windowsFirewallRuleResource{}
 	c, err := winclient.New(winclient.Config{
-		Host:     "10.0.0.1",
-		Username: "admin",
-		Password: "secret",
+		Host:                  "10.0.0.1",
+		Username:              "admin",
+		Password:              "secret",
+		InsecureIgnoreHostKey: true,
 	})
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)

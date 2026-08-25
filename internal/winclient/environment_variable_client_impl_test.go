@@ -53,10 +53,11 @@ import (
 func newEVTestClient(t *testing.T) (*Client, *EnvVarClientImpl) {
 	t.Helper()
 	c, err := New(Config{
-		Host:     "winev01",
-		Username: "u",
-		Password: "p",
-		Timeout:  30 * time.Second,
+		Host:                  "winev01",
+		Username:              "u",
+		Password:              "p",
+		Timeout:               30 * time.Second,
+		InsecureIgnoreHostKey: true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

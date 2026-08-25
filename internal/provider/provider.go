@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -39,6 +40,15 @@ type providerModel struct {
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
 	Timeout  types.String `tfsdk:"timeout"`
+
+	PrivateKey           types.String `tfsdk:"private_key"`
+	PrivateKeyPath       types.String `tfsdk:"private_key_path"`
+	PrivateKeyPassphrase types.String `tfsdk:"private_key_passphrase"`
+	UseAgent             types.Bool   `tfsdk:"use_agent"`
+
+	KnownHostsPath        types.String `tfsdk:"known_hosts_path"`
+	HostKey               types.String `tfsdk:"host_key"`
+	InsecureIgnoreHostKey types.Bool   `tfsdk:"insecure_ignore_host_key"`
 }
 
 // Metadata sets the provider type name and version.
@@ -51,9 +61,9 @@ func (p *windowsProvider) Metadata(_ context.Context, _ provider.MetadataRequest
 func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "The windows provider manages Windows resources over SSH " +
-			"(the target host's OpenSSH Server, invoking PowerShell). Host key " +
-			"verification is not performed; only use this against trusted, " +
-			"short-lived automation hosts.",
+			"(the target host's OpenSSH Server, invoking PowerShell). It supports " +
+			"public-key, ssh-agent and password authentication, and verifies the " +
+			"server's host key by default.",
 		Attributes: map[string]schema.Attribute{
 			"host": schema.StringAttribute{
 				Description: "Hostname or IP address of the target Windows host. May also be set via WINDOWS_HOST.",
@@ -68,13 +78,58 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Optional:    true,
 			},
 			"password": schema.StringAttribute{
-				Description: "SSH password. May also be set via WINDOWS_PASSWORD.",
-				Optional:    true,
-				Sensitive:   true,
+				Description: "SSH password. May also be set via WINDOWS_PASSWORD. Prefer key-based " +
+					"authentication where possible.",
+				Optional:  true,
+				Sensitive: true,
 			},
 			"timeout": schema.StringAttribute{
 				Description: "Operation timeout as a Go duration string (e.g. 30s, 2m). Default: 30s.",
 				Optional:    true,
+			},
+			"private_key": schema.StringAttribute{
+				Description: "PEM-encoded SSH private key used for public-key authentication. " +
+					"Mutually exclusive with private_key_path. May also be set via WINDOWS_PRIVATE_KEY.",
+				Optional:  true,
+				Sensitive: true,
+			},
+			"private_key_path": schema.StringAttribute{
+				Description: "Path to a PEM-encoded SSH private key. A leading '~' is expanded to the " +
+					"current user's home directory. Mutually exclusive with private_key. May also be " +
+					"set via WINDOWS_PRIVATE_KEY_PATH.",
+				Optional: true,
+			},
+			"private_key_passphrase": schema.StringAttribute{
+				Description: "Passphrase decrypting the private key, when it is protected. May also be " +
+					"set via WINDOWS_PRIVATE_KEY_PASSPHRASE.",
+				Optional:  true,
+				Sensitive: true,
+			},
+			"use_agent": schema.BoolAttribute{
+				Description: "Whether to authenticate through the ssh-agent advertised by SSH_AUTH_SOCK. " +
+					"When unset, the agent is used if SSH_AUTH_SOCK is present. May also be set via " +
+					"WINDOWS_USE_AGENT.",
+				Optional: true,
+			},
+			"known_hosts_path": schema.StringAttribute{
+				Description: "OpenSSH known_hosts file used to verify the server's host key. Defaults to " +
+					"~/.ssh/known_hosts. Mutually exclusive with host_key. May also be set via " +
+					"WINDOWS_KNOWN_HOSTS.",
+				Optional: true,
+			},
+			"host_key": schema.StringAttribute{
+				Description: "The server's expected public key in authorized_keys form " +
+					"(e.g. 'ssh-ed25519 AAAAC3Nz...'), pinned directly instead of consulting a " +
+					"known_hosts file. Useful in CI or Terraform Cloud, where no known_hosts exists. " +
+					"Mutually exclusive with known_hosts_path. May also be set via WINDOWS_HOST_KEY.",
+				Optional: true,
+			},
+			"insecure_ignore_host_key": schema.BoolAttribute{
+				Description: "Disable host key verification entirely. This exposes every connection to " +
+					"man-in-the-middle interception and should only be used against disposable hosts on " +
+					"a trusted network. Defaults to false. May also be set via " +
+					"WINDOWS_INSECURE_IGNORE_HOST_KEY.",
+				Optional: true,
 			},
 		},
 	}
@@ -104,22 +159,46 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 			"The provider cannot create the SSH client because the username is unknown at plan time.",
 		)
 	}
-	if data.Password.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
-			pathAttr("password"),
-			"Unknown Windows password",
-			"The provider cannot create the SSH client because the password is unknown at plan time.",
-		)
+	for name, value := range map[string]attr.Value{
+		"password":               data.Password,
+		"private_key":            data.PrivateKey,
+		"private_key_path":       data.PrivateKeyPath,
+		"private_key_passphrase": data.PrivateKeyPassphrase,
+		"host_key":               data.HostKey,
+		"known_hosts_path":       data.KnownHostsPath,
+	} {
+		if value.IsUnknown() {
+			resp.Diagnostics.AddAttributeError(
+				pathAttr(name),
+				"Unknown provider credential",
+				fmt.Sprintf("The provider cannot create the SSH client because %q is unknown at plan time.", name),
+			)
+		}
 	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	// A null bool means "not configured", which the winclient layer
+	// distinguishes from an explicit false via a nil pointer.
+	var useAgent *bool
+	if !data.UseAgent.IsNull() {
+		v := data.UseAgent.ValueBool()
+		useAgent = &v
+	}
+
 	cfg := winclient.Config{
-		Host:     data.Host.ValueString(),
-		Port:     int(data.Port.ValueInt64()),
-		Username: data.Username.ValueString(),
-		Password: data.Password.ValueString(),
+		Host:                  data.Host.ValueString(),
+		Port:                  int(data.Port.ValueInt64()),
+		Username:              data.Username.ValueString(),
+		Password:              data.Password.ValueString(),
+		PrivateKey:            data.PrivateKey.ValueString(),
+		PrivateKeyPath:        data.PrivateKeyPath.ValueString(),
+		PrivateKeyPassphrase:  data.PrivateKeyPassphrase.ValueString(),
+		UseAgent:              useAgent,
+		KnownHostsPath:        data.KnownHostsPath.ValueString(),
+		HostKey:               data.HostKey.ValueString(),
+		InsecureIgnoreHostKey: data.InsecureIgnoreHostKey.ValueBool(),
 	}
 
 	winclient.ResolveFromEnv(&cfg)
@@ -132,12 +211,22 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(pathAttr("username"), "Missing Windows username",
 			"Set provider attribute 'username' or environment variable WINDOWS_USERNAME.")
 	}
-	if cfg.Password == "" {
-		resp.Diagnostics.AddAttributeError(pathAttr("password"), "Missing Windows password",
-			"Set provider attribute 'password' or environment variable WINDOWS_PASSWORD.")
-	}
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	// Losing host identity verification is silent and total: the connection
+	// still succeeds, it just no longer proves who answered. Surface it on
+	// every plan and apply rather than only in the docs.
+	if cfg.InsecureIgnoreHostKey {
+		resp.Diagnostics.AddAttributeWarning(
+			pathAttr("insecure_ignore_host_key"),
+			"SSH host key verification is disabled",
+			"The provider will accept any host key presented by "+cfg.Host+", so this connection "+
+				"cannot detect a man-in-the-middle. Credentials and PowerShell payloads may be "+
+				"exposed to an impostor host. Remove 'insecure_ignore_host_key' and set 'host_key' "+
+				"or 'known_hosts_path' instead.",
+		)
 	}
 
 	timeoutStr := data.Timeout.ValueString()

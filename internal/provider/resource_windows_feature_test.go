@@ -276,7 +276,7 @@ func TestFeatureConfigure_WrongType(t *testing.T) {
 }
 
 func TestFeatureConfigure_Valid(t *testing.T) {
-	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p"})
+	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)
 	}
