@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_local_group_member` (data source): looking a member up by name failed
+  with `member "<name>" not found in group "<group>"` even when the membership
+  existed. `Get-LocalGroupMember` reports member names in the machine/domain
+  qualified form (`MACHINE\user`), but the data source's Read matched them
+  against the bare requested name with `strings.EqualFold`, which never matched.
+  A new `memberNameMatches` helper now compares the bare account component (the
+  part after the last `\`) with an exact-match fast path, so a bare `user`
+  lookup resolves a qualified `MACHINE\user` result. The same helper is applied
+  to the resource's `ImportState` name-based lookup for consistency. This
+  unblocks `TestAccWindowsLocalGroupMemberDataSource_Basic`. (#73)
 - `windows_scheduled_task`: trigger datetime boundaries (`start_boundary`,
   `end_boundary`) could come back from `Get-ScheduledTask` with a `+00:00`
   offset (e.g. `2026-01-01T08:00:00+00:00`) while the plan held the canonical

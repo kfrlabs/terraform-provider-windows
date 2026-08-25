@@ -8,7 +8,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -159,7 +158,7 @@ func (d *windowsLocalGroupMemberDataSource) Read(ctx context.Context, req dataso
 	// Step 3: find the member by name (case-insensitive).
 	var found *winclient.LocalGroupMemberState
 	for _, m := range members {
-		if strings.EqualFold(m.MemberName, memberName) {
+		if memberNameMatches(m.MemberName, memberName) {
 			found = m
 			break
 		}
