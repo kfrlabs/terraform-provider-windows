@@ -30,10 +30,11 @@ import (
 func newTestClient(t *testing.T) *Client {
 	t.Helper()
 	c, err := New(Config{
-		Host:     "localhost",
-		Username: "u",
-		Password: "p",
-		Timeout:  30 * time.Second,
+		Host:                  "localhost",
+		Username:              "u",
+		Password:              "p",
+		Timeout:               30 * time.Second,
+		InsecureIgnoreHostKey: true,
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

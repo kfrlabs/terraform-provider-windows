@@ -105,6 +105,24 @@ jobs:
           }
           Write-Host "SSH reachable on $($env:WINDOWS_HOST):22"
 
+      # The provider verifies host keys by default, so the suite needs a
+      # known_hosts baseline. Scanning the key we just generated locally is
+      # sound here precisely because the target is this same runner: there is
+      # no network path for an interposed host to sit on. Do NOT copy this
+      # pattern for a remote target, where the fingerprint must be established
+      # out of band.
+      - name: Record host key for verification
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = Join-Path $env:RUNNER_TEMP 'known_hosts'
+          $keys = & ssh-keyscan -p 22 $env:WINDOWS_HOST 2>$null
+          if (-not $keys) {
+            throw "ssh-keyscan returned no host key for $($env:WINDOWS_HOST)"
+          }
+          $keys | Set-Content -Path $path -Encoding ascii
+          Write-Host "Recorded $(($keys | Measure-Object).Count) host key(s) in $path"
+          "WINDOWS_KNOWN_HOSTS=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: go test (acceptance)
         env:
           TF_ACC: "1"

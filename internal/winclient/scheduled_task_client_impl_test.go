@@ -37,10 +37,11 @@ import (
 func newSTTestClient(t *testing.T) (*Client, *ScheduledTaskClientImpl) {
 	t.Helper()
 	c, err := New(Config{
-		Host:     "winhost",
-		Username: "u",
-		Password: "p",
-		Timeout:  30 * time.Second,
+		Host:                  "winhost",
+		Username:              "u",
+		Password:              "p",
+		Timeout:               30 * time.Second,
+		InsecureIgnoreHostKey: true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

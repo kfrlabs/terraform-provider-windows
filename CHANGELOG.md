@@ -12,13 +12,45 @@ All notable changes to this project will be documented in this file.
   `golang.org/x/crypto/ssh`; the `RunPowerShell`/`RunPowerShellWithInput`
   API, the `-EncodedCommand`/stdin bootstrap, and every resource/data source
   on top of it are unchanged. The provider `port` attribute now defaults to
-  `22`, and the `use_https` and `auth_type` provider attributes are removed
-  (authentication is password-only over SSH). Host key verification is not
-  performed (`ssh.InsecureIgnoreHostKey()`); only target trusted, short-lived
-  automation hosts. `masterzen/winrm` and its transitive NTLM/Kerberos
-  dependencies were dropped from `go.mod`. The `testacc-windows` CI workflow
-  now provisions the OpenSSH Server Windows capability on the runner instead
-  of enabling WinRM.
+  `22`, and the `use_https` and `auth_type` provider attributes are removed.
+  `masterzen/winrm` and its transitive NTLM/Kerberos dependencies were dropped
+  from `go.mod`. The `testacc-windows` CI workflow now provisions the OpenSSH
+  Server Windows capability on the runner instead of enabling WinRM.
+
+### Added
+
+- Public-key and ssh-agent authentication. The provider gained
+  `private_key` (PEM inline, sensitive), `private_key_path` (with `~`
+  expansion), `private_key_passphrase` (sensitive) and `use_agent`, each with a
+  `WINDOWS_*` environment fallback. Configured credentials are offered in the
+  conventional OpenSSH order — explicit key, then ssh-agent, then password — so
+  a host that refuses one method can still accept another. `password` is no
+  longer required; any single method suffices.
+
+### Security
+
+- **Breaking:** the provider now **verifies the SSH host key** instead of
+  accepting whatever the server presents. `ssh.InsecureIgnoreHostKey()` is gone
+  from the default path. Verification uses either `known_hosts_path` (an
+  OpenSSH `known_hosts` file, defaulting to `~/.ssh/known_hosts`) or the new
+  `host_key` attribute, which pins the expected public key inline in
+  `authorized_keys` form for CI and Terraform Cloud, where no `known_hosts`
+  file exists. When neither is usable the provider **fails closed** rather than
+  connecting unverified. A key that changes under an already-known host is
+  reported as a possible man-in-the-middle, distinctly from a
+  host-not-yet-known error.
+
+  Without this check, authentication proved the client's identity to the server
+  but nothing about who answered, so any host able to intercept the connection
+  could have harvested credentials and the PowerShell payloads the provider
+  sends — including secrets passed on stdin.
+
+  **Upgrading:** add `host_key` (from `ssh-keyscan <host>`, fingerprint verified
+  out of band) or point `known_hosts_path` at a populated file. Existing
+  configurations will fail to connect until one of these is set. The escape
+  hatch is `insecure_ignore_host_key = true`, which restores the previous
+  behaviour, cannot be combined with `host_key` or `known_hosts_path`, and emits
+  a warning on every plan and apply.
 
 ### Fixed
 

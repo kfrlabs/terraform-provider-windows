@@ -38,9 +38,6 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Username == "" {
 		return nil, fmt.Errorf("winclient: username is required")
 	}
-	if cfg.Password == "" {
-		return nil, fmt.Errorf("winclient: password is required")
-	}
 	if cfg.Port == 0 {
 		cfg.Port = 22
 	}
@@ -48,15 +45,20 @@ func New(cfg Config) (*Client, error) {
 		cfg.Timeout = 30 * time.Second
 	}
 
+	auth, err := buildAuthMethods(cfg)
+	if err != nil {
+		return nil, err
+	}
+	hostKeys, err := hostKeyCallback(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	sshCfg := &ssh.ClientConfig{
-		User:    cfg.Username,
-		Auth:    []ssh.AuthMethod{ssh.Password(cfg.Password)},
-		Timeout: cfg.Timeout,
-		// Host key verification is intentionally not performed: this provider
-		// targets short-lived automation hosts with no established
-		// known_hosts baseline, mirroring the trust model of the previous
-		// SSH transport (which had no host identity check either).
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // see comment above
+		User:            cfg.Username,
+		Auth:            auth,
+		Timeout:         cfg.Timeout,
+		HostKeyCallback: hostKeys,
 	}
 
 	return &Client{

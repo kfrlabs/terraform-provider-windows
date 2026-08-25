@@ -6,25 +6,67 @@ package winclient
 
 import (
 	"os"
+	"strconv"
 	"time"
 )
 
 // Config holds connection settings for an SSH session. No credentials are
 // ever hardcoded: values come from the provider block or environment.
+//
+// Authentication follows the usual OpenSSH precedence: an explicitly supplied
+// private key first, then the ssh-agent, then the password. Every method that
+// is configured is offered to the server, so a host that rejects one can still
+// accept another.
+//
+// Host identity is verified by default. Exactly one of HostKey,
+// KnownHostsPath (or the default known_hosts file) or InsecureIgnoreHostKey
+// decides how.
 type Config struct {
 	Host     string
 	Port     int
 	Username string
 	Password string
 	Timeout  time.Duration
+
+	// PrivateKey is a PEM-encoded private key. Mutually exclusive with
+	// PrivateKeyPath.
+	PrivateKey string
+	// PrivateKeyPath points at a PEM-encoded private key on disk. A leading
+	// "~" is expanded to the current user's home directory.
+	PrivateKeyPath string
+	// PrivateKeyPassphrase decrypts PrivateKey/PrivateKeyPath when it is
+	// passphrase-protected.
+	PrivateKeyPassphrase string
+	// UseAgent forces ssh-agent authentication on (true) or off (false).
+	// When nil, the agent is used if SSH_AUTH_SOCK is set.
+	UseAgent *bool
+
+	// KnownHostsPath is the OpenSSH known_hosts file used to verify the
+	// server. Defaults to ~/.ssh/known_hosts.
+	KnownHostsPath string
+	// HostKey pins the server's public key directly, in authorized_keys form
+	// ("ssh-ed25519 AAAAC3Nz..."). It removes the need for a known_hosts file,
+	// which is what CI runners and Terraform Cloud generally lack.
+	HostKey string
+	// InsecureIgnoreHostKey disables host identity verification entirely. It
+	// exposes every connection to man-in-the-middle interception and exists
+	// only as an explicit, deliberate opt-out.
+	InsecureIgnoreHostKey bool
 }
 
 // Environment variable names used as fallback when provider attributes are
 // unset.
 const (
-	EnvHost     = "WINDOWS_HOST"
-	EnvUsername = "WINDOWS_USERNAME"
-	EnvPassword = "WINDOWS_PASSWORD" //nolint:gosec // name of env var, not a secret
+	EnvHost                  = "WINDOWS_HOST"
+	EnvUsername              = "WINDOWS_USERNAME"
+	EnvPassword              = "WINDOWS_PASSWORD"               //nolint:gosec // name of env var, not a secret
+	EnvPrivateKey            = "WINDOWS_PRIVATE_KEY"            //nolint:gosec // name of env var, not a secret
+	EnvPrivateKeyPath        = "WINDOWS_PRIVATE_KEY_PATH"       //nolint:gosec // name of env var, not a secret
+	EnvPrivateKeyPassphrase  = "WINDOWS_PRIVATE_KEY_PASSPHRASE" //nolint:gosec // name of env var, not a secret
+	EnvUseAgent              = "WINDOWS_USE_AGENT"
+	EnvKnownHosts            = "WINDOWS_KNOWN_HOSTS"
+	EnvHostKey               = "WINDOWS_HOST_KEY"
+	EnvInsecureIgnoreHostKey = "WINDOWS_INSECURE_IGNORE_HOST_KEY"
 )
 
 // ResolveFromEnv fills any empty field in cfg with the corresponding
@@ -38,5 +80,30 @@ func ResolveFromEnv(cfg *Config) {
 	}
 	if cfg.Password == "" {
 		cfg.Password = os.Getenv(EnvPassword)
+	}
+	if cfg.PrivateKey == "" {
+		cfg.PrivateKey = os.Getenv(EnvPrivateKey)
+	}
+	if cfg.PrivateKeyPath == "" {
+		cfg.PrivateKeyPath = os.Getenv(EnvPrivateKeyPath)
+	}
+	if cfg.PrivateKeyPassphrase == "" {
+		cfg.PrivateKeyPassphrase = os.Getenv(EnvPrivateKeyPassphrase)
+	}
+	if cfg.UseAgent == nil {
+		if v, err := strconv.ParseBool(os.Getenv(EnvUseAgent)); err == nil {
+			cfg.UseAgent = &v
+		}
+	}
+	if cfg.KnownHostsPath == "" {
+		cfg.KnownHostsPath = os.Getenv(EnvKnownHosts)
+	}
+	if cfg.HostKey == "" {
+		cfg.HostKey = os.Getenv(EnvHostKey)
+	}
+	if !cfg.InsecureIgnoreHostKey {
+		if v, err := strconv.ParseBool(os.Getenv(EnvInsecureIgnoreHostKey)); err == nil {
+			cfg.InsecureIgnoreHostKey = v
+		}
 	}
 }

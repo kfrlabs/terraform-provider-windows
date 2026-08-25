@@ -230,7 +230,7 @@ func TestLegacyPackageResource_Configure_WrongType(t *testing.T) {
 }
 
 func TestLegacyPackageResource_Configure_HappyPath(t *testing.T) {
-	c, err := winclient.New(winclient.Config{Host: "x", Username: "u", Password: "p"})
+	c, err := winclient.New(winclient.Config{Host: "x", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

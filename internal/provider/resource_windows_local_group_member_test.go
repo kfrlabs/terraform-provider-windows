@@ -352,7 +352,7 @@ func TestLocalGroupMemberConfigure_WrongType(t *testing.T) {
 }
 
 func TestLocalGroupMemberConfigure_Valid(t *testing.T) {
-	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p"})
+	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)
 	}

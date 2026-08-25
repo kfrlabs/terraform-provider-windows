@@ -32,10 +32,11 @@ import (
 func newRVTestClient(t *testing.T) (*Client, *RegistryValueClientImpl) {
 	t.Helper()
 	c, err := New(Config{
-		Host:     "winrv01",
-		Username: "u",
-		Password: "p",
-		Timeout:  30 * time.Second,
+		Host:                  "winrv01",
+		Username:              "u",
+		Password:              "p",
+		Timeout:               30 * time.Second,
+		InsecureIgnoreHostKey: true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

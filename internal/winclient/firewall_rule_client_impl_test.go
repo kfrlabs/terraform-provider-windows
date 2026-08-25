@@ -32,7 +32,7 @@ import (
 // frNewClient returns a *Client + *FirewallRuleClient pair for tests.
 func frNewClient(t *testing.T) (*Client, *FirewallRuleClient) {
 	t.Helper()
-	c, err := New(Config{Host: "winfw01", Username: "u", Password: "p", Timeout: 30 * time.Second})
+	c, err := New(Config{Host: "winfw01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

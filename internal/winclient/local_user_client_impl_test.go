@@ -36,10 +36,11 @@ import (
 func newLUTestClient(t *testing.T) *Client {
 	t.Helper()
 	c, err := New(Config{
-		Host:     "winlu01",
-		Username: "u",
-		Password: "p",
-		Timeout:  30 * time.Second,
+		Host:                  "winlu01",
+		Username:              "u",
+		Password:              "p",
+		Timeout:               30 * time.Second,
+		InsecureIgnoreHostKey: true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
