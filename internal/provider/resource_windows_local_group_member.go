@@ -103,7 +103,7 @@ func (r *windowsLocalGroupMemberResource) Schema(
 func windowsLocalGroupMemberSchemaDefinition() schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages the membership of **exactly one** member in a Windows local " +
-			"group on a remote host via WinRM and PowerShell " +
+			"group on a remote host via SSH and PowerShell " +
 			"(`Microsoft.PowerShell.LocalAccounts` module, Windows Server 2016 / " +
 			"Windows 10 and later).\n\n" +
 			"Each resource instance represents one `(group, member)` pair. The " +
@@ -525,7 +525,7 @@ func (r *windowsLocalGroupMemberResource) ImportState(
 				break
 			}
 		} else {
-			if strings.EqualFold(m.MemberName, memberStr) {
+			if memberNameMatches(m.MemberName, memberStr) {
 				found = m
 				break
 			}
@@ -565,6 +565,28 @@ func (r *windowsLocalGroupMemberResource) ImportState(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// bareAccountName returns the account portion of a possibly qualified Windows
+// identity, e.g. "MACHINE\user" or "DOMAIN\user" -> "user". Identity strings
+// without a backslash are returned unchanged.
+func bareAccountName(s string) string {
+	if i := strings.LastIndex(s, `\`); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+// memberNameMatches reports whether a member returned by List matches the
+// requested lookup name. Get-LocalGroupMember reports member names in the
+// qualified form "MACHINE\user" / "DOMAIN\user", so an exact case-insensitive
+// match is tried first, then a bare-account comparison so a bare "user" lookup
+// still matches a qualified "MACHINE\user" result.
+func memberNameMatches(actualName, requested string) bool {
+	if strings.EqualFold(actualName, requested) {
+		return true
+	}
+	return strings.EqualFold(bareAccountName(actualName), bareAccountName(requested))
+}
 
 // parseCompositeID splits a composite resource ID "<group_sid>/<member_sid>"
 // into its two SID components. Returns (groupSID, memberSID, true) on success,
@@ -666,7 +688,7 @@ func addLocalGroupMemberCreateDiag(diags *diag.Diagnostics, memberInput string, 
 		diags.AddError(
 			"Create windows_local_group_member failed: access denied (EC-8)",
 			fmt.Sprintf(
-				"The WinRM user does not have permission to add members to this group. "+
+				"The SSH user does not have permission to add members to this group. "+
 					"Windows error: %s",
 				lgme.Message,
 			),

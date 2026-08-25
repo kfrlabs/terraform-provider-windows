@@ -936,3 +936,51 @@ func TestLocalGroupMemberModel_IDComposite(t *testing.T) {
 		t.Errorf("ID = %q, want %q (ADR-LGM-1)", m.ID.ValueString(), wantID)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// bareAccountName / memberNameMatches (#73)
+// ---------------------------------------------------------------------------
+
+func TestBareAccountName(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{`MACHINE\user`, "user"},
+		{`CORP\jdoe`, "jdoe"},
+		{"user", "user"},
+		{"", ""},
+		{`MACHINE\`, ""},
+		{`a\b\c`, "c"},
+	}
+	for _, c := range cases {
+		if got := bareAccountName(c.in); got != c.want {
+			t.Errorf("bareAccountName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestMemberNameMatches covers the #73 fix: Get-LocalGroupMember returns member
+// names qualified as "MACHINE\user", but callers look them up by the bare name.
+func TestMemberNameMatches(t *testing.T) {
+	cases := []struct {
+		name              string
+		actual, requested string
+		want              bool
+	}{
+		{"bare lookup matches qualified actual (#73)", `RUNNER01\usr-lgmds-tf-test`, "usr-lgmds-tf-test", true},
+		{"exact qualified match", `CORP\jdoe`, `CORP\jdoe`, true},
+		{"qualified match case-insensitive", `CORP\JDoe`, `corp\jdoe`, true},
+		{"bare vs bare", "jdoe", "jdoe", true},
+		{"bare case-insensitive", "JDoe", "jdoe", true},
+		{"qualified lookup matches qualified actual across differing prefix", `RUNNER01\jdoe`, `CORP\jdoe`, true},
+		{"different account does not match", `RUNNER01\usr-lgmds-tf-test`, "someone-else", false},
+		{"empty requested does not match", `RUNNER01\usr`, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memberNameMatches(c.actual, c.requested); got != c.want {
+				t.Errorf("memberNameMatches(%q, %q) = %v, want %v", c.actual, c.requested, got, c.want)
+			}
+		})
+	}
+}
