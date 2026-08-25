@@ -1,6 +1,6 @@
 // Package winclient: WindowsHostnameClient interface and associated types
 // for managing the NetBIOS computer name of a remote Windows host over
-// WinRM + PowerShell.
+// SSH + PowerShell.
 //
 // Spec alignment: windows_hostname spec v1 (2026-04-25).
 //
@@ -44,7 +44,7 @@ const (
 	// domain-joined renames (EC-5).
 	HostnameErrorDomainJoined HostnameErrorKind = "domain_joined"
 
-	// HostnameErrorUnreachable is returned when WinRM cannot be contacted
+	// HostnameErrorUnreachable is returned when SSH cannot be contacted
 	// (connection refused, TLS error, auth failure, timeout).  Context
 	// SHOULD include host, port and transport (EC-6).
 	HostnameErrorUnreachable HostnameErrorKind = "unreachable"
@@ -60,7 +60,7 @@ const (
 	HostnameErrorConcurrent HostnameErrorKind = "concurrent_modification"
 
 	// HostnameErrorUnknown is the catch-all for unmapped PowerShell or
-	// WinRM failures.  Stdout/stderr SHOULD be captured in Context.
+	// SSH failures.  Stdout/stderr SHOULD be captured in Context.
 	HostnameErrorUnknown HostnameErrorKind = "unknown"
 )
 
@@ -76,7 +76,7 @@ type HostnameError struct {
 	Kind HostnameErrorKind
 
 	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics.  Must not contain WinRM credentials.
+	// diagnostics.  Must not contain SSH credentials.
 	Message string
 
 	// Context holds structured diagnostic key-value pairs (e.g. "host",
@@ -84,7 +84,7 @@ type HostnameError struct {
 	// All values must be safe to log.
 	Context map[string]string
 
-	// Cause is the underlying error, if any (typically a WinRM transport
+	// Cause is the underlying error, if any (typically a SSH transport
 	// or PowerShell parsing error).
 	Cause error
 }
@@ -202,7 +202,7 @@ type HostnameState struct {
 // ---------------------------------------------------------------------------
 
 // WindowsHostnameClient defines the contract for managing the NetBIOS
-// hostname of a remote Windows host over WinRM.
+// hostname of a remote Windows host over SSH.
 //
 // All methods accept a context.Context for cancellation/timeout
 // propagation.  All methods return *HostnameError (wrapped in error).
@@ -229,7 +229,7 @@ type WindowsHostnameClient interface {
 	// Returns ErrHostnameDomainJoined (EC-5) if the host is domain-joined.
 	// Returns ErrHostnameInvalidName  (EC-1) on server-side validation failure.
 	// Returns ErrHostnamePermission   (EC-4) on AccessDenied / RenameComputerNotAuthorized.
-	// Returns ErrHostnameUnreachable  (EC-6) if WinRM cannot be reached.
+	// Returns ErrHostnameUnreachable  (EC-6) if SSH cannot be reached.
 	Create(ctx context.Context, input HostnameInput) (*HostnameState, error)
 
 	// Read aggregates Win32_ComputerSystem and the three HKLM registry

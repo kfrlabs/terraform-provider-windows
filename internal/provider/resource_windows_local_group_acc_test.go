@@ -5,7 +5,7 @@
 // Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows target with WinRM enabled and Local Administrator rights.
+//   - A Windows target with SSH enabled and Local Administrator rights.
 //   - WINDOWS_LOCAL_GROUP_SUFFIX (optional): suffix appended to test group
 //     names to avoid collisions on shared lab hosts; defaults to "tf-test".
 package provider

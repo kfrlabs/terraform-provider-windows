@@ -70,7 +70,7 @@ try {
 				})
 		}
 		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-			"ResolveGroup: WinRM transport error",
+			"ResolveGroup: SSH transport error",
 			err,
 			map[string]string{
 				"group":  groupOrSID,

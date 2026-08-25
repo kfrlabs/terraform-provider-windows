@@ -1,7 +1,7 @@
 // Package provider — unit tests for windows_feature.
 //
 // These tests exercise schema, CRUD handlers, ImportState, helpers and
-// addFeatureDiag without touching WinRM. CRUD handlers are driven via a
+// addFeatureDiag without touching SSH. CRUD handlers are driven via a
 // fakeFeatureClient injected into windowsFeatureResource.feat.
 //
 // The 9 spec edge cases are covered:

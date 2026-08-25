@@ -5,7 +5,7 @@
 // Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows target with WinRM enabled and Local Administrator rights
+//   - A Windows target with SSH enabled and Local Administrator rights
 //     (values are written under HKLM\SOFTWARE\TF-Acc-Test-Registry).
 //
 // Every test confines its writes to the dedicated test key so they are safe

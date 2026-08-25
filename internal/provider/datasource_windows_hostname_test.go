@@ -231,7 +231,7 @@ func TestHostnameDSRead_RebootPending(t *testing.T) {
 func TestHostnameDSRead_Error(t *testing.T) {
 	d := &windowsHostnameDataSource{
 		hn: &fakeHostnameClientDS{
-			readErr: errors.New("WinRM unreachable"),
+			readErr: errors.New("SSH unreachable"),
 		},
 	}
 	cfg := hostnameDSConfig()

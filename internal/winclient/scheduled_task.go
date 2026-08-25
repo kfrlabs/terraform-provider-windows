@@ -1,4 +1,4 @@
-// Package winclient: Windows Scheduled Task CRUD implementation over WinRM.
+// Package winclient: Windows Scheduled Task CRUD implementation over SSH.
 //
 // ScheduledTaskClientImpl uses the ScheduledTasks PowerShell module for all
 // task-level operations, and Schedule.Service COM for folder creation/pruning.
@@ -9,7 +9,7 @@
 //     EXCEPT principal.password, which is never embedded in the script body.
 //   - principal.password is injected on stdin via runSTEnvelopeWithInput and read by
 //     the script through [Console]::In.ReadLine(), keeping the plaintext out of
-//     the WinRM -EncodedCommand payload, WinRM trace logs, IIS WMSvc traces, and
+//     the SSH -EncodedCommand payload, SSH trace logs, IIS WMSvc traces, and
 //     any host-side Set-PSDebug/Start-Transcript output (mirrors ADR-LU-3).
 //   - Passwords are never logged or included in error context (ADR-ST-3).
 //   - All scripts are transmitted via -EncodedCommand (UTF-16LE base64).
@@ -26,7 +26,7 @@ import (
 // Compile-time assertion.
 var _ ScheduledTaskClient = (*ScheduledTaskClientImpl)(nil)
 
-// ScheduledTaskClientImpl is the PowerShell/WinRM-backed ScheduledTaskClient.
+// ScheduledTaskClientImpl is the PowerShell/SSH-backed ScheduledTaskClient.
 type ScheduledTaskClientImpl struct {
 	c *Client
 }

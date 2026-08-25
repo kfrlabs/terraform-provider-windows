@@ -1,7 +1,7 @@
 // Package provider: windows_service resource implementation.
 //
 // This file contains the TPF schema, model, cross-field validator and full
-// CRUD + ImportState handlers for the windows_service resource. All WinRM
+// CRUD + ImportState handlers for the windows_service resource. All SSH
 // interaction is delegated to winclient.ServiceClient (internal/winclient).
 //
 // Spec alignment: windows_service spec v7 (2026-04-24).
@@ -91,7 +91,7 @@ func (r *windowsServiceResource) Schema(_ context.Context, _ resource.SchemaRequ
 func windowsServiceSchemaDefinition() schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages the full lifecycle of a Windows service on a remote host " +
-			"via WinRM and PowerShell. Supports create, update, in-place reconfiguration, " +
+			"via SSH and PowerShell. Supports create, update, in-place reconfiguration, " +
 			"runtime state control (Running/Stopped/Paused), deletion and import.",
 
 		Attributes: map[string]schema.Attribute{

@@ -5,7 +5,7 @@
 // Requires (all must be set to activate acceptance tests):
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows target with WinRM enabled
+//   - A Windows target with SSH enabled
 //
 // Test scenarios covered:
 //

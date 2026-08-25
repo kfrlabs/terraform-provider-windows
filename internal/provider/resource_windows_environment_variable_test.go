@@ -1,6 +1,6 @@
 // Package provider — unit tests for windows_environment_variable resource.
 //
-// These tests exercise validators, helpers, and CRUD handlers without WinRM.
+// These tests exercise validators, helpers, and CRUD handlers without SSH.
 // A fakeEnvVarClient is injected into windowsEnvVarResource.client.
 //
 // Edge cases covered (aligned with spec EC-* identifiers):

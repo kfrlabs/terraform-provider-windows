@@ -263,7 +263,7 @@ func (r *windowsLocalUserResource) Schema(
 func windowsLocalUserSchemaDefinition() schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a Windows local user account (SAM database) on a remote host " +
-			"via WinRM and PowerShell (`Microsoft.PowerShell.LocalAccounts` module, available " +
+			"via SSH and PowerShell (`Microsoft.PowerShell.LocalAccounts` module, available " +
 			"from Windows Server 2016 / Windows 10 build 1607 and later).\n\n" +
 			"The Terraform resource ID is set to the user **SID** (e.g. `S-1-5-21-…-1001`), " +
 			"which is stable across renames. A change to the `name` attribute triggers " +
@@ -271,7 +271,7 @@ func windowsLocalUserSchemaDefinition() schema.Schema {
 			"~> **Password:** The `password` attribute is `Sensitive` but **not natively " +
 			"write-only** in TPF v1.13.0 (write-only support requires TPF ≥ 1.14.0 + Terraform CLI " +
 			"≥ 1.11). The plaintext is injected via stdin inside the PowerShell script and " +
-			"**never appears in WinRM trace logs or diagnostic output** (ADR-LU-3).\n\n" +
+			"**never appears in SSH trace logs or diagnostic output** (ADR-LU-3).\n\n" +
 			"~> **Built-in accounts:** Attempting `terraform destroy` on a built-in account " +
 			"(RID 500/501/503/504) results in a **hard error**. Use `terraform state rm` instead.",
 
@@ -350,7 +350,7 @@ func windowsLocalUserSchemaDefinition() schema.Schema {
 					"(minimum length, complexity). Required at Create unless `password_wo` is set; if both are omitted the provider raises " +
 					"a diagnostic error before calling `New-LocalUser`.\n\n" +
 					"The plaintext is injected via stdin inside the PowerShell script and **never " +
-					"appears in WinRM trace logs or provider diagnostics** (ADR-LU-3, EC-6) — but it " +
+					"appears in SSH trace logs or provider diagnostics** (ADR-LU-3, EC-6) — but it " +
 					"**does land in `terraform.tfstate`** as a Sensitive value. For a no-state-leak " +
 					"alternative, see `password_wo`.\n\n" +
 					"After `terraform import`, this attribute is `null`. Set it in HCL before " +

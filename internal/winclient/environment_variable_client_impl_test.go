@@ -1,6 +1,6 @@
 // Package winclient — unit tests for EnvVarClientImpl.
 //
-// Tests stub the package-level runEnvVarPowerShell hook so no real WinRM
+// Tests stub the package-level runEnvVarPowerShell hook so no real SSH
 // connection is required. Edge cases covered:
 //
 //	registryPathForScope   — machine, user, invalid scope
@@ -12,7 +12,7 @@
 //	Set (EC-12)            — empty value is valid
 //	Set (EC-2)             — invalid_input when registry key absent
 //	Set (permission)       — permission_denied from PS
-//	Set (transport error)  — WinRM transport failure
+//	Set (transport error)  — SSH transport failure
 //	Set (context cancel)   — cancelled context
 //	Set (no envelope)      — missing JSON in stdout
 //	Set (bad JSON)         — malformed envelope

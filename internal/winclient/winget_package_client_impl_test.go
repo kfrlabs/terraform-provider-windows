@@ -1,7 +1,7 @@
 // Package winclient — unit tests for WingetPackageClientImpl.
 //
 // Tests stub the package-level runPowerShell seam (shared with service.go)
-// so no real WinRM connection is needed. Coverage targets:
+// so no real SSH connection is needed. Coverage targets:
 //
 //   - WingetPackageError: Error(), Unwrap(), Is(), NewWingetPackageError, IsWingetPackageError
 //   - wpMapKind: all known kinds + unknown fallback

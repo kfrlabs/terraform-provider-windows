@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-A Terraform provider that manages Windows resources over WinRM by executing PowerShell on the target host. Built on the **Terraform Plugin Framework** (TPF, `terraform-plugin-framework`) — not the legacy SDKv2.
+A Terraform provider that manages Windows resources over SSH (the target host's OpenSSH Server) by executing PowerShell on the target host. Built on the **Terraform Plugin Framework** (TPF, `terraform-plugin-framework`) — not the legacy SDKv2.
 
 ## Commands
 
@@ -23,7 +23,7 @@ go test ./internal/provider/ -run TestWindowsFeatureResource -v
 go test ./internal/winclient/ -run TestFeatureClient -v
 ```
 
-Acceptance tests require `TF_ACC=1` plus `WINDOWS_HOST`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD` and a reachable Windows target; without them they skip. They also live behind the `acceptance` build tag (`-tags acceptance`) and share `testAccProtoV6ProviderFactories` from `internal/provider/acc_test_helper.go`; the default `make test` build never compiles them. The `testacc-windows` workflow (`.github/workflows/testacc-windows.yml`, `workflow_dispatch`) runs them on a GitHub-hosted `windows-latest` runner that targets its own local WinRM. Unit tests never touch WinRM.
+Acceptance tests require `TF_ACC=1` plus `WINDOWS_HOST`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD` and a reachable Windows target; without them they skip. They also live behind the `acceptance` build tag (`-tags acceptance`) and share `testAccProtoV6ProviderFactories` from `internal/provider/acc_test_helper.go`; the default `make test` build never compiles them. The `testacc-windows` workflow (`.github/workflows/testacc-windows.yml`, `workflow_dispatch`) runs them on a GitHub-hosted `windows-latest` runner that targets its own local OpenSSH Server. Unit tests never touch SSH.
 
 Enabled linters (`.golangci.yml`): `errcheck`, `gofmt` (simplify), `gosec`, `govet`, `ineffassign`, `staticcheck`, `unused`. `_test.go` files are excluded from `errcheck`/`gosec`.
 
@@ -31,15 +31,15 @@ Enabled linters (`.golangci.yml`): `errcheck`, `gofmt` (simplify), `gosec`, `gov
 
 Three layers, top to bottom:
 
-1. **`internal/provider/`** — TPF layer. Provider config + schemas, models, CRUD/ImportState handlers, diagnostics. No WinRM or PowerShell here.
-2. **`internal/winclient/`** — WinRM/PowerShell layer. Builds and runs PowerShell, parses results, returns Go structs and structured errors.
-3. **Remote Windows host** — reached via `masterzen/winrm`.
+1. **`internal/provider/`** — TPF layer. Provider config + schemas, models, CRUD/ImportState handlers, diagnostics. No SSH or PowerShell here.
+2. **`internal/winclient/`** — SSH/PowerShell layer. Builds and runs PowerShell, parses results, returns Go structs and structured errors.
+3. **Remote Windows host** — reached via `golang.org/x/crypto/ssh`, against the host's OpenSSH Server with PowerShell as the invoked command.
 
 ### Provider wiring (`internal/provider/provider.go`)
 `Configure` reads provider config, applies `WINDOWS_*` env fallbacks (`winclient.ResolveFromEnv`), builds one shared `*winclient.Client`, and hands it to every resource/data source via `resp.ResourceData` / `resp.DataSourceData`. Each resource/data source's `Configure` type-asserts `req.ProviderData.(*winclient.Client)` and wraps it in its specific client (e.g. `winclient.NewFeatureClient(c)`). New resources/data sources must be registered in the `Resources()` / `DataSources()` slices.
 
 ### winclient layer
-`client.go` is the WinRM wrapper. The key primitive is `RunPowerShell(ctx, script)`. Only a fixed bootstrap rides on the command line via `powershell.exe -EncodedCommand`; the real script (UTF-16LE base64) is streamed on **stdin** and decoded by the bootstrap, so the command line stays a constant ~600 chars and never hits Windows' ~8191-char limit regardless of script size. `RunPowerShellWithInput` appends secrets after the script on stdin so plaintext never appears in the encoded command or WinRM trace logs — use it for passwords and other sensitive values; the script reads them via `[Console]::In.ReadLine()` / `ReadToEnd()`.
+`client.go` is the SSH wrapper. The key primitive is `RunPowerShell(ctx, script)`. Only a fixed bootstrap rides on the command line via `powershell.exe -EncodedCommand`; the real script (UTF-16LE base64) is streamed on **stdin** and decoded by the bootstrap, so the command line stays a constant ~600 chars and never hits Windows' ~8191-char limit regardless of script size. `RunPowerShellWithInput` appends secrets after the script on stdin so plaintext never appears in the encoded command or SSH session logs — use it for passwords and other sensitive values; the script reads them via `[Console]::In.ReadLine()` / `ReadToEnd()`. Each call dials a fresh SSH connection (no session reuse); host key verification is intentionally skipped (`ssh.InsecureIgnoreHostKey()`), so only point this provider at trusted, short-lived automation hosts.
 
 Conventions every winclient resource follows:
 - PowerShell scripts wrap output in a **JSON envelope** via `Emit-OK` / `Emit-Err` helpers, so stdout is machine-parseable regardless of Windows locale. Always set `$ErrorActionPreference='Stop'` and silence progress/warning streams.
@@ -60,7 +60,7 @@ For a Terraform name `windows_<r>` with PascalCase `<R>`:
 | Docs | `docs/resources/<r>.md`, `docs/data-sources/<r>.md` (no `windows_` prefix) |
 | Examples | `examples/resources/windows_<r>/{resource.tf,import.sh}`, `examples/data-sources/windows_<r>/data-source.tf` |
 
-The provider layer depends on a winclient **interface** (e.g. `WindowsFeatureClient`), not the concrete type, which is what lets unit tests inject a fake client and exercise CRUD without WinRM.
+The provider layer depends on a winclient **interface** (e.g. `WindowsFeatureClient`), not the concrete type, which is what lets unit tests inject a fake client and exercise CRUD without SSH.
 
 ### Data sources
 A data source shares the **same** Terraform type name as its sibling resource (Terraform disambiguates by `resource` vs `data` block). Never suffix names with `_data`/`_info`. Data sources reuse the sibling resource's winclient `Read` — no new winclient file.
@@ -74,5 +74,5 @@ The Claude Code port of the KDust pipeline lives in `.claude/`. The `/windows-re
 
 ## Notes
 
-- `kerberos` `auth_type` is declared but **not implemented** (`ntlm` default, `basic` supported).
+- Authentication is password-only (`ssh.Password`); no private-key or SSH-agent auth is implemented.
 - Resources with slow operations set a generous default timeout and expose a `timeouts {}` block (`terraform-plugin-framework-timeouts`); e.g. `windows_feature` defaults to 30m because Server roles can take 10+ minutes.

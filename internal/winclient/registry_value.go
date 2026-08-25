@@ -1,4 +1,4 @@
-// Package winclient: Windows registry value CRUD implementation over WinRM.
+// Package winclient: Windows registry value CRUD implementation over SSH.
 //
 // All operations use the .NET Microsoft.Win32.Registry API via PowerShell
 // (ADR-RV-1). Scripts emit a JSON envelope (Emit-OK/Emit-Err) for
@@ -25,12 +25,12 @@ import (
 // Compile-time assertion: RegistryValueClientImpl satisfies RegistryValueClient.
 var _ RegistryValueClient = (*RegistryValueClientImpl)(nil)
 
-// RegistryValueClientImpl is the PowerShell/WinRM-backed RegistryValueClient.
+// RegistryValueClientImpl is the PowerShell/SSH-backed RegistryValueClient.
 type RegistryValueClientImpl struct {
 	c *Client
 }
 
-// NewRegistryValueClient constructs a RegistryValueClientImpl wrapping the given WinRM Client.
+// NewRegistryValueClient constructs a RegistryValueClientImpl wrapping the given SSH Client.
 func NewRegistryValueClient(c *Client) *RegistryValueClientImpl {
 	return &RegistryValueClientImpl{c: c}
 }

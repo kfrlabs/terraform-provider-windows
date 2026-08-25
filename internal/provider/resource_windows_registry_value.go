@@ -2,7 +2,7 @@
 //
 // This file contains the Terraform Plugin Framework schema, model, validators,
 // and full CRUD + ImportState handlers for the windows_registry_value resource.
-// WinRM interaction is delegated to winclient.RegistryValueClientImpl.
+// SSH interaction is delegated to winclient.RegistryValueClientImpl.
 //
 // Spec alignment: windows_registry_value spec v1 (2026-04-25).
 package provider
@@ -101,7 +101,7 @@ var knownHiveAbbreviations = []string{
 func windowsRegistryValueSchemaDefinition() schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a single named value (or the unnamed Default value) inside a Windows " +
-			"registry key on a remote host via WinRM + PowerShell.",
+			"registry key on a remote host via SSH + PowerShell.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,

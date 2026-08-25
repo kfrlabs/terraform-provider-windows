@@ -52,7 +52,7 @@ const (
 	// Context MUST carry:
 	//   "sub_type"  → "local" or "domain"
 	//   "member"    → the original identity string.
-	//   "host"      → the WinRM target hostname.
+	//   "host"      → the SSH target hostname.
 	//
 	// Diagnostic attribute path: "member".
 	LocalGroupMemberErrorUnresolvable LocalGroupMemberErrorKind = "member_unresolvable"
@@ -67,7 +67,7 @@ const (
 	LocalGroupMemberErrorPermission LocalGroupMemberErrorKind = "permission_denied"
 
 	// LocalGroupMemberErrorUnknown is the catch-all for unrecognised
-	// PowerShell errors or WinRM transport failures.
+	// PowerShell errors or SSH transport failures.
 	LocalGroupMemberErrorUnknown LocalGroupMemberErrorKind = "unknown"
 )
 
@@ -229,7 +229,7 @@ type LocalGroupMemberState struct {
 // ---------------------------------------------------------------------------
 
 // ClientLocalGroupMember defines the contract for managing a single
-// (group, member) membership on a remote Windows host via WinRM.
+// (group, member) membership on a remote Windows host via SSH.
 //
 // Design invariants:
 //   - All group lookups use the group SID to be immune to concurrent renames (ADR-LGM-6).

@@ -1,5 +1,5 @@
 // Package winclient - FirewallRuleClient is the concrete
-// WindowsFirewallRuleClient backed by PowerShell over WinRM.
+// WindowsFirewallRuleClient backed by PowerShell over SSH.
 //
 // Security invariants:
 //   - All user-supplied strings are interpolated via psQuote (single-quoted
@@ -26,13 +26,13 @@ import (
 // Compile-time assertion: FirewallRuleClient satisfies WindowsFirewallRuleClient.
 var _ WindowsFirewallRuleClient = (*FirewallRuleClient)(nil)
 
-// FirewallRuleClient is the PowerShell/WinRM-backed WindowsFirewallRuleClient.
+// FirewallRuleClient is the PowerShell/SSH-backed WindowsFirewallRuleClient.
 type FirewallRuleClient struct {
 	c *Client
 }
 
 // NewFirewallRuleClient constructs a FirewallRuleClient wrapping the given
-// WinRM Client.
+// SSH Client.
 func NewFirewallRuleClient(c *Client) *FirewallRuleClient {
 	return &FirewallRuleClient{c: c}
 }

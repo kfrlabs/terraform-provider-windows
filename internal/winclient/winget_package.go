@@ -1,7 +1,7 @@
 // Package winclient — WingetPackageClientImpl
 //
 // Implements WingetPackageClient by executing Microsoft.WinGet.Client
-// PowerShell cmdlets over WinRM. Every PowerShell script is emitted through
+// PowerShell cmdlets over SSH. Every PowerShell script is emitted through
 // the standard JSON envelope (Emit-OK / Emit-Err) so output is
 // locale-independent and machine-parseable.
 //
@@ -32,13 +32,13 @@ import (
 // Compile-time assertion: WingetPackageClientImpl satisfies WingetPackageClient.
 var _ WingetPackageClient = (*WingetPackageClientImpl)(nil)
 
-// WingetPackageClientImpl is the PowerShell/WinRM-backed WingetPackageClient.
+// WingetPackageClientImpl is the PowerShell/SSH-backed WingetPackageClient.
 type WingetPackageClientImpl struct {
 	c *Client
 }
 
 // NewWingetPackageClient constructs a WingetPackageClientImpl wrapping the
-// given WinRM Client.
+// given SSH Client.
 func NewWingetPackageClient(c *Client) *WingetPackageClientImpl {
 	return &WingetPackageClientImpl{c: c}
 }
@@ -366,7 +366,7 @@ func parseWPState(resp *psResponse) (*WingetPackageState, error) {
 // Core execution methods
 // ---------------------------------------------------------------------------
 
-// runWPEnvelope executes a winget script (prefixed with wpHeader) over WinRM
+// runWPEnvelope executes a winget script (prefixed with wpHeader) over SSH
 // and parses the JSON envelope. Transport errors that bypass Emit-Err (non-zero
 // exit, context cancellation) are wrapped as WingetPackageErrorUnknown.
 func (w *WingetPackageClientImpl) runWPEnvelope(ctx context.Context, op, pkgID, script string) (*psResponse, error) {
@@ -384,7 +384,7 @@ func (w *WingetPackageClientImpl) runWPEnvelope(ctx context.Context, op, pkgID, 
 				})
 		}
 		return nil, NewWingetPackageError(WingetPackageErrorUnknown,
-			fmt.Sprintf("WinRM transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err,
 			map[string]string{
 				"operation":  op,

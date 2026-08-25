@@ -394,7 +394,7 @@ func TestSTResource_Read_Nil_RemoveResource(t *testing.T) {
 }
 
 func TestSTResource_Read_ClientError(t *testing.T) {
-	fake := &fakeSTClient{readErr: errors.New("WinRM timeout")}
+	fake := &fakeSTClient{readErr: errors.New("SSH timeout")}
 	diags := scheduledTaskErrDiag("Read", fake.readErr)
 	if !diags.HasError() {
 		t.Error("expected error diagnostic")

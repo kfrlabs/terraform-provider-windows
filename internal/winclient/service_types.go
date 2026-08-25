@@ -1,5 +1,5 @@
 // Package winclient defines the WindowsServiceClient interface and associated
-// types for managing Windows services over WinRM.
+// types for managing Windows services over SSH.
 //
 // Spec alignment: windows_service spec v7 (2026-04-24).
 //
@@ -97,7 +97,7 @@ type ServiceError struct {
 	// All values must be safe to log.
 	Context map[string]string
 
-	// Cause is the underlying error, if any (e.g. a WinRM transport error).
+	// Cause is the underlying error, if any (e.g. a SSH transport error).
 	Cause error
 }
 
@@ -271,7 +271,7 @@ type ServiceState struct {
 // ---------------------------------------------------------------------------
 
 // WindowsServiceClient defines the contract for managing Windows services
-// over WinRM.  All methods accept a context.Context for cancellation and
+// over SSH.  All methods accept a context.Context for cancellation and
 // timeout propagation (respecting the provider-level cfg.Timeout, EC-7).
 //
 // Error taxonomy: all methods return *ServiceError (wrapped in error).

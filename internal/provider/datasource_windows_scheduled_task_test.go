@@ -346,7 +346,7 @@ func TestSTDataSource_Read_NotFound_Error(t *testing.T) {
 }
 
 func TestSTDataSource_Read_ClientError(t *testing.T) {
-	fake := &fakeSTClientDS{readErr: errors.New("WinRM down")}
+	fake := &fakeSTClientDS{readErr: errors.New("SSH down")}
 	_, err := fake.Read(context.Background(), `\T`)
 	if err == nil {
 		t.Fatal("expected client error")

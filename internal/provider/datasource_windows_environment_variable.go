@@ -46,7 +46,7 @@ func (d *windowsEnvVarDataSource) Metadata(_ context.Context, req datasource.Met
 func (d *windowsEnvVarDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads a single Windows environment variable (`machine` or `user` scope) " +
-			"from a remote host via WinRM + PowerShell. Returns the stored value verbatim " +
+			"from a remote host via SSH + PowerShell. Returns the stored value verbatim " +
 			"(unexpanded) and the registry kind (`expand`). " +
 			"Returns a Terraform error if the variable does not exist.",
 

@@ -1,7 +1,7 @@
 // Package winclient — unit tests for FirewallRuleClient.
 //
 // Tests stub the package-level runPowerShell seam (shared with service.go)
-// so no real WinRM connection is needed. Coverage targets:
+// so no real SSH connection is needed. Coverage targets:
 //
 //   - FirewallRuleError: Error(), Unwrap(), Is(), NewFirewallRuleError, IsFirewallRuleError
 //   - mapFirewallKind: all known kinds + unknown fallback
@@ -527,7 +527,7 @@ func TestParseFirewallRuleState_FallbackPolicyStore(t *testing.T) {
 func TestRunFirewallEnvelope_TransportError(t *testing.T) {
 	_, fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		return "", "WinRM error", errors.New("connection refused")
+		return "", "SSH error", errors.New("connection refused")
 	})()
 
 	_, err := fw.runFirewallEnvelope(context.Background(), "Read", "RULE", "script")

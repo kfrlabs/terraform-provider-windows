@@ -1,4 +1,4 @@
-// Package winclient: Windows service CRUD implementation over WinRM.
+// Package winclient: Windows service CRUD implementation over SSH.
 //
 // This file provides ServiceClient, the concrete WindowsServiceClient used by
 // the Terraform provider. All operations are executed as PowerShell scripts
@@ -9,7 +9,7 @@
 //   - service_password is NEVER interpolated into the PowerShell script body.
 //     It is injected on stdin via runEnvelopeWithInput / RunPowerShellWithInput
 //     and read by the script through [Console]::In.ReadLine(). This keeps the
-//     plaintext out of the WinRM -EncodedCommand payload, WinRM trace logs,
+//     plaintext out of the SSH -EncodedCommand payload, SSH trace logs,
 //     IIS WMSvc traces, and any host-side Set-PSDebug/Start-Transcript output
 //     (mirrors the pattern documented in ADR-LU-3 for windows_local_user).
 //   - All other user-supplied strings are interpolated only through psQuote
@@ -33,12 +33,12 @@ import (
 // Compile-time assertion: ServiceClient satisfies WindowsServiceClient.
 var _ WindowsServiceClient = (*ServiceClient)(nil)
 
-// ServiceClient is the PowerShell/WinRM-backed WindowsServiceClient.
+// ServiceClient is the PowerShell/SSH-backed WindowsServiceClient.
 type ServiceClient struct {
 	c *Client
 }
 
-// NewServiceClient constructs a ServiceClient wrapping the given WinRM Client.
+// NewServiceClient constructs a ServiceClient wrapping the given SSH Client.
 func NewServiceClient(c *Client) *ServiceClient { return &ServiceClient{c: c} }
 
 // -----------------------------------------------------------------------------
@@ -102,7 +102,7 @@ function Classify([string]$Msg) {
 
 // runPowerShell is the hook used by ServiceClient to execute PowerShell
 // scripts on the remote host. It is a package-level variable so tests can
-// substitute a deterministic, in-memory fake for the real WinRM transport
+// substitute a deterministic, in-memory fake for the real SSH transport
 // (see service_client_impl_test.go). Production code must not reassign this
 // outside tests.
 var runPowerShell = func(ctx context.Context, c *Client, script string) (string, string, error) {

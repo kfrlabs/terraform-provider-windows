@@ -216,7 +216,7 @@ type ScheduledTaskState struct {
 // ScheduledTaskClient interface
 // ---------------------------------------------------------------------------
 
-// ScheduledTaskClient manages Windows Scheduled Tasks over WinRM.
+// ScheduledTaskClient manages Windows Scheduled Tasks over SSH.
 type ScheduledTaskClient interface {
 	Create(ctx context.Context, input ScheduledTaskInput) (*ScheduledTaskState, error)
 	Read(ctx context.Context, id string) (*ScheduledTaskState, error)

@@ -11,7 +11,7 @@
 //	EC-5  Insufficient permissions      -> permission_denied with admin hint
 //	EC-6  ForceNew on include_*         -> resource layer concern, asserted there
 //	EC-7  Parent feature absent         -> dependency_missing
-//	EC-8  WinRM timeout                 -> ctx.Err() -> FeatureErrorTimeout
+//	EC-8  SSH timeout                 -> ctx.Err() -> FeatureErrorTimeout
 //	EC-9  Cmdlet unavailable (client SKU)-> unsupported_sku
 package winclient
 

@@ -183,7 +183,7 @@ func (r *windowsLocalGroupResource) Schema(
 func windowsLocalGroupSchemaDefinition() schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a Windows local group (Local Users and Groups) on a remote " +
-			"host via WinRM and PowerShell (`Microsoft.PowerShell.LocalAccounts` module, " +
+			"host via SSH and PowerShell (`Microsoft.PowerShell.LocalAccounts` module, " +
 			"available from Windows Server 2016 / Windows 10 and later).\n\n" +
 			"This resource manages **only the group entity itself** (name, description, SID). " +
 			"Membership management is out of scope for v1 and is delegated to the future " +

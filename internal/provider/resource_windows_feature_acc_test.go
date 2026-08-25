@@ -6,7 +6,7 @@
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
 //   - A Windows *Server* target (Install-WindowsFeature / Get-WindowsFeature)
-//     with WinRM enabled and Local Administrator rights. The testacc-windows
+//     with SSH enabled and Local Administrator rights. The testacc-windows
 //     workflow's windows-latest runner (Server) satisfies this.
 //   - WINDOWS_FEATURE_NAME (optional): feature to install/uninstall; defaults
 //     to "Telnet-Client" — a lightweight feature whose payload ships on disk

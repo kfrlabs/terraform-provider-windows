@@ -1,4 +1,4 @@
-// Package winclient: Windows feature CRUD over WinRM.
+// Package winclient: Windows feature CRUD over SSH.
 //
 // This file provides FeatureClient, the concrete WindowsFeatureClient used by
 // the windows_feature Terraform resource. All operations execute PowerShell
@@ -22,12 +22,12 @@ import (
 // Compile-time assertion: FeatureClient satisfies WindowsFeatureClient.
 var _ WindowsFeatureClient = (*FeatureClient)(nil)
 
-// FeatureClient is the PowerShell/WinRM-backed WindowsFeatureClient.
+// FeatureClient is the PowerShell/SSH-backed WindowsFeatureClient.
 type FeatureClient struct {
 	c *Client
 }
 
-// NewFeatureClient constructs a FeatureClient wrapping the given WinRM Client.
+// NewFeatureClient constructs a FeatureClient wrapping the given SSH Client.
 func NewFeatureClient(c *Client) *FeatureClient { return &FeatureClient{c: c} }
 
 // psFeatureHeader prepends Emit-OK/Emit-Err and Classify-Feature.

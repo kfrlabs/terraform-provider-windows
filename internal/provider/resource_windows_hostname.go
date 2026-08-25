@@ -1,7 +1,7 @@
 // Package provider: windows_hostname resource implementation.
 //
 // This file contains the TPF schema, model, custom validator and full
-// CRUD + ImportState handlers for the windows_hostname resource. All WinRM
+// CRUD + ImportState handlers for the windows_hostname resource. All SSH
 // interaction is delegated to winclient.HostnameClient (internal/winclient).
 //
 // Spec alignment: windows_hostname spec v1 (2026-04-25).
@@ -113,7 +113,7 @@ func (r *windowsHostnameResource) Schema(_ context.Context, _ resource.SchemaReq
 // a function so it can be unit-tested independently of the resource type.
 func windowsHostnameSchemaDefinition() schema.Schema {
 	return schema.Schema{
-		MarkdownDescription: "Manages the NetBIOS computer name (hostname) of a remote Windows machine over WinRM/PowerShell.\n\n" +
+		MarkdownDescription: "Manages the NetBIOS computer name (hostname) of a remote Windows machine over SSH/PowerShell.\n\n" +
 			"Renames are **asynchronous**: `Rename-Computer` only persists the new name to the registry; the change becomes active after the next reboot. " +
 			"This resource never reboots the host \u2014 it surfaces `pending_name` and `reboot_pending` so an operator (or a downstream `null_resource` / `windows_reboot`) can orchestrate the reboot.\n\n" +
 			"**Scope (v1):** workgroup machines only. Domain-joined machines are rejected at runtime (EC-5). The Terraform resource ID is anchored on `machine_id` (HKLM MachineGuid), not on the hostname, so the ID survives renames and detects machine replacement out-of-band.\n\n" +

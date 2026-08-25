@@ -5,7 +5,7 @@
 // Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows target with WinRM enabled and Local Administrator rights
+//   - A Windows target with SSH enabled and Local Administrator rights
 //     (machine-scope variables write to HKLM and need admin).
 //
 // The variable names below are prefixed with TF_ACC_ and removed on destroy,

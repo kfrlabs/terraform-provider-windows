@@ -2,7 +2,7 @@
 //
 // These tests complement the acceptance-test skeletons in
 // resource_windows_hostname_test.go by exercising the schema, validators,
-// helpers, and CRUD handlers without touching WinRM. They use a
+// helpers, and CRUD handlers without touching SSH. They use a
 // fakeHostnameClient injected into windowsHostnameResource.hn.
 package provider
 
@@ -478,7 +478,7 @@ func TestHostnameRead_GenericError(t *testing.T) {
 	fake := &fakeHostnameClient{
 		readErr: winclient.NewHostnameError(
 			winclient.HostnameErrorUnreachable,
-			"WinRM connection refused",
+			"SSH connection refused",
 			nil, nil,
 		),
 	}

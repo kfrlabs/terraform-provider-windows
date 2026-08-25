@@ -2,7 +2,7 @@
 //
 // Manages the install / update / uninstall lifecycle of a Windows software
 // package via the Microsoft Windows Package Manager (winget) using the
-// official PowerShell module Microsoft.WinGet.Client over WinRM.
+// official PowerShell module Microsoft.WinGet.Client over SSH.
 //
 // Spec alignment: windows_winget_package spec v1 (2026-05-01).
 // Framework:      terraform-plugin-framework v1.13.0.
@@ -99,7 +99,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 		MarkdownDescription: "Manages the install / update / uninstall lifecycle of a Windows " +
 			"software package via the Microsoft Windows Package Manager (`winget`) using the " +
 			"official PowerShell module `Microsoft.WinGet.Client`. " +
-			"Access is performed over WinRM + PowerShell. " +
+			"Access is performed over SSH + PowerShell. " +
 			"The module **must** already be installed on the target host; " +
 			"the provider does **not** auto-install it.\n\n" +
 			"Install scope is always `SystemOrUnknown` (machine-level), " +
@@ -229,7 +229,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 	}
 }
 
-// Configure stores the shared WinRM client and creates the winget package
+// Configure stores the shared SSH client and creates the winget package
 // sub-client. Called by the framework after provider Configure.
 func (r *windowsWingetPackageResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {

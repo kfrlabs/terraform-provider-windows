@@ -1,7 +1,7 @@
 // Package provider — unit tests for windows_environment_variable data source.
 //
 // These tests exercise the data source schema, Metadata, Configure, and Read
-// handlers without WinRM. The fakeEnvVarClient defined in the resource test
+// handlers without SSH. The fakeEnvVarClient defined in the resource test
 // file is reused (same package).
 //
 // Edge cases covered:
@@ -344,7 +344,7 @@ func TestEnvVarDataSource_Read_PermissionError(t *testing.T) {
 
 func TestEnvVarDataSource_Read_TransportError(t *testing.T) {
 	fake := &fakeEnvVarClient{
-		readErr: winclient.NewEnvVarError(winclient.EnvVarErrorUnknown, "WinRM timeout", nil, nil),
+		readErr: winclient.NewEnvVarError(winclient.EnvVarErrorUnknown, "SSH timeout", nil, nil),
 	}
 	ds := &windowsEnvVarDataSource{client: fake}
 

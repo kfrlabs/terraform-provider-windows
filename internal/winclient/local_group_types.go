@@ -1,5 +1,5 @@
 // Package winclient defines types and the client interface for managing
-// Windows local groups over WinRM.
+// Windows local groups over SSH.
 //
 // Spec alignment: windows_local_group spec v1 (2026-04-25).
 //
@@ -59,7 +59,7 @@ const (
 	LocalGroupErrorInvalidName LocalGroupErrorKind = "invalid_name"
 
 	// LocalGroupErrorUnknown is returned for unrecognised PowerShell errors
-	// or unexpected WinRM transport failures.
+	// or unexpected SSH transport failures.
 	LocalGroupErrorUnknown LocalGroupErrorKind = "unknown"
 )
 
@@ -85,7 +85,7 @@ type LocalGroupError struct {
 	// All values must be safe to log — no secrets.
 	Context map[string]string
 
-	// Cause is the underlying error, if any (e.g. a WinRM transport error).
+	// Cause is the underlying error, if any (e.g. a SSH transport error).
 	Cause error
 }
 
@@ -216,7 +216,7 @@ type GroupState struct {
 // ---------------------------------------------------------------------------
 
 // WindowsLocalGroupClient defines the contract for managing Windows local
-// groups over WinRM (Microsoft.PowerShell.LocalAccounts module).
+// groups over SSH (Microsoft.PowerShell.LocalAccounts module).
 //
 // All methods accept a context.Context for cancellation and timeout propagation.
 // All methods return *LocalGroupError (wrapped in error).

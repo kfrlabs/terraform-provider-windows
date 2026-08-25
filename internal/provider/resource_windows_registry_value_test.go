@@ -1,6 +1,6 @@
 // Package provider — unit tests for windows_registry_value resource.
 //
-// These tests exercise validators, helpers, and CRUD handlers without WinRM.
+// These tests exercise validators, helpers, and CRUD handlers without SSH.
 // A fakeRegistryValueClient is injected into windowsRegistryValueResource.client.
 //
 // Edge cases covered (aligned with spec EC-* identifiers):

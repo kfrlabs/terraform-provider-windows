@@ -2,8 +2,8 @@
 // Terraform resource lifecycle for windows_firewall_rule.
 //
 // The resource manages a single Windows Defender Firewall rule on a remote
-// host via WinRM + PowerShell (NetSecurity module). It delegates all
-// WinRM/PS interaction to winclient.FirewallRuleClient.
+// host via SSH + PowerShell (NetSecurity module). It delegates all
+// SSH/PS interaction to winclient.FirewallRuleClient.
 //
 // Spec alignment: windows_firewall_rule spec v1 (2026-05-01).
 // Framework:      terraform-plugin-framework v1.13.0.
@@ -108,7 +108,7 @@ func (r *windowsFirewallRuleResource) Schema(_ context.Context, _ resource.Schem
 func windowsFirewallRuleSchemaDefinition() schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a Windows Defender Firewall with Advanced Security rule " +
-			"on a remote Windows host via WinRM and PowerShell (`NetSecurity` module). " +
+			"on a remote Windows host via SSH and PowerShell (`NetSecurity` module). " +
 			"One Terraform resource maps to exactly one `NetFirewallRule`, keyed on its " +
 			"stable technical `Name` (InstanceID), which is distinct from `display_name`.\n\n" +
 			"Import format: `<name>` (PersistentStore assumed) or `<policy_store>/<name>`.",
@@ -312,7 +312,7 @@ func (r *windowsFirewallRuleResource) ConfigValidators(_ context.Context) []reso
 // Configure
 // ---------------------------------------------------------------------------
 
-// Configure stores the provider-level WinRM client and creates a
+// Configure stores the provider-level SSH client and creates a
 // FirewallRuleClient for this resource instance.
 func (r *windowsFirewallRuleResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {

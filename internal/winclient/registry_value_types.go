@@ -108,7 +108,7 @@ type RegistryValueState struct {
 	ValueBinary  *string
 }
 
-// RegistryValueClient manages Windows registry values over WinRM using
+// RegistryValueClient manages Windows registry values over SSH using
 // the .NET Microsoft.Win32.Registry API via PowerShell (ADR-RV-1).
 //
 // Error conventions:
