@@ -434,7 +434,7 @@ func TestCreate_InvalidParameter_EC11_NoPasswordLeak(t *testing.T) {
 //
 // Regression guard: this test would have caught the pre-Tier-1 leak where
 // $password was rendered with psQuote and shipped as part of the encoded
-// command (visible to WinRM trace logs and any host-side Start-Transcript).
+// command (visible to SSH trace logs and any host-side Start-Transcript).
 func TestCreate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	const secret = "P@ssw0rd!Sup3rS3cret#42"
 	var capturedScript, capturedStdin string

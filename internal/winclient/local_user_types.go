@@ -1,5 +1,5 @@
 // Package winclient defines types and the client interface for managing
-// Windows local user accounts over WinRM.
+// Windows local user accounts over SSH.
 //
 // Spec alignment: windows_local_user spec v1 (2026-04-25).
 //
@@ -58,7 +58,7 @@ const (
 	LocalUserErrorInvalidName LocalUserErrorKind = "invalid_name"
 
 	// LocalUserErrorUnknown is the catch-all for unrecognised PowerShell
-	// errors or unexpected WinRM transport failures.
+	// errors or unexpected SSH transport failures.
 	LocalUserErrorUnknown LocalUserErrorKind = "unknown"
 )
 
@@ -83,7 +83,7 @@ type LocalUserError struct {
 	// operation, output, exit_code). MUST NOT contain passwords or secrets.
 	Context map[string]string
 
-	// Cause is the underlying error, if any (WinRM transport error, etc.).
+	// Cause is the underlying error, if any (SSH transport error, etc.).
 	Cause error
 }
 
@@ -248,7 +248,7 @@ type UserState struct {
 // ---------------------------------------------------------------------------
 
 // LocalUserClient defines the contract for managing Windows local user accounts
-// over WinRM (Microsoft.PowerShell.LocalAccounts module).
+// over SSH (Microsoft.PowerShell.LocalAccounts module).
 //
 // Methods are intentionally granular (Rename/SetPassword/Enable/Disable as
 // separate calls) to match the distinct PowerShell cmdlets and allow

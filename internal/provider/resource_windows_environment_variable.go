@@ -1,7 +1,7 @@
 // Package provider: windows_environment_variable resource implementation.
 //
 // Manages a single Windows environment variable (machine or user scope) on a
-// remote host via WinRM + PowerShell using the .NET Microsoft.Win32.Registry
+// remote host via SSH + PowerShell using the .NET Microsoft.Win32.Registry
 // API (ADR-EV-1). Broadcasts WM_SETTINGCHANGE after every mutation so that
 // newly started processes inherit the change without a reboot (ADR-EV-2).
 //
@@ -119,7 +119,7 @@ func (v envVarNameValidator) ValidateString(
 func windowsEnvVarSchemaDefinition() schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a single Windows environment variable " +
-			"(`machine` or `user` scope) on a remote host via WinRM + PowerShell. " +
+			"(`machine` or `user` scope) on a remote host via SSH + PowerShell. " +
 			"Uses the .NET `Microsoft.Win32.Registry` API for type-safe `REG_SZ` / " +
 			"`REG_EXPAND_SZ` storage and broadcasts `WM_SETTINGCHANGE` after every " +
 			"mutation so that newly started processes inherit the change without a reboot.\n\n" +
@@ -242,7 +242,7 @@ func addEnvVarDiag(diags *diag.Diagnostics, op string, err error) {
 		case winclient.EnvVarErrorPermission:
 			diags.AddError(
 				fmt.Sprintf("Permission denied during %s", op),
-				fmt.Sprintf("%s. Ensure the WinRM credentials have the required privileges "+
+				fmt.Sprintf("%s. Ensure the SSH credentials have the required privileges "+
 					"(Local Administrator required for scope=machine).", eve.Message),
 			)
 		case winclient.EnvVarErrorInvalidInput:

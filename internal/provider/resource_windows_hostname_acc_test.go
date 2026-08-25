@@ -5,7 +5,7 @@
 // Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A workgroup (NOT domain-joined) Windows target with WinRM and Local
+//   - A workgroup (NOT domain-joined) Windows target with SSH and Local
 //     Administrator rights.
 //
 // SAFETY: applying windows_hostname renames the machine (Rename-Computer) and
@@ -13,7 +13,7 @@
 // so the create/update/drift lifecycle scenarios below remain SKELETONS gated
 // on WINDOWS_HOSTNAME_ALLOW_RENAME=1 and are left unimplemented. Only the
 // plan-time schema-validation tests are executed here — they never mutate the
-// host because the error is raised before any WinRM call.
+// host because the error is raised before any SSH call.
 package provider
 
 import (

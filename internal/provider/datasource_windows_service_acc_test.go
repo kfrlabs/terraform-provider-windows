@@ -26,8 +26,8 @@ func testAccServiceDSPreCheck(t *testing.T) {
 	}
 }
 
-// TestAccWindowsServiceDataSource_Basic reads the WinRM service which must
-// be running since the provider uses WinRM to connect.
+// TestAccWindowsServiceDataSource_Basic reads the SSH service which must
+// be running since the provider uses SSH to connect.
 func TestAccWindowsServiceDataSource_Basic(t *testing.T) {
 	testAccServiceDSPreCheck(t)
 	resource.Test(t, resource.TestCase{
@@ -36,12 +36,12 @@ func TestAccWindowsServiceDataSource_Basic(t *testing.T) {
 			{
 				Config: `
 data "windows_service" "winrm" {
-  name = "WinRM"
+  name = "SSH"
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.windows_service.winrm", "id"),
-					resource.TestCheckResourceAttr("data.windows_service.winrm", "name", "WinRM"),
+					resource.TestCheckResourceAttr("data.windows_service.winrm", "name", "SSH"),
 					resource.TestCheckResourceAttrSet("data.windows_service.winrm", "display_name"),
 					resource.TestCheckResourceAttrSet("data.windows_service.winrm", "start_type"),
 					resource.TestCheckResourceAttr("data.windows_service.winrm", "current_status", "Running"),

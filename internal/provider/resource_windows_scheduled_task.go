@@ -39,10 +39,10 @@ import (
 )
 
 // stDefaultTimeout is the fallback per-operation timeout when the user does
-// not provide a `timeouts {}` block. Scheduled-task CRUD over WinRM is fast
+// not provide a `timeouts {}` block. Scheduled-task CRUD over SSH is fast
 // (PowerShell module Register-/Set-/Unregister-ScheduledTask), so 5 minutes
 // is more than enough for nominal cases while still bounding pathological
-// hangs (e.g. WinRM degradation, slow DC for principals).
+// hangs (e.g. SSH degradation, slow DC for principals).
 const stDefaultTimeout = 5 * time.Minute
 
 // Framework interface assertions.
@@ -402,7 +402,7 @@ func (r *windowsScheduledTaskResource) Metadata(_ context.Context, req resource.
 // Schema returns the full TPF schema.
 func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages a Windows Scheduled Task via WinRM + PowerShell (ScheduledTasks module, Windows 2012+).",
+		MarkdownDescription: "Manages a Windows Scheduled Task via SSH + PowerShell (ScheduledTasks module, Windows 2012+).",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,

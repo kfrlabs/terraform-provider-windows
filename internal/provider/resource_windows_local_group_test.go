@@ -1,7 +1,7 @@
 // Package provider — unit tests for the windows_local_group resource.
 //
 // These tests exercise schema, validators, CRUD handlers, ImportState, and
-// helpers without touching WinRM. CRUD handlers are driven via a
+// helpers without touching SSH. CRUD handlers are driven via a
 // fakeLocalGroupClient injected into windowsLocalGroupResource.grp.
 //
 // Edge cases covered (aligned with spec EC-* identifiers):

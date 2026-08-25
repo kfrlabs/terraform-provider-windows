@@ -3,7 +3,7 @@
 // Coverage targets: local_user.go ≥ 85%, local_user_helpers.go ≥ 85%.
 //
 // Tests stub the package-level runPowerShell and runPSInput hooks so no real
-// WinRM connection is required. Edge cases covered:
+// SSH connection is required. Edge cases covered:
 //
 //	EC-1  Create: name collision (already_exists)
 //	EC-2  Delete: built-in RID guard (500/501/503/504) → builtin_account

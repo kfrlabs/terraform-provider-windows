@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
@@ -40,9 +38,6 @@ type providerModel struct {
 	Port     types.Int64  `tfsdk:"port"`
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
-	UseHTTPS types.Bool   `tfsdk:"use_https"`
-	Insecure types.Bool   `tfsdk:"insecure"`
-	AuthType types.String `tfsdk:"auth_type"`
 	Timeout  types.String `tfsdk:"timeout"`
 }
 
@@ -55,39 +50,27 @@ func (p *windowsProvider) Metadata(_ context.Context, _ provider.MetadataRequest
 // Schema defines the provider configuration schema.
 func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "The windows provider manages Windows resources over WinRM.",
+		Description: "The windows provider manages Windows resources over SSH " +
+			"(the target host's OpenSSH Server, invoking PowerShell). Host key " +
+			"verification is not performed; only use this against trusted, " +
+			"short-lived automation hosts.",
 		Attributes: map[string]schema.Attribute{
 			"host": schema.StringAttribute{
 				Description: "Hostname or IP address of the target Windows host. May also be set via WINDOWS_HOST.",
 				Optional:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "WinRM port (default 5985 for HTTP, 5986 for HTTPS).",
+				Description: "SSH port (default: 22).",
 				Optional:    true,
 			},
 			"username": schema.StringAttribute{
-				Description: "WinRM username. May also be set via WINDOWS_USERNAME.",
+				Description: "SSH username. May also be set via WINDOWS_USERNAME.",
 				Optional:    true,
 			},
 			"password": schema.StringAttribute{
-				Description: "WinRM password. May also be set via WINDOWS_PASSWORD.",
+				Description: "SSH password. May also be set via WINDOWS_PASSWORD.",
 				Optional:    true,
 				Sensitive:   true,
-			},
-			"use_https": schema.BoolAttribute{
-				Description: "Use HTTPS for the WinRM transport (default: false).",
-				Optional:    true,
-			},
-			"insecure": schema.BoolAttribute{
-				Description: "Skip TLS certificate verification (default: false). Only useful with use_https=true.",
-				Optional:    true,
-			},
-			"auth_type": schema.StringAttribute{
-				Description: "Authentication type: basic, ntlm, or kerberos. Default: ntlm.",
-				Optional:    true,
-				Validators: []validator.String{
-					stringvalidator.OneOf("basic", "ntlm", "kerberos"),
-				},
 			},
 			"timeout": schema.StringAttribute{
 				Description: "Operation timeout as a Go duration string (e.g. 30s, 2m). Default: 30s.",
@@ -98,7 +81,7 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 }
 
 // Configure validates the provider configuration, applies environment
-// fallbacks, and constructs a shared WinRM client made available to all
+// fallbacks, and constructs a shared SSH client made available to all
 // resources and data sources via resp.ResourceData / resp.DataSourceData.
 func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	var data providerModel
@@ -111,21 +94,21 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			pathAttr("host"),
 			"Unknown Windows host",
-			"The provider cannot create the WinRM client because the host is unknown at plan time.",
+			"The provider cannot create the SSH client because the host is unknown at plan time.",
 		)
 	}
 	if data.Username.IsUnknown() {
 		resp.Diagnostics.AddAttributeError(
 			pathAttr("username"),
 			"Unknown Windows username",
-			"The provider cannot create the WinRM client because the username is unknown at plan time.",
+			"The provider cannot create the SSH client because the username is unknown at plan time.",
 		)
 	}
 	if data.Password.IsUnknown() {
 		resp.Diagnostics.AddAttributeError(
 			pathAttr("password"),
 			"Unknown Windows password",
-			"The provider cannot create the WinRM client because the password is unknown at plan time.",
+			"The provider cannot create the SSH client because the password is unknown at plan time.",
 		)
 	}
 	if resp.Diagnostics.HasError() {
@@ -137,9 +120,6 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		Port:     int(data.Port.ValueInt64()),
 		Username: data.Username.ValueString(),
 		Password: data.Password.ValueString(),
-		UseHTTPS: data.UseHTTPS.ValueBool(),
-		Insecure: data.Insecure.ValueBool(),
-		AuthType: data.AuthType.ValueString(),
 	}
 
 	winclient.ResolveFromEnv(&cfg)
@@ -174,7 +154,7 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	client, err := winclient.New(cfg)
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to create WinRM client", err.Error())
+		resp.Diagnostics.AddError("Unable to create SSH client", err.Error())
 		return
 	}
 

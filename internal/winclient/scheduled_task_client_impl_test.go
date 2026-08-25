@@ -1,6 +1,6 @@
 // Package winclient — unit tests for ScheduledTaskClientImpl.
 //
-// All tests stub the runSTPS hook so no real WinRM connection is needed.
+// All tests stub the runSTPS hook so no real SSH connection is needed.
 // Edge cases covered:
 //
 //   - splitTaskID: root path, sub-folder, no separator
@@ -1020,8 +1020,8 @@ func TestSTCreate_PasswordSensitive_NotInErrorContext(t *testing.T) {
 
 // TestSTCreate_PasswordInjectedViaStdin_NotInScriptBody is the regression
 // guard for the Tier-1 fix: principal.password must NEVER appear inside the
-// generated PowerShell script body (which is shipped over WinRM as a
-// -EncodedCommand payload, traceable by host-side WinRM/IIS-WMSvc logs).
+// generated PowerShell script body (which is shipped over SSH as a
+// -EncodedCommand payload, traceable by host-side SSH/IIS-WMSvc logs).
 // It must be delivered exclusively over stdin.
 func TestSTCreate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	const secret = "S3cr3t#Pwd!ForSchedTask"

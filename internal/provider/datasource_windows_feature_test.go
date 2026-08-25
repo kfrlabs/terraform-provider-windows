@@ -2,7 +2,7 @@
 //
 // Tests cover: Metadata, Schema, Configure (nil/wrong/correct), Read happy
 // path, Read not-found, Read generic error, and model-mapping edge cases.
-// All tests run without WinRM via a fake WindowsFeatureClient injected into
+// All tests run without SSH via a fake WindowsFeatureClient injected into
 // windowsFeatureDataSource.feat.
 package provider
 

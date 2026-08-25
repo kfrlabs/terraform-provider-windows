@@ -1,11 +1,11 @@
-// Package winclient provides the PowerShell/WinRM-backed implementation of
+// Package winclient provides the PowerShell/SSH-backed implementation of
 // LocalUserClient for managing Windows local user accounts.
 //
 // Security invariants:
 //   - Passwords are NEVER interpolated into script bodies. They are injected
 //     via stdin (runLUEnvelopeWithInput) and read by the PS script via
 //     [Console]::In.ReadLine(). This prevents the plaintext from appearing in
-//     WinRM -EncodedCommand payloads, trace logs, or diagnostic output.
+//     SSH -EncodedCommand payloads, trace logs, or diagnostic output.
 //   - All other user-supplied strings are escaped via psQuote (single-quoted
 //     PowerShell literals with embedded quotes doubled).
 //   - No secret appears in LocalUserError.Message or Context.
@@ -28,18 +28,18 @@ import (
 // Compile-time assertion: LocalUserClientImpl satisfies LocalUserClient.
 var _ LocalUserClient = (*LocalUserClientImpl)(nil)
 
-// LocalUserClientImpl is the PowerShell/WinRM-backed LocalUserClient.
+// LocalUserClientImpl is the PowerShell/SSH-backed LocalUserClient.
 type LocalUserClientImpl struct {
 	c *Client
 }
 
-// NewLocalUserClient constructs a LocalUserClientImpl wrapping the given WinRM Client.
+// NewLocalUserClient constructs a LocalUserClientImpl wrapping the given SSH Client.
 func NewLocalUserClient(c *Client) *LocalUserClientImpl {
 	return &LocalUserClientImpl{c: c}
 }
 
 // runPSInput is the package-level hook for stdin-based PowerShell execution.
-// Tests can override this to inject fake responses without a real WinRM connection.
+// Tests can override this to inject fake responses without a real SSH connection.
 var runPSInput = func(ctx context.Context, c *Client, script, stdin string) (string, string, error) {
 	return c.RunPowerShellWithInput(ctx, script, stdin)
 }
@@ -222,7 +222,7 @@ func (lc *LocalUserClientImpl) runLUEnvelope(ctx context.Context, op, key, scrip
 				})
 		}
 		return nil, NewLocalUserError(LocalUserErrorUnknown,
-			fmt.Sprintf("WinRM transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err, map[string]string{
 				"operation": op, "key": key, "host": lc.c.cfg.Host,
 				"stderr": truncate(stderr, 2048),
@@ -247,7 +247,7 @@ func (lc *LocalUserClientImpl) runLUEnvelopeWithInput(ctx context.Context, op, k
 				})
 		}
 		return nil, NewLocalUserError(LocalUserErrorUnknown,
-			fmt.Sprintf("WinRM transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err, map[string]string{
 				"operation": op, "key": key, "host": lc.c.cfg.Host,
 				"stderr": truncate(stderr, 2048),
@@ -506,7 +506,7 @@ try {
 
 // SetPassword rotates the account password via Set-LocalUser -SID -Password.
 // The password plaintext is injected via stdin and NEVER appears in the script
-// body, WinRM trace logs, or diagnostic output (ADR-LU-3, EC-6).
+// body, SSH trace logs, or diagnostic output (ADR-LU-3, EC-6).
 func (lc *LocalUserClientImpl) SetPassword(ctx context.Context, sid, password string) error {
 	qSID := psQuote(sid)
 

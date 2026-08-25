@@ -11,7 +11,7 @@
 // NOTE: This file is the SchemaArchitect skeleton. The CRUD handlers are
 // intentional stubs that return ErrNotImplemented diagnostics. The
 // ProviderCoder task will replace each stub body with the real PowerShell-
-// over-WinRM logic against winclient.LegacyPackageClient.
+// over-SSH logic against winclient.LegacyPackageClient.
 package provider
 
 import (
@@ -128,7 +128,7 @@ func (r *windowsLegacyPackageResource) Metadata(_ context.Context, req resource.
 
 func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages legacy Windows installers (.msi via msiexec; .exe via Start-Process) over WinRM.",
+		Description: "Manages legacy Windows installers (.msi via msiexec; .exe via Start-Process) over SSH.",
 		MarkdownDescription: "Installs, updates and uninstalls Windows software distributed as legacy installers " +
 			"(`.exe` wrappers like InstallShield/NSIS/Inno Setup and Windows Installer `.msi` packages).\n\n" +
 			"Complements `windows_winget_package` for software not available via winget or shipped as a " +

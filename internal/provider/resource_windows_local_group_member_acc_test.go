@@ -5,7 +5,7 @@
 // Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows target with WinRM enabled and Local Administrator rights.
+//   - A Windows target with SSH enabled and Local Administrator rights.
 //
 // Each test provisions its own local group and local user, then adds the user
 // to the group, so it is fully self-contained and safe to run repeatedly.

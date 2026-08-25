@@ -1,7 +1,7 @@
 // Package winclient — unit tests for LegacyPackageClientImpl.
 //
 // Tests stub the package-level runPSInput seam (shared with local_user.go) so
-// no real WinRM connection is needed.
+// no real SSH connection is needed.
 package winclient
 
 import (

@@ -1,4 +1,4 @@
-// Package winclient: Windows environment variable CRUD implementation over WinRM.
+// Package winclient: Windows environment variable CRUD implementation over SSH.
 //
 // Uses the .NET Microsoft.Win32.Registry API via PowerShell (ADR-EV-1).
 // Scripts emit a JSON envelope (Emit-OK/Emit-Err) for locale-independent,
@@ -21,12 +21,12 @@ import (
 // Compile-time assertion: EnvVarClientImpl satisfies EnvVarClient.
 var _ EnvVarClient = (*EnvVarClientImpl)(nil)
 
-// EnvVarClientImpl is the PowerShell/WinRM-backed EnvVarClient.
+// EnvVarClientImpl is the PowerShell/SSH-backed EnvVarClient.
 type EnvVarClientImpl struct {
 	c *Client
 }
 
-// NewEnvVarClient constructs an EnvVarClientImpl wrapping the given WinRM Client.
+// NewEnvVarClient constructs an EnvVarClientImpl wrapping the given SSH Client.
 func NewEnvVarClient(c *Client) *EnvVarClientImpl {
 	return &EnvVarClientImpl{c: c}
 }

@@ -41,7 +41,7 @@ const (
 	// interactive MSA authentication or is policy-blocked (EC-5).
 	WingetPackageErrorBlockedByPolicy WingetPackageErrorKind = "blocked_by_policy"
 
-	// WingetPackageErrorPermission is returned when the WinRM session lacks
+	// WingetPackageErrorPermission is returned when the SSH session lacks
 	// Local Administrator privileges (EC-7).
 	WingetPackageErrorPermission WingetPackageErrorKind = "permission_denied"
 
@@ -58,7 +58,7 @@ const (
 	WingetPackageErrorResourceInUse WingetPackageErrorKind = "resource_in_use"
 
 	// WingetPackageErrorUnknown is returned for unexpected PowerShell errors
-	// or WinRM transport failures not matching any of the above categories.
+	// or SSH transport failures not matching any of the above categories.
 	WingetPackageErrorUnknown WingetPackageErrorKind = "unknown"
 )
 
@@ -209,7 +209,7 @@ type WingetPackageState struct {
 // ---------------------------------------------------------------------------
 
 // WingetPackageClient defines the contract for managing Windows packages via
-// the Microsoft.WinGet.Client PowerShell module over WinRM.
+// the Microsoft.WinGet.Client PowerShell module over SSH.
 //
 // All methods accept a context.Context for cancellation and timeout
 // propagation. All errors are returned as *WingetPackageError (wrapped in

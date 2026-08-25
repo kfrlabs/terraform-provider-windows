@@ -1,7 +1,7 @@
 // Package provider — unit tests for windows_winget_package data source.
 //
 // These tests exercise the data source schema, Metadata, Configure, and Read
-// handlers without WinRM. A package-local fakeWingetPackageClient implements
+// handlers without SSH. A package-local fakeWingetPackageClient implements
 // the winclient.WingetPackageClient interface; only Read is meaningfully
 // exercised here (the other methods are present to satisfy the interface).
 //
@@ -436,7 +436,7 @@ func TestWingetPackageDataSource_Read_SourceUnreachable(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWingetPackageDataSource_Read_TransportError(t *testing.T) {
-	fake := &fakeWingetPackageClient{readErr: errors.New("WinRM connection refused")}
+	fake := &fakeWingetPackageClient{readErr: errors.New("SSH connection refused")}
 	ds := &windowsWingetPackageDataSource{client: fake}
 
 	req := datasource.ReadRequest{Config: dsWPConfig(t, nil)}

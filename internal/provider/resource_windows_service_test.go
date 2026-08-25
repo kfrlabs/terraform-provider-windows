@@ -434,7 +434,7 @@ func TestWindowsServiceModel_Shape(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 // fakeSvcClient is an in-memory WindowsServiceClient used to drive the CRUD
-// handlers without touching WinRM. Each method captures the last input and
+// handlers without touching SSH. Each method captures the last input and
 // returns a preset response/error for assertion.
 type fakeSvcClient struct {
 	createIn   winclient.ServiceInput

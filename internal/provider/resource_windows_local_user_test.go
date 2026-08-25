@@ -1,6 +1,6 @@
 // Package provider — unit tests for windows_local_user resource.
 //
-// These tests exercise validators, helpers, and CRUD handlers without WinRM.
+// These tests exercise validators, helpers, and CRUD handlers without SSH.
 // A fakeLocalUserClient is injected into windowsLocalUserResource.user.
 //
 // Edge cases covered (aligned with spec EC-* identifiers):

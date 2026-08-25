@@ -5,7 +5,7 @@
 // These tests require:
 //   - build tag: acceptance  (`go test -tags acceptance ./...`)
 //   - TF_ACC=1
-//   - A reachable Windows host with WinRM enabled
+//   - A reachable Windows host with SSH enabled
 //   - Env vars: WINDOWS_HOST, WINDOWS_USERNAME, WINDOWS_PASSWORD
 //   - The target host must have the Microsoft.WinGet.Client PowerShell module
 //     installed (Install-Module Microsoft.WinGet.Client -Scope AllUsers)
@@ -169,7 +169,7 @@ func TestAccWindowsWingetPackage_DriftDetection(t *testing.T) {
 	t.Skip("SKELETON: see TestAccWindowsWingetPackage_Basic")
 	// Steps:
 	// 1. Create the package
-	// 2. Run Uninstall-WinGetPackage out-of-band via WinRM exec
+	// 2. Run Uninstall-WinGetPackage out-of-band via SSH exec
 	// 3. Refresh-only plan → expect non-empty plan (resource removed from state)
 	// 4. Apply → package re-installed
 }
@@ -255,7 +255,7 @@ resource "windows_winget_package" "test" {
 //nolint:unused
 func testAccCheckWingetPackageDestroyed(packageID, source string) func() error {
 	return func() error {
-		// Implementation: connect to the Windows host via WinRM and run
+		// Implementation: connect to the Windows host via SSH and run
 		// Get-WinGetPackage -Id <packageID> -Source <source> -MatchOption Equals
 		// Expect empty result.
 		return nil

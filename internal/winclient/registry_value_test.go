@@ -1,7 +1,7 @@
 // Package winclient — unit tests for RegistryValueClientImpl.
 //
 // Tests stub the package-level runRegistryValuePowerShell hook so no real
-// WinRM connection is required. Edge cases covered:
+// SSH connection is required. Edge cases covered:
 //
 //	EC-3  Type conflict detection (type_conflict response from PS)
 //	EC-4  Read: value not found → (nil, nil) — not an error

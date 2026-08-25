@@ -1,6 +1,6 @@
-// LegacyPackageClient PowerShell/WinRM-backed implementation.
+// LegacyPackageClient PowerShell/SSH-backed implementation.
 //
-// Implements LegacyPackageClient by executing PowerShell scripts over WinRM.
+// Implements LegacyPackageClient by executing PowerShell scripts over SSH.
 // The full input payload is forwarded to the script via stdin as JSON
 // (Client.RunPowerShellWithInput) so that complex fields (lists, maps) are
 // transferred without any PowerShell quoting concern. Every script emits a
@@ -115,7 +115,7 @@ type LegacyPackageState struct {
 // ---------------------------------------------------------------------------
 
 // LegacyPackageClient is the contract used by the resource layer to manage
-// legacy Windows installers via PowerShell over WinRM.
+// legacy Windows installers via PowerShell over SSH.
 //
 // Implementations MUST:
 //
@@ -190,7 +190,7 @@ type LegacyPackageClientImpl struct {
 }
 
 // NewLegacyPackageClient constructs a LegacyPackageClientImpl wrapping the
-// given WinRM Client.
+// given SSH Client.
 func NewLegacyPackageClient(c *Client) *LegacyPackageClientImpl {
 	return &LegacyPackageClientImpl{c: c}
 }
@@ -209,7 +209,7 @@ type deletePayload struct {
 	TimeoutSeconds   int64    `json:"timeout_seconds,omitempty"`
 }
 
-// runEnvelope executes script over WinRM with stdin piped from payload (JSON
+// runEnvelope executes script over SSH with stdin piped from payload (JSON
 // encoded) and decodes the JSON envelope written to stdout by Emit-OK /
 // Emit-Err. Transport errors are wrapped as LegacyPackageError{Kind:"unknown"}.
 func (l *LegacyPackageClientImpl) runEnvelope(ctx context.Context, op string, payload any, script string) (*psResponse, error) {
@@ -222,7 +222,7 @@ func (l *LegacyPackageClientImpl) runEnvelope(ctx context.Context, op string, pa
 	}
 	full := lpHeader + "\n" + script
 	// Route through the package-level runPSInput seam (also used by local_user.go)
-	// so unit tests can stub the WinRM transport without a real host.
+	// so unit tests can stub the SSH transport without a real host.
 	stdout, stderr, err := runPSInput(ctx, l.c, full, string(stdin))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -236,7 +236,7 @@ func (l *LegacyPackageClientImpl) runEnvelope(ctx context.Context, op string, pa
 			}
 		}
 		return nil, &LegacyPackageError{
-			Kind: "unknown", Message: fmt.Sprintf("WinRM transport error during %q", op),
+			Kind: "unknown", Message: fmt.Sprintf("SSH transport error during %q", op),
 			Cause: err,
 			Context: map[string]string{
 				"operation": op,

@@ -1,4 +1,4 @@
-// Package winclient provides the PowerShell/WinRM-backed implementation of
+// Package winclient provides the PowerShell/SSH-backed implementation of
 // WindowsLocalGroupClient.
 //
 // Security invariants:
@@ -26,12 +26,12 @@ import (
 // Compile-time assertion: LocalGroupClient satisfies WindowsLocalGroupClient.
 var _ WindowsLocalGroupClient = (*LocalGroupClient)(nil)
 
-// LocalGroupClient is the PowerShell/WinRM-backed WindowsLocalGroupClient.
+// LocalGroupClient is the PowerShell/SSH-backed WindowsLocalGroupClient.
 type LocalGroupClient struct {
 	c *Client
 }
 
-// NewLocalGroupClient constructs a LocalGroupClient wrapping the given WinRM
+// NewLocalGroupClient constructs a LocalGroupClient wrapping the given SSH
 // Client.
 func NewLocalGroupClient(c *Client) *LocalGroupClient {
 	return &LocalGroupClient{c: c}
@@ -143,7 +143,7 @@ func (lc *LocalGroupClient) runLGEnvelope(ctx context.Context, op, key, script s
 				})
 		}
 		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-			fmt.Sprintf("WinRM transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err, map[string]string{
 				"operation": op, "key": key, "host": lc.c.cfg.Host,
 				"stderr": truncate(stderr, 2048),

@@ -1,4 +1,4 @@
-// Package winclient: Windows hostname (NetBIOS computer name) CRUD over WinRM.
+// Package winclient: Windows hostname (NetBIOS computer name) CRUD over SSH.
 //
 // HostnameClient is the concrete WindowsHostnameClient backing the
 // windows_hostname Terraform resource. All operations execute PowerShell
@@ -24,12 +24,12 @@ import (
 // Compile-time assertion: HostnameClient satisfies WindowsHostnameClient.
 var _ WindowsHostnameClient = (*HostnameClient)(nil)
 
-// HostnameClient is the PowerShell/WinRM-backed WindowsHostnameClient.
+// HostnameClient is the PowerShell/SSH-backed WindowsHostnameClient.
 type HostnameClient struct {
 	c *Client
 }
 
-// NewHostnameClient wraps the given WinRM Client.
+// NewHostnameClient wraps the given SSH Client.
 func NewHostnameClient(c *Client) *HostnameClient { return &HostnameClient{c: c} }
 
 // runHostnamePowerShell is the package-level indirection used by
@@ -93,7 +93,7 @@ type hostnameStatePayload struct {
 
 // psHostnameHeader prepends Emit-OK/Emit-Err and Classify-Hostname.
 //
-// Classify-Hostname maps Rename-Computer / WinRM error substrings to
+// Classify-Hostname maps Rename-Computer / SSH error substrings to
 // HostnameErrorKind values. Detection is best-effort and substring-based
 // because Windows error messages are localised.
 const psHostnameHeader = `
@@ -146,11 +146,7 @@ func (h *HostnameClient) runHostnameEnvelope(ctx context.Context, op, script str
 	baseCtx["operation"] = op
 	baseCtx["host"] = h.c.cfg.Host
 	baseCtx["port"] = fmt.Sprintf("%d", h.c.cfg.Port)
-	if h.c.cfg.UseHTTPS {
-		baseCtx["transport"] = "https"
-	} else {
-		baseCtx["transport"] = "http"
-	}
+	baseCtx["transport"] = "ssh"
 
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -161,7 +157,7 @@ func (h *HostnameClient) runHostnameEnvelope(ctx context.Context, op, script str
 		baseCtx["stderr"] = truncate(stderr, 2048)
 		baseCtx["stdout"] = truncate(stdout, 2048)
 		return nil, NewHostnameError(HostnameErrorUnreachable,
-			fmt.Sprintf("WinRM transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err, baseCtx)
 	}
 

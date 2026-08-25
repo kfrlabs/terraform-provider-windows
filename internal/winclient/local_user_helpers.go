@@ -66,7 +66,7 @@ try {
 			)
 		}
 		return nil, NewLocalUserError(LocalUserErrorUnknown,
-			"ResolveLocalUserSID: WinRM transport error",
+			"ResolveLocalUserSID: SSH transport error",
 			err,
 			map[string]string{
 				"user":   nameOrSID,

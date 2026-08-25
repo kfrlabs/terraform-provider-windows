@@ -4,7 +4,7 @@
 // data source.
 //
 // Requires: TF_ACC=1, WINDOWS_HOST, WINDOWS_USERNAME, WINDOWS_PASSWORD.
-// The host must allow administrative WinRM access since the test creates a
+// The host must allow administrative SSH access since the test creates a
 // firewall rule in the resource step before reading it back via the data
 // source.
 //

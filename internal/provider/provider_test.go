@@ -44,7 +44,7 @@ func TestProvider_Schema(t *testing.T) {
 	p := &windowsProvider{}
 	resp := &provider.SchemaResponse{}
 	p.Schema(context.Background(), provider.SchemaRequest{}, resp)
-	for _, k := range []string{"host", "port", "username", "password", "use_https", "insecure", "auth_type", "timeout"} {
+	for _, k := range []string{"host", "port", "username", "password", "timeout"} {
 		if _, ok := resp.Schema.Attributes[k]; !ok {
 			t.Errorf("provider schema missing %q", k)
 		}
@@ -70,14 +70,11 @@ func TestPathAttr(t *testing.T) {
 // providerConfigObjectType matches the provider schema.
 func providerConfigObjectType() tftypes.Object {
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"host":      tftypes.String,
-		"port":      tftypes.Number,
-		"username":  tftypes.String,
-		"password":  tftypes.String,
-		"use_https": tftypes.Bool,
-		"insecure":  tftypes.Bool,
-		"auth_type": tftypes.String,
-		"timeout":   tftypes.String,
+		"host":     tftypes.String,
+		"port":     tftypes.Number,
+		"username": tftypes.String,
+		"password": tftypes.String,
+		"timeout":  tftypes.String,
 	}}
 }
 
@@ -89,14 +86,11 @@ func providerCfgValue(host, user, pass, timeout *string) tftypes.Value {
 		return tftypes.NewValue(tftypes.String, *p)
 	}
 	return tftypes.NewValue(providerConfigObjectType(), map[string]tftypes.Value{
-		"host":      s(host),
-		"port":      tftypes.NewValue(tftypes.Number, nil),
-		"username":  s(user),
-		"password":  s(pass),
-		"use_https": tftypes.NewValue(tftypes.Bool, nil),
-		"insecure":  tftypes.NewValue(tftypes.Bool, nil),
-		"auth_type": tftypes.NewValue(tftypes.String, nil),
-		"timeout":   s(timeout),
+		"host":     s(host),
+		"port":     tftypes.NewValue(tftypes.Number, nil),
+		"username": s(user),
+		"password": s(pass),
+		"timeout":  s(timeout),
 	})
 }
 

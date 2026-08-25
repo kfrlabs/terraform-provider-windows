@@ -8,8 +8,7 @@ terraform {
 }
 
 provider "windows" {
-  host      = var.windows_host
-  username  = var.windows_username
-  password  = var.windows_password
-  auth_type = "ntlm"
+  host     = var.windows_host
+  username = var.windows_username
+  password = var.windows_password
 }

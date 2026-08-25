@@ -297,7 +297,7 @@ func TestLocalGroupDSRead_NilResult(t *testing.T) {
 func TestLocalGroupDSRead_GenericError(t *testing.T) {
 	d := &windowsLocalGroupDataSource{
 		grp: &fakeLocalGroupClientDS{
-			importByNameErr: errors.New("WinRM gone"),
+			importByNameErr: errors.New("SSH gone"),
 		},
 	}
 	cfg := localGroupDSConfigByName("SomeGroup")

@@ -733,7 +733,7 @@ func TestAddFirewallDiag_FirewallRuleError(t *testing.T) {
 
 func TestAddFirewallDiag_FirewallRuleError_WithCause(t *testing.T) {
 	var d diag.Diagnostics
-	cause := errors.New("WinRM connection lost")
+	cause := errors.New("SSH connection lost")
 	fe := winclient.NewFirewallRuleError(
 		winclient.FirewallRuleErrorUnknown,
 		"transport failure",
@@ -745,7 +745,7 @@ func TestAddFirewallDiag_FirewallRuleError_WithCause(t *testing.T) {
 		t.Fatal("expected error diag")
 	}
 	detail := d[0].Detail()
-	if !strings.Contains(detail, "WinRM connection lost") {
+	if !strings.Contains(detail, "SSH connection lost") {
 		t.Errorf("detail should contain cause: %s", detail)
 	}
 }

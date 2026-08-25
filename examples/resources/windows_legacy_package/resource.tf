@@ -8,10 +8,9 @@ terraform {
 }
 
 provider "windows" {
-  host      = var.windows_host
-  username  = var.windows_username
-  password  = var.windows_password
-  auth_type = "ntlm"
+  host     = var.windows_host
+  username = var.windows_username
+  password = var.windows_password
 }
 
 # MSI from a local path on the target host. ProductCode is auto-extracted.

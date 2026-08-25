@@ -81,7 +81,7 @@ func (d *windowsFirewallRuleDataSource) Metadata(_ context.Context, req datasour
 func (d *windowsFirewallRuleDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the observed state of a Windows Defender Firewall " +
-			"with Advanced Security rule on a remote Windows host via WinRM and " +
+			"with Advanced Security rule on a remote Windows host via SSH and " +
 			"PowerShell (`NetSecurity` module). The rule is looked up by its stable " +
 			"technical `name` (InstanceID), distinct from `display_name`.\n\n" +
 			"Returns a Terraform error when the rule does not exist in the target " +

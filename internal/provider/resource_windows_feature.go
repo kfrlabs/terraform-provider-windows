@@ -1,7 +1,7 @@
 // Package provider: windows_feature resource implementation.
 //
 // This file contains the TPF schema, model, and CRUD + ImportState handlers
-// for the windows_feature resource. WinRM interaction is delegated to
+// for the windows_feature resource. SSH interaction is delegated to
 // winclient.FeatureClient (internal/winclient/feature.go).
 package provider
 
@@ -84,7 +84,7 @@ func (r *windowsFeatureResource) Schema(ctx context.Context, _ resource.SchemaRe
 func windowsFeatureSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages installation/uninstallation of a Windows Server role or feature " +
-			"on a remote host via WinRM and PowerShell. Backed by Get/Install/Uninstall-WindowsFeature " +
+			"on a remote host via SSH and PowerShell. Backed by Get/Install/Uninstall-WindowsFeature " +
 			"(ServerManager module). Client SKUs are not supported — use Enable/Disable-WindowsOptionalFeature instead.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{

@@ -5,7 +5,7 @@
 // These tests require:
 //   - build tag: acceptance  (`go test -tags acceptance ./...`)
 //   - TF_ACC=1
-//   - A reachable Windows host with WinRM enabled
+//   - A reachable Windows host with SSH enabled
 //   - Env vars: WINDOWS_HOST, WINDOWS_USERNAME, WINDOWS_PASSWORD
 //   - WINDOWS_LP_MSI_URL  : URL of a small public MSI (e.g. 7-Zip)
 //   - WINDOWS_LP_MSI_SHA256 : sha256 of that MSI

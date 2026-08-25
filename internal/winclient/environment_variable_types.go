@@ -1,5 +1,5 @@
 // Package winclient defines the EnvVarClient interface and associated types
-// for managing Windows environment variables over WinRM.
+// for managing Windows environment variables over SSH.
 //
 // Spec alignment: windows_environment_variable spec v1 (2026-04-26).
 //
@@ -31,11 +31,11 @@ type EnvVarScope string
 const (
 	// EnvVarScopeMachine targets the system-wide environment stored at
 	// HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment.
-	// Requires Local Administrator privileges on the WinRM target.
+	// Requires Local Administrator privileges on the SSH target.
 	EnvVarScopeMachine EnvVarScope = "machine"
 
 	// EnvVarScopeUser targets the per-user environment stored at
-	// HKCU\Environment (scoped to the WinRM authentication identity).
+	// HKCU\Environment (scoped to the SSH authentication identity).
 	EnvVarScopeUser EnvVarScope = "user"
 )
 
@@ -60,7 +60,7 @@ const (
 	EnvVarErrorInvalidInput EnvVarErrorKind = "invalid_input"
 
 	// EnvVarErrorUnknown is returned for unrecognised PS errors or unexpected
-	// WinRM transport failures.
+	// SSH transport failures.
 	EnvVarErrorUnknown EnvVarErrorKind = "unknown"
 )
 
@@ -197,7 +197,7 @@ type EnvVarState struct {
 // ---------------------------------------------------------------------------
 
 // EnvVarClient is the interface for creating, reading, updating, and deleting
-// Windows environment variables over WinRM (ADR-EV-3).
+// Windows environment variables over SSH (ADR-EV-3).
 //
 // Error conventions:
 //   - Read returns (nil, nil) when the variable does not exist (EC-4).

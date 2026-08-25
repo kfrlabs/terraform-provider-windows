@@ -5,7 +5,7 @@
 // Requires:
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows target with WinRM enabled and Local Administrator rights.
+//   - A Windows target with SSH enabled and Local Administrator rights.
 //
 // All rules are created with the "tf-acc-" name prefix and removed on destroy,
 // so the tests are safe to run repeatedly against a shared lab host.

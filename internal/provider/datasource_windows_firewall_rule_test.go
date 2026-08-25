@@ -383,7 +383,7 @@ func TestFirewallRuleDS_Read_NilResult(t *testing.T) {
 
 func TestFirewallRuleDS_Read_GenericError(t *testing.T) {
 	d := &windowsFirewallRuleDataSource{fw: &fakeFirewallClientDS{
-		readErr: errors.New("WinRM transport down"),
+		readErr: errors.New("SSH transport down"),
 	}}
 	cfg := firewallDSConfig("X", nil)
 	req := datasource.ReadRequest{Config: cfg}
@@ -392,7 +392,7 @@ func TestFirewallRuleDS_Read_GenericError(t *testing.T) {
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error from generic failure")
 	}
-	if !strings.Contains(resp.Diagnostics[0].Detail(), "WinRM transport down") {
+	if !strings.Contains(resp.Diagnostics[0].Detail(), "SSH transport down") {
 		t.Errorf("detail did not propagate: %s", resp.Diagnostics[0].Detail())
 	}
 }
@@ -406,7 +406,7 @@ func TestFirewallRuleDS_Read_TypedErrorEnriched(t *testing.T) {
 		readErr: winclient.NewFirewallRuleError(
 			winclient.FirewallRuleErrorPermission,
 			"access denied",
-			errors.New("WinRM 401"),
+			errors.New("SSH 401"),
 			map[string]string{"name": "X"},
 		),
 	}
@@ -425,7 +425,7 @@ func TestFirewallRuleDS_Read_TypedErrorEnriched(t *testing.T) {
 	if !strings.Contains(detail, "access denied") {
 		t.Errorf("detail missing message: %s", detail)
 	}
-	if !strings.Contains(detail, "WinRM 401") {
+	if !strings.Contains(detail, "SSH 401") {
 		t.Errorf("detail missing cause: %s", detail)
 	}
 }

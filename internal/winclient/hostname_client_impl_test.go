@@ -9,7 +9,7 @@
 //	EC-3  Pending rename surfaced           -> reboot_pending=true
 //	EC-4  Permission denied                 -> permission_denied via Classify
 //	EC-5  Domain-joined host                -> guardDomain / domain_joined
-//	EC-6  WinRM unreachable / timeout       -> unreachable
+//	EC-6  SSH unreachable / timeout       -> unreachable
 //	EC-7  Delete is a no-op                 -> Delete returns nil
 //	EC-10 Machine replaced                  -> machine_mismatch
 //	EC-11 Concurrent external rename        -> concurrent_modification

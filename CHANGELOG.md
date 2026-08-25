@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the provider now connects to the target Windows host over
+  **SSH** (its OpenSSH Server, invoking PowerShell) instead of WinRM. The
+  `internal/winclient.Client` transport was rewritten on top of
+  `golang.org/x/crypto/ssh`; the `RunPowerShell`/`RunPowerShellWithInput`
+  API, the `-EncodedCommand`/stdin bootstrap, and every resource/data source
+  on top of it are unchanged. The provider `port` attribute now defaults to
+  `22`, and the `use_https` and `auth_type` provider attributes are removed
+  (authentication is password-only over SSH). Host key verification is not
+  performed (`ssh.InsecureIgnoreHostKey()`); only target trusted, short-lived
+  automation hosts. `masterzen/winrm` and its transitive NTLM/Kerberos
+  dependencies were dropped from `go.mod`. The `testacc-windows` CI workflow
+  now provisions the OpenSSH Server Windows capability on the runner instead
+  of enabling WinRM.
+
 ### Fixed
 
 - `windows_scheduled_task`: trigger datetime boundaries (`start_boundary`,

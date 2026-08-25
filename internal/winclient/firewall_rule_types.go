@@ -1,5 +1,5 @@
 // Package winclient defines the WindowsFirewallRuleClient interface and
-// associated types for managing Windows Defender Firewall rules via WinRM.
+// associated types for managing Windows Defender Firewall rules via SSH.
 //
 // Spec alignment: windows_firewall_rule spec v1 (2026-05-01).
 package winclient
@@ -26,7 +26,7 @@ const (
 	// pre-existing rule with the same Name.
 	FirewallRuleErrorAlreadyExists FirewallRuleErrorKind = "already_exists"
 
-	// FirewallRuleErrorPermission is returned when WinRM or NetSecurity
+	// FirewallRuleErrorPermission is returned when SSH or NetSecurity
 	// refuses the operation due to insufficient privileges.
 	FirewallRuleErrorPermission FirewallRuleErrorKind = "permission_denied"
 
@@ -39,7 +39,7 @@ const (
 	FirewallRuleErrorInvalidInput FirewallRuleErrorKind = "invalid_input"
 
 	// FirewallRuleErrorUnknown is returned for unexpected PowerShell errors
-	// or WinRM transport failures.
+	// or SSH transport failures.
 	FirewallRuleErrorUnknown FirewallRuleErrorKind = "unknown"
 )
 
@@ -163,7 +163,7 @@ type FirewallRuleState struct {
 // ---------------------------------------------------------------------------
 
 // WindowsFirewallRuleClient defines the contract for managing Windows Defender
-// Firewall rules via WinRM (NetSecurity PowerShell module).
+// Firewall rules via SSH (NetSecurity PowerShell module).
 type WindowsFirewallRuleClient interface {
 	// Create adds a new firewall rule via New-NetFirewallRule, then calls Read
 	// to populate all computed filter attributes.
