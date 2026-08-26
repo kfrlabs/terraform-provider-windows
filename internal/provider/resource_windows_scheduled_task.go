@@ -609,11 +609,7 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 			},
 
 			// Per-operation timeouts (terraform-plugin-framework-timeouts).
-			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
-				Create: true,
-				Update: true,
-				Delete: true,
-			}),
+			"timeouts": timeouts.Attributes(ctx, stTimeoutsOpts),
 		},
 	}
 }
@@ -974,9 +970,13 @@ func stateToModel(ctx context.Context, s *winclient.ScheduledTaskState, priorMod
 	}
 
 	// Preserve user-configured per-operation timeouts across the projection
-	// (resp.State.Set overwrites the full state object).
+	// (resp.State.Set overwrites the full state object). On import there is no
+	// prior model, and leaving the zero value would put an object with no
+	// attribute types into state, which the framework rejects.
 	if priorModel != nil {
 		m.Timeouts = priorModel.Timeouts
+	} else {
+		m.Timeouts = stNullTimeouts()
 	}
 
 	// description: map empty string to null (Optional-only field)
@@ -1182,6 +1182,38 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 // ---------------------------------------------------------------------------
 // Utility helpers
 // ---------------------------------------------------------------------------
+
+// stTimeoutsOpts declares which per-operation timeouts the resource exposes.
+// The schema and stNullTimeouts both derive from it; keep them together, since
+// a null timeouts value whose attribute types disagree with the schema is
+// rejected by the framework as a provider type error.
+var stTimeoutsOpts = timeouts.Opts{
+	Create: true,
+	Update: true,
+	Delete: true,
+}
+
+// stNullTimeouts returns a null timeouts value carrying the schema's attribute
+// types. The zero timeouts.Value wraps an object with NO attribute types, which
+// the framework reports as "Expected timeouts.Type / underlying type
+// tftypes.Object[...] / Received tftypes.Object[]" -- the failure mode on
+// import, where there is no prior state to copy the value from.
+func stNullTimeouts() timeouts.Value {
+	attrTypes := map[string]attr.Type{}
+	if stTimeoutsOpts.Create {
+		attrTypes["create"] = types.StringType
+	}
+	if stTimeoutsOpts.Read {
+		attrTypes["read"] = types.StringType
+	}
+	if stTimeoutsOpts.Update {
+		attrTypes["update"] = types.StringType
+	}
+	if stTimeoutsOpts.Delete {
+		attrTypes["delete"] = types.StringType
+	}
+	return timeouts.Value{Object: types.ObjectNull(attrTypes)}
+}
 
 // strOrNull returns types.StringNull() for empty strings (Optional-only fields).
 func strOrNull(s string) types.String {

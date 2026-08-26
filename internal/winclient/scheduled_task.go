@@ -975,7 +975,11 @@ func (c *ScheduledTaskClientImpl) Update(ctx context.Context, id string, input S
 	// Settings
 	sb.WriteString(buildSettingsFragment(input.Settings, input.Enabled))
 
-	// Set-ScheduledTask
+	// Set-ScheduledTask. Note the absence of Description here: unlike
+	// Register-ScheduledTask (see Create), Set-ScheduledTask has no
+	// -Description parameter, and passing one fails the whole update with
+	// "A parameter cannot be found that matches parameter name 'Description'".
+	// It is applied separately below, on the task object.
 	sb.WriteString(fmt.Sprintf(`
 $_stSetParams = @{
   TaskName    = %s
@@ -985,8 +989,7 @@ $_stSetParams = @{
   Settings    = $_stSettings
   ErrorAction = 'Stop'
 }
-$_stSetParams['Description'] = %s
-`, psQuote(taskName), psQuote(taskPath), psQuote(input.Description)))
+`, psQuote(taskName), psQuote(taskPath)))
 
 	if input.Principal != nil && input.Principal.Password != nil {
 		// principal.password is read from stdin (see Create for rationale).
@@ -999,16 +1002,24 @@ $_stSetParams['Description'] = %s
 		sb.WriteString("$_stSetParams['Trigger'] = $_stTriggers\n")
 	}
 
-	sb.WriteString(`
+	// The description rides on the task object, not on the cmdlet. Applied
+	// unconditionally rather than only when non-empty: removing description
+	// from the configuration has to clear it on the host too, and an empty
+	// string is how that is expressed. Inside the same try so a failure is
+	// classified like any other update failure.
+	sb.WriteString(fmt.Sprintf(`
 try {
   Set-ScheduledTask @_stSetParams | Out-Null
+  $_stDescTask = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop
+  $_stDescTask.Description = %s
+  Set-ScheduledTask -InputObject $_stDescTask -ErrorAction Stop | Out-Null
 } catch {
   $msg = $_.Exception.Message
   if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $msg @{ phase = 'update' }; exit 0 }
   if ($msg -match 'argument' -or $msg -match 'invalid' -or $msg -match 'parameter') { Emit-Err 'invalid_input' $msg @{ phase = 'update' }; exit 0 }
   Emit-Err 'unknown' $msg @{ phase = 'update' }; exit 0
 }
-`)
+`, psQuote(taskName), psQuote(taskPath), psQuote(input.Description)))
 
 	// OnEvent XML injection (ADR-ST-5)
 	if hasOnEventTrigger(input.Triggers) {

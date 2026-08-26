@@ -193,6 +193,21 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed (acceptance suite)
 
+- `windows_scheduled_task` updates failed with "A parameter cannot be found
+  that matches parameter name 'Description'". `Set-ScheduledTask` has no
+  `-Description` parameter, unlike `Register-ScheduledTask` used on create. The
+  description is now set on the task object and written back, and it is applied
+  unconditionally so clearing it in the configuration clears it on the host.
+  (#82)
+- `windows_scheduled_task` import failed with a framework Value Conversion Error
+  on `timeouts`. With no prior state to copy from, the attribute kept its Go
+  zero value, whose object carries no attribute types, so the framework saw
+  `tftypes.Object[]` where the schema declares
+  `Object["create","delete","update"]`. Import now writes a null value carrying
+  the schema's types, and both halves derive from one `timeouts.Opts` so they
+  cannot disagree. (#83)
+
+
 - `TestAccWindowsServiceDataSource_Basic` looked up a service named `SSH`,
   which does not exist: the SCM name for OpenSSH Server is `sshd` (`OpenSSH SSH
   Server` is only its display name). A leftover of the WinRM -> SSH rename,

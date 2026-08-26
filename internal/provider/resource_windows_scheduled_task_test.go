@@ -689,3 +689,35 @@ func TestBuildTriggerObject_UnknownIntervalResolvesToNull(t *testing.T) {
 		}
 	})
 }
+
+// stNullTimeouts must carry exactly the attribute types the schema declares.
+// A null timeouts value whose object has no attribute types is what made
+// ImportState fail with a framework Value Conversion Error (#83): the framework
+// compares the value's underlying type against the schema's and rejects
+// tftypes.Object[] where it expects Object["create","delete","update"].
+//
+// Both halves now derive from stTimeoutsOpts, so adding or removing an
+// operation moves them together and cannot desynchronise them. What this test
+// still catches is the original defect class: stNullTimeouts returning an
+// untyped value (a bare timeouts.Value{}) or a hand-written attribute map that
+// does not match the schema. Verified by reverting the fix, which fails it.
+func TestScheduledTaskNullTimeoutsMatchesSchema(t *testing.T) {
+	r := NewWindowsScheduledTaskResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	attrDef, ok := resp.Schema.Attributes["timeouts"]
+	if !ok {
+		t.Fatal("schema has no timeouts attribute")
+	}
+
+	want := attrDef.GetType()
+	got := stNullTimeouts().Type(context.Background())
+	if !want.Equal(got) {
+		t.Errorf("stNullTimeouts type mismatch:\n schema: %s\n  value: %s", want, got)
+	}
+
+	if !stNullTimeouts().IsNull() {
+		t.Error("stNullTimeouts must be null, not an object of null strings")
+	}
+}
