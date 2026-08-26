@@ -1233,6 +1233,9 @@ func scheduledTaskErrDiag(op string, err error) diag.Diagnostics {
 		if ste.Cause != nil {
 			detail += ": " + ste.Cause.Error()
 		}
+		if stderr := ste.Context["stderr"]; stderr != "" {
+			detail += "\nstderr: " + stderr
+		}
 		diags.AddError(summary, detail)
 		return diags
 	}
