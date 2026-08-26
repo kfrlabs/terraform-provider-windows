@@ -240,7 +240,7 @@ func (e *EnvVarClientImpl) runScript(ctx context.Context, op, script string) (*e
 		}
 		return nil, &EnvVarError{
 			Kind:    EnvVarErrorUnknown,
-			Message: fmt.Sprintf("powershell transport error during %q", op),
+			Message: fmt.Sprintf("SSH transport error during %q", op),
 			Cause:   err,
 			Context: map[string]string{
 				"operation": op,

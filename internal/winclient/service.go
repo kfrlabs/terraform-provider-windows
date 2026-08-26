@@ -134,7 +134,7 @@ func (s *ServiceClient) runEnvelope(ctx context.Context, op, name, script string
 				})
 		}
 		return nil, NewServiceError(ServiceErrorUnknown,
-			fmt.Sprintf("powershell transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err, map[string]string{
 				"operation": op, "name": name, "host": s.c.cfg.Host,
 				"stderr": truncate(stderr, 2048),
@@ -192,7 +192,7 @@ func (s *ServiceClient) runEnvelopeWithInput(ctx context.Context, op, name, scri
 				})
 		}
 		return nil, NewServiceError(ServiceErrorUnknown,
-			fmt.Sprintf("powershell transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err, map[string]string{
 				"operation": op, "name": name, "host": s.c.cfg.Host,
 				"stderr": truncate(stderr, 2048),

@@ -270,7 +270,7 @@ func (r *RegistryValueClientImpl) runScript(ctx context.Context, op, script stri
 		}
 		return nil, &RegistryValueError{
 			Kind:    RegistryValueErrorUnknown,
-			Message: fmt.Sprintf("powershell transport error during %q", op),
+			Message: fmt.Sprintf("SSH transport error during %q", op),
 			Cause:   err,
 			Context: map[string]string{
 				"operation": op, "host": r.c.cfg.Host,

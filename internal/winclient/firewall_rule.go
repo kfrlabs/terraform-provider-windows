@@ -383,7 +383,7 @@ func (c *FirewallRuleClient) runFirewallEnvelope(ctx context.Context, op, name, 
 		}
 		return nil, NewFirewallRuleError(
 			FirewallRuleErrorUnknown,
-			fmt.Sprintf("PowerShell transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err,
 			map[string]string{
 				"operation": op, "name": name, "host": c.c.cfg.Host,

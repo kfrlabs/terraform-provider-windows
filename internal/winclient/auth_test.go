@@ -39,6 +39,15 @@ func noAgent(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 }
 
+// setHome points os.UserHomeDir at dir. It sets USERPROFILE as well as HOME
+// because os.UserHomeDir reads USERPROFILE on Windows, and these tests must
+// not fall through to the real developer's ~/.ssh/known_hosts on any platform.
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 func TestBuildAuthMethodsPasswordOnly(t *testing.T) {
 	noAgent(t)
 	methods, err := buildAuthMethods(Config{Password: "s3cr3t"})
@@ -210,7 +219,7 @@ func TestParseHostKey(t *testing.T) {
 // The default must verify. A Config with no host-key settings and no
 // known_hosts file must fail closed rather than connect blindly.
 func TestHostKeyCallbackFailsClosedByDefault(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setHome(t, t.TempDir())
 	_, err := hostKeyCallback(Config{Host: "192.0.2.10"})
 	if err == nil {
 		t.Fatal("expected an error when no known_hosts file exists")
@@ -372,7 +381,7 @@ func TestBuildAuthMethodsAgentFailureHandling(t *testing.T) {
 
 func TestExpandHome(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 
 	cases := map[string]string{
 		"~":                filepath.Join(home),
@@ -443,6 +452,39 @@ func TestResolveFromEnvDoesNotOverrideExplicitValues(t *testing.T) {
 	}
 }
 
+// WINDOWS_PORT fills in only when no port was configured, and a value that is
+// not a usable TCP port is ignored rather than dialed.
+func TestResolveFromEnvPort(t *testing.T) {
+	t.Run("fills empty port", func(t *testing.T) {
+		t.Setenv(EnvPort, "2222")
+		var cfg Config
+		ResolveFromEnv(&cfg)
+		if cfg.Port != 2222 {
+			t.Errorf("Port = %d, want 2222", cfg.Port)
+		}
+	})
+
+	t.Run("explicit port wins", func(t *testing.T) {
+		t.Setenv(EnvPort, "2222")
+		cfg := Config{Port: 2200}
+		ResolveFromEnv(&cfg)
+		if cfg.Port != 2200 {
+			t.Errorf("Port = %d, want the explicit 2200", cfg.Port)
+		}
+	})
+
+	for _, bad := range []string{"", "twenty-two", "0", "-1", "65536", "22 "} {
+		t.Run("ignores "+bad, func(t *testing.T) {
+			t.Setenv(EnvPort, bad)
+			var cfg Config
+			ResolveFromEnv(&cfg)
+			if cfg.Port != 0 {
+				t.Errorf("WINDOWS_PORT=%q should leave Port unset for New to default, got %d", bad, cfg.Port)
+			}
+		})
+	}
+}
+
 // An unparseable WINDOWS_USE_AGENT must not silently read as false.
 func TestResolveFromEnvIgnoresMalformedBools(t *testing.T) {
 	t.Setenv(EnvUseAgent, "yes-please")
@@ -462,7 +504,7 @@ func TestResolveFromEnvIgnoresMalformedBools(t *testing.T) {
 // New must not build a client that skips verification by default.
 func TestNewRequiresHostVerification(t *testing.T) {
 	noAgent(t)
-	t.Setenv("HOME", t.TempDir())
+	setHome(t, t.TempDir())
 	if _, err := New(Config{Host: "h", Username: "u", Password: "p"}); err == nil {
 		t.Fatal("New should refuse to build a client with no way to verify the host")
 	}

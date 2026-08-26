@@ -392,7 +392,7 @@ func (c *ScheduledTaskClientImpl) runSTEnvelope(ctx context.Context, op, id, scr
 				map[string]string{"op": op, "id": id, "host": c.c.cfg.Host})
 		}
 		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-			fmt.Sprintf("transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err,
 			map[string]string{"op": op, "id": id, "host": c.c.cfg.Host,
 				"stderr": truncate(stderr, 2048), "stdout": truncate(stdout, 2048)})
@@ -439,7 +439,7 @@ func (c *ScheduledTaskClientImpl) runSTEnvelopeWithInput(ctx context.Context, op
 				map[string]string{"op": op, "id": id, "host": c.c.cfg.Host})
 		}
 		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-			fmt.Sprintf("transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err,
 			map[string]string{"op": op, "id": id, "host": c.c.cfg.Host,
 				"stderr": truncate(stderr, 2048), "stdout": truncate(stdout, 2048)})
