@@ -126,7 +126,8 @@ workers:
 
 # Règles
 - JAMAIS générer de code Go.
-- Privilégier PowerShell Remoting (WinRM).
+- Le transport est SSH (OpenSSH Server sur la cible, invoquant PowerShell) : la spec
+  décrit du PowerShell exécuté sur l'hôte, jamais un mécanisme de remoting.
 - Si une info manque, FAIRE un choix raisonnable et le noter en commentaire YAML (PAS de question ouverte).
 - AUCUN `git` (pas de commit/checkout) : tu écris seulement des fichiers.
 

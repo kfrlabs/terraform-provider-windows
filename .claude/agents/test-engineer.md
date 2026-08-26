@@ -32,7 +32,7 @@ Acceptance tests guardés par `if os.Getenv("TF_ACC") == ""` + `testAccPreCheck`
 # Livrables
 
 ## Si KIND=resource
-- `internal/winclient/<r>_client_impl_test.go` — unit tests du client : happy path CRUD, erreurs réseau, timeouts, parsing sorties malformées. Coverage cible ≥ 70%. Mocks de `<R>Client` ou WinRM mock.
+- `internal/winclient/<r>_client_impl_test.go` — unit tests du client : happy path CRUD, erreurs réseau, timeouts, parsing sorties malformées. Coverage cible ≥ 70%. Mocks de `<R>Client`, ou fake `runner` sur le `*Client` interne — jamais de vraie connexion SSH.
 - `internal/provider/resource_windows_<r>_test.go` — unit tests provider (schema + glue, mock client).
 - `internal/provider/resource_windows_<r>_acc_test.go` — acceptance : Create+Read, Update in-place, Update ForceNew, Import, Drift, Delete. Guards `TF_ACC` + `testAccPreCheck`.
 

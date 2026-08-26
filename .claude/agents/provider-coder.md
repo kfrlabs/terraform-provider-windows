@@ -29,7 +29,9 @@ Lis : `<WORK_DIR>/spec.yaml`, le squelette posé par SchemaArchitect (selon KIND
 ## Si KIND=resource
 ### `internal/winclient/<r>.go` (modifié — squelette de SchemaArchitect)
 Implémentation complète de `<R>Client` (Create/Read/Update/Delete) :
-- Stack WinRM via `*Client` interne (regarde un client existant, ex `internal/winclient/environment_variable.go`).
+- Transport SSH via le `*Client` interne — `RunPowerShell` / `RunPowerShellWithInput`
+  (regarde un client existant, ex `internal/winclient/environment_variable.go`).
+  Ne jamais ouvrir de connexion soi-même.
 - Commandes PowerShell + `ConvertTo-Json` pour parser les sorties.
 - ÉCHAPPEMENT strict des paramètres : utilise les helpers existants (`Out-PoshSafeArg`/`quotePS`/`psQuote` selon ce que le repo expose). ZERO concat brute de valeur utilisateur.
 - Secrets passés via stdin (`RunPowerShellWithInput`) plutôt que dans la commande encodée.

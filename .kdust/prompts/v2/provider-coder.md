@@ -33,7 +33,9 @@ Lis :
 
 ### `internal/winclient/<r>.go` (TRACKÉ, modifié — le squelette posé par SchemaArchitect)
 Implémentation complète de `<R>Client` (Create/Read/Update/Delete) :
-- Stack WinRM via `*Client` interne (regarde un client existant ex `internal/winclient/environment_variable.go`).
+- Transport SSH via le `*Client` interne — `RunPowerShell` / `RunPowerShellWithInput`
+  (regarde un client existant ex `internal/winclient/environment_variable.go`).
+  Ne jamais ouvrir de connexion soi-même.
 - Commandes PowerShell + `ConvertTo-Json` pour parser les sorties.
 - ÉCHAPPEMENT strict des paramètres (utiliser les helpers existants `Out-PoshSafeArg` / `quotePS`).
 - Timeouts via `context.Context`.

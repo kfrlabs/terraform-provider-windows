@@ -52,6 +52,11 @@ All notable changes to this project will be documented in this file.
   behaviour, cannot be combined with `host_key` or `known_hosts_path`, and emits
   a warning on every plan and apply.
 
+- The provider `port` attribute gained a `WINDOWS_PORT` environment fallback,
+  so every connection attribute now has one — which is what the documentation
+  already claimed. A value that is not a usable TCP port is ignored rather than
+  dialed, leaving `New` to default to `22`.
+
 ### Fixed
 
 - `windows_local_group_member` (data source): looking a member up by name failed
@@ -170,6 +175,44 @@ All notable changes to this project will be documented in this file.
   `windows_firewall_rule`, `windows_local_group_member` and
   `windows_registry_value` data-source reads — while preserving UTF-16LE
   fidelity for non-ASCII values. (#39)
+- The provider `timeout` attribute was documented as an "operation timeout",
+  but it only ever bounded connection establishment (`net.Dialer.Timeout` and
+  `ssh.ClientConfig.Timeout`). Command duration is bounded by the request
+  context, i.e. the per-resource `timeouts {}` block. Behaviour is unchanged;
+  the description now says what the attribute does, so raising it to
+  accommodate a slow install is no longer mistaken for a fix.
+- `Configure` rejected an unknown value for the string credentials but silently
+  accepted one for `port`, `timeout`, `use_agent` and `insecure_ignore_host_key`,
+  where it would collapse to the zero value — dialing port 22, or flipping host
+  key verification — instead of failing. All connection attributes are now
+  checked.
+- Transport failures were reported with four different wordings across the
+  resources (`powershell transport error`, `PowerShell transport error`,
+  `transport error`, `SSH transport error`). They all say `SSH transport error`
+  now, which is also what the transport actually is.
+
+### Documentation
+
+- `README.md` still described the provider as WinRM-based, and its example
+  configuration set the removed `auth_type` attribute — a copy-paste that no
+  longer plans. It now covers the SSH transport, how to enable OpenSSH Server on
+  the target, the three authentication methods, host key verification and the
+  full set of `WINDOWS_*` variables.
+- Added **ADR-0010** (SSH as the transport) and **ADR-0011** (verify host keys by
+  default, and fail closed), recording the two decisions behind #78 and #79 —
+  including the invariants `auth.go` must preserve and the known ssh-agent
+  limitation on Windows.
+- The KDust pipeline prompts (`.claude/agents/`, `.kdust/prompts/v2/`) still
+  instructed agents to target "PowerShell Remoting (WinRM)" and to mock WinRM,
+  so the next generated resource would have been specified against the old
+  transport. They now describe the SSH client and its `RunPowerShell` surface.
+- `CLAUDE.md` claimed CI fails on `docs/` drift; the `docs` workflow is
+  deliberately a schema-validation gate with a non-blocking drift step. The note
+  now matches the workflow, and `make test`'s documented timeout matches the
+  `GNUmakefile`.
+- Documented that ssh-agent authentication is unavailable when Terraform itself
+  runs on Windows, since the agent is exposed as a named pipe rather than a Unix
+  socket.
 
 ### Internal
 

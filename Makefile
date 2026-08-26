@@ -15,7 +15,7 @@ build:
 	go install ./...
 
 test:
-	go test -short ./... -timeout 30s
+	go test -short ./... -timeout 120s
 
 testacc:
 	TF_ACC=1 go test -tags acceptance ./... -v -timeout 120m

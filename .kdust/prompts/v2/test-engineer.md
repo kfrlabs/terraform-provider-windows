@@ -33,7 +33,7 @@ Les acceptance tests sont guardés par `if os.Getenv("TF_ACC") == ""` + `testAcc
 - `internal/winclient/<r>_client_impl_test.go` — unit tests du client
   - Happy path CRUD, erreurs réseau, timeouts, parsing sorties malformées
   - Coverage cible ≥ 70%
-  - Mocks de l'interface `<R>Client` ou tests directs avec WinRM mock
+  - Mocks de l'interface `<R>Client`, ou fake `runner` sur le `*Client` interne — jamais de vraie connexion SSH
 - `internal/provider/resource_windows_<r>_test.go` — unit tests du provider (schema + glue, mocks de client)
 - `internal/provider/resource_windows_<r>_acc_test.go` — acceptance tests
   - Guards `TF_ACC` + `testAccPreCheck`
