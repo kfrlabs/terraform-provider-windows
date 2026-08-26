@@ -191,6 +191,37 @@ All notable changes to this project will be documented in this file.
   `transport error`, `SSH transport error`). They all say `SSH transport error`
   now, which is also what the transport actually is.
 
+### Fixed (acceptance suite)
+
+- `TestAccWindowsServiceDataSource_Basic` looked up a service named `SSH`,
+  which does not exist: the SCM name for OpenSSH Server is `sshd` (`OpenSSH SSH
+  Server` is only its display name). A leftover of the WinRM -> SSH rename,
+  which also left the data block labelled `winrm`.
+- `TestAccWindowsLocalGroupMemberDataSource_Basic` still failed after #73. The
+  qualified-name lookup worked, but the data source then wrote the
+  host-qualified name Windows returns (`HOST\\alice`) back into `member_name`,
+  which is a **Required** argument, so it no longer matched the configuration.
+  It now echoes the value as written; `member_sid` remains the resolved
+  identity, and the resource's `member_name` is Computed and still holds the
+  canonical form.
+
+### Changed (CI)
+
+- The acceptance suite is now sharded across runners (`feature`, `feature-ds`,
+  `rest`), cutting wall clock from ~12min to ~6min. Two thirds of the runtime is
+  `windows_feature`: `Get-WindowsFeature` imports the ServerManager module on
+  every call (~18s) and each call gets a fresh SSH connection and
+  `powershell.exe`, so Terraform's 5-6 reads per test pay it 5-6 times.
+  Sharding rather than `t.Parallel()` because DISM and `Install-WindowsFeature`
+  are machine-global and serialised by Windows; separate runners are separate
+  machines. The floor is the slowest single test, so going further needs a
+  persistent PowerShell session in `winclient`.
+- Shard filters are anchored on `^TestAcc`, which also stops the acceptance job
+  re-running the ~200 unit tests that `test.yml` already covers on ubuntu.
+- Fixed the `publickey` leg, which never authenticated: `ssh-keygen -N '""'` is
+  a PowerShell 5.1 workaround and under `pwsh` 7 passes two literal quotes as
+  the passphrase, leaving the key encrypted and unusable under `BatchMode`.
+
 ### Documentation
 
 - `README.md` still described the provider as WinRM-based, and its example

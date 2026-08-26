@@ -690,7 +690,7 @@ func TestWPInstall_UnknownStatus(t *testing.T) {
 func TestWPInstall_TransportError(t *testing.T) {
 	_, wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		return "", "", errors.New("winrm dial")
+		return "", "", errors.New("ssh dial")
 	})()
 
 	_, err := wp.Install(context.Background(), WingetPackageInput{
@@ -937,7 +937,7 @@ func TestWPUpdate_BlockedByPolicy(t *testing.T) {
 func TestWPUpdate_TransportError(t *testing.T) {
 	_, wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		return "", "", errors.New("winrm dial")
+		return "", "", errors.New("ssh dial")
 	})()
 
 	_, err := wp.Update(context.Background(), WingetPackageInput{

@@ -128,7 +128,7 @@ func TestAccWindowsLegacyPackage_DriftDetection(t *testing.T) {
 	testAccLegacyPackagePreCheck(t)
 	t.Skip("SKELETON: see TestAccWindowsLegacyPackage_Basic")
 	// Step 1: create.
-	// Step 2: PreConfig → ssh/winrm and run msiexec /x <ID> /qn /norestart.
+	// Step 2: PreConfig → connect over SSH and run msiexec /x <ID> /qn /norestart.
 	// Step 3: ExpectNonEmptyPlan with replace-required diff.
 }
 

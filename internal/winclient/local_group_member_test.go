@@ -83,7 +83,7 @@ func lgmRemovedRespData() map[string]any {
 // ---------------------------------------------------------------------------
 
 func TestLocalGroupMemberError_ErrorAndUnwrap(t *testing.T) {
-	cause := errors.New("underlying-winrm-error")
+	cause := errors.New("underlying-ssh-error")
 	e := NewLocalGroupMemberError(
 		LocalGroupMemberErrorPermission,
 		"access denied",
@@ -100,7 +100,7 @@ func TestLocalGroupMemberError_ErrorAndUnwrap(t *testing.T) {
 	if !strings.Contains(msg, "access denied") {
 		t.Errorf("Error() missing message: %q", msg)
 	}
-	if !strings.Contains(msg, "underlying-winrm-error") {
+	if !strings.Contains(msg, "underlying-ssh-error") {
 		t.Errorf("Error() missing cause: %q", msg)
 	}
 
@@ -232,7 +232,7 @@ func TestRunLGMEnvelope_ContextCancelled(t *testing.T) {
 
 func TestRunLGMEnvelope_TransportError(t *testing.T) {
 	restore := stubLGRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		return "junk", "stderr-junk", errors.New("winrm: tcp reset")
+		return "junk", "stderr-junk", errors.New("ssh: tcp reset")
 	})
 	defer restore()
 

@@ -214,7 +214,7 @@ func TestRunFeatureEnvelope_Timeout_EC8(t *testing.T) {
 
 func TestRunFeatureEnvelope_TransportError(t *testing.T) {
 	restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
-		return "stdout-junk", "stderr-junk", errors.New("winrm: tcp reset")
+		return "stdout-junk", "stderr-junk", errors.New("ssh: tcp reset")
 	})
 	defer restore()
 	f := NewFeatureClient(newFeatTestClient(t))
