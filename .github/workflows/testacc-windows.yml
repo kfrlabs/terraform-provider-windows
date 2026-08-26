@@ -8,7 +8,8 @@
 # WINDOWS_HOST at the runner itself. Fully ephemeral, no external host, no
 # repository secrets.
 #
-# Manual only (workflow_dispatch). Coverage today: the data-source suites and
+# Triggered manually (workflow_dispatch) and on pull requests touching the
+# transport or the provider layer. Coverage today: the data-source suites and
 # the windows_scheduled_task resource actually run; the remaining resource
 # acceptance tests are still skeletons and self-skip.
 
@@ -142,19 +143,41 @@ jobs:
       # administrators_authorized_keys rather than the per-user file, and
       # refuses it unless its ACL is restricted to SYSTEM and Administrators.
       - name: Provision SSH key pair
+        if: matrix.auth == 'publickey'
         run: |
           $ErrorActionPreference = 'Stop'
 
           $keyPath = Join-Path $env:RUNNER_TEMP 'id_ed25519'
           Remove-Item "$keyPath", "$keyPath.pub" -Force -ErrorAction SilentlyContinue
-          & ssh-keygen -t ed25519 -f $keyPath -N '""' -C 'tfacc-acceptance' -q
+          # -N '' and not -N '""': the doubled-quote form is a PowerShell 5.1
+          # workaround, and under pwsh 7 it passes two literal quote characters
+          # as the passphrase. The key would then be encrypted, unusable under
+          # BatchMode, and the failure would surface as a bare "Permission
+          # denied (publickey)" with nothing pointing back to here.
+          & ssh-keygen -t ed25519 -f $keyPath -N '' -C 'tfacc-acceptance' -q
           if (-not (Test-Path "$keyPath.pub")) { throw "ssh-keygen did not produce a key pair" }
+
+          # Prove the key really has no passphrase rather than trusting the
+          # quoting above: -y with an empty -P fails on an encrypted key.
+          & ssh-keygen -y -P '' -f $keyPath | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "the generated key is passphrase-protected; check the -N quoting for this shell"
+          }
 
           $akFile = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
           Get-Content "$keyPath.pub" | Set-Content -Path $akFile -Encoding ascii
           & icacls $akFile /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F' | Out-Null
 
           Restart-Service sshd
+          # Restart-Service returns before sshd is necessarily accepting again;
+          # without this wait an auth failure and a not-yet-listening socket are
+          # indistinguishable.
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $deadline) {
+            if ((Test-NetConnection -ComputerName $env:WINDOWS_HOST -Port 22 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }
+            Start-Sleep -Milliseconds 500
+          }
+
           "WINDOWS_PRIVATE_KEY_PATH=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       # Fail fast with an unambiguous signal: BatchMode forbids any password
@@ -168,6 +191,21 @@ jobs:
             -o UserKnownHostsFile=$env:WINDOWS_KNOWN_HOSTS `
             $target 'Write-Output KEYAUTH_OK'
           if ($LASTEXITCODE -ne 0 -or $out -notcontains 'KEYAUTH_OK') {
+            # "Permission denied (publickey)" alone cannot distinguish a client
+            # that could not load the key from a server that rejected it, so
+            # collect both sides before failing.
+            Write-Host '--- ssh -vvv ---'
+            & ssh -vvv -i $env:WINDOWS_PRIVATE_KEY_PATH -o BatchMode=yes `
+              -o UserKnownHostsFile=$env:WINDOWS_KNOWN_HOSTS `
+              $target 'Write-Output KEYAUTH_OK' 2>&1 | Out-Host
+            Write-Host '--- authorized_keys ACL ---'
+            $akFile = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+            & icacls $akFile | Out-Host
+            Get-Content $akFile | ForEach-Object { $_.Substring(0, [Math]::Min(40, $_.Length)) + '...' } | Out-Host
+            Write-Host '--- sshd log ---'
+            Get-Content (Join-Path $env:ProgramData 'ssh\logs\sshd.log') -Tail 40 -ErrorAction SilentlyContinue | Out-Host
+            Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 40 -ErrorAction SilentlyContinue |
+              ForEach-Object { "$($_.TimeCreated) $($_.Message)" } | Out-Host
             throw "public-key authentication failed (exit $LASTEXITCODE): $out"
           }
           Write-Host "Public-key authentication confirmed"
