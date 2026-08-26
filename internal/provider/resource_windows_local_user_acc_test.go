@@ -48,7 +48,7 @@ func TestAccWindowsLocalUser_Basic(t *testing.T) {
 	cfg := fmt.Sprintf(`
 resource "windows_local_user" "test" {
   name        = %q
-  password    = "P@ssw0rd-Acc-Basic!"
+  password    = "Tr0ub4dour&Zx9!Acc-Basic-Qw7mK"
   full_name   = "TF Acc User"
   description = "created by acceptance test"
 }
@@ -86,7 +86,7 @@ func TestAccWindowsLocalUser_DisabledAndFlags(t *testing.T) {
 				Config: fmt.Sprintf(`
 resource "windows_local_user" "flags" {
   name                   = %q
-  password               = "P@ssw0rd-Acc-Flags!"
+  password               = "Tr0ub4dour&Zx9!Acc-Flags-Vb3nR"
   enabled                = false
   password_never_expires = true
 }
@@ -110,7 +110,7 @@ func TestAccWindowsLocalUser_RenameNoRecreate(t *testing.T) {
 		return fmt.Sprintf(`
 resource "windows_local_user" "rn" {
   name     = %q
-  password = "P@ssw0rd-Acc-Rename!"
+  password = "Tr0ub4dour&Zx9!Acc-Rename-Fp2k"
 }
 `, name)
 	}
@@ -156,7 +156,7 @@ func TestAccWindowsLocalUser_ImportByName(t *testing.T) {
 				Config: fmt.Sprintf(`
 resource "windows_local_user" "imp" {
   name     = %q
-  password = "P@ssw0rd-Acc-Import!"
+  password = "Tr0ub4dour&Zx9!Acc-Import-Ht8w"
 }
 `, name),
 			},

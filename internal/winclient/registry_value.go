@@ -67,7 +67,10 @@ function Hex-To-Bytes([string]$Hex) {
   for ($i = 0; $i -lt $Hex.Length; $i += 2) {
     $bytes[$i/2] = [Convert]::ToByte($Hex.Substring($i, 2), 16)
   }
-  return $bytes
+  # Comma operator prevents the pipeline from enumerating $bytes into
+  # Object[]; without it SetValue(..., RegistryValueKind.Binary) rejects
+  # the value with "type of the value object did not match".
+  return ,$bytes
 }
 function Bytes-To-Hex([byte[]]$Bytes) {
   if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
