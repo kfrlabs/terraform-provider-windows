@@ -369,7 +369,7 @@ try {
     Emit-OK $data
 } catch {
     $kind = Classify-LU $_.Exception.Message $_.FullyQualifiedErrorId
-    Emit-Err $kind $_.Exception.Message @{ name = %s; step = 'new_local_user' }
+    Emit-Err $kind $_.Exception.Message @{ name = %s; step = 'new_local_user'; pwlen = $PlainPassword.Length }
 }
 `,
 		qName, input.Name, qName,

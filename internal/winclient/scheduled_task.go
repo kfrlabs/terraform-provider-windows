@@ -733,7 +733,7 @@ func buildOnEventFragment(taskName, taskPath string, triggers []ScheduledTaskTri
 			enabled = *t.Enabled
 		}
 		sb.WriteString(fmt.Sprintf(
-			"  [ordered]@{ enabled=$%s; subscription=%s; start_boundary=%s; end_boundary=%s; delay=%s; execution_time_limit=%s },\n",
+			"  [ordered]@{ enabled=$%s; subscription=%s; start_boundary=%s; end_boundary=%s; delay=%s; execution_time_limit=%s }\n",
 			psBool(enabled),
 			psQuote(t.Subscription),
 			psQuote(t.StartBoundary),
