@@ -222,6 +222,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed (CI)
 
+- Acceptance pre-checks required `WINDOWS_PASSWORD` specifically, in 21
+  duplicated copies. The public-key leg of the matrix clears that variable on
+  purpose -- to prove the key alone authenticates -- so 69 of the 85 tests in the
+  `rest` shard skipped there, and the failures among them were invisible. The
+  suite now requires a host, a username and **at least one** credential, in a
+  single shared `testAccRequireEnv` mirroring `winclient.buildAuthMethods`. The
+  auth method the provider recommends is no longer the one it does not test.
+
 - The acceptance suite is now sharded across runners (`feature`, `feature-ds`,
   `rest`), cutting wall clock from ~12min to ~6min. Two thirds of the runtime is
   `windows_feature`: `Get-WindowsFeature` imports the ServerManager module on

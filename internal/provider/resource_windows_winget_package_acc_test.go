@@ -41,11 +41,7 @@ func testAccWingetPreCheck(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("TF_ACC not set; skipping windows_winget_package acceptance test")
 	}
-	for _, v := range []string{"WINDOWS_HOST", "WINDOWS_USERNAME", "WINDOWS_PASSWORD"} {
-		if os.Getenv(v) == "" {
-			t.Skipf("env %s not set; skipping acceptance test", v)
-		}
-	}
+	testAccRequireEnv(t)
 }
 
 // TestAccWindowsWingetPackage_Basic is the baseline create + read + destroy

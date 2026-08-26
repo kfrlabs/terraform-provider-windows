@@ -26,11 +26,7 @@ func testAccFirewallRuleDSPreCheck(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("TF_ACC not set; skipping acceptance test")
 	}
-	for _, v := range []string{"WINDOWS_HOST", "WINDOWS_USERNAME", "WINDOWS_PASSWORD"} {
-		if os.Getenv(v) == "" {
-			t.Skipf("env %s not set; skipping acceptance test", v)
-		}
-	}
+	testAccRequireEnv(t)
 }
 
 // TestAccWindowsFirewallRuleDataSource_Basic creates a firewall rule via the
