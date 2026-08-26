@@ -23,7 +23,9 @@ go test ./internal/provider/ -run TestWindowsFeatureResource -v
 go test ./internal/winclient/ -run TestFeatureClient -v
 ```
 
-Acceptance tests require `TF_ACC=1` plus `WINDOWS_HOST`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD` and a reachable Windows target; without them they skip. They also live behind the `acceptance` build tag (`-tags acceptance`) and share `testAccProtoV6ProviderFactories` from `internal/provider/acc_test_helper.go`; the default `make test` build never compiles them. The `testacc-windows` workflow (`.github/workflows/testacc-windows.yml`, `workflow_dispatch`) runs them on a GitHub-hosted `windows-latest` runner that targets its own local OpenSSH Server. Unit tests never touch SSH.
+Acceptance tests require `TF_ACC=1` plus `WINDOWS_HOST`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD` and a reachable Windows target; without them they skip. They also live behind the `acceptance` build tag (`-tags acceptance`) and share `testAccProtoV6ProviderFactories` from `internal/provider/acc_test_helper.go`; the default `make test` build never compiles them. The `testacc-windows` workflow (`.github/workflows/testacc-windows.yml`) runs them on a GitHub-hosted `windows-latest` runner that targets its own local OpenSSH Server, across an `auth: [password, publickey]` matrix so both credential paths are exercised against a real sshd. It triggers on `workflow_dispatch` and on PRs touching `internal/winclient/**` or `internal/provider/**`.
+
+Unit tests never reach a **Windows** host, but they do speak SSH: `internal/winclient/transport_test.go` drives real handshakes against the in-process server in `sshtest_test.go` (x/crypto's server side, loopback, no build tag, milliseconds). That tier is what covers auth method selection, host key acceptance/rejection, and the `-EncodedCommand` + UTF-16LE-on-stdin bootstrap end to end — none of which fakes can prove. Keep it free of Docker, network and external images so it stays part of the default `make test`.
 
 Enabled linters (`.golangci.yml`): `errcheck`, `gofmt` (simplify), `gosec`, `govet`, `ineffassign`, `staticcheck`, `unused`. `_test.go` files are excluded from `errcheck`/`gosec`.
 

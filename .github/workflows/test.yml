@@ -1,8 +1,13 @@
 # Continuous Integration: build / vet / lint / unit-tests on every push and PR.
 #
+# The unit suite includes the transport tests in internal/winclient, which
+# drive a real SSH handshake against an in-process server on loopback (see
+# sshtest_test.go). They need no Windows host and no network, so they belong
+# here rather than in the acceptance workflow.
+#
 # Acceptance tests (TF_ACC=1) are NOT executed here: they require a live
-# Windows host reachable over WinRM and a valid set of credentials. They
-# are expected to run on a self-hosted runner or against a dedicated lab.
+# Windows host reachable over SSH and a valid set of credentials. They run in
+# testacc-windows.yml, on a Windows runner that acts as its own target.
 #
 # Matrix: track the Go floor declared in go.mod (currently 1.25). Older
 # minors are not buildable under GOTOOLCHAIN=local once the go directive
