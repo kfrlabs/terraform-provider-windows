@@ -366,12 +366,15 @@ $SecurePassword = ConvertTo-SecureString -String $PlainPassword -AsPlainText -Fo
 try {
     $params = @{ Name = %s; Password = $SecurePassword; ErrorAction = 'Stop' }%s
     $user = New-LocalUser @params
-    # PasswordNeverExpires/UserMayChangePassword are set via a follow-up
-    # Set-LocalUser rather than New-LocalUser parameters, and -Disabled is
-    # applied last via Disable-LocalUser: New-LocalUser (and Set-LocalUser,
-    # in the same call) have been observed to silently drop the password
-    # flags when the account is disabled in that same operation.
-    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -UserMayChangePassword %s -ErrorAction Stop
+    # PasswordNeverExpires/UserMayChangePassword are set via follow-up
+    # Set-LocalUser calls rather than New-LocalUser parameters, and -Disabled
+    # is applied last via Disable-LocalUser: New-LocalUser has been observed
+    # to silently drop the password flags when the account is disabled in
+    # the same operation, and passing both flags to a single Set-LocalUser
+    # call has been observed to drop PasswordNeverExpires as well, so each
+    # gets its own call.
+    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -ErrorAction Stop
+    Set-LocalUser -SID $user.SID.Value -UserMayChangePassword %s -ErrorAction Stop
     if (-not $%s) {
         Disable-LocalUser -SID $user.SID.Value -ErrorAction Stop
     }
@@ -435,7 +438,9 @@ try {
 // or enabled state (use Enable/Disable).
 //
 // PasswordNeverExpires and UserMayChangePassword are always passed as
-// explicit booleans (Set-LocalUser accepts $true/$false for these).
+// explicit booleans (Set-LocalUser accepts $true/$false for these), each via
+// its own Set-LocalUser call: passing both flags to a single invocation has
+// been observed to silently drop PasswordNeverExpires.
 //
 // Set-LocalUser exposes the positive -UserMayChangePassword switch, unlike
 // New-LocalUser's negative -UserMayNotChangePassword; input.UserMayNotChangePassword
@@ -469,12 +474,12 @@ try {
         SID = %s
         FullName = %s
         Description = %s
-        PasswordNeverExpires = %s
-        UserMayChangePassword = %s
         ErrorAction = 'Stop'
     }
     %s
     Set-LocalUser @params
+    Set-LocalUser -SID %s -PasswordNeverExpires %s -ErrorAction Stop
+    Set-LocalUser -SID %s -UserMayChangePassword %s -ErrorAction Stop
     $user = Get-LocalUser -SID %s -ErrorAction Stop
     $data = Get-UserData $user
     Emit-OK $data
@@ -482,7 +487,7 @@ try {
     $kind = Classify-LU $_.Exception.Message $_.FullyQualifiedErrorId
     Emit-Err $kind $_.Exception.Message @{ sid = %s; step = 'set_local_user' }
 }
-`, qSID, qFullName, qDesc, pne, umcp, expiryBlock, qSID, qSID)
+`, qSID, qFullName, qDesc, expiryBlock, qSID, pne, qSID, umcp, qSID, qSID)
 
 	resp, err := lc.runLUEnvelope(ctx, "update", sid, script)
 	if err != nil {

@@ -33,6 +33,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
@@ -91,7 +92,7 @@ var scheduledTaskTriggerAttrTypes = map[string]attr.Type{
 	"days_of_week":         types.ListType{ElemType: types.StringType},
 	"weeks_interval":       types.Int64Type,
 	"user_id":              types.StringType,
-	"subscription":         types.StringType,
+	"subscription":         subscriptionXMLType{},
 }
 
 var scheduledTaskSettingsAttrTypes = map[string]attr.Type{
@@ -130,17 +131,17 @@ type windowsScheduledTaskActionModel struct {
 }
 
 type windowsScheduledTaskTriggerModel struct {
-	Type               types.String `tfsdk:"type"`
-	Enabled            types.Bool   `tfsdk:"enabled"`
-	StartBoundary      types.String `tfsdk:"start_boundary"`
-	EndBoundary        types.String `tfsdk:"end_boundary"`
-	ExecutionTimeLimit types.String `tfsdk:"execution_time_limit"`
-	Delay              types.String `tfsdk:"delay"`
-	DaysInterval       types.Int64  `tfsdk:"days_interval"`
-	DaysOfWeek         types.List   `tfsdk:"days_of_week"`
-	WeeksInterval      types.Int64  `tfsdk:"weeks_interval"`
-	UserID             types.String `tfsdk:"user_id"`
-	Subscription       types.String `tfsdk:"subscription"`
+	Type               types.String         `tfsdk:"type"`
+	Enabled            types.Bool           `tfsdk:"enabled"`
+	StartBoundary      types.String         `tfsdk:"start_boundary"`
+	EndBoundary        types.String         `tfsdk:"end_boundary"`
+	ExecutionTimeLimit types.String         `tfsdk:"execution_time_limit"`
+	Delay              types.String         `tfsdk:"delay"`
+	DaysInterval       types.Int64          `tfsdk:"days_interval"`
+	DaysOfWeek         types.List           `tfsdk:"days_of_week"`
+	WeeksInterval      types.Int64          `tfsdk:"weeks_interval"`
+	UserID             types.String         `tfsdk:"user_id"`
+	Subscription       subscriptionXMLValue `tfsdk:"subscription"`
 }
 
 type windowsScheduledTaskSettingsModel struct {
@@ -582,12 +583,12 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						},
 						"subscription": schema.StringAttribute{
 							Optional: true,
-							// Computed: the plan modifier below normalizes insignificant XML
-							// whitespace, which Terraform only permits a provider to do to a
-							// non-null config value when the attribute is Computed.
-							Computed:            true,
+							// CustomType gives this attribute semantic-equality XML comparison
+							// (see subscriptionXMLValue), so Windows re-serializing this value's
+							// whitespace on round-trip doesn't trip TPF's plan/apply consistency
+							// checks or show as configuration drift.
+							CustomType:          subscriptionXMLType{},
 							MarkdownDescription: "XPath event query. Required for `OnEvent` (ADR-ST-5).",
-							PlanModifiers:       []planmodifier.String{subscriptionWhitespaceModifier{}},
 						},
 					},
 				},
@@ -1179,7 +1180,7 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 		DaysOfWeek:         dows.(types.List),
 		WeeksInterval:      wi,
 		UserID:             strOrNull(t.UserID),
-		Subscription:       strOrNull(normalizeXMLWhitespace(t.Subscription)),
+		Subscription:       subscriptionXMLValueOrNull(t.Subscription),
 	}
 	return types.ObjectValueFrom(ctx, scheduledTaskTriggerAttrTypes, tm)
 }
@@ -1228,47 +1229,105 @@ func strOrNull(s string) types.String {
 	return types.StringValue(s)
 }
 
-// subscriptionWhitespaceModifier normalizes the OnEvent trigger's subscription
-// XML at plan time to the same form buildTriggerObject produces for the value
-// Windows returns, so a heredoc's indentation/blank lines don't trip TPF's
-// "provider produced inconsistent result after apply" check.
-type subscriptionWhitespaceModifier struct{}
-
-func (subscriptionWhitespaceModifier) Description(context.Context) string {
-	return "Normalizes insignificant XML whitespace to match Windows' round-tripped value."
-}
-
-func (m subscriptionWhitespaceModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-func (subscriptionWhitespaceModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	// Drive off ConfigValue, not PlanValue: subscription is Optional+Computed,
-	// so the framework's default plan for an unconfigured attribute is
-	// Unknown, not null. Force it back to null so validation (subscription
-	// must be unset for non-OnEvent triggers) keeps working.
-	if req.ConfigValue.IsNull() {
-		resp.PlanValue = types.StringNull()
-		return
-	}
-	if req.ConfigValue.IsUnknown() {
-		return
-	}
-	resp.PlanValue = types.StringValue(normalizeXMLWhitespace(req.ConfigValue.ValueString()))
-}
-
 // normalizeXMLWhitespace collapses whitespace-only text between XML tags and
-// trims the result. Windows Task Scheduler re-serializes an OnEvent trigger's
-// <Subscription> XML fragment when it round-trips through Register/Export-
-// ScheduledTask, dropping blank lines and any trailing newline; applying the
-// same collapse to both the planned config value and the value read back from
-// Windows keeps the two in sync so TPF doesn't see a false "provider produced
-// inconsistent result" diff.
+// trims the result. Used only for equality comparisons (see
+// subscriptionXMLValue.StringSemanticEquals below), never for storage: it
+// lets a heredoc config's indentation/blank lines compare equal to the
+// (differently whitespaced) value Windows Task Scheduler returns after it
+// re-serializes an OnEvent trigger's <Subscription> XML fragment through
+// Register/Export-ScheduledTask.
 var xmlInterTagWhitespace = regexp.MustCompile(`>\s+<`)
 
 func normalizeXMLWhitespace(s string) string {
 	s = strings.TrimSpace(s)
 	return xmlInterTagWhitespace.ReplaceAllString(s, "><")
+}
+
+// subscriptionXMLValue is the framework value type for the OnEvent trigger's
+// "subscription" attribute. It implements semantic equality so that a
+// heredoc config and Windows' differently-whitespaced round-tripped value are
+// treated as unchanged, avoiding both a "provider produced inconsistent
+// result after apply" error (on create) and a false diff on later refresh.
+type subscriptionXMLValue struct {
+	basetypes.StringValue
+}
+
+func subscriptionXMLValueOf(s string) subscriptionXMLValue {
+	return subscriptionXMLValue{StringValue: types.StringValue(s)}
+}
+
+func subscriptionXMLValueOrNull(s string) subscriptionXMLValue {
+	if s == "" {
+		return subscriptionXMLValue{StringValue: types.StringNull()}
+	}
+	return subscriptionXMLValueOf(s)
+}
+
+func (v subscriptionXMLValue) Equal(o attr.Value) bool {
+	other, ok := o.(subscriptionXMLValue)
+	if !ok {
+		return false
+	}
+	return v.StringValue.Equal(other.StringValue)
+}
+
+func (v subscriptionXMLValue) Type(context.Context) attr.Type {
+	return subscriptionXMLType{}
+}
+
+func (v subscriptionXMLValue) StringSemanticEquals(_ context.Context, newValuable basetypes.StringValuable) (bool, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	other, ok := newValuable.(subscriptionXMLValue)
+	if !ok {
+		diags.AddError("Semantic Equality Check Error",
+			fmt.Sprintf("expected subscriptionXMLValue, got %T", newValuable))
+		return false, diags
+	}
+	if v.IsNull() || v.IsUnknown() || other.IsNull() || other.IsUnknown() {
+		return false, diags
+	}
+	return normalizeXMLWhitespace(v.ValueString()) == normalizeXMLWhitespace(other.ValueString()), diags
+}
+
+// subscriptionXMLType is the attr.Type counterpart of subscriptionXMLValue.
+type subscriptionXMLType struct {
+	basetypes.StringType
+}
+
+func (t subscriptionXMLType) Equal(o attr.Type) bool {
+	other, ok := o.(subscriptionXMLType)
+	if !ok {
+		return false
+	}
+	return t.StringType.Equal(other.StringType)
+}
+
+func (t subscriptionXMLType) String() string {
+	return "subscriptionXMLType"
+}
+
+func (t subscriptionXMLType) ValueFromString(_ context.Context, in basetypes.StringValue) (basetypes.StringValuable, diag.Diagnostics) {
+	return subscriptionXMLValue{StringValue: in}, nil
+}
+
+func (t subscriptionXMLType) ValueFromTerraform(ctx context.Context, in tftypes.Value) (attr.Value, error) {
+	attrValue, err := t.StringType.ValueFromTerraform(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	stringValue, ok := attrValue.(basetypes.StringValue)
+	if !ok {
+		return nil, fmt.Errorf("unexpected value type %T for subscriptionXMLType", attrValue)
+	}
+	valuable, diags := t.ValueFromString(ctx, stringValue)
+	if diags.HasError() {
+		return nil, fmt.Errorf("error converting StringValue to subscriptionXMLValue: %v", diags)
+	}
+	return valuable, nil
+}
+
+func (t subscriptionXMLType) ValueType(context.Context) attr.Value {
+	return subscriptionXMLValue{}
 }
 
 // scheduledTaskErrDiag converts a ScheduledTaskError to Terraform diagnostics.
