@@ -320,12 +320,6 @@ func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, pass
 	if input.Description != "" {
 		optParts.WriteString("\n    $params['Description'] = " + qDesc)
 	}
-	if input.PasswordNeverExpires {
-		optParts.WriteString("\n    $params['PasswordNeverExpires'] = $true")
-	}
-	if input.UserMayNotChangePassword {
-		optParts.WriteString("\n    $params['UserMayNotChangePassword'] = $true")
-	}
 	if !input.Enabled {
 		optParts.WriteString("\n    $params['Disabled'] = $true")
 	}
@@ -333,6 +327,15 @@ func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, pass
 		optParts.WriteString("\n    $params['AccountNeverExpires'] = $true")
 	} else if input.AccountExpires != "" {
 		optParts.WriteString("\n    $params['AccountExpires'] = [DateTimeOffset]::Parse(" + psQuote(input.AccountExpires) + ").UtcDateTime")
+	}
+
+	pne := "$false"
+	if input.PasswordNeverExpires {
+		pne = "$true"
+	}
+	umcp := "$false"
+	if input.UserMayNotChangePassword {
+		umcp = "$true"
 	}
 
 	script := fmt.Sprintf(`
@@ -364,6 +367,10 @@ $SecurePassword = ConvertTo-SecureString -String $PlainPassword -AsPlainText -Fo
 try {
     $params = @{ Name = %s; Password = $SecurePassword; ErrorAction = 'Stop' }%s
     $user = New-LocalUser @params
+    # PasswordNeverExpires/UserMayNotChangePassword are set via a follow-up
+    # Set-LocalUser rather than New-LocalUser parameters: New-LocalUser has
+    # been observed to silently drop them when combined with -Disabled.
+    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -UserMayNotChangePassword %s -ErrorAction Stop
     $freshUser = Get-LocalUser -SID $user.SID.Value -ErrorAction Stop
     $data = Get-UserData $freshUser
     Emit-OK $data
@@ -373,7 +380,7 @@ try {
 }
 `,
 		qName, input.Name, qName,
-		qName, optParts.String(),
+		qName, optParts.String(), pne, umcp,
 		qName)
 
 	// Inject password via stdin (never appears in script body or logs).

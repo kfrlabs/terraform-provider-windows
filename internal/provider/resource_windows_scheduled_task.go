@@ -583,6 +583,7 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						"subscription": schema.StringAttribute{
 							Optional:            true,
 							MarkdownDescription: "XPath event query. Required for `OnEvent` (ADR-ST-5).",
+							PlanModifiers:       []planmodifier.String{subscriptionWhitespaceModifier{}},
 						},
 					},
 				},
@@ -1174,7 +1175,7 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 		DaysOfWeek:         dows.(types.List),
 		WeeksInterval:      wi,
 		UserID:             strOrNull(t.UserID),
-		Subscription:       strOrNull(t.Subscription),
+		Subscription:       strOrNull(normalizeXMLWhitespace(t.Subscription)),
 	}
 	return types.ObjectValueFrom(ctx, scheduledTaskTriggerAttrTypes, tm)
 }
@@ -1221,6 +1222,41 @@ func strOrNull(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+// subscriptionWhitespaceModifier normalizes the OnEvent trigger's subscription
+// XML at plan time to the same form buildTriggerObject produces for the value
+// Windows returns, so a heredoc's indentation/blank lines don't trip TPF's
+// "provider produced inconsistent result after apply" check.
+type subscriptionWhitespaceModifier struct{}
+
+func (subscriptionWhitespaceModifier) Description(context.Context) string {
+	return "Normalizes insignificant XML whitespace to match Windows' round-tripped value."
+}
+
+func (m subscriptionWhitespaceModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (subscriptionWhitespaceModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
+		return
+	}
+	resp.PlanValue = types.StringValue(normalizeXMLWhitespace(req.PlanValue.ValueString()))
+}
+
+// normalizeXMLWhitespace collapses whitespace-only text between XML tags and
+// trims the result. Windows Task Scheduler re-serializes an OnEvent trigger's
+// <Subscription> XML fragment when it round-trips through Register/Export-
+// ScheduledTask, dropping blank lines and any trailing newline; applying the
+// same collapse to both the planned config value and the value read back from
+// Windows keeps the two in sync so TPF doesn't see a false "provider produced
+// inconsistent result" diff.
+var xmlInterTagWhitespace = regexp.MustCompile(`>\s+<`)
+
+func normalizeXMLWhitespace(s string) string {
+	s = strings.TrimSpace(s)
+	return xmlInterTagWhitespace.ReplaceAllString(s, "><")
 }
 
 // scheduledTaskErrDiag converts a ScheduledTaskError to Terraform diagnostics.

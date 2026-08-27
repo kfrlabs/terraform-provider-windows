@@ -10,8 +10,11 @@
 //     to avoid collisions on shared lab hosts; defaults to "tf-test".
 //
 // The password literals below are dummy complexity-satisfying values; they are
-// never asserted on and never logged (ADR-LU-3). `userSuffix` and
-// `testAccLocalUserPreCheck` are shared with the local_user data-source suite.
+// never asserted on and never logged (ADR-LU-3). None may share a 3+ char
+// substring with a configured full_name token, or Windows' complexity filter
+// rejects the password as containing part of the account's full name.
+// `userSuffix` and `testAccLocalUserPreCheck` are shared with the local_user
+// data-source suite.
 package provider
 
 import (
@@ -48,7 +51,7 @@ func TestAccWindowsLocalUser_Basic(t *testing.T) {
 	cfg := fmt.Sprintf(`
 resource "windows_local_user" "test" {
   name        = %q
-  password    = "Tr0ub4dour&Zx9!Acc-Basic-Qw7mK"
+  password    = "Tr0ub4dour&Zx9!Xyz-Basic-Qw7mK"
   full_name   = "TF Acc User"
   description = "created by acceptance test"
 }
