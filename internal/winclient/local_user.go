@@ -333,9 +333,11 @@ func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, pass
 	if input.PasswordNeverExpires {
 		pne = "$true"
 	}
-	umcp := "$false"
+	// Set-LocalUser's switch is the positive -UserMayChangePassword, unlike
+	// New-LocalUser's negative -UserMayNotChangePassword; invert here.
+	umcp := "$true"
 	if input.UserMayNotChangePassword {
-		umcp = "$true"
+		umcp = "$false"
 	}
 
 	script := fmt.Sprintf(`
@@ -370,7 +372,7 @@ try {
     # PasswordNeverExpires/UserMayNotChangePassword are set via a follow-up
     # Set-LocalUser rather than New-LocalUser parameters: New-LocalUser has
     # been observed to silently drop them when combined with -Disabled.
-    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -UserMayNotChangePassword %s -ErrorAction Stop
+    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -UserMayChangePassword %s -ErrorAction Stop
     $freshUser = Get-LocalUser -SID $user.SID.Value -ErrorAction Stop
     $data = Get-UserData $freshUser
     Emit-OK $data
@@ -430,8 +432,12 @@ try {
 // Set-LocalUser. Does NOT handle renames (use Rename), passwords (use SetPassword),
 // or enabled state (use Enable/Disable).
 //
-// PasswordNeverExpires and UserMayNotChangePassword are always passed as
+// PasswordNeverExpires and UserMayChangePassword are always passed as
 // explicit booleans (Set-LocalUser accepts $true/$false for these).
+//
+// Set-LocalUser exposes the positive -UserMayChangePassword switch, unlike
+// New-LocalUser's negative -UserMayNotChangePassword; input.UserMayNotChangePassword
+// is inverted here to match.
 func (lc *LocalUserClientImpl) Update(ctx context.Context, sid string, input UserInput) (*UserState, error) {
 	qSID := psQuote(sid)
 	qFullName := psQuote(input.FullName)
@@ -441,9 +447,9 @@ func (lc *LocalUserClientImpl) Update(ctx context.Context, sid string, input Use
 	if input.PasswordNeverExpires {
 		pne = "$true"
 	}
-	umcp := "$false"
+	umcp := "$true"
 	if input.UserMayNotChangePassword {
-		umcp = "$true"
+		umcp = "$false"
 	}
 
 	var expiryBlock string
@@ -462,7 +468,7 @@ try {
         FullName = %s
         Description = %s
         PasswordNeverExpires = %s
-        UserMayNotChangePassword = %s
+        UserMayChangePassword = %s
         ErrorAction = 'Stop'
     }
     %s
