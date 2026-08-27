@@ -581,7 +581,11 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 							MarkdownDescription: "Restrict `AtLogon` trigger to a specific user.",
 						},
 						"subscription": schema.StringAttribute{
-							Optional:            true,
+							Optional: true,
+							// Computed: the plan modifier below normalizes insignificant XML
+							// whitespace, which Terraform only permits a provider to do to a
+							// non-null config value when the attribute is Computed.
+							Computed:            true,
 							MarkdownDescription: "XPath event query. Required for `OnEvent` (ADR-ST-5).",
 							PlanModifiers:       []planmodifier.String{subscriptionWhitespaceModifier{}},
 						},
@@ -1239,10 +1243,18 @@ func (m subscriptionWhitespaceModifier) MarkdownDescription(ctx context.Context)
 }
 
 func (subscriptionWhitespaceModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
+	// Drive off ConfigValue, not PlanValue: subscription is Optional+Computed,
+	// so the framework's default plan for an unconfigured attribute is
+	// Unknown, not null. Force it back to null so validation (subscription
+	// must be unset for non-OnEvent triggers) keeps working.
+	if req.ConfigValue.IsNull() {
+		resp.PlanValue = types.StringNull()
 		return
 	}
-	resp.PlanValue = types.StringValue(normalizeXMLWhitespace(req.PlanValue.ValueString()))
+	if req.ConfigValue.IsUnknown() {
+		return
+	}
+	resp.PlanValue = types.StringValue(normalizeXMLWhitespace(req.ConfigValue.ValueString()))
 }
 
 // normalizeXMLWhitespace collapses whitespace-only text between XML tags and

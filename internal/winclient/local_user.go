@@ -320,9 +320,6 @@ func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, pass
 	if input.Description != "" {
 		optParts.WriteString("\n    $params['Description'] = " + qDesc)
 	}
-	if !input.Enabled {
-		optParts.WriteString("\n    $params['Disabled'] = $true")
-	}
 	if input.AccountNeverExpires {
 		optParts.WriteString("\n    $params['AccountNeverExpires'] = $true")
 	} else if input.AccountExpires != "" {
@@ -369,10 +366,15 @@ $SecurePassword = ConvertTo-SecureString -String $PlainPassword -AsPlainText -Fo
 try {
     $params = @{ Name = %s; Password = $SecurePassword; ErrorAction = 'Stop' }%s
     $user = New-LocalUser @params
-    # PasswordNeverExpires/UserMayNotChangePassword are set via a follow-up
-    # Set-LocalUser rather than New-LocalUser parameters: New-LocalUser has
-    # been observed to silently drop them when combined with -Disabled.
+    # PasswordNeverExpires/UserMayChangePassword are set via a follow-up
+    # Set-LocalUser rather than New-LocalUser parameters, and -Disabled is
+    # applied last via Disable-LocalUser: New-LocalUser (and Set-LocalUser,
+    # in the same call) have been observed to silently drop the password
+    # flags when the account is disabled in that same operation.
     Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -UserMayChangePassword %s -ErrorAction Stop
+    if (-not $%s) {
+        Disable-LocalUser -SID $user.SID.Value -ErrorAction Stop
+    }
     $freshUser = Get-LocalUser -SID $user.SID.Value -ErrorAction Stop
     $data = Get-UserData $freshUser
     Emit-OK $data
@@ -382,7 +384,7 @@ try {
 }
 `,
 		qName, input.Name, qName,
-		qName, optParts.String(), pne, umcp,
+		qName, optParts.String(), pne, umcp, psBool(input.Enabled),
 		qName)
 
 	// Inject password via stdin (never appears in script body or logs).
