@@ -255,7 +255,7 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 			DaysOfWeek:         dows.(types.List),
 			WeeksInterval:      types.Int64Value(t.WeeksInterval),
 			UserID:             types.StringValue(t.UserID),
-			Subscription:       types.StringValue(t.Subscription),
+			Subscription:       subscriptionXMLValueOf(t.Subscription),
 		})
 		allDiags.Append(d2...)
 		trigElems[i] = obj

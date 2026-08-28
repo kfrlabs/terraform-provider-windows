@@ -78,11 +78,11 @@ func lpStateMap(id, version string) map[string]any {
 func TestLPError_ErrorWithCause(t *testing.T) {
 	cause := errors.New("network down")
 	e := &LegacyPackageError{
-		Kind: "timeout", Message: "winrm cancelled",
+		Kind: "timeout", Message: "ssh cancelled",
 		Cause: cause, Context: map[string]string{"host": "winlp01"},
 	}
 	msg := e.Error()
-	for _, want := range []string{"timeout", "winrm cancelled", "network down"} {
+	for _, want := range []string{"timeout", "ssh cancelled", "network down"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("missing %q in Error(): %q", want, msg)
 		}
@@ -189,7 +189,7 @@ func TestLPParseState_MalformedJSON(t *testing.T) {
 func TestLPRunEnvelope_TransportError(t *testing.T) {
 	_, lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
-		return "", "winrm: connection refused", errors.New("dial tcp: refused")
+		return "", "ssh: connection refused", errors.New("dial tcp: refused")
 	})()
 
 	_, err := lp.runEnvelope(context.Background(), "Create", LegacyPackageInput{Name: "x"}, "Emit-OK $null")

@@ -55,7 +55,7 @@ output "admin_user_principal_source" {
 ### Required
 
 - `group_name` (String) Name or SID of the target local group (e.g. "Administrators" or "S-1-5-32-544").
-- `member_name` (String) Display name of the member to look up within the group.
+- `member_name` (String) Name of the member to look up within the group. Matched case-insensitively against the name Windows reports, either bare ("alice") or host-qualified ("HOST\\alice"). Echoed back as written; see member_sid for the resolved identity.
 
 ### Read-Only
 

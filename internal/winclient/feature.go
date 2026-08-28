@@ -111,7 +111,7 @@ func (f *FeatureClient) runFeatureEnvelope(ctx context.Context, op, name, script
 				map[string]string{"operation": op, "name": name, "host": f.c.cfg.Host})
 		}
 		return nil, NewFeatureError(FeatureErrorUnknown,
-			fmt.Sprintf("powershell transport error during %q", op),
+			fmt.Sprintf("SSH transport error during %q", op),
 			err,
 			map[string]string{
 				"operation": op, "name": name, "host": f.c.cfg.Host,

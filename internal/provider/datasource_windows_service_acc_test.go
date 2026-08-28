@@ -19,11 +19,7 @@ func testAccServiceDSPreCheck(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("TF_ACC not set; skipping acceptance test")
 	}
-	for _, v := range []string{"WINDOWS_HOST", "WINDOWS_USERNAME", "WINDOWS_PASSWORD"} {
-		if os.Getenv(v) == "" {
-			t.Skipf("env %s not set; skipping acceptance test", v)
-		}
-	}
+	testAccRequireEnv(t)
 }
 
 // TestAccWindowsServiceDataSource_Basic reads the SSH service which must
@@ -34,17 +30,21 @@ func TestAccWindowsServiceDataSource_Basic(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
+				// sshd, not "SSH": the SCM service name for OpenSSH Server is
+				// sshd ("OpenSSH SSH Server" is only its display name). And it
+				// is the one service guaranteed to be running here, since the
+				// provider reached this host through it.
 				Config: `
-data "windows_service" "winrm" {
-  name = "SSH"
+data "windows_service" "sshd" {
+  name = "sshd"
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttrSet("data.windows_service.winrm", "id"),
-					resource.TestCheckResourceAttr("data.windows_service.winrm", "name", "SSH"),
-					resource.TestCheckResourceAttrSet("data.windows_service.winrm", "display_name"),
-					resource.TestCheckResourceAttrSet("data.windows_service.winrm", "start_type"),
-					resource.TestCheckResourceAttr("data.windows_service.winrm", "current_status", "Running"),
+					resource.TestCheckResourceAttrSet("data.windows_service.sshd", "id"),
+					resource.TestCheckResourceAttr("data.windows_service.sshd", "name", "sshd"),
+					resource.TestCheckResourceAttrSet("data.windows_service.sshd", "display_name"),
+					resource.TestCheckResourceAttrSet("data.windows_service.sshd", "start_type"),
+					resource.TestCheckResourceAttr("data.windows_service.sshd", "current_status", "Running"),
 				),
 			},
 		},

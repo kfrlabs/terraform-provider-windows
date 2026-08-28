@@ -1242,6 +1242,53 @@ func TestSTUpdate_DescriptionOnly_UsesSetScheduledTask(t *testing.T) {
 	if !strings.Contains(capturedScript, "Set-ScheduledTask") {
 		t.Errorf("expected Set-ScheduledTask in update script, got: %s", capturedScript[:min(500, len(capturedScript))])
 	}
+
+	// Set-ScheduledTask has no -Description parameter, and passing one fails
+	// the whole update with "A parameter cannot be found that matches parameter
+	// name 'Description'". This assertion is the point of the test: the earlier
+	// version only checked that the cmdlet was invoked, which is exactly how
+	// the bug reached CI (#82).
+	if strings.Contains(capturedScript, "$_stSetParams['Description']") {
+		t.Error("update passes Description to Set-ScheduledTask, which has no such parameter (#82)")
+	}
+
+	// The description belongs on the task object instead.
+	for _, want := range []string{
+		"$_stDescTask.Description",
+		"Set-ScheduledTask -InputObject $_stDescTask",
+		"'new description'",
+	} {
+		if !strings.Contains(capturedScript, want) {
+			t.Errorf("update script missing %q", want)
+		}
+	}
+}
+
+// Clearing description in the configuration has to clear it on the host, so the
+// description write is unconditional rather than guarded on a non-empty value
+// the way Register-ScheduledTask's is.
+func TestSTUpdate_EmptyDescription_StillCleared(t *testing.T) {
+	_, impl := newSTTestClient(t)
+	var capturedScript string
+	defer stubSTRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+		capturedScript = script
+		return buildMinimalPayloadJSON(t, "MyTask", `\`), "", nil
+	})()
+	input := ScheduledTaskInput{
+		Name: "MyTask", Path: `\`, Description: "",
+		Enabled:  true,
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	}
+	if _, err := impl.Update(context.Background(), `\MyTask`, input); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if !strings.Contains(capturedScript, "$_stDescTask.Description = ''") {
+		t.Error("empty description must still be written, to clear it on the host")
+	}
+	if strings.Contains(capturedScript, "$_stSetParams['Description']") {
+		t.Error("update passes Description to Set-ScheduledTask (#82)")
+	}
 }
 
 func TestSTUpdate_PermissionDenied(t *testing.T) {

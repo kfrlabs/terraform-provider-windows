@@ -213,7 +213,7 @@ func TestRunHostnameEnvelope_Timeout_EC6(t *testing.T) {
 
 func TestRunHostnameEnvelope_TransportError_EC6(t *testing.T) {
 	restore := stubHnRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		return "junk-out", "junk-err", errors.New("winrm: tcp reset")
+		return "junk-out", "junk-err", errors.New("ssh: tcp reset")
 	})
 	defer restore()
 	h := NewHostnameClient(newHnTestClient(t))

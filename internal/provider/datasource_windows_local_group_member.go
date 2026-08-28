@@ -69,8 +69,11 @@ func (d *windowsLocalGroupMemberDataSource) Schema(_ context.Context, _ datasour
 				Description: "Name or SID of the target local group (e.g. \"Administrators\" or \"S-1-5-32-544\").",
 			},
 			"member_name": schema.StringAttribute{
-				Required:    true,
-				Description: "Display name of the member to look up within the group.",
+				Required: true,
+				Description: "Name of the member to look up within the group. Matched " +
+					"case-insensitively against the name Windows reports, either bare " +
+					"(\"alice\") or host-qualified (\"HOST\\\\alice\"). Echoed back as " +
+					"written; see member_sid for the resolved identity.",
 			},
 			"group_sid": schema.StringAttribute{
 				Computed:    true,
@@ -175,9 +178,16 @@ func (d *windowsLocalGroupMemberDataSource) Read(ctx context.Context, req dataso
 
 	compositeID := found.GroupSID + "/" + found.MemberSID
 	state := windowsLocalGroupMemberDataSourceModel{
-		ID:                    types.StringValue(compositeID),
-		GroupName:             types.StringValue(groupName),
-		MemberName:            types.StringValue(found.MemberName),
+		ID:        types.StringValue(compositeID),
+		GroupName: types.StringValue(groupName),
+		// member_name is a Required lookup key, so it echoes back what the
+		// configuration asked for. Windows returns the host-qualified form
+		// ("HOST\name"), and since memberNameMatches accepts either, writing
+		// the qualified form here would silently replace a Required argument
+		// with a different string. The resolved identity is member_sid; the
+		// resource's own member_name is Computed and does hold the canonical
+		// form.
+		MemberName:            config.MemberName,
 		GroupSID:              types.StringValue(found.GroupSID),
 		MemberSID:             types.StringValue(found.MemberSID),
 		MemberPrincipalSource: types.StringValue(found.PrincipalSource),

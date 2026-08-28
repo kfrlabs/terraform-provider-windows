@@ -41,11 +41,7 @@ func testAccLegacyPackagePreCheck(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("TF_ACC not set; skipping windows_legacy_package acceptance test")
 	}
-	for _, v := range []string{"WINDOWS_HOST", "WINDOWS_USERNAME", "WINDOWS_PASSWORD"} {
-		if os.Getenv(v) == "" {
-			t.Skipf("env %s not set; skipping acceptance test", v)
-		}
-	}
+	testAccRequireEnv(t)
 }
 
 // TestAccWindowsLegacyPackage_Basic — Create + Read + Destroy (MSI).
@@ -128,7 +124,7 @@ func TestAccWindowsLegacyPackage_DriftDetection(t *testing.T) {
 	testAccLegacyPackagePreCheck(t)
 	t.Skip("SKELETON: see TestAccWindowsLegacyPackage_Basic")
 	// Step 1: create.
-	// Step 2: PreConfig → ssh/winrm and run msiexec /x <ID> /qn /norestart.
+	// Step 2: PreConfig → connect over SSH and run msiexec /x <ID> /qn /norestart.
 	// Step 3: ExpectNonEmptyPlan with replace-required diff.
 }
 

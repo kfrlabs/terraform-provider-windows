@@ -21,16 +21,20 @@ OpenSSH order:
 1. **Public key** — `private_key` (PEM inline) or `private_key_path`. Add
    `private_key_passphrase` when the key is encrypted.
 2. **ssh-agent** — used automatically when `SSH_AUTH_SOCK` is set. Force it on
-   or off with `use_agent`.
+   or off with `use_agent`. On Windows the agent is reached through a named
+   pipe rather than a Unix socket, which the provider does not currently dial:
+   use `private_key_path` when Terraform itself runs on Windows.
 3. **Password** — `password`.
 
 Prefer keys: a password is replayable by whoever observes it, and the target's
 OpenSSH Server can be configured to refuse password authentication entirely.
 
-Every attribute has an environment fallback (`WINDOWS_PRIVATE_KEY`,
+Every connection attribute has an environment fallback (`WINDOWS_HOST`,
+`WINDOWS_PORT`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD`, `WINDOWS_PRIVATE_KEY`,
 `WINDOWS_PRIVATE_KEY_PATH`, `WINDOWS_PRIVATE_KEY_PASSPHRASE`,
-`WINDOWS_USE_AGENT`, `WINDOWS_PASSWORD`), which keeps secrets out of `.tf`
-files and out of Terraform state.
+`WINDOWS_USE_AGENT`, `WINDOWS_KNOWN_HOSTS`, `WINDOWS_HOST_KEY`,
+`WINDOWS_INSECURE_IGNORE_HOST_KEY`), which keeps secrets out of `.tf` files and
+out of Terraform state.
 
 ## Host key verification
 

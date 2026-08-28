@@ -112,7 +112,7 @@ func fakeGroupData(name, description, sid string) map[string]any {
 // -----------------------------------------------------------------------------
 
 func TestLocalGroupError_ErrorAndUnwrap(t *testing.T) {
-	cause := errors.New("underlying-winrm-error")
+	cause := errors.New("underlying-ssh-error")
 	e := NewLocalGroupError(LocalGroupErrorPermission, "access denied", cause,
 		map[string]string{"host": "winlg01", "operation": "create"})
 	if e.Unwrap() != cause {
@@ -125,7 +125,7 @@ func TestLocalGroupError_ErrorAndUnwrap(t *testing.T) {
 	if !strings.Contains(msg, "access denied") {
 		t.Errorf("Error() missing message: %q", msg)
 	}
-	if !strings.Contains(msg, "underlying-winrm-error") {
+	if !strings.Contains(msg, "underlying-ssh-error") {
 		t.Errorf("Error() missing cause: %q", msg)
 	}
 
@@ -273,7 +273,7 @@ func TestRunLGEnvelope_ContextCancelled(t *testing.T) {
 
 func TestRunLGEnvelope_TransportError(t *testing.T) {
 	restore := stubLGRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		return "stdout-junk", "stderr-junk", errors.New("winrm: tcp reset")
+		return "stdout-junk", "stderr-junk", errors.New("ssh: tcp reset")
 	})
 	defer restore()
 
@@ -673,7 +673,7 @@ func TestLocalGroupDelete_BuiltinGuard_ReadFailFallback(t *testing.T) {
 	// If the Read inside Delete fails (transport error), the SID is used as name.
 	restore := stubLGRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		// Simulate a transport error on the Read call inside Delete.
-		return "", "", errors.New("winrm: connection refused")
+		return "", "", errors.New("ssh: connection refused")
 	})
 	defer restore()
 

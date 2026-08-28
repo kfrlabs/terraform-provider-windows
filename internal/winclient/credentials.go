@@ -58,6 +58,7 @@ type Config struct {
 // unset.
 const (
 	EnvHost                  = "WINDOWS_HOST"
+	EnvPort                  = "WINDOWS_PORT"
 	EnvUsername              = "WINDOWS_USERNAME"
 	EnvPassword              = "WINDOWS_PASSWORD"               //nolint:gosec // name of env var, not a secret
 	EnvPrivateKey            = "WINDOWS_PRIVATE_KEY"            //nolint:gosec // name of env var, not a secret
@@ -74,6 +75,13 @@ const (
 func ResolveFromEnv(cfg *Config) {
 	if cfg.Host == "" {
 		cfg.Host = os.Getenv(EnvHost)
+	}
+	// A malformed or out-of-range WINDOWS_PORT is left for New to default to
+	// 22 rather than silently dialing a port the operator did not mean.
+	if cfg.Port == 0 {
+		if v, err := strconv.Atoi(os.Getenv(EnvPort)); err == nil && v > 0 && v <= 65535 {
+			cfg.Port = v
+		}
 	}
 	if cfg.Username == "" {
 		cfg.Username = os.Getenv(EnvUsername)

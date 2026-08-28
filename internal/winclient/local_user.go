@@ -95,13 +95,33 @@ function Format-PSDate($dt) {
   return $d.ToString('yyyy-MM-ddTHH:mm:ssZ')
 }
 
+# Get-PasswordNeverExpires derives the "password never expires" flag.
+#
+# The LocalUser object returned by Get-LocalUser exposes no such property --
+# it is a cmdlet parameter only, never a member of the returned object -- so
+# reading it off $User always yields $null, which ConvertTo-Json serialises as
+# false regardless of what was written.
+#
+# The authoritative source is the ADS_UF_DONT_EXPIRE_PASSWD (0x10000) bit of
+# the account's UserFlags: exactly the bit the cmdlet parameter toggles. Fall
+# back to $User.PasswordExpires (null iff the password does not expire) when
+# the ADSI lookup is unavailable.
+function Get-PasswordNeverExpires($User) {
+  try {
+    $adsi = [ADSI]('WinNT://./' + $User.Name + ',user')
+    return [bool]([int]$adsi.UserFlags.Value -band 0x10000)
+  } catch {
+    return ($null -eq $User.PasswordExpires)
+  }
+}
+
 function Get-UserData($User) {
   return [ordered]@{
     Name                  = $User.Name
     FullName              = if ($null -eq $User.FullName) { '' } else { $User.FullName }
     Description           = if ($null -eq $User.Description) { '' } else { $User.Description }
     Enabled               = $User.Enabled
-    PasswordNeverExpires  = $User.PasswordNeverExpires
+    PasswordNeverExpires  = (Get-PasswordNeverExpires $User)
     UserMayChangePassword = $User.UserMayChangePassword
     AccountExpires        = (Format-PSDate $User.AccountExpires)
     LastLogon             = (Format-PSDate $User.LastLogon)
@@ -320,6 +340,17 @@ func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, pass
 	if input.Description != "" {
 		optParts.WriteString("\n    $params['Description'] = " + qDesc)
 	}
+	if input.AccountNeverExpires {
+		optParts.WriteString("\n    $params['AccountNeverExpires'] = $true")
+	} else if input.AccountExpires != "" {
+		optParts.WriteString("\n    $params['AccountExpires'] = [DateTimeOffset]::Parse(" + psQuote(input.AccountExpires) + ").UtcDateTime")
+	}
+	// New-LocalUser accepts PasswordNeverExpires, UserMayNotChangePassword and
+	// Disabled as switches, so the account is created in its final shape by a
+	// single NetUserAdd. Earlier revisions split these across follow-up
+	// Set-LocalUser / Disable-LocalUser calls because password_never_expires
+	// always read back as false; that was a read-side defect (see
+	// Get-PasswordNeverExpires in luPsHeader), not a write-order conflict.
 	if input.PasswordNeverExpires {
 		optParts.WriteString("\n    $params['PasswordNeverExpires'] = $true")
 	}
@@ -328,11 +359,6 @@ func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, pass
 	}
 	if !input.Enabled {
 		optParts.WriteString("\n    $params['Disabled'] = $true")
-	}
-	if input.AccountNeverExpires {
-		optParts.WriteString("\n    $params['AccountNeverExpires'] = $true")
-	} else if input.AccountExpires != "" {
-		optParts.WriteString("\n    $params['AccountExpires'] = [DateTimeOffset]::Parse(" + psQuote(input.AccountExpires) + ").UtcDateTime")
 	}
 
 	script := fmt.Sprintf(`
@@ -369,7 +395,7 @@ try {
     Emit-OK $data
 } catch {
     $kind = Classify-LU $_.Exception.Message $_.FullyQualifiedErrorId
-    Emit-Err $kind $_.Exception.Message @{ name = %s; step = 'new_local_user' }
+    Emit-Err $kind $_.Exception.Message @{ name = %s; step = 'new_local_user'; pwlen = $PlainPassword.Length }
 }
 `,
 		qName, input.Name, qName,
@@ -423,8 +449,13 @@ try {
 // Set-LocalUser. Does NOT handle renames (use Rename), passwords (use SetPassword),
 // or enabled state (use Enable/Disable).
 //
-// PasswordNeverExpires and UserMayNotChangePassword are always passed as
-// explicit booleans (Set-LocalUser accepts $true/$false for these).
+// PasswordNeverExpires and UserMayChangePassword are always passed as
+// explicit booleans (Set-LocalUser accepts $true/$false for these) in the
+// same splatted invocation as the other scalars.
+//
+// Set-LocalUser exposes the positive -UserMayChangePassword switch, unlike
+// New-LocalUser's negative -UserMayNotChangePassword; input.UserMayNotChangePassword
+// is inverted here to match.
 func (lc *LocalUserClientImpl) Update(ctx context.Context, sid string, input UserInput) (*UserState, error) {
 	qSID := psQuote(sid)
 	qFullName := psQuote(input.FullName)
@@ -434,9 +465,9 @@ func (lc *LocalUserClientImpl) Update(ctx context.Context, sid string, input Use
 	if input.PasswordNeverExpires {
 		pne = "$true"
 	}
-	umcp := "$false"
+	umcp := "$true"
 	if input.UserMayNotChangePassword {
-		umcp = "$true"
+		umcp = "$false"
 	}
 
 	var expiryBlock string
@@ -455,7 +486,7 @@ try {
         FullName = %s
         Description = %s
         PasswordNeverExpires = %s
-        UserMayNotChangePassword = %s
+        UserMayChangePassword = %s
         ErrorAction = 'Stop'
     }
     %s

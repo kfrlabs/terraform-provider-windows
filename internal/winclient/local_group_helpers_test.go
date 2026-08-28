@@ -134,7 +134,7 @@ func TestResolveGroup_PermissionDenied(t *testing.T) {
 
 func TestResolveGroup_TransportError(t *testing.T) {
 	restore := stubLGRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		return "", "winrm closed connection", errors.New("winrm: connection reset by peer")
+		return "", "ssh closed connection", errors.New("ssh: connection reset by peer")
 	})
 	defer restore()
 

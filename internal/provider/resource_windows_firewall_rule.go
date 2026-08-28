@@ -597,7 +597,7 @@ func firewallStateToModel(ctx context.Context, s *winclient.FirewallRuleState) (
 		ID:                  types.StringValue(s.Name),
 		Name:                types.StringValue(s.Name),
 		DisplayName:         types.StringValue(s.DisplayName),
-		Description:         types.StringValue(s.Description),
+		Description:         strOrNull(s.Description),
 		Enabled:             types.BoolValue(s.Enabled),
 		Direction:           types.StringValue(s.Direction),
 		Action:              types.StringValue(s.Action),

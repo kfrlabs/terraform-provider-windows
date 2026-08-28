@@ -70,7 +70,7 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Optional:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "SSH port (default: 22).",
+				Description: "SSH port. Defaults to 22. May also be set via WINDOWS_PORT.",
 				Optional:    true,
 			},
 			"username": schema.StringAttribute{
@@ -84,8 +84,10 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Sensitive: true,
 			},
 			"timeout": schema.StringAttribute{
-				Description: "Operation timeout as a Go duration string (e.g. 30s, 2m). Default: 30s.",
-				Optional:    true,
+				Description: "Timeout for establishing the SSH connection (TCP dial plus handshake), as a " +
+					"Go duration string (e.g. 30s, 2m). Default: 30s. This does NOT bound how long a " +
+					"PowerShell operation may run: use the per-resource timeouts block for that.",
+				Optional: true,
 			},
 			"private_key": schema.StringAttribute{
 				Description: "PEM-encoded SSH private key used for public-key authentication. " +
@@ -107,8 +109,9 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 			},
 			"use_agent": schema.BoolAttribute{
 				Description: "Whether to authenticate through the ssh-agent advertised by SSH_AUTH_SOCK. " +
-					"When unset, the agent is used if SSH_AUTH_SOCK is present. May also be set via " +
-					"WINDOWS_USE_AGENT.",
+					"When unset, the agent is used if SSH_AUTH_SOCK is present. Unavailable when " +
+					"Terraform itself runs on Windows, where the agent is a named pipe rather than a " +
+					"Unix socket: use private_key_path there. May also be set via WINDOWS_USE_AGENT.",
 				Optional: true,
 			},
 			"known_hosts_path": schema.StringAttribute{
@@ -159,18 +162,26 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 			"The provider cannot create the SSH client because the username is unknown at plan time.",
 		)
 	}
+	// Every remaining connection attribute must be known too. An unknown value
+	// would otherwise collapse to the zero value — silently dialing port 22, or
+	// silently turning host key verification back on or off — which is worse
+	// than refusing to configure.
 	for name, value := range map[string]attr.Value{
-		"password":               data.Password,
-		"private_key":            data.PrivateKey,
-		"private_key_path":       data.PrivateKeyPath,
-		"private_key_passphrase": data.PrivateKeyPassphrase,
-		"host_key":               data.HostKey,
-		"known_hosts_path":       data.KnownHostsPath,
+		"password":                 data.Password,
+		"private_key":              data.PrivateKey,
+		"private_key_path":         data.PrivateKeyPath,
+		"private_key_passphrase":   data.PrivateKeyPassphrase,
+		"host_key":                 data.HostKey,
+		"known_hosts_path":         data.KnownHostsPath,
+		"port":                     data.Port,
+		"timeout":                  data.Timeout,
+		"use_agent":                data.UseAgent,
+		"insecure_ignore_host_key": data.InsecureIgnoreHostKey,
 	} {
 		if value.IsUnknown() {
 			resp.Diagnostics.AddAttributeError(
 				pathAttr(name),
-				"Unknown provider credential",
+				"Unknown provider configuration",
 				fmt.Sprintf("The provider cannot create the SSH client because %q is unknown at plan time.", name),
 			)
 		}

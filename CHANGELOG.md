@@ -52,8 +52,28 @@ All notable changes to this project will be documented in this file.
   behaviour, cannot be combined with `host_key` or `known_hosts_path`, and emits
   a warning on every plan and apply.
 
+- The provider `port` attribute gained a `WINDOWS_PORT` environment fallback,
+  so every connection attribute now has one — which is what the documentation
+  already claimed. A value that is not a usable TCP port is ignored rather than
+  dialed, leaving `New` to default to `22`.
+
 ### Fixed
 
+- `windows_local_user`: `password_never_expires` always read back as `false`,
+  producing `Provider produced inconsistent result after apply` for any account
+  configured with `password_never_expires = true`. The read path took the value
+  from `$User.PasswordNeverExpires`, but the `LocalUser` object returned by
+  `Get-LocalUser` has no such member — it is a `New-LocalUser`/`Set-LocalUser`
+  parameter only — so the expression always evaluated to `$null` and serialised
+  as `false`, whatever had been written. The flag is now derived from the
+  `ADS_UF_DONT_EXPIRE_PASSWD` (`0x10000`) bit of the account's ADSI `UserFlags`,
+  which is exactly the bit the cmdlet parameter toggles, with a fallback to the
+  `PasswordExpires`-is-null check. Because this was a read-side defect, the
+  write-side workarounds it had accumulated (splitting the flags across separate
+  `Set-LocalUser` calls, a follow-up `Disable-LocalUser`, a verify-and-retry
+  loop, and an extra SSH round-trip to re-read state after Create/Update) are
+  all removed: `Create` issues one `New-LocalUser`, `Update` one
+  `Set-LocalUser`. This unblocks `TestAccWindowsLocalUser_DisabledAndFlags`.
 - `windows_local_group_member` (data source): looking a member up by name failed
   with `member "<name>" not found in group "<group>"` even when the membership
   existed. `Get-LocalGroupMember` reports member names in the machine/domain
@@ -170,6 +190,98 @@ All notable changes to this project will be documented in this file.
   `windows_firewall_rule`, `windows_local_group_member` and
   `windows_registry_value` data-source reads — while preserving UTF-16LE
   fidelity for non-ASCII values. (#39)
+- The provider `timeout` attribute was documented as an "operation timeout",
+  but it only ever bounded connection establishment (`net.Dialer.Timeout` and
+  `ssh.ClientConfig.Timeout`). Command duration is bounded by the request
+  context, i.e. the per-resource `timeouts {}` block. Behaviour is unchanged;
+  the description now says what the attribute does, so raising it to
+  accommodate a slow install is no longer mistaken for a fix.
+- `Configure` rejected an unknown value for the string credentials but silently
+  accepted one for `port`, `timeout`, `use_agent` and `insecure_ignore_host_key`,
+  where it would collapse to the zero value — dialing port 22, or flipping host
+  key verification — instead of failing. All connection attributes are now
+  checked.
+- Transport failures were reported with four different wordings across the
+  resources (`powershell transport error`, `PowerShell transport error`,
+  `transport error`, `SSH transport error`). They all say `SSH transport error`
+  now, which is also what the transport actually is.
+
+### Fixed (acceptance suite)
+
+- `windows_scheduled_task` updates failed with "A parameter cannot be found
+  that matches parameter name 'Description'". `Set-ScheduledTask` has no
+  `-Description` parameter, unlike `Register-ScheduledTask` used on create. The
+  description is now set on the task object and written back, and it is applied
+  unconditionally so clearing it in the configuration clears it on the host.
+  (#82)
+- `windows_scheduled_task` import failed with a framework Value Conversion Error
+  on `timeouts`. With no prior state to copy from, the attribute kept its Go
+  zero value, whose object carries no attribute types, so the framework saw
+  `tftypes.Object[]` where the schema declares
+  `Object["create","delete","update"]`. Import now writes a null value carrying
+  the schema's types, and both halves derive from one `timeouts.Opts` so they
+  cannot disagree. (#83)
+
+
+- `TestAccWindowsServiceDataSource_Basic` looked up a service named `SSH`,
+  which does not exist: the SCM name for OpenSSH Server is `sshd` (`OpenSSH SSH
+  Server` is only its display name). A leftover of the WinRM -> SSH rename,
+  which also left the data block labelled `winrm`.
+- `TestAccWindowsLocalGroupMemberDataSource_Basic` still failed after #73. The
+  qualified-name lookup worked, but the data source then wrote the
+  host-qualified name Windows returns (`HOST\\alice`) back into `member_name`,
+  which is a **Required** argument, so it no longer matched the configuration.
+  It now echoes the value as written; `member_sid` remains the resolved
+  identity, and the resource's `member_name` is Computed and still holds the
+  canonical form.
+
+### Changed (CI)
+
+- Acceptance pre-checks required `WINDOWS_PASSWORD` specifically, in 21
+  duplicated copies. The public-key leg of the matrix clears that variable on
+  purpose -- to prove the key alone authenticates -- so 69 of the 85 tests in the
+  `rest` shard skipped there, and the failures among them were invisible. The
+  suite now requires a host, a username and **at least one** credential, in a
+  single shared `testAccRequireEnv` mirroring `winclient.buildAuthMethods`. The
+  auth method the provider recommends is no longer the one it does not test.
+
+- The acceptance suite is now sharded across runners (`feature`, `feature-ds`,
+  `rest`), cutting wall clock from ~12min to ~6min. Two thirds of the runtime is
+  `windows_feature`: `Get-WindowsFeature` imports the ServerManager module on
+  every call (~18s) and each call gets a fresh SSH connection and
+  `powershell.exe`, so Terraform's 5-6 reads per test pay it 5-6 times.
+  Sharding rather than `t.Parallel()` because DISM and `Install-WindowsFeature`
+  are machine-global and serialised by Windows; separate runners are separate
+  machines. The floor is the slowest single test, so going further needs a
+  persistent PowerShell session in `winclient`.
+- Shard filters are anchored on `^TestAcc`, which also stops the acceptance job
+  re-running the ~200 unit tests that `test.yml` already covers on ubuntu.
+- Fixed the `publickey` leg, which never authenticated: `ssh-keygen -N '""'` is
+  a PowerShell 5.1 workaround and under `pwsh` 7 passes two literal quotes as
+  the passphrase, leaving the key encrypted and unusable under `BatchMode`.
+
+### Documentation
+
+- `README.md` still described the provider as WinRM-based, and its example
+  configuration set the removed `auth_type` attribute — a copy-paste that no
+  longer plans. It now covers the SSH transport, how to enable OpenSSH Server on
+  the target, the three authentication methods, host key verification and the
+  full set of `WINDOWS_*` variables.
+- Added **ADR-0010** (SSH as the transport) and **ADR-0011** (verify host keys by
+  default, and fail closed), recording the two decisions behind #78 and #79 —
+  including the invariants `auth.go` must preserve and the known ssh-agent
+  limitation on Windows.
+- The KDust pipeline prompts (`.claude/agents/`, `.kdust/prompts/v2/`) still
+  instructed agents to target "PowerShell Remoting (WinRM)" and to mock WinRM,
+  so the next generated resource would have been specified against the old
+  transport. They now describe the SSH client and its `RunPowerShell` surface.
+- `CLAUDE.md` claimed CI fails on `docs/` drift; the `docs` workflow is
+  deliberately a schema-validation gate with a non-blocking drift step. The note
+  now matches the workflow, and `make test`'s documented timeout matches the
+  `GNUmakefile`.
+- Documented that ssh-agent authentication is unavailable when Terraform itself
+  runs on Windows, since the agent is exposed as a named pipe rather than a Unix
+  socket.
 
 ### Internal
 

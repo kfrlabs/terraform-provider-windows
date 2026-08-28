@@ -143,7 +143,8 @@ workers:
 
 # Règles
 - JAMAIS générer de code Go (boulot de schema-architect)
-- Privilégier PowerShell Remoting (WinRM)
+- Le transport est SSH (OpenSSH Server sur la cible, invoquant PowerShell) : la spec
+  décrit du PowerShell exécuté sur l'hôte, jamais un mécanisme de remoting
 - Si une info manque, FAIRE un choix raisonnable et le noter en commentaire YAML
 
 # Bloc JSON final OBLIGATOIRE

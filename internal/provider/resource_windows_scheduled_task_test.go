@@ -23,6 +23,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
@@ -688,4 +689,87 @@ func TestBuildTriggerObject_UnknownIntervalResolvesToNull(t *testing.T) {
 			t.Errorf("intervals = (%v, %v), want (null, null)", tm.DaysInterval, tm.WeeksInterval)
 		}
 	})
+}
+
+// stNullTimeouts must carry exactly the attribute types the schema declares.
+// A null timeouts value whose object has no attribute types is what made
+// ImportState fail with a framework Value Conversion Error (#83): the framework
+// compares the value's underlying type against the schema's and rejects
+// tftypes.Object[] where it expects Object["create","delete","update"].
+//
+// Both halves now derive from stTimeoutsOpts, so adding or removing an
+// operation moves them together and cannot desynchronise them. What this test
+// still catches is the original defect class: stNullTimeouts returning an
+// untyped value (a bare timeouts.Value{}) or a hand-written attribute map that
+// does not match the schema. Verified by reverting the fix, which fails it.
+func TestScheduledTaskNullTimeoutsMatchesSchema(t *testing.T) {
+	r := NewWindowsScheduledTaskResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	attrDef, ok := resp.Schema.Attributes["timeouts"]
+	if !ok {
+		t.Fatal("schema has no timeouts attribute")
+	}
+
+	want := attrDef.GetType()
+	got := stNullTimeouts().Type(context.Background())
+	if !want.Equal(got) {
+		t.Errorf("stNullTimeouts type mismatch:\n schema: %s\n  value: %s", want, got)
+	}
+
+	if !stNullTimeouts().IsNull() {
+		t.Error("stNullTimeouts must be null, not an object of null strings")
+	}
+}
+
+func TestSubscriptionXMLValue_StringSemanticEquals(t *testing.T) {
+	configXML := "<QueryList>\n  <Query Id=\"0\" Path=\"System\">\n    <Select Path=\"System\">*[System[EventID=1074]]</Select>\n\n  </Query>\n</QueryList>\n"
+	windowsXML := "<QueryList>\n  <Query Id=\"0\" Path=\"System\">\n    <Select Path=\"System\">*[System[EventID=1074]]</Select>\n  </Query>\n</QueryList>"
+
+	equal, diags := subscriptionXMLValueOf(configXML).StringSemanticEquals(context.Background(), subscriptionXMLValueOf(windowsXML))
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !equal {
+		t.Error("expected whitespace-only-different XML to compare semantically equal")
+	}
+
+	differentQuery := "<QueryList><Query Id=\"1\" Path=\"System\"><Select Path=\"System\">*[System[EventID=999]]</Select></Query></QueryList>"
+	equal, diags = subscriptionXMLValueOf(configXML).StringSemanticEquals(context.Background(), subscriptionXMLValueOf(differentQuery))
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if equal {
+		t.Error("expected genuinely different XML to compare semantically unequal")
+	}
+}
+
+func TestSubscriptionXMLType_SchemaWiring(t *testing.T) {
+	r := NewWindowsScheduledTaskResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	trigAttr, ok := resp.Schema.Attributes["triggers"]
+	if !ok {
+		t.Fatal("schema has no triggers attribute")
+	}
+	nested, ok := trigAttr.(schema.ListNestedAttribute)
+	if !ok {
+		t.Fatalf("triggers attribute is %T, want schema.ListNestedAttribute", trigAttr)
+	}
+	subAttr, ok := nested.NestedObject.Attributes["subscription"]
+	if !ok {
+		t.Fatal("triggers nested schema has no subscription attribute")
+	}
+
+	want := subAttr.GetType()
+	got := subscriptionXMLValueOf("x").Type(context.Background())
+	if !want.Equal(got) {
+		t.Errorf("subscription type mismatch:\n schema: %s\n  value: %s", want, got)
+	}
+
+	if !subscriptionXMLValueOrNull("").IsNull() {
+		t.Error("subscriptionXMLValueOrNull(\"\") must be null")
+	}
 }

@@ -322,7 +322,7 @@ func TestRunEnvelope_ContextCancelled_EC7(t *testing.T) {
 
 func TestRunEnvelope_TransportErrorUnknown(t *testing.T) {
 	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
-		return "", "some stderr", errors.New("winrm: broken pipe")
+		return "", "some stderr", errors.New("ssh: broken pipe")
 	})
 	defer restore()
 
