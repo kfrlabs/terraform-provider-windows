@@ -325,16 +325,19 @@ func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, pass
 	} else if input.AccountExpires != "" {
 		optParts.WriteString("\n    $params['AccountExpires'] = [DateTimeOffset]::Parse(" + psQuote(input.AccountExpires) + ").UtcDateTime")
 	}
-
-	pne := "$false"
+	// PasswordNeverExpires and UserMayNotChangePassword are passed straight
+	// to New-LocalUser (it accepts both as switches) instead of via follow-up
+	// Set-LocalUser calls: two separate Set-LocalUser calls for these flags
+	// have been observed to silently step on each other regardless of call
+	// order, so the account is created with both flags already correct in a
+	// single NetUserAdd, and -Disabled is applied via its own Disable-LocalUser
+	// call afterward (combining -Disabled into this same New-LocalUser call
+	// has separately been observed to drop the password flags).
 	if input.PasswordNeverExpires {
-		pne = "$true"
+		optParts.WriteString("\n    $params['PasswordNeverExpires'] = $true")
 	}
-	// Set-LocalUser's switch is the positive -UserMayChangePassword, unlike
-	// New-LocalUser's negative -UserMayNotChangePassword; invert here.
-	umcp := "$true"
 	if input.UserMayNotChangePassword {
-		umcp = "$false"
+		optParts.WriteString("\n    $params['UserMayNotChangePassword'] = $true")
 	}
 
 	script := fmt.Sprintf(`
@@ -366,18 +369,13 @@ $SecurePassword = ConvertTo-SecureString -String $PlainPassword -AsPlainText -Fo
 try {
     $params = @{ Name = %s; Password = $SecurePassword; ErrorAction = 'Stop' }%s
     $user = New-LocalUser @params
-    # PasswordNeverExpires/UserMayChangePassword are set via follow-up
-    # Set-LocalUser calls rather than New-LocalUser parameters, and -Disabled
-    # is applied via Disable-LocalUser BEFORE those flag calls: New-LocalUser
-    # has been observed to silently drop the password flags when the account
-    # is disabled in the same operation. Passing both flags to a single
-    # Set-LocalUser call has been observed to drop PasswordNeverExpires as
-    # well, so each gets its own call.
+    # -Disabled is applied via its own Disable-LocalUser call rather than a
+    # New-LocalUser parameter: combining -Disabled with the password flags in
+    # a single New-LocalUser call has been observed to silently drop those
+    # flags.
     if (-not $%s) {
         Disable-LocalUser -SID $user.SID.Value -ErrorAction Stop
     }
-    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -ErrorAction Stop
-    Set-LocalUser -SID $user.SID.Value -UserMayChangePassword %s -ErrorAction Stop
     $freshUser = Get-LocalUser -SID $user.SID.Value -ErrorAction Stop
     $data = Get-UserData $freshUser
     Emit-OK $data
@@ -387,7 +385,7 @@ try {
 }
 `,
 		qName, input.Name, qName,
-		qName, optParts.String(), psBool(input.Enabled), pne, umcp,
+		qName, optParts.String(), psBool(input.Enabled),
 		qName)
 
 	// Inject password via stdin (never appears in script body or logs).
@@ -395,17 +393,7 @@ try {
 	if err != nil {
 		return nil, err
 	}
-	created, err := parseUserData("create", resp.Data)
-	if err != nil {
-		return nil, err
-	}
-	// Get-LocalUser called later in THIS SAME script/PowerShell process has
-	// been observed to still report PasswordNeverExpires/UserMayChangePassword
-	// as their pre-change values even after the Set-LocalUser calls above
-	// completed without error (a same-process ADSI/SAM read-cache quirk).
-	// Re-reading via a brand new SSH connection (a fresh PowerShell process,
-	// per Read's own invocation) is what actually reflects the committed state.
-	return lc.Read(ctx, created.SID)
+	return parseUserData("create", resp.Data)
 }
 
 // ---------------------------------------------------------------------------
