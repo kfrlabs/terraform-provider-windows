@@ -368,16 +368,19 @@ try {
     $user = New-LocalUser @params
     # PasswordNeverExpires/UserMayChangePassword are set via follow-up
     # Set-LocalUser calls rather than New-LocalUser parameters, and -Disabled
-    # is applied last via Disable-LocalUser: New-LocalUser has been observed
-    # to silently drop the password flags when the account is disabled in
-    # the same operation, and passing both flags to a single Set-LocalUser
-    # call has been observed to drop PasswordNeverExpires as well, so each
-    # gets its own call.
-    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -ErrorAction Stop
-    Set-LocalUser -SID $user.SID.Value -UserMayChangePassword %s -ErrorAction Stop
+    # is applied via Disable-LocalUser BEFORE those flag calls: New-LocalUser
+    # has been observed to silently drop the password flags when the account
+    # is disabled in the same operation, and Disable-LocalUser itself has
+    # been observed to revert PasswordNeverExpires/UserMayChangePassword back
+    # to their defaults when called AFTER those flags are set, so disabling
+    # must come first and the flag calls must be the last writes before the
+    # final read. Passing both flags to a single Set-LocalUser call has also
+    # been observed to drop PasswordNeverExpires, so each gets its own call.
     if (-not $%s) {
         Disable-LocalUser -SID $user.SID.Value -ErrorAction Stop
     }
+    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -ErrorAction Stop
+    Set-LocalUser -SID $user.SID.Value -UserMayChangePassword %s -ErrorAction Stop
     $freshUser = Get-LocalUser -SID $user.SID.Value -ErrorAction Stop
     $data = Get-UserData $freshUser
     Emit-OK $data
@@ -387,7 +390,7 @@ try {
 }
 `,
 		qName, input.Name, qName,
-		qName, optParts.String(), pne, umcp, psBool(input.Enabled),
+		qName, optParts.String(), psBool(input.Enabled), pne, umcp,
 		qName)
 
 	// Inject password via stdin (never appears in script body or logs).
