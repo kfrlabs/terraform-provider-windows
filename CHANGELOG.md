@@ -59,6 +59,21 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_local_user`: `password_never_expires` always read back as `false`,
+  producing `Provider produced inconsistent result after apply` for any account
+  configured with `password_never_expires = true`. The read path took the value
+  from `$User.PasswordNeverExpires`, but the `LocalUser` object returned by
+  `Get-LocalUser` has no such member — it is a `New-LocalUser`/`Set-LocalUser`
+  parameter only — so the expression always evaluated to `$null` and serialised
+  as `false`, whatever had been written. The flag is now derived from the
+  `ADS_UF_DONT_EXPIRE_PASSWD` (`0x10000`) bit of the account's ADSI `UserFlags`,
+  which is exactly the bit the cmdlet parameter toggles, with a fallback to the
+  `PasswordExpires`-is-null check. Because this was a read-side defect, the
+  write-side workarounds it had accumulated (splitting the flags across separate
+  `Set-LocalUser` calls, a follow-up `Disable-LocalUser`, a verify-and-retry
+  loop, and an extra SSH round-trip to re-read state after Create/Update) are
+  all removed: `Create` issues one `New-LocalUser`, `Update` one
+  `Set-LocalUser`. This unblocks `TestAccWindowsLocalUser_DisabledAndFlags`.
 - `windows_local_group_member` (data source): looking a member up by name failed
   with `member "<name>" not found in group "<group>"` even when the membership
   existed. `Get-LocalGroupMember` reports member names in the machine/domain

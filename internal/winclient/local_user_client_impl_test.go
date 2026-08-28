@@ -1109,3 +1109,132 @@ func TestResolveLocalUserSID_InvalidJSON(t *testing.T) {
 		t.Errorf("expected unknown for invalid JSON, got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// password_never_expires — read-side derivation (root cause of the repeated
+// "was cty.True, but now cty.False" acceptance failures)
+// ---------------------------------------------------------------------------
+
+// TestLUPsHeader_PasswordNeverExpires_NotReadFromProperty guards the root
+// cause: the LocalUser object returned by Get-LocalUser has no
+// PasswordNeverExpires property, so reading it off the object always yields
+// $null (serialised as false). The flag must be derived from the
+// ADS_UF_DONT_EXPIRE_PASSWD bit instead.
+func TestLUPsHeader_PasswordNeverExpires_NotReadFromProperty(t *testing.T) {
+	if strings.Contains(luPsHeader, "$User.PasswordNeverExpires") {
+		t.Error("Get-UserData must not read $User.PasswordNeverExpires: the property does not exist on LocalUser and always evaluates to $null")
+	}
+	if !strings.Contains(luPsHeader, "function Get-PasswordNeverExpires") {
+		t.Error("luPsHeader must define Get-PasswordNeverExpires")
+	}
+	if !strings.Contains(luPsHeader, "0x10000") {
+		t.Error("Get-PasswordNeverExpires must test the ADS_UF_DONT_EXPIRE_PASSWD (0x10000) UserFlags bit")
+	}
+	if !strings.Contains(luPsHeader, "$null -eq $User.PasswordExpires") {
+		t.Error("Get-PasswordNeverExpires must fall back to the PasswordExpires null check")
+	}
+	if !strings.Contains(luPsHeader, "PasswordNeverExpires  = (Get-PasswordNeverExpires $User)") {
+		t.Error("Get-UserData must populate PasswordNeverExpires via Get-PasswordNeverExpires")
+	}
+}
+
+// TestLocalUserClient_Create_SingleNewLocalUserCall asserts the account is
+// created in its final shape by one New-LocalUser invocation: no follow-up
+// Set-LocalUser or Disable-LocalUser calls, which earlier revisions added
+// while chasing the read-side defect above.
+func TestLocalUserClient_Create_SingleNewLocalUserCall(t *testing.T) {
+	_, lc := newLUClient(t)
+
+	var script string
+	defer stubLUInput(func(_ context.Context, _ *Client, s, _ string) (string, string, error) {
+		script = s
+		return luOK(t, fakeUserData("svc", "S-1-5-21-1-2-3-1007")), "", nil
+	})()
+
+	input := UserInput{
+		Name:                     "svc",
+		PasswordNeverExpires:     true,
+		UserMayNotChangePassword: true,
+		Enabled:                  false,
+	}
+	if _, err := lc.Create(context.Background(), input, "P@ssw0rd!"); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if strings.Contains(script, "Set-LocalUser") {
+		t.Error("Create must not issue a follow-up Set-LocalUser call")
+	}
+	if strings.Contains(script, "Disable-LocalUser") {
+		t.Error("Create must disable via New-LocalUser -Disabled, not a follow-up Disable-LocalUser call")
+	}
+	for _, want := range []string{
+		"$params['PasswordNeverExpires'] = $true",
+		"$params['UserMayNotChangePassword'] = $true",
+		"$params['Disabled'] = $true",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("Create script missing %q", want)
+		}
+	}
+}
+
+// TestLocalUserClient_Create_EnabledOmitsDisabled checks the -Disabled switch
+// is only splatted in when the account should be disabled.
+func TestLocalUserClient_Create_EnabledOmitsDisabled(t *testing.T) {
+	_, lc := newLUClient(t)
+
+	var script string
+	defer stubLUInput(func(_ context.Context, _ *Client, s, _ string) (string, string, error) {
+		script = s
+		return luOK(t, fakeUserData("svc", "S-1-5-21-1-2-3-1008")), "", nil
+	})()
+
+	if _, err := lc.Create(context.Background(), UserInput{Name: "svc", Enabled: true}, "P@ssw0rd!"); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if strings.Contains(script, "Disabled") {
+		t.Error("Create must not set -Disabled for an enabled account")
+	}
+}
+
+// TestLocalUserClient_Update_SingleSetLocalUserCall asserts the flags travel
+// in the same splatted Set-LocalUser invocation as the other scalars, and
+// that Update no longer pays for an extra SSH round-trip to re-read state.
+func TestLocalUserClient_Update_SingleSetLocalUserCall(t *testing.T) {
+	_, lc := newLUClient(t)
+
+	var scripts []string
+	defer stubLURun(func(_ context.Context, _ *Client, s string) (string, string, error) {
+		scripts = append(scripts, s)
+		return luOK(t, fakeUserData("alice", "S-1-5-21-111-222-333-1001")), "", nil
+	})()
+
+	_, err := lc.Update(context.Background(), "S-1-5-21-111-222-333-1001", UserInput{
+		Name:                     "alice",
+		PasswordNeverExpires:     true,
+		UserMayNotChangePassword: true,
+		Enabled:                  true,
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	if len(scripts) != 1 {
+		t.Fatalf("Update issued %d PowerShell calls, want 1 (no follow-up Read)", len(scripts))
+	}
+	script := scripts[0]
+	if n := strings.Count(script, "Set-LocalUser"); n != 1 {
+		t.Errorf("Set-LocalUser appears %d times, want 1", n)
+	}
+	for _, want := range []string{
+		"PasswordNeverExpires = $true",
+		"UserMayChangePassword = $false",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("Update script missing %q", want)
+		}
+	}
+	if strings.Contains(script, "UserMayNotChangePassword") {
+		t.Error("Set-LocalUser has no -UserMayNotChangePassword parameter")
+	}
+}

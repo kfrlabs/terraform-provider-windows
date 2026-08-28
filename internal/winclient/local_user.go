@@ -95,13 +95,33 @@ function Format-PSDate($dt) {
   return $d.ToString('yyyy-MM-ddTHH:mm:ssZ')
 }
 
+# Get-PasswordNeverExpires derives the "password never expires" flag.
+#
+# The LocalUser object returned by Get-LocalUser exposes no such property --
+# it is a cmdlet parameter only, never a member of the returned object -- so
+# reading it off $User always yields $null, which ConvertTo-Json serialises as
+# false regardless of what was written.
+#
+# The authoritative source is the ADS_UF_DONT_EXPIRE_PASSWD (0x10000) bit of
+# the account's UserFlags: exactly the bit the cmdlet parameter toggles. Fall
+# back to $User.PasswordExpires (null iff the password does not expire) when
+# the ADSI lookup is unavailable.
+function Get-PasswordNeverExpires($User) {
+  try {
+    $adsi = [ADSI]('WinNT://./' + $User.Name + ',user')
+    return [bool]([int]$adsi.UserFlags.Value -band 0x10000)
+  } catch {
+    return ($null -eq $User.PasswordExpires)
+  }
+}
+
 function Get-UserData($User) {
   return [ordered]@{
     Name                  = $User.Name
     FullName              = if ($null -eq $User.FullName) { '' } else { $User.FullName }
     Description           = if ($null -eq $User.Description) { '' } else { $User.Description }
     Enabled               = $User.Enabled
-    PasswordNeverExpires  = $User.PasswordNeverExpires
+    PasswordNeverExpires  = (Get-PasswordNeverExpires $User)
     UserMayChangePassword = $User.UserMayChangePassword
     AccountExpires        = (Format-PSDate $User.AccountExpires)
     LastLogon             = (Format-PSDate $User.LastLogon)
@@ -325,19 +345,20 @@ func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, pass
 	} else if input.AccountExpires != "" {
 		optParts.WriteString("\n    $params['AccountExpires'] = [DateTimeOffset]::Parse(" + psQuote(input.AccountExpires) + ").UtcDateTime")
 	}
-	// PasswordNeverExpires and UserMayNotChangePassword are passed straight
-	// to New-LocalUser (it accepts both as switches) instead of via follow-up
-	// Set-LocalUser calls: two separate Set-LocalUser calls for these flags
-	// have been observed to silently step on each other regardless of call
-	// order, so the account is created with both flags already correct in a
-	// single NetUserAdd, and -Disabled is applied via its own Disable-LocalUser
-	// call afterward (combining -Disabled into this same New-LocalUser call
-	// has separately been observed to drop the password flags).
+	// New-LocalUser accepts PasswordNeverExpires, UserMayNotChangePassword and
+	// Disabled as switches, so the account is created in its final shape by a
+	// single NetUserAdd. Earlier revisions split these across follow-up
+	// Set-LocalUser / Disable-LocalUser calls because password_never_expires
+	// always read back as false; that was a read-side defect (see
+	// Get-PasswordNeverExpires in luPsHeader), not a write-order conflict.
 	if input.PasswordNeverExpires {
 		optParts.WriteString("\n    $params['PasswordNeverExpires'] = $true")
 	}
 	if input.UserMayNotChangePassword {
 		optParts.WriteString("\n    $params['UserMayNotChangePassword'] = $true")
+	}
+	if !input.Enabled {
+		optParts.WriteString("\n    $params['Disabled'] = $true")
 	}
 
 	script := fmt.Sprintf(`
@@ -369,13 +390,6 @@ $SecurePassword = ConvertTo-SecureString -String $PlainPassword -AsPlainText -Fo
 try {
     $params = @{ Name = %s; Password = $SecurePassword; ErrorAction = 'Stop' }%s
     $user = New-LocalUser @params
-    # -Disabled is applied via its own Disable-LocalUser call rather than a
-    # New-LocalUser parameter: combining -Disabled with the password flags in
-    # a single New-LocalUser call has been observed to silently drop those
-    # flags.
-    if (-not $%s) {
-        Disable-LocalUser -SID $user.SID.Value -ErrorAction Stop
-    }
     $freshUser = Get-LocalUser -SID $user.SID.Value -ErrorAction Stop
     $data = Get-UserData $freshUser
     Emit-OK $data
@@ -385,7 +399,7 @@ try {
 }
 `,
 		qName, input.Name, qName,
-		qName, optParts.String(), psBool(input.Enabled),
+		qName, optParts.String(),
 		qName)
 
 	// Inject password via stdin (never appears in script body or logs).
@@ -436,9 +450,8 @@ try {
 // or enabled state (use Enable/Disable).
 //
 // PasswordNeverExpires and UserMayChangePassword are always passed as
-// explicit booleans (Set-LocalUser accepts $true/$false for these), each via
-// its own Set-LocalUser call: passing both flags to a single invocation has
-// been observed to silently drop PasswordNeverExpires.
+// explicit booleans (Set-LocalUser accepts $true/$false for these) in the
+// same splatted invocation as the other scalars.
 //
 // Set-LocalUser exposes the positive -UserMayChangePassword switch, unlike
 // New-LocalUser's negative -UserMayNotChangePassword; input.UserMayNotChangePassword
@@ -472,12 +485,12 @@ try {
         SID = %s
         FullName = %s
         Description = %s
+        PasswordNeverExpires = %s
+        UserMayChangePassword = %s
         ErrorAction = 'Stop'
     }
     %s
     Set-LocalUser @params
-    Set-LocalUser -SID %s -PasswordNeverExpires %s -ErrorAction Stop
-    Set-LocalUser -SID %s -UserMayChangePassword %s -ErrorAction Stop
     $user = Get-LocalUser -SID %s -ErrorAction Stop
     $data = Get-UserData $user
     Emit-OK $data
@@ -485,21 +498,13 @@ try {
     $kind = Classify-LU $_.Exception.Message $_.FullyQualifiedErrorId
     Emit-Err $kind $_.Exception.Message @{ sid = %s; step = 'set_local_user' }
 }
-`, qSID, qFullName, qDesc, expiryBlock, qSID, pne, qSID, umcp, qSID, qSID)
+`, qSID, qFullName, qDesc, pne, umcp, expiryBlock, qSID, qSID)
 
 	resp, err := lc.runLUEnvelope(ctx, "update", sid, script)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := parseUserData("update", resp.Data); err != nil {
-		return nil, err
-	}
-	// See Create: Get-LocalUser called later in this same script/process has
-	// been observed to still report PasswordNeverExpires/UserMayChangePassword
-	// as their pre-change values even after the Set-LocalUser calls above
-	// completed without error. Re-reading via a brand new SSH connection is
-	// what actually reflects the committed state.
-	return lc.Read(ctx, sid)
+	return parseUserData("update", resp.Data)
 }
 
 // ---------------------------------------------------------------------------
