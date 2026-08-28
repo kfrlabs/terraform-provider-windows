@@ -4,6 +4,7 @@
 package winclient
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -13,7 +14,7 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
 	"unicode/utf16"
 
@@ -23,10 +24,20 @@ import (
 // Client wraps an SSH connection and exposes helpers to run PowerShell
 // scripts against the configured Windows host (via its OpenSSH Server,
 // with PowerShell as the invoked command).
+//
+// A Client keeps at most one persistent PowerShell session open at a time
+// (issue #81): the first RunPowerShell/RunPowerShellWithInput call dials and
+// starts it, later calls reuse it, and a broken session is transparently
+// re-established. Calls are serialised by mu — the SSH session's stdin/
+// stdout/stderr are a single shared, ordered stream, so two calls cannot
+// safely interleave on it.
 type Client struct {
 	cfg     Config
 	sshCfg  *ssh.ClientConfig
 	address string
+
+	mu      sync.Mutex
+	session *persistentSession
 }
 
 // New creates and validates a new SSH Client from the given Config. It does
@@ -72,72 +83,86 @@ func New(cfg Config) (*Client, error) {
 // included — callers must not log it).
 func (c *Client) Config() Config { return c.cfg }
 
+// Close tears down the persistent PowerShell session, if one is open. Safe
+// to call on a Client that never ran a command, and safe to call more than
+// once.
+func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.session == nil {
+		return nil
+	}
+	err := c.session.Close()
+	c.session = nil
+	return err
+}
+
 // RunPowerShell executes the given PowerShell script on the remote host and
 // returns its stdout and stderr. It honours the provided context for
 // cancellation.
 //
 // The script is not placed on the command line: only a fixed bootstrap is
-// passed via -EncodedCommand, and the real script (UTF-16LE base64) is streamed
-// on stdin, so the command line stays a constant ~600 chars regardless of script
-// size. This keeps us under Windows' ~8191-char command-line limit (#39) while
-// preserving exact UTF-16LE fidelity for non-ASCII values.
+// passed via -EncodedCommand, and the real script (UTF-16LE base64) is
+// streamed on stdin, so the command line stays a constant ~600 chars
+// regardless of script size. This keeps us under Windows' ~8191-char
+// command-line limit (#39) while preserving exact UTF-16LE fidelity for
+// non-ASCII values.
 func (c *Client) RunPowerShell(ctx context.Context, script string) (string, string, error) {
-	return c.run(ctx, composeStdin(script, ""))
+	return c.run(ctx, script, "")
 }
 
-// RunPowerShellWithInput executes the given PowerShell script with the supplied
-// stdin string piped to the process. This allows sensitive data (e.g. passwords)
-// to be injected via stdin rather than the script body, so the plaintext never
-// appears in the encoded command or SSH session logs.
-//
-// Transport matches RunPowerShell: a fixed bootstrap decodes the real script
-// from the first stdin line, then the script itself reads the caller's input
-// from the remainder via [Console]::In.ReadLine() / ReadToEnd().
+// RunPowerShellWithInput executes the given PowerShell script with the
+// supplied stdin string piped to the process. This allows sensitive data
+// (e.g. passwords) to be injected via stdin rather than the script body, so
+// the plaintext never appears in the encoded command or SSH session logs.
 func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin string) (string, string, error) {
-	return c.run(ctx, composeStdin(script, stdin))
+	return c.run(ctx, script, stdin)
 }
 
-// run dials a fresh SSH connection, opens a session running the fixed
-// bootstrap command with stdinReader piped in, and returns its stdout/stderr.
-func (c *Client) run(ctx context.Context, stdinReader io.Reader) (string, string, error) {
-	if c == nil || c.sshCfg == nil {
+// run sends one request to the persistent PowerShell session, establishing
+// it first if needed, and retries exactly once against a freshly
+// re-established session if the existing one turns out to be dead. That
+// keeps a stale session (remote crash, dropped TCP connection, idle
+// timeout) from permanently failing every subsequent call.
+func (c *Client) run(ctx context.Context, script, secret string) (string, string, error) {
+	if c == nil {
 		return "", "", fmt.Errorf("winclient: nil client")
 	}
 
-	client, err := c.dial(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	defer func() { _ = client.Close() }()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	session, err := client.NewSession()
-	if err != nil {
-		return "", "", fmt.Errorf("winclient: new ssh session: %w", err)
-	}
-	defer func() { _ = session.Close() }()
-
-	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
-	session.Stdin = stdinReader
-
-	done := make(chan error, 1)
-	go func() { done <- session.Run(bootstrapCommand()) }()
-
-	select {
-	case <-ctx.Done():
-		_ = session.Close()
-		return stdout.String(), stderr.String(), ctx.Err()
-	case runErr := <-done:
-		if runErr != nil {
-			var exitErr *ssh.ExitError
-			if errors.As(runErr, &exitErr) {
-				return stdout.String(), stderr.String(), fmt.Errorf("winclient: powershell exited with code %d", exitErr.ExitStatus())
-			}
-			return stdout.String(), stderr.String(), fmt.Errorf("winclient: powershell run: %w", runErr)
+	if c.session == nil {
+		sess, err := newPersistentSession(ctx, c)
+		if err != nil {
+			return "", "", err
 		}
-		return stdout.String(), stderr.String(), nil
+		c.session = sess
 	}
+
+	stdout, stderr, err := c.session.run(ctx, script, secret)
+	if !isSessionBroken(err) {
+		return stdout, stderr, err
+	}
+
+	_ = c.session.Close()
+	c.session = nil
+
+	sess, dialErr := newPersistentSession(ctx, c)
+	if dialErr != nil {
+		return stdout, stderr, fmt.Errorf("winclient: session dropped and could not be re-established: %w (original error: %v)", dialErr, err)
+	}
+	c.session = sess
+	return c.session.run(ctx, script, secret)
+}
+
+// isSessionBroken reports whether err indicates the persistent session
+// itself is unusable (closed pipe, dropped connection, protocol framing
+// lost) as opposed to the script it just ran having failed on the remote
+// side, which readReplResponse already turns into a normal (nil-error)
+// result carrying status information in stdout/stderr.
+func isSessionBroken(err error) bool {
+	return err != nil
 }
 
 // dial opens a new SSH connection to the configured host, honouring ctx for
@@ -156,30 +181,141 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 	return ssh.NewClient(sshConn, chans, reqs), nil
 }
 
-// psBootstrap is the constant script passed via -EncodedCommand. It reads a
-// single base64 (UTF-16LE) line from stdin, decodes it to the real script, and
-// executes it. Because the large payload travels on stdin rather than the
-// command line, the command line stays a fixed ~600 chars — well under Windows'
-// ~8191-char limit (#39). Errors are surfaced by the invoked script's own JSON
-// envelope; a failed decode throws (ErrorActionPreference=Stop) and exits non-zero.
-const psBootstrap = `$ErrorActionPreference='Stop'
-$b64=[Console]::In.ReadLine()
-$code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($b64))
-& ([ScriptBlock]::Create($code))`
-
-// bootstrapCommand builds the fixed powershell.exe invocation. It does not
-// depend on the script being run, so its length is constant.
-func bootstrapCommand() string {
-	return fmt.Sprintf("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encodePowerShell(psBootstrap))
+// persistentSession wraps one SSH connection running the REPL bootstrap. It
+// is not safe for concurrent use; Client.mu is what makes that safe in
+// practice.
+type persistentSession struct {
+	sshClient *ssh.Client
+	session   *ssh.Session
+	stdin     io.WriteCloser
+	stdout    *bufio.Reader
+	stderr    *bufio.Reader
+	marker    string
 }
 
-// composeStdin lays out the stdin stream the bootstrap expects: the base64
-// (UTF-16LE) script as the first line, then any caller-supplied input as the
-// remainder. The bootstrap consumes the first line; the script then reads input
-// from the rest via [Console]::In.ReadLine() / ReadToEnd(). base64 uses the
-// standard alphabet (no newlines), so it is always exactly one line.
-func composeStdin(script, input string) io.Reader {
-	return strings.NewReader(encodePowerShell(script) + "\n" + input)
+// newPersistentSession dials, starts the REPL bootstrap and waits for its
+// ready handshake before handing the session back.
+func newPersistentSession(ctx context.Context, c *Client) (*persistentSession, error) {
+	sshClient, err := c.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	session, err := sshClient.NewSession()
+	if err != nil {
+		_ = sshClient.Close()
+		return nil, fmt.Errorf("winclient: new ssh session: %w", err)
+	}
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		_ = session.Close()
+		_ = sshClient.Close()
+		return nil, fmt.Errorf("winclient: stdin pipe: %w", err)
+	}
+	stdoutPipe, err := session.StdoutPipe()
+	if err != nil {
+		_ = session.Close()
+		_ = sshClient.Close()
+		return nil, fmt.Errorf("winclient: stdout pipe: %w", err)
+	}
+	stderrPipe, err := session.StderrPipe()
+	if err != nil {
+		_ = session.Close()
+		_ = sshClient.Close()
+		return nil, fmt.Errorf("winclient: stderr pipe: %w", err)
+	}
+
+	if err := session.Start(replBootstrapCommand()); err != nil {
+		_ = session.Close()
+		_ = sshClient.Close()
+		return nil, fmt.Errorf("winclient: start powershell REPL: %w", err)
+	}
+
+	ps := &persistentSession{
+		sshClient: sshClient,
+		session:   session,
+		stdin:     stdin,
+		stdout:    bufio.NewReader(stdoutPipe),
+		stderr:    bufio.NewReader(stderrPipe),
+	}
+
+	type readyResult struct {
+		marker string
+		err    error
+	}
+	done := make(chan readyResult, 1)
+	go func() {
+		marker, err := readReplReady(ps.stdout)
+		done <- readyResult{marker, err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = ps.Close()
+		return nil, ctx.Err()
+	case r := <-done:
+		if r.err != nil {
+			_ = ps.Close()
+			return nil, r.err
+		}
+		ps.marker = r.marker
+		return ps, nil
+	}
+}
+
+// run sends one request and waits for its framed response, honouring ctx
+// for cancellation. It returns a non-nil error only for transport/protocol
+// failures; a script that raised an uncaught PowerShell error is reported
+// through the returned stderr text plus a wrapped error identifying it as
+// such, mirroring the old one-process-per-call non-zero exit behaviour
+// closely enough that callers built around extractLastJSONLine keep working
+// unmodified.
+func (ps *persistentSession) run(ctx context.Context, script, secret string) (string, string, error) {
+	type result struct {
+		stdout, stderr string
+		status         int
+		err            error
+	}
+	done := make(chan result, 1)
+	go func() {
+		if _, err := io.WriteString(ps.stdin, encodeReplRequest(script, secret)); err != nil {
+			done <- result{err: fmt.Errorf("winclient: write REPL request: %w", err)}
+			return
+		}
+		stdout, stderr, status, err := readReplResponse(ps.stdout, ps.stderr)
+		done <- result{stdout, stderr, status, err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = ps.Close()
+		return "", "", ctx.Err()
+	case r := <-done:
+		if r.err != nil {
+			return r.stdout, r.stderr, r.err
+		}
+		if r.status != 0 {
+			return r.stdout, r.stderr, fmt.Errorf("winclient: powershell script raised an uncaught error")
+		}
+		return r.stdout, r.stderr, nil
+	}
+}
+
+// Close ends the REPL loop by closing stdin (read as EOF by
+// [Console]::In.ReadLine()) and tears down the SSH session and connection.
+func (ps *persistentSession) Close() error {
+	var errs []error
+	if err := ps.stdin.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := ps.session.Close(); err != nil && !errors.Is(err, io.EOF) {
+		errs = append(errs, err)
+	}
+	if err := ps.sshClient.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // encodePowerShell encodes a script as UTF-16LE base64, matching the
