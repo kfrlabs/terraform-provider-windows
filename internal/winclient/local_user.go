@@ -368,20 +368,25 @@ try {
     $user = New-LocalUser @params
     # PasswordNeverExpires/UserMayChangePassword are set via follow-up
     # Set-LocalUser calls rather than New-LocalUser parameters, and -Disabled
-    # is applied via Disable-LocalUser BEFORE those flag calls: New-LocalUser
+    # is applied via Disable-LocalUser BEFORE those flag calls (New-LocalUser
     # has been observed to silently drop the password flags when the account
-    # is disabled in the same operation, and Disable-LocalUser itself has
-    # been observed to revert PasswordNeverExpires/UserMayChangePassword back
-    # to their defaults when called AFTER those flags are set, so disabling
-    # must come first and the flag calls must be the last writes before the
-    # final read. Passing both flags to a single Set-LocalUser call has also
-    # been observed to drop PasswordNeverExpires, so each gets its own call.
+    # is disabled in the same operation). Each flag still gets its own
+    # Set-LocalUser call (passing both to one call has been observed to drop
+    # PasswordNeverExpires), but the two calls have also been observed to
+    # step on each other: whichever runs last can silently revert the other
+    # back to its pre-change value. So the calls are re-verified against a
+    # fresh read and retried once if either didn't stick.
     if (-not $%s) {
         Disable-LocalUser -SID $user.SID.Value -ErrorAction Stop
     }
-    Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -ErrorAction Stop
-    Set-LocalUser -SID $user.SID.Value -UserMayChangePassword %s -ErrorAction Stop
-    $freshUser = Get-LocalUser -SID $user.SID.Value -ErrorAction Stop
+    for ($i = 0; $i -lt 2; $i++) {
+        Set-LocalUser -SID $user.SID.Value -PasswordNeverExpires %s -ErrorAction Stop
+        Set-LocalUser -SID $user.SID.Value -UserMayChangePassword %s -ErrorAction Stop
+        $freshUser = Get-LocalUser -SID $user.SID.Value -ErrorAction Stop
+        if ($freshUser.PasswordNeverExpires -eq [bool]%s -and $freshUser.UserMayChangePassword -eq [bool]%s) {
+            break
+        }
+    }
     $data = Get-UserData $freshUser
     Emit-OK $data
 } catch {
@@ -390,7 +395,7 @@ try {
 }
 `,
 		qName, input.Name, qName,
-		qName, optParts.String(), psBool(input.Enabled), pne, umcp,
+		qName, optParts.String(), psBool(input.Enabled), pne, umcp, pne, umcp,
 		qName)
 
 	// Inject password via stdin (never appears in script body or logs).
@@ -443,7 +448,10 @@ try {
 // PasswordNeverExpires and UserMayChangePassword are always passed as
 // explicit booleans (Set-LocalUser accepts $true/$false for these), each via
 // its own Set-LocalUser call: passing both flags to a single invocation has
-// been observed to silently drop PasswordNeverExpires.
+// been observed to silently drop PasswordNeverExpires. The two calls have
+// also been observed to step on each other (whichever runs last can revert
+// the other), so the result is re-verified against a fresh read and the
+// calls retried once if either flag didn't stick.
 //
 // Set-LocalUser exposes the positive -UserMayChangePassword switch, unlike
 // New-LocalUser's negative -UserMayNotChangePassword; input.UserMayNotChangePassword
@@ -481,16 +489,21 @@ try {
     }
     %s
     Set-LocalUser @params
-    Set-LocalUser -SID %s -PasswordNeverExpires %s -ErrorAction Stop
-    Set-LocalUser -SID %s -UserMayChangePassword %s -ErrorAction Stop
-    $user = Get-LocalUser -SID %s -ErrorAction Stop
+    for ($i = 0; $i -lt 2; $i++) {
+        Set-LocalUser -SID %s -PasswordNeverExpires %s -ErrorAction Stop
+        Set-LocalUser -SID %s -UserMayChangePassword %s -ErrorAction Stop
+        $user = Get-LocalUser -SID %s -ErrorAction Stop
+        if ($user.PasswordNeverExpires -eq [bool]%s -and $user.UserMayChangePassword -eq [bool]%s) {
+            break
+        }
+    }
     $data = Get-UserData $user
     Emit-OK $data
 } catch {
     $kind = Classify-LU $_.Exception.Message $_.FullyQualifiedErrorId
     Emit-Err $kind $_.Exception.Message @{ sid = %s; step = 'set_local_user' }
 }
-`, qSID, qFullName, qDesc, expiryBlock, qSID, pne, qSID, umcp, qSID, qSID)
+`, qSID, qFullName, qDesc, expiryBlock, qSID, pne, qSID, umcp, qSID, pne, umcp, qSID)
 
 	resp, err := lc.runLUEnvelope(ctx, "update", sid, script)
 	if err != nil {
