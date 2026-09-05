@@ -99,39 +99,82 @@ func encodeReplSecret(secret string) string {
 }
 
 // readReplResponse reads one framed response from the REPL: stdout lines up
-// to the "##WINCLIENT-END:<status>##" marker, then stderr lines up to
+// to the "##WINCLIENT-END:<status>##" marker, and stderr lines up to
 // "##WINCLIENT-END##". status is 0 when the script ran to completion, 1 when
 // it raised an uncaught error (the persistent-session analogue of the old
 // non-zero process exit).
+//
+// The two streams are drained by concurrent goroutines rather than one after
+// the other. A script that writes enough combined stdout+stderr to fill the
+// SSH channel's flow-control window before its own end marker (routine for a
+// "cold" CIM/CDXML module like NetSecurity or LocalAccounts, which can be
+// chatty on the error/warning stream) would otherwise deadlock: the remote
+// side blocks trying to write the full stream, while a sequential reader is
+// still waiting on the other one. The pre-#81 one-process-per-call transport
+// avoided this by handing Stdout/Stderr to ssh.Session as io.Writers, which
+// Session.Start drains with its own concurrent copies; this restores that
+// property for the persistent REPL.
 func readReplResponse(stdout, stderr *bufio.Reader) (out, errOut string, status int, err error) {
-	var outBuf, errBuf strings.Builder
-	for {
-		line, rerr := stdout.ReadString('\n')
-		trimmed := strings.TrimRight(line, "\r\n")
-		if strings.HasPrefix(trimmed, replEndStdoutPrefix) && strings.HasSuffix(trimmed, replEndStdoutSuffix) {
-			code := strings.TrimSuffix(strings.TrimPrefix(trimmed, replEndStdoutPrefix), replEndStdoutSuffix)
-			status, err = strconv.Atoi(code)
-			if err != nil {
-				return outBuf.String(), errBuf.String(), 0, fmt.Errorf("winclient: malformed REPL end marker %q: %w", trimmed, err)
+	type stdoutResult struct {
+		out    string
+		status int
+		err    error
+	}
+	type stderrResult struct {
+		out string
+		err error
+	}
+
+	stdoutDone := make(chan stdoutResult, 1)
+	go func() {
+		var outBuf strings.Builder
+		for {
+			line, rerr := stdout.ReadString('\n')
+			trimmed := strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(trimmed, replEndStdoutPrefix) && strings.HasSuffix(trimmed, replEndStdoutSuffix) {
+				code := strings.TrimSuffix(strings.TrimPrefix(trimmed, replEndStdoutPrefix), replEndStdoutSuffix)
+				st, atoiErr := strconv.Atoi(code)
+				if atoiErr != nil {
+					stdoutDone <- stdoutResult{outBuf.String(), 0, fmt.Errorf("winclient: malformed REPL end marker %q: %w", trimmed, atoiErr)}
+					return
+				}
+				stdoutDone <- stdoutResult{outBuf.String(), st, nil}
+				return
 			}
-			break
+			outBuf.WriteString(line)
+			if rerr != nil {
+				stdoutDone <- stdoutResult{outBuf.String(), 0, fmt.Errorf("winclient: REPL session ended before stdout end marker: %w", rerr)}
+				return
+			}
 		}
-		outBuf.WriteString(line)
-		if rerr != nil {
-			return outBuf.String(), errBuf.String(), 0, fmt.Errorf("winclient: REPL session ended before stdout end marker: %w", rerr)
+	}()
+
+	stderrDone := make(chan stderrResult, 1)
+	go func() {
+		var errBuf strings.Builder
+		for {
+			line, rerr := stderr.ReadString('\n')
+			if strings.TrimRight(line, "\r\n") == replEndStderrLine {
+				stderrDone <- stderrResult{errBuf.String(), nil}
+				return
+			}
+			errBuf.WriteString(line)
+			if rerr != nil {
+				stderrDone <- stderrResult{errBuf.String(), fmt.Errorf("winclient: REPL session ended before stderr end marker: %w", rerr)}
+				return
+			}
 		}
+	}()
+
+	so := <-stdoutDone
+	se := <-stderrDone
+	if so.err != nil {
+		return so.out, se.out, 0, so.err
 	}
-	for {
-		line, rerr := stderr.ReadString('\n')
-		if strings.TrimRight(line, "\r\n") == replEndStderrLine {
-			break
-		}
-		errBuf.WriteString(line)
-		if rerr != nil {
-			return outBuf.String(), errBuf.String(), 0, fmt.Errorf("winclient: REPL session ended before stderr end marker: %w", rerr)
-		}
+	if se.err != nil {
+		return so.out, se.out, so.status, se.err
 	}
-	return outBuf.String(), errBuf.String(), status, nil
+	return so.out, se.out, so.status, nil
 }
 
 // readReplReady blocks for the REPL's startup handshake line and returns the

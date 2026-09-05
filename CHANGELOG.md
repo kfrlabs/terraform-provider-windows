@@ -21,6 +21,20 @@ All notable changes to this project will be documented in this file.
   are left for a follow-up, validated one at a time against `testacc-windows`
   (#81).
 
+### Fixed
+
+- The persistent REPL session (#81) deadlocked on cold calls into chatty
+  CIM/CDXML-backed cmdlets (`windows_local_user`, `windows_firewall_rule`
+  reads use `Microsoft.PowerShell.LocalAccounts`/`NetSecurity`), hanging the
+  provider until Terraform's own timeout. `readReplResponse` read stdout to
+  completion before touching stderr; `x/crypto/ssh`'s `Session.StderrPipe`
+  documents a fixed buffer shared between the two streams, so a response
+  chatty enough on stderr to fill it before its stdout end marker blocked the
+  remote side, with nothing draining stderr to relieve it. Both streams are
+  now drained concurrently, matching how the pre-#81 transport handed
+  `Stdout`/`Stderr` to `ssh.Session` as `io.Writer`s (drained by its own
+  internal goroutines) rather than reading them out sequentially.
+
 ### Changed
 
 - **Breaking:** the provider now connects to the target Windows host over

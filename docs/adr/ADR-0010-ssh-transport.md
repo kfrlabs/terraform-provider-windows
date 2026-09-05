@@ -105,6 +105,23 @@ this framing protocol (ready handshake, framed per-request response,
 concurrent-call serialisation and recovery are covered by the default
 `make test`, with no Windows host required.
 
+**Read stdout and stderr concurrently, not sequentially (amended
+2026-09-05).** The first `testacc-windows` run against this transport
+deadlocked reading `windows_local_user`/`windows_firewall_rule` — both backed
+by CIM/CDXML modules (`Microsoft.PowerShell.LocalAccounts`, `NetSecurity`)
+that are chatty on the error stream on a cold call — while `windows_feature`
+(`ServerManager`, no CIM) was fine. `readReplResponse` read every stdout line
+up to its end marker before touching stderr at all. `x/crypto/ssh`'s
+`Session.StderrPipe` documents exactly this hazard: stdout and stderr share
+one fixed buffer, and a stream that fills it while its sibling goes unread
+blocks the remote side. The pre-#81 transport never hit this because it
+handed `Stdout`/`Stderr` to `ssh.Session` as `io.Writer`s, which `Session.Run`
+drains with its own concurrent goroutines; `readReplResponse` now does the
+same explicitly, one goroutine per stream, joined before returning.
+`internal/winclient/transport_test.go`'s
+`TestTransportDrainsLargeStderrWithoutDeadlock` reproduces it with an
+oversized canned stderr response against the loopback server.
+
 ### Testability, which WinRM never gave us
 
 `x/crypto/ssh` has a server side, so the transport can be driven end to end

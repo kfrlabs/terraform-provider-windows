@@ -539,6 +539,34 @@ func TestTransportRecoversFromDroppedSession(t *testing.T) {
 	}
 }
 
+// x/crypto/ssh's Session.StderrPipe documents a fixed buffer shared between
+// stdout and stderr: if one stream isn't serviced while the other fills it,
+// the remote command blocks. A "cold" CIM/CDXML module (NetSecurity,
+// LocalAccounts) can write enough combined output to hit exactly that before
+// its own end marker. This reproduces it directly: a canned response large
+// enough to exceed the shared buffer must still come back inside the test
+// timeout, proving readReplResponse drains both streams concurrently rather
+// than stdout-then-stderr.
+func TestTransportDrainsLargeStderrWithoutDeadlock(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	large := strings.Repeat("x", 3*1024*1024) // exceeds x/crypto/ssh's shared stdout/stderr buffer
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", stderr: large})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	stdout, stderr := mustRun(t, c, "Get-Thing")
+	if stdout != "ok" {
+		t.Errorf("stdout = %q, want %q", stdout, "ok")
+	}
+	if stderr != large {
+		t.Errorf("stderr length = %d, want %d", len(stderr), len(large))
+	}
+}
+
 // decodeReplSecretForTest decodes a REPL request's raw base64 secret field
 // (see encodeReplSecret) back to plaintext for assertions.
 func decodeReplSecretForTest(b64 string) (string, error) {
