@@ -19,6 +19,47 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New resource `windows_file`, which manages a single file on the target host:
+  content, encoding and file attributes. Content can come from `content`
+  (inline text), `content_base64` (binary), `source` (a file on the machine
+  running Terraform) or `source_url` (HTTP/HTTPS), and secrets can be passed
+  through the write-only `content_wo` / `content_base64_wo` attributes, which
+  never reach the state or the plan and are rewritten when `content_wo_version`
+  is bumped. Parent directories are created on demand, `overwrite = false`
+  refuses to clobber a pre-existing file, and `attributes` enforces the
+  `hidden` / `readonly` / `archive` / `system` / `temporary` flags.
+
+  File bytes never travel in the PowerShell script: they are streamed as
+  base64 on stdin and read back with `[Console]::In.ReadToEnd()`, which keeps
+  quoting off megabyte payloads, avoids the fourfold blow-up of the UTF-16LE
+  script encoding, and keeps content out of `-EncodedCommand`. Writes are
+  atomic through a temporary file in the destination directory, so an
+  interrupted apply or a full disk never leaves a truncated file. When the
+  target already exists the swap uses `File.Replace`, which **preserves the
+  existing security descriptor** — updating a file's content does not disturb
+  an ACL managed elsewhere. Sharing violations, by far the most common failure
+  mode on Windows, are retried with backoff before surfacing as `file_locked`.
+
+  Drift detection compares SHA-256 digests rather than transferring content:
+  `Read` only returns metadata, so `terraform plan` stays O(1) in bandwidth
+  over any number of files and a file holding a secret is not pulled back on
+  every refresh. The desired digest is computed at plan time, which is what
+  makes a locally edited `source` file, or an out-of-band edit on the host,
+  show up as a diff. A pinned `source_url_sha256` keeps the plan entirely
+  local; without it the provider must fetch the URL on every plan and says so
+  with a warning. `download_on = "target"` lets the Windows host download a
+  large artifact itself and then requires the pinned digest, since the provider
+  never sees those bytes.
+
+  Importing uses the absolute path. Below 1 MiB the real content is read back
+  during the import, so the first plan afterwards is clean instead of showing a
+  phantom `"" -> "<content>"` diff against a file that already matches; above
+  that ceiling the content is left empty and a warning explains that the first
+  apply will rewrite the file.
+
+  Ownership and ACLs are deliberately out of scope and will land as a separate
+  `windows_file_acl` resource.
+
 - Public-key and ssh-agent authentication. The provider gained
   `private_key` (PEM inline, sensitive), `private_key_path` (with `~`
   expansion), `private_key_passphrase` (sensitive) and `use_agent`, each with a
