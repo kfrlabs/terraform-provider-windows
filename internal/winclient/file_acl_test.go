@@ -335,3 +335,49 @@ func TestMapFileACLErrorKind(t *testing.T) {
 		t.Errorf("got %q, want unknown", got)
 	}
 }
+
+// TestValidateFileACLInput_ForcesPreserveOffWhenAuthoritative pins the
+// convergence fix. Windows performs the inherited-to-explicit conversion when
+// the descriptor is committed, not in memory, so authoritative mode cannot
+// reconcile the copies it would create and must not ask for them.
+func TestValidateFileACLInput_ForcesPreserveOffWhenAuthoritative(t *testing.T) {
+	in := FileACLInput{
+		Path:                       `C:\data\app.conf`,
+		Mode:                       FileACLModeAuthoritative,
+		InheritanceEnabled:         false,
+		PreserveInheritedOnProtect: true,
+		AccessRules: []FileACLAccessRule{
+			{Identity: "BUILTIN\\Administrators", Rights: []string{"FullControl"}},
+		},
+	}
+	if err := ValidateFileACLInput(&in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if in.PreserveInheritedOnProtect {
+		t.Error("authoritative mode must protect without preserving, or two applies never converge")
+	}
+
+	// Additive mode keeps the flag: undeclared entries are not managed there, so
+	// the preserved copies are stable.
+	additive := in
+	additive.Mode = FileACLModeAdditive
+	additive.PreserveInheritedOnProtect = true
+	if err := ValidateFileACLInput(&additive); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !additive.PreserveInheritedOnProtect {
+		t.Error("additive mode must keep preserve_inherited_on_protect")
+	}
+
+	// Leaving inheritance enabled makes the flag irrelevant but must not be
+	// rewritten.
+	unprotected := in
+	unprotected.InheritanceEnabled = true
+	unprotected.PreserveInheritedOnProtect = true
+	if err := ValidateFileACLInput(&unprotected); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !unprotected.PreserveInheritedOnProtect {
+		t.Error("an unprotected target must keep the flag untouched")
+	}
+}

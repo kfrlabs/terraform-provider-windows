@@ -339,6 +339,21 @@ func ValidateFileACLInput(input *FileACLInput) error {
 		}
 	}
 
+	// Verified on a live host: SetAccessRuleProtection(true, true) does not
+	// convert the inherited entries in memory. GetAccessRules still reports zero
+	// explicit entries afterwards, and the conversion is performed by the kernel
+	// when Set-Acl commits. No ordering of operations can therefore purge those
+	// copies in the same pass: they land on disk as explicit entries, and the
+	// next apply removes them, so two consecutive applies never converge.
+	//
+	// Authoritative mode therefore always protects without preserving. The
+	// resulting DACL is exactly the declared rules, which is what the mode
+	// promises, and the provider warns when the ignored value was set
+	// explicitly.
+	if input.Mode == FileACLModeAuthoritative && !input.InheritanceEnabled {
+		input.PreserveInheritedOnProtect = false
+	}
+
 	if input.Mode == FileACLModeAuthoritative && len(input.AccessRules) == 0 {
 		return &FileACLError{
 			Kind: FileACLErrorInvalidInput,

@@ -358,8 +358,13 @@ func (v fileACLCrossFieldValidator) ValidateResource(ctx context.Context, req re
 		return
 	}
 
-	// An unknown value cannot be validated yet: defer to apply time.
-	if cfg.Mode.IsUnknown() || cfg.InheritanceEnabled.IsUnknown() {
+	// An unknown value cannot be validated yet: defer to apply time. path is
+	// specifically unknown whenever it references another resource, as in
+	// path = windows_file.f.path, which is the idiomatic way to secure a file
+	// this provider also creates. Validating it here would reject that config
+	// outright with "path must not be empty".
+	if cfg.Path.IsUnknown() || cfg.Mode.IsUnknown() ||
+		cfg.InheritanceEnabled.IsUnknown() || cfg.PreserveInheritedOnProtect.IsUnknown() {
 		return
 	}
 	for _, rule := range cfg.AccessRules {
@@ -389,10 +394,12 @@ func (v fileACLCrossFieldValidator) ValidateResource(ctx context.Context, req re
 		!cfg.InheritanceEnabled.IsNull() && !cfg.InheritanceEnabled.ValueBool() &&
 		!cfg.PreserveInheritedOnProtect.IsNull() && cfg.PreserveInheritedOnProtect.ValueBool() {
 		resp.Diagnostics.AddAttributeWarning(path.Root("preserve_inherited_on_protect"),
-			"preserve_inherited_on_protect has no effect here",
-			"In authoritative mode the entries converted from inherited to explicit are not declared as "+
-				"access_rule blocks, so the same apply removes them again. Declare them explicitly, or use "+
-				"mode = \"additive\" if they must survive.")
+			"preserve_inherited_on_protect is ignored in authoritative mode",
+			"Windows converts the inherited entries into explicit ones only when the descriptor is "+
+				"committed, so they cannot be reconciled by the apply that creates them: the next apply "+
+				"would remove them and no plan would ever be empty. Authoritative mode therefore protects "+
+				"the target without preserving them, and the resulting DACL is exactly the declared "+
+				"access_rule blocks. Declare the entries you want to keep, or use mode = \"additive\".")
 	}
 }
 
