@@ -44,11 +44,11 @@ func testAccFilePreCheck(t *testing.T) {
 // their cleanup even though the provider itself authenticated successfully.
 func accFileClient(t *testing.T) winclient.FileClient {
 	t.Helper()
-	cfg := winclient.Config{
-		Timeout:               60 * time.Second,
-		InsecureIgnoreHostKey: true,
-	}
+	cfg := winclient.Config{Timeout: 60 * time.Second}
 	winclient.ResolveFromEnv(&cfg)
+	if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
+		cfg.InsecureIgnoreHostKey = true
+	}
 	c, err := winclient.New(cfg)
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)
@@ -64,11 +64,11 @@ func testAccCheckFileDestroy(s *terraform.State) error {
 			continue
 		}
 		if fc == nil {
-			cfg := winclient.Config{
-				Timeout:               60 * time.Second,
-				InsecureIgnoreHostKey: true,
-			}
+			cfg := winclient.Config{Timeout: 60 * time.Second}
 			winclient.ResolveFromEnv(&cfg)
+			if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
+				cfg.InsecureIgnoreHostKey = true
+			}
 			c, err := winclient.New(cfg)
 			if err != nil {
 				return err
