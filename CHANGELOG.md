@@ -19,6 +19,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_directory` resource for creating and managing remote Windows directories over SSH and PowerShell. It supports parent creation, directory attributes, import, drift detection, and an explicit `recursive_delete` safeguard.
+
+
 - New resource `windows_file_acl`, which manages the NTFS security descriptor of
   an existing file or directory: owner, DACL and inheritance protection. It
   never creates nor deletes the target, so it composes with `windows_file`,
