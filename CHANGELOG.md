@@ -19,6 +19,57 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New resource `windows_file_acl`, which manages the NTFS security descriptor of
+  an existing file or directory: owner, DACL and inheritance protection. It
+  never creates nor deletes the target, so it composes with `windows_file`,
+  which preserves the security descriptor on every content update. Audit
+  entries (SACL) are out of scope, and permissions are never applied
+  recursively.
+
+  `mode = "authoritative"` (the default) makes the explicit DACL exactly the
+  declared `access_rule` blocks: an entry added out of band shows up as drift
+  and is removed on the next apply. `mode = "additive"` enforces only the
+  declared entries and leaves the rest of the DACL untouched and undiffed,
+  which is what you want on a path whose permissions are partly owned by an
+  installer. `Destroy` restores inheritance and strips the managed entries; it
+  never deletes the secured file or directory.
+
+  Identities are accepted as a SID, a qualified name or a bare local name, and
+  are resolved on the target and **compared by SID**: renaming an account or
+  qualifying it differently does not produce a spurious diff, and an orphaned
+  SID left by a deleted account stays readable. Rights are compared on the
+  effective access mask rather than on the `FileSystemRights` keywords, since
+  the composite values overlap (`Modify` includes `Read`), and the comparison
+  ignores the `Synchronize` bit, which Windows applies inconsistently: the same
+  declared right lands as `0x20089` on a file but `0x120089` on a directory
+  depending on which API wrote the entry.
+
+  Observed data is exposed separately from the declarative blocks, as the
+  computed `sddl` string and the `effective_access_rules` list (which includes
+  inherited entries). No computed attribute lives inside an `access_rule`
+  block, because Terraform cannot correlate the elements of a repeated block
+  that carries computed values. `Read` reconciles rather than overwrites: a
+  declared rule that matches the host is left exactly as it was written, so
+  `Modify` is not rewritten into a keyword decomposition and a bare account
+  name is not replaced by its qualified form.
+
+  Two guard rails refuse a configuration that would lock an operator out: an
+  `authoritative` resource with no `access_rule`, and
+  `inheritance_enabled = false` with no allow entry, which would leave an empty
+  effective DACL denying access to everyone including the owner.
+  `preserve_inherited_on_protect` is honoured in `additive` mode but ignored
+  (with a warning) in `authoritative` mode: Windows converts inherited entries
+  into explicit ones only when the descriptor is committed, so the apply that
+  creates those copies cannot reconcile them and no plan would ever be empty.
+
+  Changing `owner` requires `SeTakeOwnershipPrivilege` and
+  `SeRestorePrivilege`; leaving the attribute unset leaves ownership untouched
+  and undiffed. The desired descriptor is streamed to the host as JSON on
+  stdin, so no path, identity or right is ever interpolated into script text,
+  and errors are classified from .NET exception types and Win32 codes read from
+  `HResult` rather than from message text, which keeps the mapping working on a
+  non-English host.
+
 - New resource `windows_file`, which manages a single file on the target host:
   content, encoding and file attributes. Content can come from `content`
   (inline text), `content_base64` (binary), `source` (a file on the machine
