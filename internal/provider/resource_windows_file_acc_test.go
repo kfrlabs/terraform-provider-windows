@@ -182,19 +182,22 @@ resource "windows_file" "bom" {
 }
 
 resource "windows_file" "utf16" {
-  path     = %q
-  content  = "ab"
-  encoding = "utf16le"
+  path       = %q
+  content    = "ab"
+  encoding   = "utf16le"
+  depends_on = [windows_file.bom]
 }
 
 resource "windows_file" "crlf" {
-  path    = %q
-  content = "a\r\nb"
+  path       = %q
+  content    = "a\r\nb"
+  depends_on = [windows_file.utf16]
 }
 
 resource "windows_file" "accents" {
-  path    = %q
-  content = "caf\u00e9"
+  path       = %q
+  content    = "caf\u00e9"
+  depends_on = [windows_file.crlf]
 }
 `, fileTestDir+`\bom.txt`, fileTestDir+`\utf16.txt`, fileTestDir+`\crlf.txt`, fileTestDir+`\accents.txt`)
 
