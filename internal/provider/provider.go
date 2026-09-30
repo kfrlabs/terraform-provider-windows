@@ -268,6 +268,8 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 	return []func() resource.Resource{
 		NewWindowsEnvironmentVariableResource,
 		NewWindowsFeatureResource,
+		NewWindowsFileResource,
+		NewWindowsFileACLResource,
 		NewWindowsFirewallRuleResource,
 		NewWindowsHostnameResource,
 		NewWindowsLegacyPackageResource,
