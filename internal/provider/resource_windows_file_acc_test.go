@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"testing"
 	"time"
 
@@ -38,22 +37,19 @@ func testAccFilePreCheck(t *testing.T) {
 
 // accFileClient builds a direct winclient for out-of-band manipulation, which
 // is the only way to simulate drift (EC-5) and disappearance (EC-4).
+//
+// ResolveFromEnv is intentional here: the public-key CI leg clears
+// WINDOWS_PASSWORD and provides WINDOWS_PRIVATE_KEY_PATH instead. Keeping a
+// password-only config in this helper makes the resource tests fail during
+// their cleanup even though the provider itself authenticated successfully.
 func accFileClient(t *testing.T) winclient.FileClient {
 	t.Helper()
-	port := 22
-	if p := os.Getenv("WINDOWS_PORT"); p != "" {
-		if n, err := strconv.Atoi(p); err == nil {
-			port = n
-		}
-	}
-	c, err := winclient.New(winclient.Config{
-		Host:                  os.Getenv("WINDOWS_HOST"),
-		Port:                  port,
-		Username:              os.Getenv("WINDOWS_USERNAME"),
-		Password:              os.Getenv("WINDOWS_PASSWORD"),
+	cfg := winclient.Config{
 		Timeout:               60 * time.Second,
 		InsecureIgnoreHostKey: true,
-	})
+	}
+	winclient.ResolveFromEnv(&cfg)
+	c, err := winclient.New(cfg)
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)
 	}
@@ -68,20 +64,12 @@ func testAccCheckFileDestroy(s *terraform.State) error {
 			continue
 		}
 		if fc == nil {
-			port := 22
-			if p := os.Getenv("WINDOWS_PORT"); p != "" {
-				if n, err := strconv.Atoi(p); err == nil {
-					port = n
-				}
-			}
-			c, err := winclient.New(winclient.Config{
-				Host:                  os.Getenv("WINDOWS_HOST"),
-				Port:                  port,
-				Username:              os.Getenv("WINDOWS_USERNAME"),
-				Password:              os.Getenv("WINDOWS_PASSWORD"),
+			cfg := winclient.Config{
 				Timeout:               60 * time.Second,
 				InsecureIgnoreHostKey: true,
-			})
+			}
+			winclient.ResolveFromEnv(&cfg)
+			c, err := winclient.New(cfg)
 			if err != nil {
 				return err
 			}
