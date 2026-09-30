@@ -25,6 +25,35 @@ go test ./internal/winclient/ -run TestFeatureClient -v
 
 Acceptance tests require `TF_ACC=1` plus `WINDOWS_HOST`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD` and a reachable Windows target; without them they skip. They also live behind the `acceptance` build tag (`-tags acceptance`) and share `testAccProtoV6ProviderFactories` from `internal/provider/acc_test_helper.go`; the default `make test` build never compiles them. The `testacc-windows` workflow (`.github/workflows/testacc-windows.yml`) runs them on a GitHub-hosted `windows-latest` runner that targets its own local OpenSSH Server, across an `auth: [password, publickey]` matrix so both credential paths are exercised against a real sshd. It triggers on `workflow_dispatch` and on PRs touching `internal/winclient/**` or `internal/provider/**`.
 
+### Local acceptance target: throwaway Windows container
+
+CI runs the acceptance suite on a GitHub-hosted `windows-latest` runner, but
+locally you need your own target. `test/windows-container/` builds a disposable
+SSH-reachable Windows container for exactly that: everything the tests write
+lands inside it and disappears with `docker rm -f`, so no shared host gets
+polluted. It needs a Windows Server host (validated on **Server 2025**) running
+Docker in process isolation, and the base image tag must match the host build
+(`servercore:ltsc2025`) or process isolation refuses the kernel. OpenSSH
+binaries are copied from the host's `C:\Windows\System32\OpenSSH` into the
+image rather than downloaded, which sidesteps version drift entirely.
+
+Point the suite at it with `WINDOWS_HOST`, `WINDOWS_PORT=2222`,
+`WINDOWS_USERNAME=tfacc`, `WINDOWS_PASSWORD` and
+`WINDOWS_INSECURE_IGNORE_HOST_KEY=true`. Build, run and teardown commands are
+in `test/windows-container/README.md`.
+
+That README also records four traps, each of which costs a build-and-debug
+cycle and none of which fails with an obvious message: `net user` hangs on a
+password of 15+ characters or one containing the account name; sshd must run as
+`NT AUTHORITY\SYSTEM` or it kills every session with
+`CreateProcessAsUserW failed error:1314`, and registering it as a service fails
+differently (error 1067, no log at all); host keys have to be generated at
+runtime as SYSTEM, since keys generated at build time keep a
+`ContainerAdministrator` ACE that sshd rejects as "permissions are too open";
+and `sshd_config` must be written from scratch, because the shipped default
+ends with a `Match Group administrators` block that swallows any appended
+global directive. Read it before modifying the image.
+
 Unit tests never reach a **Windows** host, but they do speak SSH: `internal/winclient/transport_test.go` drives real handshakes against the in-process server in `sshtest_test.go` (x/crypto's server side, loopback, no build tag, milliseconds). That tier is what covers auth method selection, host key acceptance/rejection, and the `-EncodedCommand` + UTF-16LE-on-stdin bootstrap end to end — none of which fakes can prove. Keep it free of Docker, network and external images so it stays part of the default `make test`.
 
 Enabled linters (`.golangci.yml`): `errcheck`, `gofmt` (simplify), `gosec`, `govet`, `ineffassign`, `staticcheck`, `unused`. `_test.go` files are excluded from `errcheck`/`gosec`.
