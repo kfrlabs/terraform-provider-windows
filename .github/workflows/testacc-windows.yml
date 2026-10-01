@@ -13,16 +13,34 @@
 # the windows_scheduled_task resource actually run; the remaining resource
 # acceptance tests are still skeletons and self-skip.
 #
-# The suite is sharded across runners rather than parallelised in-process. Two
-# thirds of its wall clock is windows_feature: Get-WindowsFeature imports the
-# ServerManager module on every call (~18s), and a fresh SSH connection and
-# powershell.exe per call means that cost is paid for each of the 5-6 reads
-# Terraform performs per test. t.Parallel() is not an option there -- DISM and
-# Install-WindowsFeature are machine-global and serialised by Windows, so
-# concurrent feature tests would flake. Separate runners are separate machines,
-# which sidesteps shared state entirely. The floor is the slowest single test
-# (TestAccWindowsFeature_Basic, ~4min); going below that needs a persistent
-# PowerShell session in winclient, not more shards.
+# The suite is sharded across runners rather than parallelised in-process,
+# because none of these tests use t.Parallel() (see below), so within a
+# single `go test` run they execute strictly back to back.
+#
+# windows_feature is the one genuinely unavoidable cost: Get-WindowsFeature
+# imports the ServerManager module on every call (~18s), and a fresh SSH
+# connection and powershell.exe per call means that cost is paid for each of
+# the 5-6 reads Terraform performs per test. t.Parallel() is not an option
+# there -- DISM and Install-WindowsFeature are machine-global and serialised
+# by Windows, so concurrent feature tests would flake. TestAccWindowsFeature_
+# Basic and _Import each get their own runner for exactly that reason, and
+# each is a floor on its own: ~4-6.5min per test, measured. Going below that
+# needs a persistent PowerShell session in winclient, not more shards.
+#
+# Every other resource type does NOT share that constraint (distinct
+# resource names/paths per test, a fresh SSH dial per call), but as the
+# provider grew past file/registry/service/scheduled-task/etc. resources, all
+# of it kept landing in one `rest` shard that was sized and documented for a
+# much smaller suite (~20 tests). By the time it held 85 tests it was the
+# slowest shard in the matrix at ~16min, eclipsing windows_feature -- not
+# because any single test got slower, but because nothing was re-balancing
+# the split as tests accumulated. The shards below group tests by resource
+# family (prefix-matched, so new tests of an existing resource land in the
+# right shard automatically) and are rebalanced to ~6min each based on
+# measured per-test timings. `rest` stays as a catch-all safety net: it only
+# ever runs tests from a genuinely new resource family nobody has sorted into
+# a shard yet, so coverage can never silently go unscheduled -- but if it
+# stops being empty, that is the signal to rebalance again.
 
 name: testacc-windows
 
@@ -60,23 +78,46 @@ jobs:
         # Both authentication paths get exercised against the real sshd:
         # password auth, and the public-key auth the provider now recommends.
         auth: [password, publickey]
-        # Shards are balanced on measured durations, not on file count. `rest`
-        # holds ~20 tests of 2-15s each; the two feature entries are single
-        # tests that dominate everything else.
+        # Shards are balanced on measured durations, not on file count (see
+        # the header comment above for how and why).
         # `skip` and not a negative lookahead: go test -run compiles with RE2,
         # which has no (?!...). Anchoring every filter on ^TestAcc also keeps
         # the ~200 unit tests in this package out of the acceptance job, where
         # test.yml already covers them on ubuntu.
         shard:
-          - name: feature
-            filter: "^TestAccWindowsFeature_"
+          # windows_feature write tests: each is its own floor (DISM is
+          # machine-global, see above), so each gets a dedicated runner
+          # instead of sharing one and summing its two tests' time.
+          - name: feature-basic
+            filter: "^TestAccWindowsFeature_Basic$"
             skip: ""
-          - name: feature-ds
-            filter: "^(TestAccWindowsFeatureDataSource_|TestAccWindowsLocalUserDataSource_)"
+          - name: feature-import
+            filter: "^TestAccWindowsFeature_Import$"
             skip: ""
+          # Everything below is read/write against its own distinct
+          # resource (unique names/paths per test), so grouping by resource
+          # family for shard balance carries no correctness risk. Sums are
+          # measured from a full `rest`-shard run; rebalance by moving a
+          # family between shards if one drifts far from the others.
+          - name: storage
+            # FileACL(244s) + RegistryValue(58s) + Directory(45s) + Hostname(20s) ~= 367s
+            filter: "^TestAcc(WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname)(DataSource)?_"
+            skip: ""
+          - name: identity-net
+            # FirewallRule(143s) + File(87s) + LocalGroupMember(60s) + LocalUser(49s) + Service(34s) ~= 373s
+            filter: "^TestAcc(WindowsFirewallRule|WindowsFile|WindowsLocalGroupMember|WindowsLocalUser|WindowsService)(DataSource)?_"
+            skip: ""
+          - name: scheduling
+            # FeatureDataSource(137s, read-only Get-WindowsFeature, safe here) + ScheduledTask(122s) + LocalGroup(55s) + EnvironmentVariable(37s) ~= 351s
+            filter: "^(TestAccWindowsFeatureDataSource_|TestAcc(WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)(DataSource)?_|TestAccountExpiresConflictValidator_)"
+            skip: ""
+          # Safety net: catches any TestAcc* that doesn't belong to a family
+          # above yet (e.g. a brand-new resource's acceptance tests). Empty
+          # today -- if it starts taking real time, split its tests into
+          # their own family and rebalance the shards above.
           - name: rest
             filter: "^TestAcc"
-            skip: "^TestAcc(WindowsFeature_|WindowsFeatureDataSource_|WindowsLocalUserDataSource_)"
+            skip: "^TestAcc(WindowsFeature_|WindowsFeatureDataSource_|WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname|WindowsFirewallRule|WindowsFile|WindowsLocalGroupMember|WindowsLocalUser|WindowsService|WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)|^TestAccountExpiresConflictValidator_"
     defaults:
       run:
         shell: pwsh
