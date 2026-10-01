@@ -266,6 +266,7 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 // The list is empty at bootstrap and filled in by follow-up KDust tasks.
 func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		NewWindowsDirectoryResource,
 		NewWindowsEnvironmentVariableResource,
 		NewWindowsFeatureResource,
 		NewWindowsFileResource,

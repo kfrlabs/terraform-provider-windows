@@ -19,6 +19,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New resource `windows_directory`, which manages the presence, NTFS attributes
+  (`hidden` / `readonly` / `system`) and absence of a directory on the target
+  host. Content of the directory is never managed here: only the directory
+  entry itself. Unlike `windows_file`, creating a `windows_directory` that
+  already exists on the host is not an error, since a directory is naturally
+  a shareable container; only a path that resolves to an existing file is
+  rejected. Deleting a non-empty directory fails explicitly unless
+  `recursive_delete = true`, so files not managed by Terraform are never
+  silently discarded. Missing parent directories are created on demand unless
+  `create_parent_directories = false`, in which case a missing parent is a
+  typed, explicit error rather than a raw PowerShell exception. Pair it with
+  `windows_file_acl`, which already accepts a directory target, for ownership
+  and ACL management.
+
 - New resource `windows_file_acl`, which manages the NTFS security descriptor of
   an existing file or directory: owner, DACL and inheritance protection. It
   never creates nor deletes the target, so it composes with `windows_file`,

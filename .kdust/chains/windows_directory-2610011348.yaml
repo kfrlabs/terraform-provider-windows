@@ -1,0 +1,12 @@
+chain: terraform-provider-windows
+resource: windows_directory
+kind: resource
+branch: kdust/chain/windows_directory-2610011348
+started_at: 2026-10-01T13:48:00Z
+description: Manages the presence, attributes and absence of a directory on a remote Windows host over SSH + PowerShell.
+workers:
+  - win-spec-analyst
+  - schema-architect
+  - provider-coder
+  - test-engineer
+  - quality-gate
