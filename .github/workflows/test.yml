@@ -56,7 +56,11 @@ jobs:
   test:
     name: unit tests
     runs-on: ubuntu-latest
-    needs: build
+    # No `needs: build`: `go test` compiles the packages it exercises on its
+    # own, in a fresh runner that shares no build cache with the `build` job
+    # anyway. Gating this job behind `build` only serialised two independent
+    # ~20-40s jobs for no benefit; running them in parallel is the single
+    # biggest win in this workflow's wall-clock time.
     steps:
       - uses: actions/checkout@v7
 
