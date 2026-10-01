@@ -381,11 +381,6 @@ func (d *DirectoryClientImpl) Update(ctx context.Context, path string, attribute
 	return toDirectoryState(path, &payload), nil
 }
 
-// directoryDeleteData mirrors the JSON object returned by the Delete PS script.
-type directoryDeleteData struct {
-	Deleted bool `json:"deleted"`
-}
-
 // Delete implements DirectoryClient.Delete.
 //
 // Idempotent: a missing directory is a silent no-op (EC-5). Returns
