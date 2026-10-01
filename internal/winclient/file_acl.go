@@ -165,6 +165,9 @@ function Get-FileACLPropagationName($F) {
 # An absent inheritance defaults per target type, which is the only place where
 # the target type is actually known. Container inheritance on a file is refused
 # rather than silently written as a no-op flag.
+# access_mask arrives as an unsigned 32-bit value (JSON has no uint32): values
+# above [int]::MaxValue must be folded back to signed before the
+# FileSystemRights cast, otherwise a mask carrying generic rights fails.
 function New-FileACLRule($Spec, [string]$TargetType) {
   $sid = Resolve-FileACLIdentity ([string]$Spec.identity)
   $inh = [string]$Spec.inheritance
@@ -175,7 +178,9 @@ function New-FileACLRule($Spec, [string]$TargetType) {
     throw (New-Object System.ArgumentException(
       ('inheritance ' + $inh + ' is only valid on a directory; the target is a file')))
   }
-  $mask  = [int]$Spec.access_mask
+  $maskLong = [int64]$Spec.access_mask
+  if ($maskLong -gt 2147483647) { $maskLong = $maskLong - 4294967296 }
+  $mask  = [int]$maskLong
   $type  = [System.Security.AccessControl.AccessControlType]::Allow
   if ([string]$Spec.type -eq 'deny') { $type = [System.Security.AccessControl.AccessControlType]::Deny }
   return (New-Object System.Security.AccessControl.FileSystemAccessRule(
@@ -223,10 +228,16 @@ function Build-FileACLData([string]$P, [string]$T) {
     try { $name = (New-Object System.Security.Principal.SecurityIdentifier($sidValue)).Translate([System.Security.Principal.NTAccount]).Value } catch { }
     $kind = 'allow'
     if ($r.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny) { $kind = 'deny' }
+    # FileSystemRights is a signed int32 enum: generic rights (e.g. 0xE0000000
+    # from an inherited parent ACE) read back as a negative [int], and
+    # [uint32](negative) throws. Fold back to unsigned manually.
+    $rawMask = [int]$r.FileSystemRights
+    $maskU = [int64]$rawMask
+    if ($rawMask -lt 0) { $maskU = $maskU + 4294967296 }
     [void]$rules.Add([ordered]@{
       identity     = $name
       identity_sid = $sidValue
-      access_mask  = [int64]([uint32]([int]$r.FileSystemRights))
+      access_mask  = $maskU
       type         = $kind
       inheritance  = (Get-FileACLInheritanceName $r.InheritanceFlags)
       propagation  = (Get-FileACLPropagationName $r.PropagationFlags)

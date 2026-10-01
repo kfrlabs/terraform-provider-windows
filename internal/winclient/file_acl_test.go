@@ -81,6 +81,10 @@ func TestFileACLRightsFromMask(t *testing.T) {
 		{"modify with synchronize", 197055 | FileACLRightSynchronize, "Modify", 0},
 		{"read with synchronize", 131209 | FileACLRightSynchronize, "Read", 0},
 		{"generic all is surfaced", 0x10000000, "", 0x10000000},
+		// Inherited directory ACEs report generic rights as a signed
+		// negative int32 (-536805376 = 0xE0000000): the unsigned mask must
+		// survive the trip and surface as residual, never crash.
+		{"generic read+write+execute", 0xE0000000, "", 0xE0000000},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -280,6 +284,30 @@ func TestParseFileACLPayload(t *testing.T) {
 		}
 	})
 
+	t.Run("generic inherited mask survives as residual", func(t *testing.T) {
+		raw := json.RawMessage(`{"found":true,"path":"C:\\d","target_type":"directory",` +
+			`"owner":"BUILTIN\\Administrators","owner_sid":"S-1-5-32-544",` +
+			`"inheritance_enabled":true,"sddl":"O:BAG:DUD:PAI","access_rules":[` +
+			`{"identity":"NT AUTHORITY\\SYSTEM","identity_sid":"S-1-5-18","access_mask":3758161920,` +
+			`"type":"allow","inheritance":"container_object","propagation":"none","inherited":true}]}`)
+		st, err := parseFileACLPayload(raw, `C:\d`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(st.AccessRules) != 1 {
+			t.Fatalf("got %d rules, want 1", len(st.AccessRules))
+		}
+		if st.AccessRules[0].AccessMask != 3758161920 {
+			t.Errorf("mask = %d, want 3758161920 (0xE0000000)", st.AccessRules[0].AccessMask)
+		}
+		if len(st.AccessRules[0].Rights) != 1 || st.AccessRules[0].Rights[0] != "0xE0000000" {
+			t.Errorf("rights = %v, want [0xE0000000]", st.AccessRules[0].Rights)
+		}
+		if len(st.ExplicitRules()) != 0 {
+			t.Error("an inherited generic rule must not be reported as explicit")
+		}
+	})
+
 	// ConvertTo-Json serialises a one-element array as a bare object.
 	t.Run("tolerates a single rule as an object", func(t *testing.T) {
 		raw := json.RawMessage(`{"found":true,"target_type":"file","access_rules":` +
@@ -324,6 +352,13 @@ func TestFileACLScriptHygiene(t *testing.T) {
 	// Error classification must never depend on message text.
 	if !strings.Contains(psFileACLHeader, "$ex.HResult -band 0xFFFF") {
 		t.Error("classification must read Win32 codes from HResult, not from message text")
+	}
+	// Signed-to-unsigned mask conversion must never use [uint32](negative):
+	// generic rights read back as -536805376 and that cast throws.
+	for _, body := range []string{psFileACLHeader, psFileACLSetBody, psFileACLReadBody, psFileACLResetBody} {
+		if strings.Contains(body, "[uint32]([int]") {
+			t.Error("mask conversion must fold negative int32 manually, [uint32]([int]...) throws")
+		}
 	}
 }
 
