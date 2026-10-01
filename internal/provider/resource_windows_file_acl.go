@@ -161,22 +161,20 @@ func windowsFileACLSchemaDefinition(ctx context.Context) schema.Schema {
 				Validators: []validator.String{
 					stringvalidator.OneOf(winclient.FileACLModeAuthoritative, winclient.FileACLModeAdditive),
 				},
-				MarkdownDescription: "How the DACL is reconciled.\n\n" +
-					"- `authoritative` (default): the explicit DACL is exactly the declared rules. Any explicit " +
-					"entry that is not declared is removed, and an out-of-band addition shows up as drift.\n" +
-					"- `additive`: only the declared rules are enforced. Other explicit entries are left untouched " +
-					"and never diffed.",
+				MarkdownDescription: "How the DACL is reconciled. With `authoritative` (the default) the " +
+					"explicit DACL is exactly the declared rules, so an entry that is not declared is removed " +
+					"and an out-of-band addition shows up as drift. With `additive` only the declared rules are " +
+					"enforced and other explicit entries are left untouched and never diffed.",
 			},
 			"owner": schema.StringAttribute{
 				Optional: true,
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
 				},
-				MarkdownDescription: "Owner to enforce, as a SID, a qualified name (`DOMAIN\\\\user`, " +
-					"`BUILTIN\\\\Administrators`) or a bare local name. When omitted, ownership is left untouched " +
-					"and never diffed.\n\n" +
-					"Changing the owner requires `SeTakeOwnershipPrivilege` and `SeRestorePrivilege` on the " +
-					"connecting account.",
+				MarkdownDescription: "Owner to enforce, as a SID, a qualified name (`DOMAIN\\user`, " +
+					"`BUILTIN\\Administrators`) or a bare local name. When omitted, ownership is left " +
+					"untouched and never diffed. Changing the owner requires `SeTakeOwnershipPrivilege` and " +
+					"`SeRestorePrivilege` on the connecting account.",
 			},
 			"inheritance_enabled": schema.BoolAttribute{
 				Optional: true,
@@ -189,10 +187,11 @@ func windowsFileACLSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional: true,
 				Computed: true,
 				Default:  booldefault.StaticBool(true),
-				MarkdownDescription: "When inheritance is disabled, whether the previously inherited entries are " +
-					"converted into explicit ones (`true`) or dropped (`false`).\n\n" +
-					"This only has an observable effect in `additive` mode: in `authoritative` mode the converted " +
-					"entries are not declared, so they are removed by the same apply.",
+				MarkdownDescription: "When inheritance is disabled, whether the previously inherited entries " +
+					"are converted into explicit ones (`true`) or dropped (`false`). Only honoured in " +
+					"`additive` mode: `authoritative` mode always protects without preserving, because Windows " +
+					"converts the entries only when the descriptor is committed and the apply that creates them " +
+					"cannot reconcile them.",
 			},
 
 			"target_type": schema.StringAttribute{
@@ -236,7 +235,7 @@ func windowsFileACLSchemaDefinition(ctx context.Context) schema.Schema {
 								stringvalidator.LengthAtLeast(1),
 							},
 							MarkdownDescription: "Trustee, as a SID (`S-1-5-32-544`), a qualified name " +
-								"(`DOMAIN\\\\user`, `NT AUTHORITY\\\\SYSTEM`) or a bare local name. It is resolved " +
+								"(`DOMAIN\\user`, `NT AUTHORITY\\SYSTEM`) or a bare local name. It is resolved " +
 								"on the target and compared by SID, so renaming or re-qualifying an account does " +
 								"not produce a spurious diff.",
 						},
@@ -358,8 +357,13 @@ func (v fileACLCrossFieldValidator) ValidateResource(ctx context.Context, req re
 		return
 	}
 
-	// An unknown value cannot be validated yet: defer to apply time.
-	if cfg.Mode.IsUnknown() || cfg.InheritanceEnabled.IsUnknown() {
+	// An unknown value cannot be validated yet: defer to apply time. path is
+	// specifically unknown whenever it references another resource, as in
+	// path = windows_file.f.path, which is the idiomatic way to secure a file
+	// this provider also creates. Validating it here would reject that config
+	// outright with "path must not be empty".
+	if cfg.Path.IsUnknown() || cfg.Mode.IsUnknown() ||
+		cfg.InheritanceEnabled.IsUnknown() || cfg.PreserveInheritedOnProtect.IsUnknown() {
 		return
 	}
 	for _, rule := range cfg.AccessRules {
@@ -389,10 +393,12 @@ func (v fileACLCrossFieldValidator) ValidateResource(ctx context.Context, req re
 		!cfg.InheritanceEnabled.IsNull() && !cfg.InheritanceEnabled.ValueBool() &&
 		!cfg.PreserveInheritedOnProtect.IsNull() && cfg.PreserveInheritedOnProtect.ValueBool() {
 		resp.Diagnostics.AddAttributeWarning(path.Root("preserve_inherited_on_protect"),
-			"preserve_inherited_on_protect has no effect here",
-			"In authoritative mode the entries converted from inherited to explicit are not declared as "+
-				"access_rule blocks, so the same apply removes them again. Declare them explicitly, or use "+
-				"mode = \"additive\" if they must survive.")
+			"preserve_inherited_on_protect is ignored in authoritative mode",
+			"Windows converts the inherited entries into explicit ones only when the descriptor is "+
+				"committed, so they cannot be reconciled by the apply that creates them: the next apply "+
+				"would remove them and no plan would ever be empty. Authoritative mode therefore protects "+
+				"the target without preserving them, and the resulting DACL is exactly the declared "+
+				"access_rule blocks. Declare the entries you want to keep, or use mode = \"additive\".")
 	}
 }
 
