@@ -288,7 +288,7 @@ func TestParseFileACLPayload(t *testing.T) {
 		raw := json.RawMessage(`{"found":true,"path":"C:\\d","target_type":"directory",` +
 			`"owner":"BUILTIN\\Administrators","owner_sid":"S-1-5-32-544",` +
 			`"inheritance_enabled":true,"sddl":"O:BAG:DUD:PAI","access_rules":[` +
-			`{"identity":"NT AUTHORITY\\SYSTEM","identity_sid":"S-1-5-18","access_mask":3758161920,` +
+			`{"identity":"NT AUTHORITY\\SYSTEM","identity_sid":"S-1-5-18","access_mask":3758096384,` +
 			`"type":"allow","inheritance":"container_object","propagation":"none","inherited":true}]}`)
 		st, err := parseFileACLPayload(raw, `C:\d`)
 		if err != nil {
@@ -297,8 +297,8 @@ func TestParseFileACLPayload(t *testing.T) {
 		if len(st.AccessRules) != 1 {
 			t.Fatalf("got %d rules, want 1", len(st.AccessRules))
 		}
-		if st.AccessRules[0].AccessMask != 3758161920 {
-			t.Errorf("mask = %d, want 3758161920 (0xE0000000)", st.AccessRules[0].AccessMask)
+		if st.AccessRules[0].AccessMask != 3758096384 {
+			t.Errorf("mask = %d, want 3758096384 (0xE0000000)", st.AccessRules[0].AccessMask)
 		}
 		if len(st.AccessRules[0].Rights) != 1 || st.AccessRules[0].Rights[0] != "0xE0000000" {
 			t.Errorf("rights = %v, want [0xE0000000]", st.AccessRules[0].Rights)
