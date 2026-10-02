@@ -30,6 +30,15 @@ import (
 // fast with the evidence below instead of hanging until the job is killed.
 const diagResponseTimeout = 20 * time.Minute
 
+// diagPacingGap is a TEMPORARY probe (debug/repl-silence-probe): enforce a
+// minimum gap between consecutive writes on one persistent session. The V3
+// transcripts prove the remote wedges in ReadLine for call #2/#3 with the
+// request already written (+0/+0 deltas); if spacing writes out defeats the
+// stall, the trigger is a back-to-back forwarding race in Win32-OpenSSH;
+// if it still wedges at the same depth, the trigger is per-call count or
+// accumulated session state instead.
+const diagPacingGap = 5 * time.Second
+
 // responseTimeoutError reports a call that produced no complete REPL response
 // within diagResponseTimeout. It carries how many bytes the remote had sent
 // on each stream: zero on both means the bootstrap never executed the script
@@ -245,6 +254,11 @@ type persistentSession struct {
 	calls       int
 	stdoutCount *countReader
 	stderrCount *countReader
+
+	// lastEnd records when the previous call's response was fully
+	// consumed, for the TEMPORARY pacing probe (diagPacingGap). Only
+	// touched with Client.mu held.
+	lastEnd time.Time
 }
 
 // newPersistentSession dials, starts the REPL bootstrap and waits for its
@@ -337,6 +351,18 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		err            error
 	}
 	ps.calls++
+	// TEMPORARY pacing probe (see diagPacingGap): keep consecutive
+	// writes on one session at least diagPacingGap apart, measured from
+	// when the previous response was fully consumed.
+	if !ps.lastEnd.IsZero() {
+		if wait := diagPacingGap - time.Since(ps.lastEnd); wait > 0 {
+			select {
+			case <-ctx.Done():
+				return "", "", ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+	}
 	// TEMPORARY diagnostic snapshots: per-call byte deltas distinguish a
 	// call the remote never answered (zero new bytes) from a partial
 	// response (nonzero deltas but no end markers).
@@ -364,6 +390,7 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		_ = ps.Close()
 		return "", "", ctx.Err()
 	case r := <-done:
+		ps.lastEnd = time.Now()
 		if r.err != nil {
 			return r.stdout, r.stderr, r.err
 		}
