@@ -70,10 +70,9 @@ concurrency:
 jobs:
   acceptance:
     name: acceptance (${{ matrix.auth }}, ${{ matrix.shard.name }})
-    # TEMPORARY (debug/repl-silence-probe): windows-2022 instead of
-    # windows-latest, to test whether the wedge is specific to the
-    # 2025-based runner image / its Win32-OpenSSH build.
-    runs-on: windows-2022
+    # TEMPORARY (debug/repl-silence-probe): windows-2022 verdict recorded
+    # (same wedge) — back on windows-latest for production parity.
+    runs-on: windows-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false

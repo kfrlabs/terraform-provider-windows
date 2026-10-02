@@ -51,6 +51,26 @@ try {
 function Write-WcLog([string]$Msg) {
   if ($null -ne $__wcLog) { Add-Content -Path $__wcLog -Value ((Get-Date -Format o) + ' ' + $Msg) -ErrorAction SilentlyContinue }
 }
+# TEMPORARY V5D probe: read request lines byte-by-byte off a single raw FD 0
+# stream opened once at boot, bypassing the cached [Console]::In reader
+# entirely (no StreamReader buffering, no decoder state, no SetIn coupling).
+# Same contract as ReadLine: one \n-terminated line (\r stripped), $null on
+# EOF. Request lines are base64, hence pure ASCII.
+$__wcStdin = [Console]::OpenStandardInput()
+function Read-WcLine {
+  $bytes = New-Object System.Collections.Generic.List[byte]
+  $one = New-Object byte[] 1
+  while ($true) {
+    $n = $__wcStdin.Read($one, 0, 1)
+    if ($n -eq 0) {
+      if ($bytes.Count -eq 0) { return $null }
+      break
+    }
+    if ($one[0] -eq 10) { break }
+    if ($one[0] -ne 13) { $bytes.Add($one[0]) }
+  }
+  return [Text.Encoding]::ASCII.GetString($bytes.ToArray())
+}
 [Console]::Out.WriteLine('` + replReadyPrefix + `' + $__wcMarker + '` + replReadySuffix + `')
 [Console]::Out.Flush()
 Write-WcLog 'READY-WRITTEN'
@@ -58,10 +78,10 @@ $__wcIter = 0
 while ($true) {
   $__wcIter++
   Write-WcLog ('ITER-START n=' + $__wcIter)
-  $__b64Script = [Console]::In.ReadLine()
+  $__b64Script = Read-WcLine
   if ($null -eq $__b64Script) { Write-WcLog 'GOT-SCRIPT-NULL-BREAK'; break }
   Write-WcLog ('GOT-SCRIPT len=' + $__b64Script.Length)
-  $__b64Secret = [Console]::In.ReadLine()
+  $__b64Secret = Read-WcLine
   if ($null -eq $__b64Secret) { $__b64Secret = '' }
   Write-WcLog ('GOT-SECRET len=' + $__b64Secret.Length)
   $__scriptBytes = [Convert]::FromBase64String($__b64Script)
