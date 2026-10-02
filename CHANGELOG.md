@@ -34,6 +34,14 @@ All notable changes to this project will be documented in this file.
   now drained concurrently, matching how the pre-#81 transport handed
   `Stdout`/`Stderr` to `ssh.Session` as `io.Writer`s (drained by its own
   internal goroutines) rather than reading them out sequentially.
+- The persistent REPL session (#81) also hung when redirected PowerShell
+  output had no trailing newline (e.g. a CLIXML warning blob on stderr), so
+  the bootstrap's end marker landed glued to that output on the same wire
+  line. `readReplResponse` required an exact whole-line match and missed the
+  marker, waiting forever on a session that never sends EOF (hanging the
+  `identity-net`, `scheduling` and `storage` acceptance shards on later
+  calls of already-used sessions). End markers are now recognised as a line
+  suffix, keeping whatever precedes them verbatim as script output.
 
 ### Changed
 
