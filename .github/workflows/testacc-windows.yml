@@ -75,9 +75,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Both authentication paths get exercised against the real sshd:
-        # password auth, and the public-key auth the provider now recommends.
-        auth: [password, publickey]
+        # TEMPORARY (debug/repl-silence-probe): single-job matrix to keep
+        # the probe cheap. identity-net/password reproduces the wedge
+        # deterministically (firewall datasource Basic, then later hangs).
+        auth: [password]
         # Shards are balanced on measured durations, not on file count (see
         # the header comment above for how and why).
         # `skip` and not a negative lookahead: go test -run compiles with RE2,
@@ -88,36 +89,40 @@ jobs:
           # windows_feature write tests: each is its own floor (DISM is
           # machine-global, see above), so each gets a dedicated runner
           # instead of sharing one and summing its two tests' time.
-          - name: feature-basic
-            filter: "^TestAccWindowsFeature_Basic$"
-            skip: ""
-          - name: feature-import
-            filter: "^TestAccWindowsFeature_Import$"
-            skip: ""
+          # TEMPORARY (debug/repl-silence-probe): disabled, identity-net only.
+          # - name: feature-basic
+          #   filter: "^TestAccWindowsFeature_Basic$"
+          #   skip: ""
+          # - name: feature-import
+          #   filter: "^TestAccWindowsFeature_Import$"
+          #   skip: ""
           # Everything below is read/write against its own distinct
           # resource (unique names/paths per test), so grouping by resource
           # family for shard balance carries no correctness risk. Sums are
           # measured from a full `rest`-shard run; rebalance by moving a
           # family between shards if one drifts far from the others.
-          - name: storage
-            # FileACL(244s) + RegistryValue(58s) + Directory(45s) + Hostname(20s) ~= 367s
-            filter: "^TestAcc(WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname)(DataSource)?_"
-            skip: ""
+          # TEMPORARY (debug/repl-silence-probe): disabled, identity-net only.
+          # - name: storage
+          #   # FileACL(244s) + RegistryValue(58s) + Directory(45s) + Hostname(20s) ~= 367s
+          #   filter: "^TestAcc(WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname)(DataSource)?_"
+          #   skip: ""
           - name: identity-net
             # FirewallRule(143s) + File(87s) + LocalGroupMember(60s) + LocalUser(49s) + Service(34s) ~= 373s
             filter: "^TestAcc(WindowsFirewallRule|WindowsFile|WindowsLocalGroupMember|WindowsLocalUser|WindowsService)(DataSource)?_"
             skip: ""
-          - name: scheduling
-            # FeatureDataSource(137s, read-only Get-WindowsFeature, safe here) + ScheduledTask(122s) + LocalGroup(55s) + EnvironmentVariable(37s) ~= 351s
-            filter: "^(TestAccWindowsFeatureDataSource_|TestAcc(WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)(DataSource)?_|TestAccountExpiresConflictValidator_)"
-            skip: ""
+          # TEMPORARY (debug/repl-silence-probe): disabled, identity-net only.
+          # - name: scheduling
+          #   # FeatureDataSource(137s, read-only Get-WindowsFeature, safe here) + ScheduledTask(122s) + LocalGroup(55s) + EnvironmentVariable(37s) ~= 351s
+          #   filter: "^(TestAccWindowsFeatureDataSource_|TestAcc(WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)(DataSource)?_|TestAccountExpiresConflictValidator_)"
+          #   skip: ""
           # Safety net: catches any TestAcc* that doesn't belong to a family
           # above yet (e.g. a brand-new resource's acceptance tests). Empty
           # today -- if it starts taking real time, split its tests into
           # their own family and rebalance the shards above.
-          - name: rest
-            filter: "^TestAcc"
-            skip: "^TestAcc(WindowsFeature_|WindowsFeatureDataSource_|WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname|WindowsFirewallRule|WindowsFile|WindowsLocalGroupMember|WindowsLocalUser|WindowsService|WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)|^TestAccountExpiresConflictValidator_"
+          # TEMPORARY (debug/repl-silence-probe): disabled, identity-net only.
+          # - name: rest
+          #   filter: "^TestAcc"
+          #   skip: "^TestAcc(WindowsFeature_|WindowsFeatureDataSource_|WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname|WindowsFirewallRule|WindowsFile|WindowsLocalGroupMember|WindowsLocalUser|WindowsService|WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)|^TestAccountExpiresConflictValidator_"
     defaults:
       run:
         shell: pwsh
@@ -321,8 +326,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: repl-logs-${{ matrix.auth }}-${{ matrix.shard.name }}
-          path: |
-            ${{ runner.temp }}/winclient-repl-*.log
-            C:/Windows/Temp/winclient-repl-*.log
+          path: C:/Windows/Temp/winclient-repl-*.log
           if-no-files-found: ignore
           retention-days: 7
