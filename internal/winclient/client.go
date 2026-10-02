@@ -51,7 +51,9 @@ type countReader struct {
 
 func (c *countReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
-	c.n.Add(uint64(n))
+	if n > 0 {
+		c.n.Add(uint64(n))
+	}
 	return n, err
 }
 
