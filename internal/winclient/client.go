@@ -15,11 +15,47 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// diagResponseTimeout bounds a single REPL call while diagnosing the PR #89
+// acceptance hang (identity-net, scheduling, storage shards stuck with both
+// drains starved and the remote silent). TEMPORARY: revert once root-caused.
+// It fires far above any legitimate single call (feature installs take a few
+// minutes) and far below the CI go-test timeout, so a wedged remote fails
+// fast with the evidence below instead of hanging until the job is killed.
+const diagResponseTimeout = 20 * time.Minute
+
+// responseTimeoutError reports a call that produced no complete REPL response
+// within diagResponseTimeout. It carries how many bytes the remote had sent
+// on each stream: zero on both means the bootstrap never executed the script
+// (stdin delivery stall), while nonzero means the script ran and stalled
+// mid-output (or its end marker was never recognised).
+type responseTimeoutError struct {
+	msg string
+}
+
+func (e *responseTimeoutError) Error() string { return e.msg }
+
+// countReader counts bytes flowing from the remote so a stuck call can
+// report how far the response got. Safe for concurrent use by the two drain
+// goroutines (each wraps a different stream).
+type countReader struct {
+	r io.Reader
+	n atomic.Uint64
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n.Add(uint64(n))
+	return n, err
+}
+
+func (c *countReader) bytes() uint64 { return c.n.Load() }
 
 // Client wraps an SSH connection and exposes helpers to run PowerShell
 // scripts against the configured Windows host (via its OpenSSH Server,
@@ -144,6 +180,14 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 	if !isSessionBroken(err) {
 		return stdout, stderr, err
 	}
+	// A response timeout already tore the session down; surfacing it beats
+	// burning another diagResponseTimeout on a blind retry past the CI
+	// go-test timeout (TEMPORARY diagnostic, see above).
+	var rto *responseTimeoutError
+	if errors.As(err, &rto) {
+		c.session = nil
+		return stdout, stderr, err
+	}
 
 	_ = c.session.Close()
 	c.session = nil
@@ -191,6 +235,14 @@ type persistentSession struct {
 	stdout    *bufio.Reader
 	stderr    *bufio.Reader
 	marker    string
+
+	// createdAt and calls track session age and usage for the temporary
+	// response-timeout diagnostic below. calls is only touched with
+	// Client.mu held, which serialises every call on the session.
+	createdAt   time.Time
+	calls       int
+	stdoutCount *countReader
+	stderrCount *countReader
 }
 
 // newPersistentSession dials, starts the REPL bootstrap and waits for its
@@ -232,12 +284,17 @@ func newPersistentSession(ctx context.Context, c *Client) (*persistentSession, e
 		return nil, fmt.Errorf("winclient: start powershell REPL: %w", err)
 	}
 
+	stdoutCount := &countReader{r: stdoutPipe}
+	stderrCount := &countReader{r: stderrPipe}
 	ps := &persistentSession{
-		sshClient: sshClient,
-		session:   session,
-		stdin:     stdin,
-		stdout:    bufio.NewReader(stdoutPipe),
-		stderr:    bufio.NewReader(stderrPipe),
+		sshClient:   sshClient,
+		session:     session,
+		stdin:       stdin,
+		stdout:      bufio.NewReader(stdoutCount),
+		stderr:      bufio.NewReader(stderrCount),
+		createdAt:   time.Now(),
+		stdoutCount: stdoutCount,
+		stderrCount: stderrCount,
 	}
 
 	type readyResult struct {
@@ -277,6 +334,7 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		status         int
 		err            error
 	}
+	ps.calls++
 	done := make(chan result, 1)
 	go func() {
 		if _, err := io.WriteString(ps.stdin, encodeReplRequest(script, secret)); err != nil {
@@ -287,6 +345,13 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		done <- result{stdout, stderr, status, err}
 	}()
 
+	// TEMPORARY diagnostic for the PR #89 hang (see diagResponseTimeout):
+	// bound the wait and report how many response bytes arrived, so one CI
+	// run distinguishes a bootstrap that never executed the script (zero
+	// bytes on both streams: stdin delivery stall) from a script that ran
+	// and stalled mid-output. Revert once root-caused.
+	timer := time.NewTimer(diagResponseTimeout)
+	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		_ = ps.Close()
@@ -299,6 +364,21 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 			return r.stdout, r.stderr, fmt.Errorf("winclient: powershell script raised an uncaught error")
 		}
 		return r.stdout, r.stderr, nil
+	case <-timer.C:
+		outBytes := ps.stdoutCount.bytes()
+		errBytes := ps.stderrCount.bytes()
+		_ = ps.Close() // unstick the drains if they unblock on EOF
+		var partialOut, partialErr string
+		select {
+		case r := <-done:
+			partialOut, partialErr = r.stdout, r.stderr
+		case <-time.After(10 * time.Second):
+		}
+		return "", "", &responseTimeoutError{msg: fmt.Sprintf(
+			"winclient: TEMPORARY diagnostic: no REPL response within %s (session age %s, call #%d on this session, script %dB; server sent %d stdout bytes / %d stderr bytes; partial stdout %.300q, partial stderr %.300q)",
+			diagResponseTimeout, time.Since(ps.createdAt).Round(time.Second), ps.calls,
+			len(script), outBytes, errBytes,
+			truncate(partialOut, 300), truncate(partialErr, 300))}
 	}
 }
 
