@@ -1,6 +1,7 @@
 package winclient
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -564,6 +565,84 @@ func TestTransportDrainsLargeStderrWithoutDeadlock(t *testing.T) {
 	}
 	if stderr != large {
 		t.Errorf("stderr length = %d, want %d", len(stderr), len(large))
+	}
+}
+
+// The real bootstrap writes the script's stderr while the script runs,
+// BEFORE the stdout end marker — unlike the canned server default, which
+// writes stderr after it. A "cold" CIM/CDXML import (NetSecurity,
+// LocalAccounts) emits megabytes of chatter in that window; if the client
+// does not drain stderr concurrently with waiting for the stdout end
+// marker, the remote blocks on a full flow-control window and the call
+// hangs. This covers that exact ordering.
+func TestTransportDrainsLargeStderrBeforeEndMarkerWithoutDeadlock(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	large := strings.Repeat("y", 3*1024*1024)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", stderr: large, stderrBeforeEndMarker: true})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	stdout, stderr := mustRun(t, c, "Get-Thing")
+	if stdout != "ok" {
+		t.Errorf("stdout = %q, want %q", stdout, "ok")
+	}
+	if stderr != large {
+		t.Errorf("stderr length = %d, want %d", len(stderr), len(large))
+	}
+}
+
+// Redirected PowerShell streams may emit output without a trailing newline
+// (e.g. a CLIXML warning blob), gluing the end marker to that output on the
+// same line. The reader must still recognise the marker as a suffix;
+// requiring a whole-line match hangs forever on a persistent session.
+// Reproduces the testacc-windows hang on PR #89 (firewall/scheduling/
+// storage shards): the script completed, but the stderr drain never saw its
+// end marker.
+func TestReadReplResponseGluedMarkers(t *testing.T) {
+	stdout := bufio.NewReader(strings.NewReader(
+		"{\"ok\":true}\npartial-output" + replEndStdoutPrefix + "0" + replEndStdoutSuffix + "\n"))
+	stderr := bufio.NewReader(strings.NewReader(
+		"#< CLIXML\n<Objs><S S=\"warning\">chatter</S>c" + replEndStderrLine + "\n"))
+
+	out, errOut, status, err := readReplResponse(stdout, stderr)
+	if err != nil {
+		t.Fatalf("readReplResponse: %v", err)
+	}
+	if status != 0 {
+		t.Errorf("status = %d, want 0", status)
+	}
+	if want := "{\"ok\":true}\npartial-output"; out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+	if want := "#< CLIXML\n<Objs><S S=\"warning\">chatter</S>c"; errOut != want {
+		t.Errorf("stderr = %q, want %q", errOut, want)
+	}
+}
+
+// A clean marker on its own line keeps working exactly as before (no output
+// glued to it contributes nothing).
+func TestReadReplResponseCleanMarkers(t *testing.T) {
+	stdout := bufio.NewReader(strings.NewReader(
+		"{\"ok\":true}\n" + replEndStdoutPrefix + "3" + replEndStdoutSuffix + "\n"))
+	stderr := bufio.NewReader(strings.NewReader(
+		"warning line\n" + replEndStderrLine + "\n"))
+
+	out, errOut, status, err := readReplResponse(stdout, stderr)
+	if err != nil {
+		t.Fatalf("readReplResponse: %v", err)
+	}
+	if status != 3 {
+		t.Errorf("status = %d, want 3", status)
+	}
+	if out != "{\"ok\":true}\n" {
+		t.Errorf("stdout = %q", out)
+	}
+	if errOut != "warning line\n" {
+		t.Errorf("stderr = %q", errOut)
 	}
 }
 

@@ -114,6 +114,16 @@ func encodeReplSecret(secret string) string {
 // avoided this by handing Stdout/Stderr to ssh.Session as io.Writers, which
 // Session.Start drains with its own concurrent copies; this restores that
 // property for the persistent REPL.
+//
+// Markers are recognised as a line SUFFIX, not a whole line: redirected
+// PowerShell streams may emit output that does not end with a newline (e.g.
+// a CLIXML warning blob), so the bootstrap's WriteLine(marker) lands glued
+// to that output on the same line. Requiring an exact whole-line match
+// misses the marker and hangs forever on a persistent session (no EOF ever
+// arrives, unlike the old one-process-per-call transport). Anything
+// preceding the marker on its line is kept verbatim as script output. The
+// marker is always the last thing written on its stream for the call, so a
+// suffix match cannot misfire on script output.
 func readReplResponse(stdout, stderr *bufio.Reader) (out, errOut string, status int, err error) {
 	type stdoutResult struct {
 		out    string
@@ -131,15 +141,13 @@ func readReplResponse(stdout, stderr *bufio.Reader) (out, errOut string, status 
 		for {
 			line, rerr := stdout.ReadString('\n')
 			trimmed := strings.TrimRight(line, "\r\n")
-			if strings.HasPrefix(trimmed, replEndStdoutPrefix) && strings.HasSuffix(trimmed, replEndStdoutSuffix) {
-				code := strings.TrimSuffix(strings.TrimPrefix(trimmed, replEndStdoutPrefix), replEndStdoutSuffix)
-				st, atoiErr := strconv.Atoi(code)
-				if atoiErr != nil {
-					stdoutDone <- stdoutResult{outBuf.String(), 0, fmt.Errorf("winclient: malformed REPL end marker %q: %w", trimmed, atoiErr)}
+			if idx := strings.LastIndex(trimmed, replEndStdoutPrefix); idx >= 0 && strings.HasSuffix(trimmed, replEndStdoutSuffix) {
+				code := strings.TrimSuffix(trimmed[idx+len(replEndStdoutPrefix):], replEndStdoutSuffix)
+				if st, atoiErr := strconv.Atoi(code); atoiErr == nil {
+					outBuf.WriteString(trimmed[:idx])
+					stdoutDone <- stdoutResult{outBuf.String(), st, nil}
 					return
 				}
-				stdoutDone <- stdoutResult{outBuf.String(), st, nil}
-				return
 			}
 			outBuf.WriteString(line)
 			if rerr != nil {
@@ -154,7 +162,8 @@ func readReplResponse(stdout, stderr *bufio.Reader) (out, errOut string, status 
 		var errBuf strings.Builder
 		for {
 			line, rerr := stderr.ReadString('\n')
-			if strings.TrimRight(line, "\r\n") == replEndStderrLine {
+			if trimmed := strings.TrimRight(line, "\r\n"); strings.HasSuffix(trimmed, replEndStderrLine) {
+				errBuf.WriteString(strings.TrimSuffix(trimmed, replEndStderrLine))
 				stderrDone <- stderrResult{errBuf.String(), nil}
 				return
 			}

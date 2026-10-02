@@ -47,6 +47,12 @@ type testServerOptions struct {
 	// requests have been served (without responding to the next one),
 	// simulating a session that dies mid-use — for recovery tests.
 	dropAfterCalls int
+
+	// stderrBeforeEndMarker, when true, writes the canned stderr BEFORE the
+	// stdout end marker, matching the real bootstrap's ordering (the script
+	// writes its stderr while it runs, before the bootstrap emits the stdout
+	// end marker). The default writes stderr after the stdout end marker.
+	stderrBeforeEndMarker bool
 }
 
 // testRequest is one decoded REPL request the server received.
@@ -229,8 +235,15 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 			}
 
 			writeFramedLine(ch, opts.stdout)
+			if opts.stderrBeforeEndMarker {
+				// Real bootstrap ordering: the script's stderr is written
+				// while it runs, before the stdout end marker.
+				writeFramedLine(ch.Stderr(), opts.stderr)
+			}
 			_, _ = fmt.Fprintf(ch, "%s%d%s\n", replEndStdoutPrefix, opts.status, replEndStdoutSuffix)
-			writeFramedLine(ch.Stderr(), opts.stderr)
+			if !opts.stderrBeforeEndMarker {
+				writeFramedLine(ch.Stderr(), opts.stderr)
+			}
 			_, _ = fmt.Fprintf(ch.Stderr(), "%s\n", replEndStderrLine)
 		}
 
