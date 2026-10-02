@@ -321,6 +321,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: repl-logs-${{ matrix.auth }}-${{ matrix.shard.name }}
-          path: ${{ runner.temp }}/winclient-repl-*.log
+          path: |
+            ${{ runner.temp }}/winclient-repl-*.log
+            C:/Windows/Temp/winclient-repl-*.log
           if-no-files-found: ignore
           retention-days: 7

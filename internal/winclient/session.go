@@ -43,6 +43,7 @@ $__wcMarker = [guid]::NewGuid().ToString('N')
 $__wcLog = $null
 try {
   $__logDir = $env:RUNNER_TEMP
+  if ([string]::IsNullOrEmpty($__logDir)) { $__logDir = 'C:\Windows\Temp' }
   if ([string]::IsNullOrEmpty($__logDir)) { $__logDir = $env:TEMP }
   $__wcLog = Join-Path $__logDir ('winclient-repl-' + $PID + '.log')
   Add-Content -Path $__wcLog -Value ((Get-Date -Format o) + ' BOOT marker=' + $__wcMarker) -ErrorAction Stop
