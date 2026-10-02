@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars and adjust if your lab container differs from the
+# defaults documented in test/windows-container/README.md.
+
+windows_host     = "172.18.122.201"
+windows_port     = 2222
+windows_username = "tfacc"
+windows_password = "Zx9-Terra!2026"
+
+enable_network_tests = false
+enable_feature_test  = false
