@@ -294,7 +294,9 @@ jobs:
           $skip = "${{ matrix.shard.skip }}"
           $args = @('-run', "${{ inputs.run_filter || matrix.shard.filter }}")
           if ($skip) { $args += @('-skip', $skip) }
-          go test -tags acceptance ./internal/provider/ -v -timeout 120m @args
+          # 30m (not 120m) so a hung test panics with a goroutine dump before
+          # the 60m job timeout cancels the runner, revealing where it blocks.
+          go test -tags acceptance ./internal/provider/ -v -timeout 30m @args
 
       - name: go test (acceptance, public-key auth)
         if: matrix.auth == 'publickey'
@@ -306,4 +308,6 @@ jobs:
           $skip = "${{ matrix.shard.skip }}"
           $args = @('-run', "${{ inputs.run_filter || matrix.shard.filter }}")
           if ($skip) { $args += @('-skip', $skip) }
-          go test -tags acceptance ./internal/provider/ -v -timeout 120m @args
+          # 30m (not 120m) so a hung test panics with a goroutine dump before
+          # the 60m job timeout cancels the runner, revealing where it blocks.
+          go test -tags acceptance ./internal/provider/ -v -timeout 30m @args
