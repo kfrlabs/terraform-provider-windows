@@ -21,6 +21,8 @@ work/
 *.tfstate
 *.tfstate.backup
 crash.log
+test/terraform/terraform.tfvars
+test/terraform/.terraform.lock.hcl
 
 # Go build caches (container-managed)
 .gocache/
