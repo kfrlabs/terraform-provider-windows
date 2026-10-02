@@ -92,12 +92,12 @@ trips.
   retried, so a stale session does not permanently fail every subsequent call.
 - `exit` inside a script now terminates the whole reusable `powershell.exe`
   process, not just that call — the opposite of what the old one-process-per-call
-  model relied on for early-return-after-`Emit-Err`. Existing scripts that used
-  `exit 0` this way are being migrated to return a status the caller checks
-  (e.g. `windows_feature`'s `Ensure-FeatureCmdlets` returns `$false` and its
-  callers guard with `if (Ensure-FeatureCmdlets) { ... }`) instead of exiting.
-  This lands incrementally, resource by resource, validated by the real
-  Windows `testacc-windows` CI job each time, starting with `windows_feature`.
+  model relied on for early-return-after-`Emit-Err`. Scripts that used `exit 0`
+  this way are migrated to return a status the caller checks (e.g.
+  `windows_feature`'s `Ensure-FeatureCmdlets`, `windows_scheduled_task`'s
+  `Ensure-TaskFolder`, and `windows_winget_package`'s `Assert-WinGetModule`
+  return `$false` and their callers guard with
+  `if (Ensure-FeatureCmdlets) { ... }`) instead of exiting.
 
 `internal/winclient/sshtest_test.go`'s in-process server was extended to speak
 this framing protocol (ready handshake, framed per-request response,

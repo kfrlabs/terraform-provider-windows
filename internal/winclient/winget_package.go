@@ -51,7 +51,7 @@ func NewWingetPackageClient(c *Client) *WingetPackageClientImpl {
 //   - Emit-OK / Emit-Err  : JSON envelope emitters (locale-independent).
 //   - Classify-WP         : maps error message fragments to WingetPackageErrorKind strings.
 //   - Assert-WinGetModule  : pre-flight that checks and imports Microsoft.WinGet.Client;
-//     emits Emit-Err 'module_missing' + exit 0 on failure (EC-1).
+//     emits Emit-Err 'module_missing' + return on failure (EC-1).
 const wpHeader = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
@@ -78,17 +78,22 @@ function Classify-WP([string]$Msg) {
 }
 
 function Assert-WinGetModule {
+  # Returns $true on success, $false (after Emit-Err) on failure. Since #81
+  # this script runs inside a long-lived, reused PowerShell session, where
+  # "exit" would kill the session instead of just this call; callers must
+  # check the return value and stop rather than fall through.
   $m = @(Get-Module -ListAvailable 'Microsoft.WinGet.Client' -ErrorAction SilentlyContinue)
   if ($m.Count -eq 0) {
     Emit-Err 'module_missing' 'Microsoft.WinGet.Client PowerShell module is not available on this host. Install it with: Install-Module Microsoft.WinGet.Client -Scope AllUsers' @{}
-    exit 0
+    return $false
   }
   try {
     Import-Module 'Microsoft.WinGet.Client' -ErrorAction Stop
   } catch {
     Emit-Err 'module_missing' ('Failed to import Microsoft.WinGet.Client: ' + $_.Exception.Message) @{}
-    exit 0
+    return $false
   }
+  return $true
 }
 `
 
@@ -105,7 +110,7 @@ function Assert-WinGetModule {
 const wpReadBody = `
 $wpId  = @@ID@@
 $wpSrc = @@SRC@@
-Assert-WinGetModule
+if (-not (Assert-WinGetModule)) { return }
 try {
   $pkgs = @(Get-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -ErrorAction Stop)
   if ($pkgs.Count -eq 0) {
@@ -130,7 +135,7 @@ $wpId  = @@ID@@
 $wpSrc = @@SRC@@
 $wpVer = @@VER@@
 $wpOvr = @@OVERRIDE@@
-Assert-WinGetModule
+if (-not (Assert-WinGetModule)) { return }
 try {
   # EC-2: pre-flight existence check before Install
   $existing = @(Get-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -ErrorAction SilentlyContinue)
@@ -138,7 +143,7 @@ try {
     $existVer = [string]$existing[0].InstalledVersion
     $importId = $wpSrc + ':' + $wpId
     Emit-Err 'already_installed' ('Package ' + $wpId + ' is already installed (version ' + $existVer + ') from source ' + $wpSrc + '. Import with: terraform import windows_winget_package.<name> ' + $importId) @{ installed_version = $existVer }
-    exit 0
+    return
   }
   $params = @{
     Id                      = $wpId
@@ -155,25 +160,25 @@ try {
   $status = [string]$result.Status
   if ($status -eq 'NoApplicableInstaller' -or $status -eq 'InvalidVersion') {
     Emit-Err 'version_not_available' ('Version ' + $wpVer + ' not available for ' + $wpId + ' on source ' + $wpSrc + ' (status: ' + $status + ')') @{ status = $status }
-    exit 0
+    return
   }
   if ($status -eq 'BlockedByPolicy' -or $status -eq 'RequiresInteractive') {
     Emit-Err 'blocked_by_policy' ('Package ' + $wpId + ' from ' + $wpSrc + ' is blocked by policy or requires interactive authentication. Consider source=winget.') @{ status = $status }
-    exit 0
+    return
   }
   if ($status -eq 'ResourceInUse') {
     Emit-Err 'resource_in_use' 'winget resource in use (another transaction is in progress)' @{ status = $status }
-    exit 0
+    return
   }
   if ($status -eq 'DownloadError' -or $status -eq 'SourceError') {
     Emit-Err 'source_unreachable' ('Network/source error installing ' + $wpId + ' from ' + $wpSrc + ' (status: ' + $status + ')') @{ status = $status }
-    exit 0
+    return
   }
   if ($status -ne 'Ok' -and $status -ne 'RebootRequired' -and $status -ne 'AlreadyInstalled') {
     $extCode = ''
     if ($null -ne $result.ExtendedErrorCode) { $extCode = [string]$result.ExtendedErrorCode }
     Emit-Err 'unknown' ('Install-WinGetPackage returned status ' + $status + ' for ' + $wpId + ' (ExtendedErrorCode: ' + $extCode + ')') @{ status = $status; extended_error_code = $extCode }
-    exit 0
+    return
   }
   $reboot = ($status -eq 'RebootRequired')
   $pkgs2 = @(Get-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -ErrorAction SilentlyContinue)
@@ -200,7 +205,7 @@ const wpUpdateBody = `
 $wpId  = @@ID@@
 $wpSrc = @@SRC@@
 $wpVer = @@VER@@
-Assert-WinGetModule
+if (-not (Assert-WinGetModule)) { return }
 try {
   $params = @{
     Id                      = $wpId
@@ -216,33 +221,33 @@ try {
   $status = [string]$result.Status
   if ($status -eq 'NoApplicableInstaller' -or $status -eq 'InvalidVersion') {
     Emit-Err 'version_not_available' ('Version ' + $wpVer + ' not available for ' + $wpId + ' on source ' + $wpSrc + ' (status: ' + $status + ')') @{ status = $status }
-    exit 0
+    return
   }
   if ($status -eq 'CatalogError') {
     Emit-Err 'catalog_error' ('Package ' + $wpId + ' was not found in catalog on source ' + $wpSrc + '. It may have been renamed or removed. Consider: terraform destroy + re-import under the new ID.') @{ status = $status }
-    exit 0
+    return
   }
   if ($status -eq 'BlockedByPolicy' -or $status -eq 'RequiresInteractive') {
     Emit-Err 'blocked_by_policy' ('Package ' + $wpId + ' from ' + $wpSrc + ' is blocked by policy or requires interactive authentication.') @{ status = $status }
-    exit 0
+    return
   }
   if ($status -eq 'ResourceInUse') {
     Emit-Err 'resource_in_use' 'winget resource in use (another transaction is in progress)' @{ status = $status }
-    exit 0
+    return
   }
   if ($status -eq 'DownloadError' -or $status -eq 'SourceError') {
     Emit-Err 'source_unreachable' ('Network/source error updating ' + $wpId + ' from ' + $wpSrc + ' (status: ' + $status + ')') @{ status = $status }
-    exit 0
+    return
   }
   if ($status -eq 'PackageNotInstalled') {
     Emit-Err 'unknown' ('Cannot update ' + $wpId + ': package is not currently installed (PackageNotInstalled).') @{ status = $status }
-    exit 0
+    return
   }
   if ($status -ne 'Ok' -and $status -ne 'RebootRequired' -and $status -ne 'NoAvailableUpgrade' -and $status -ne 'AlreadyInstalled') {
     $extCode = ''
     if ($null -ne $result.ExtendedErrorCode) { $extCode = [string]$result.ExtendedErrorCode }
     Emit-Err 'unknown' ('Update-WinGetPackage returned status ' + $status + ' for ' + $wpId + ' (ExtendedErrorCode: ' + $extCode + ')') @{ status = $status; extended_error_code = $extCode }
-    exit 0
+    return
   }
   $reboot = ($status -eq 'RebootRequired')
   $pkgs2 = @(Get-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -ErrorAction SilentlyContinue)
@@ -268,23 +273,23 @@ try {
 const wpUninstallBody = `
 $wpId  = @@ID@@
 $wpSrc = @@SRC@@
-Assert-WinGetModule
+if (-not (Assert-WinGetModule)) { return }
 try {
   $result = Uninstall-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -Mode Silent -Scope SystemOrUnknown
   $status = [string]$result.Status
   if ($status -eq 'PackageNotInstalled') {
     Emit-OK ([ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $false })
-    exit 0
+    return
   }
   if ($status -eq 'ResourceInUse') {
     Emit-Err 'resource_in_use' 'winget resource in use (another transaction is in progress)' @{ status = $status }
-    exit 0
+    return
   }
   if ($status -ne 'Ok' -and $status -ne 'RebootRequired') {
     $extCode = ''
     if ($null -ne $result.ExtendedErrorCode) { $extCode = [string]$result.ExtendedErrorCode }
     Emit-Err 'unknown' ('Uninstall-WinGetPackage returned status ' + $status + ' for ' + $wpId + ' (ExtendedErrorCode: ' + $extCode + ')') @{ status = $status; extended_error_code = $extCode }
-    exit 0
+    return
   }
   $reboot = ($status -eq 'RebootRequired')
   Emit-OK ([ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $reboot })

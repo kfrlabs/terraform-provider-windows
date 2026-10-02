@@ -262,8 +262,13 @@ function Ensure-TaskFolder([string]$FolderPath) {
   # ITaskFolder::CreateFolder rejects a trailing backslash (ERROR_INVALID_NAME,
   # 0x8007007B), so normalise first; Remove-EmptyFolder already does this. The
   # root path '\' trims to '' and needs no folder created.
+  #
+  # Returns $true on success, $false (after Emit-Err) on failure. Since #81
+  # this script runs inside a long-lived, reused PowerShell session, where
+  # "exit" would kill the session instead of just this call; callers must
+  # check the return value and stop rather than fall through.
   $FolderPath = $FolderPath.TrimEnd('\')
-  if ($FolderPath -eq '') { return }
+  if ($FolderPath -eq '') { return $true }
   try {
     $svc = New-Object -ComObject 'Schedule.Service'
     $svc.Connect()
@@ -274,8 +279,9 @@ function Ensure-TaskFolder([string]$FolderPath) {
     catch { $svc.GetFolder('\').CreateFolder($FolderPath, $null) | Out-Null }
   } catch {
     Emit-Err 'unknown' ('Folder creation failed: ' + $_.Exception.Message) @{ path = $FolderPath }
-    exit 0
+    return $false
   }
+  return $true
 }
 
 function Remove-EmptyFolder([string]$FolderPath) {
@@ -746,7 +752,7 @@ func buildOnEventFragment(taskName, taskPath string, triggers []ScheduledTaskTri
 	sb.WriteString(fmt.Sprintf(`
 $_stXml = $null
 try { $_stXml = Export-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop } catch {
-  Emit-Err 'unknown' ('XML export failed: ' + $_.Exception.Message) @{}; exit 0
+  Emit-Err 'unknown' ('XML export failed: ' + $_.Exception.Message) @{}; return
 }
 $_stDoc = [xml]$_stXml
 $_stNs  = 'http://schemas.microsoft.com/windows/2004/02/mit/task'
@@ -790,7 +796,7 @@ foreach ($_stEt in $_stEvtTriggers) {
 }
 $_stNewXml = $_stDoc.OuterXml
 try { Register-ScheduledTask -Xml $_stNewXml -TaskName %s -TaskPath %s -Force -ErrorAction Stop | Out-Null } catch {
-  Emit-Err 'unknown' ('XML re-register failed: ' + $_.Exception.Message) @{}; exit 0
+  Emit-Err 'unknown' ('XML re-register failed: ' + $_.Exception.Message) @{}; return
 }
 `, psQuote(taskName), psQuote(taskPath), psQuote(taskName), psQuote(taskPath)))
 	return sb.String()
@@ -863,14 +869,14 @@ $_stExisting = $null
 try { $_stExisting = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop } catch {}
 if ($null -ne $_stExisting) {
   Emit-Err 'already_exists' ('Task already exists: %s. Use terraform import to adopt it.') @{ task_name = %s; task_path = %s }
-  exit 0
+  return
 }
 `, psQuote(input.Name), psQuote(input.Path),
 		strings.ReplaceAll(id, "'", "''"),
 		psQuote(input.Name), psQuote(input.Path)))
 
 	// Folder creation (ADR-ST-1)
-	sb.WriteString(fmt.Sprintf("Ensure-TaskFolder %s\n", psQuote(input.Path)))
+	sb.WriteString(fmt.Sprintf("if (-not (Ensure-TaskFolder %s)) { return }\n", psQuote(input.Path)))
 
 	// Actions
 	sb.WriteString(buildActionsFragment(input.Actions))
@@ -916,9 +922,9 @@ try {
   Register-ScheduledTask @_stRegParams | Out-Null
 } catch {
   $msg = $_.Exception.Message
-  if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $msg @{ phase = 'register' }; exit 0 }
-  if ($msg -match 'argument' -or $msg -match 'invalid' -or $msg -match 'parameter') { Emit-Err 'invalid_input' $msg @{ phase = 'register' }; exit 0 }
-  Emit-Err 'unknown' $msg @{ phase = 'register' }; exit 0
+  if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $msg @{ phase = 'register' }; return }
+  if ($msg -match 'argument' -or $msg -match 'invalid' -or $msg -match 'parameter') { Emit-Err 'invalid_input' $msg @{ phase = 'register' }; return }
+  Emit-Err 'unknown' $msg @{ phase = 'register' }; return
 }
 `)
 
@@ -1015,9 +1021,9 @@ try {
   Set-ScheduledTask -InputObject $_stDescTask -ErrorAction Stop | Out-Null
 } catch {
   $msg = $_.Exception.Message
-  if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $msg @{ phase = 'update' }; exit 0 }
-  if ($msg -match 'argument' -or $msg -match 'invalid' -or $msg -match 'parameter') { Emit-Err 'invalid_input' $msg @{ phase = 'update' }; exit 0 }
-  Emit-Err 'unknown' $msg @{ phase = 'update' }; exit 0
+  if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $msg @{ phase = 'update' }; return }
+  if ($msg -match 'argument' -or $msg -match 'invalid' -or $msg -match 'parameter') { Emit-Err 'invalid_input' $msg @{ phase = 'update' }; return }
+  Emit-Err 'unknown' $msg @{ phase = 'update' }; return
 }
 `, psQuote(taskName), psQuote(taskPath), psQuote(input.Description)))
 
@@ -1071,7 +1077,7 @@ func (c *ScheduledTaskClientImpl) Delete(ctx context.Context, id string) error {
 # Check if task exists
 $_stTask = $null
 try { $_stTask = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop } catch {}
-if ($null -eq $_stTask) { Emit-OK 'not_found'; exit 0 }
+if ($null -eq $_stTask) { Emit-OK 'not_found'; return }
 
 # Stop if running (ADR-ST-7)
 $_stInfo = $null
@@ -1091,7 +1097,7 @@ if ($_stCurState -eq 4) {
   $_stTask = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop
   if ([int]$_stTask.State -eq 4) {
     Emit-Err 'task_running' 'Task is still running after 30s stop timeout (ADR-ST-7 / EC-14).' @{ task_name = %s; task_path = %s }
-    exit 0
+    return
   }
 }
 
@@ -1100,8 +1106,8 @@ try {
   Unregister-ScheduledTask -TaskName %s -TaskPath %s -Confirm:$false -ErrorAction Stop
 } catch {
   $msg = $_.Exception.Message
-  if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $msg @{}; exit 0 }
-  Emit-Err 'unknown' $msg @{}; exit 0
+  if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $msg @{}; return }
+  Emit-Err 'unknown' $msg @{}; return
 }
 
 # Prune empty folder (non-fatal)
@@ -1136,7 +1142,7 @@ $_stTask = $null
 try { $_stTask = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop } catch {}
 if ($null -eq $_stTask) {
   Emit-Err 'not_found' ('Task not found for import: %s') @{ task_name = %s; task_path = %s }
-  exit 0
+  return
 }
 Read-TaskState %s %s
 `,

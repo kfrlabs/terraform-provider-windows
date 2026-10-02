@@ -15,10 +15,10 @@ All notable changes to this project will be documented in this file.
   every single call. Calls are serialised onto the shared session; a session
   found to be dead is transparently re-established once before the call is
   retried. `exit` inside a script now terminates the shared session rather
-  than just that call — `windows_feature` was migrated off `exit 0` to a
-  return-value pattern; the remaining resources still using `exit 0`
-  (`windows_scheduled_task`, `windows_legacy_package`, `windows_winget_package`)
-  are left for a follow-up, validated one at a time against `testacc-windows`
+  than just that call — every resource was migrated off `exit 0` to a
+  return-value pattern (`windows_feature`, `windows_scheduled_task`,
+  `windows_legacy_package`, `windows_winget_package`), so a script that
+  reports an error no longer tears down the session it is running in
   (#81).
 
 ### Fixed
