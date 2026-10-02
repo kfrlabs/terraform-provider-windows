@@ -337,6 +337,11 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		err            error
 	}
 	ps.calls++
+	// TEMPORARY diagnostic snapshots: per-call byte deltas distinguish a
+	// call the remote never answered (zero new bytes) from a partial
+	// response (nonzero deltas but no end markers).
+	outBefore := ps.stdoutCount.bytes()
+	errBefore := ps.stderrCount.bytes()
 	done := make(chan result, 1)
 	go func() {
 		if _, err := io.WriteString(ps.stdin, encodeReplRequest(script, secret)); err != nil {
@@ -377,9 +382,9 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		case <-time.After(10 * time.Second):
 		}
 		return "", "", &responseTimeoutError{msg: fmt.Sprintf(
-			"winclient: TEMPORARY diagnostic: no REPL response within %s (session age %s, call #%d on this session, script %dB; server sent %d stdout bytes / %d stderr bytes; partial stdout %.300q, partial stderr %.300q)",
+			"winclient: TEMPORARY diagnostic: no REPL response within %s (session age %s, call #%d on this session, script %dB; server sent %d stdout bytes / %d stderr bytes total, +%d/+%d since this call started; partial stdout %.300q, partial stderr %.300q)",
 			diagResponseTimeout, time.Since(ps.createdAt).Round(time.Second), ps.calls,
-			len(script), outBytes, errBytes,
+			len(script), outBytes, errBytes, outBytes-outBefore, errBytes-errBefore,
 			truncate(partialOut, 300), truncate(partialErr, 300))}
 	}
 }

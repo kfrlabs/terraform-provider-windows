@@ -311,3 +311,16 @@ jobs:
           # 30m (not 120m) so a hung test panics with a goroutine dump before
           # the 60m job timeout cancels the runner, revealing where it blocks.
           go test -tags acceptance ./internal/provider/ -v -timeout 30m @args
+
+      # TEMPORARY (debug/repl-silence-probe): collect the REPL-side
+      # transcript the instrumented bootstrap writes to RUNNER_TEMP. It
+      # shows exactly where the remote wedges (ReadLine block vs script
+      # wedge vs lost markers). Always runs so a hung shard still uploads.
+      - name: Upload REPL transcripts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: repl-logs-${{ matrix.auth }}-${{ matrix.shard.name }}
+          path: ${{ runner.temp }}/winclient-repl-*.log
+          if-no-files-found: ignore
+          retention-days: 7

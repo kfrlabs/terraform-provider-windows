@@ -40,15 +40,32 @@ const (
 // the outer pipe, so it never blocks waiting for the next request.
 const psReplBootstrap = `$ErrorActionPreference = 'Stop'
 $__wcMarker = [guid]::NewGuid().ToString('N')
+$__wcLog = $null
+try {
+  $__logDir = $env:RUNNER_TEMP
+  if ([string]::IsNullOrEmpty($__logDir)) { $__logDir = $env:TEMP }
+  $__wcLog = Join-Path $__logDir ('winclient-repl-' + $PID + '.log')
+  Add-Content -Path $__wcLog -Value ((Get-Date -Format o) + ' BOOT marker=' + $__wcMarker) -ErrorAction Stop
+} catch {}
+function Write-WcLog([string]$Msg) {
+  if ($null -ne $__wcLog) { Add-Content -Path $__wcLog -Value ((Get-Date -Format o) + ' ' + $Msg) -ErrorAction SilentlyContinue }
+}
 [Console]::Out.WriteLine('` + replReadyPrefix + `' + $__wcMarker + '` + replReadySuffix + `')
 [Console]::Out.Flush()
+Write-WcLog 'READY-WRITTEN'
+$__wcIter = 0
 while ($true) {
+  $__wcIter++
+  Write-WcLog ('ITER-START n=' + $__wcIter)
   $__b64Script = [Console]::In.ReadLine()
-  if ($null -eq $__b64Script) { break }
+  if ($null -eq $__b64Script) { Write-WcLog 'GOT-SCRIPT-NULL-BREAK'; break }
+  Write-WcLog ('GOT-SCRIPT len=' + $__b64Script.Length)
   $__b64Secret = [Console]::In.ReadLine()
   if ($null -eq $__b64Secret) { $__b64Secret = '' }
+  Write-WcLog ('GOT-SECRET len=' + $__b64Secret.Length)
   $__scriptBytes = [Convert]::FromBase64String($__b64Script)
   $__script = [Text.Encoding]::Unicode.GetString($__scriptBytes)
+  Write-WcLog ('DECODED scriptlen=' + $__script.Length)
   if ($__b64Secret.Length -gt 0) {
     $__secretBytes = [Convert]::FromBase64String($__b64Secret)
   } else {
@@ -58,6 +75,7 @@ while ($true) {
   $__prevIn = [Console]::In
   $__status = 0
   [Console]::SetIn($__secretReader)
+  Write-WcLog 'SCRIPT-START'
   try {
     & ([ScriptBlock]::Create($__script))
   } catch {
@@ -66,11 +84,14 @@ while ($true) {
   } finally {
     [Console]::SetIn($__prevIn)
   }
+  Write-WcLog ('SCRIPT-END status=' + $__status)
   [Console]::Out.WriteLine('` + replEndStdoutPrefix + `' + $__status + '` + replEndStdoutSuffix + `')
   [Console]::Out.Flush()
   [Console]::Error.WriteLine('` + replEndStderrLine + `')
   [Console]::Error.Flush()
+  Write-WcLog 'MARKERS-WRITTEN'
 }
+Write-WcLog 'LOOP-EXIT'
 `
 
 // replBootstrapCommand builds the fixed powershell.exe invocation for the
