@@ -19,7 +19,7 @@ resource "windows_directory" "scratch" {
 
 # A directory under a path whose parents must already exist.
 resource "windows_directory" "strict_parent" {
-  path                       = "C:\\ProgramData\\app\\strict"
+  path                      = "C:\\ProgramData\\app\\strict"
   create_parent_directories = false
 }
 
