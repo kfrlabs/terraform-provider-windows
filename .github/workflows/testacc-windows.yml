@@ -69,7 +69,7 @@ concurrency:
 
 jobs:
   acceptance:
-    name: acceptance (${{ matrix.auth }}, ${{ matrix.shard.name }})
+    name: acceptance (${{ matrix.auth }}, ${{ matrix.shard.name }}, ${{ matrix.shell }})
     # TEMPORARY (debug/repl-silence-probe): windows-2022 verdict recorded
     # (same wedge) — back on windows-latest for production parity.
     runs-on: windows-latest
@@ -81,6 +81,9 @@ jobs:
         # the probe cheap. identity-net/password reproduces the wedge
         # deterministically (firewall datasource Basic, then later hangs).
         auth: [password]
+        # TEMPORARY V6 probe: same shard under powershell.exe 5.1 and
+        # pwsh 7, to test whether the stdin stall is 5.1-specific.
+        shell: [powershell, pwsh]
         # Shards are balanced on measured durations, not on file count (see
         # the header comment above for how and why).
         # `skip` and not a negative lookahead: go test -run compiles with RE2,
@@ -297,6 +300,8 @@ jobs:
           TF_ACC: "1"
           # Leave the key out of the picture so this really is the password path.
           WINDOWS_PRIVATE_KEY_PATH: ""
+          # TEMPORARY V6 probe: select the remote REPL shell.
+          WINCLIENT_SHELL: ${{ matrix.shell }}
         run: |
           $skip = "${{ matrix.shard.skip }}"
           $args = @('-run', "${{ inputs.run_filter || matrix.shard.filter }}")
@@ -327,7 +332,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: repl-logs-${{ matrix.auth }}-${{ matrix.shard.name }}
+          name: repl-logs-${{ matrix.auth }}-${{ matrix.shard.name }}-${{ matrix.shell }}
           path: C:/Windows/Temp/winclient-repl-*.log
           if-no-files-found: ignore
           retention-days: 7

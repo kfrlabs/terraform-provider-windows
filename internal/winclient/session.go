@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -115,11 +116,22 @@ while ($true) {
 Write-WcLog 'LOOP-EXIT'
 `
 
-// replBootstrapCommand builds the fixed powershell.exe invocation for the
+// replShell selects the remote shell binary. TEMPORARY V6 probe
+// (debug/repl-silence-probe): WINCLIENT_SHELL=pwsh exercises the same
+// persistent REPL under PowerShell 7, to test whether the stdin stall is
+// specific to Windows PowerShell 5.1. Default preserves production.
+func replShell() string {
+	if os.Getenv("WINCLIENT_SHELL") == "pwsh" {
+		return "pwsh.exe"
+	}
+	return "powershell.exe"
+}
+
+// replBootstrapCommand builds the fixed shell invocation for the
 // persistent REPL. Its length does not depend on any script sent later,
 // matching the constant-command-line guarantee from #39.
 func replBootstrapCommand() string {
-	return fmt.Sprintf("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encodePowerShell(psReplBootstrap))
+	return fmt.Sprintf("%s -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", replShell(), encodePowerShell(psReplBootstrap))
 }
 
 // encodeReplRequest lays out one request: the base64 (UTF-16LE) script on
