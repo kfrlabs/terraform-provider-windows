@@ -2,6 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-08-25
+- Amended: 2026-08-28 (persistent PowerShell session, issue #81)
+- Amended: 2026-10-03 (persistent sessions require PowerShell 7, 5.1 falls
+  back to one-shot)
 - Supersedes: none (records the transport implicitly chosen at bootstrap)
 - Relates to: ADR-0011 (host key verification), PR #78
 
@@ -27,8 +30,10 @@ than decided, and it cost us on four fronts:
 ## Decision
 
 Connect over **SSH** using `golang.org/x/crypto/ssh`, against the target's
-OpenSSH Server, invoking `powershell.exe` as the command. `masterzen/winrm` and
-its NTLM/Kerberos dependencies are dropped.
+OpenSSH Server, invoking `pwsh.exe` (PowerShell 7) as the command, with a
+one-shot `powershell.exe` (5.1) process per call as the fallback where
+PowerShell 7 is absent (see the 2026-10-03 amendment below).
+`masterzen/winrm` and its NTLM/Kerberos dependencies are dropped.
 
 The `winclient` public surface is deliberately unchanged: `RunPowerShell`,
 `RunPowerShellWithInput`, and the `-EncodedCommand` + UTF-16LE-on-stdin
@@ -55,12 +60,89 @@ bounded by the request `context`, i.e. the per-resource `timeouts {}` block
 5m for `windows_scheduled_task`). Raising `timeout` to accommodate a slow
 install does nothing, which is why its description says so explicitly.
 
-### One connection per call
+### One persistent session per Client (amended 2026-08-28, issue #81)
 
-`RunPowerShell` dials a fresh SSH connection every time; there is no session
-reuse or multiplexing. This keeps the client stateless and safe to share across
-concurrent resource operations, at the cost of a handshake per PowerShell call.
-Revisit only if handshake latency shows up in real applies.
+Originally `RunPowerShell` dialled a fresh SSH connection and started a fresh
+`powershell.exe` for every call. That was simple and stateless, but it meant
+paying every call's module-import cost from scratch — `windows_feature`'s
+`ServerManager` import alone is ~18s cold — which made a single acceptance
+test file take 105-246s for what should be a handful of PowerShell round
+trips.
+
+`Client` now keeps at most **one** persistent `powershell.exe` session open
+(`internal/winclient/session.go`), reused across every `RunPowerShell` /
+`RunPowerShellWithInput` call for that `Client`'s lifetime:
+
+- The bootstrap (`psReplBootstrap`) is a loop, not a one-shot script: it reads
+  successive requests from stdin — two base64 lines, script then secret input
+  — and frames each response with a sentinel line
+  (`##WINCLIENT-END:<status>##` / `##WINCLIENT-END##`) so the client can tell
+  where one call's output ends and the next begins. The command line stays
+  fixed regardless of call count, preserving the #39 guarantee.
+- The secret is bound to the call via `[Console]::SetIn` over a `MemoryStream`
+  scoped to exactly the decoded secret bytes, so existing scripts'
+  `[Console]::In.ReadLine()` / `ReadToEnd()` calls are unmodified: `ReadToEnd()`
+  hits the end of that stream, not the outer pipe, so it never blocks waiting
+  for the next request.
+- Calls are serialised by `Client.mu`: the session's stdin/stdout/stderr is one
+  shared, ordered stream, so two calls cannot safely interleave on it. A single
+  session (rather than a pool) was chosen deliberately for the first
+  iteration — it is far simpler to reason about and test, and the actual cost
+  being eliminated (module import) dwarfs the cost of serialising calls that
+  were largely sequential per resource anyway. A pool is a candidate follow-up
+  if concurrent-apply throughput turns out to matter in practice.
+- A session that turns out to be dead (dropped connection, crashed remote
+  process) is transparently closed and re-established once before the call is
+  retried, so a stale session does not permanently fail every subsequent call.
+- `exit` inside a script now terminates the whole reusable `powershell.exe`
+  process, not just that call — the opposite of what the old one-process-per-call
+  model relied on for early-return-after-`Emit-Err`. Scripts that used `exit 0`
+  this way are migrated to return a status the caller checks (e.g.
+  `windows_feature`'s `Ensure-FeatureCmdlets`, `windows_scheduled_task`'s
+  `Ensure-TaskFolder`, and `windows_winget_package`'s `Assert-WinGetModule`
+  return `$false` and their callers guard with
+  `if (Ensure-FeatureCmdlets) { ... }`) instead of exiting.
+
+`internal/winclient/sshtest_test.go`'s in-process server was extended to speak
+this framing protocol (ready handshake, framed per-request response,
+`dropAfterCalls` to simulate a session dying mid-use) so session reuse,
+concurrent-call serialisation and recovery are covered by the default
+`make test`, with no Windows host required.
+
+**Persistent sessions require PowerShell 7; Windows PowerShell 5.1 falls
+back to one process per call (amended 2026-10-03).** Acceptance runs
+showed reused `powershell.exe` (5.1) sessions wedging after one or two
+requests: the next stdin write is accepted on the SSH channel but never
+reaches the child, which blocks in its stdin read forever with no EOF —
+while the identical framing under `pwsh.exe` serves arbitrarily many
+sequential requests (133/133 healthy sessions, depth 10, in the probe run).
+Pacing the writes, re-reading stdin off a fresh handle, and both
+windows-2022 and windows-2025 images all reproduce the 5.1 stall, so it is
+inherent to the 5.1 console stdin stack under Win32-OpenSSH, not to timing,
+framing, or image. `Client` therefore establishes its persistent session
+with `pwsh.exe`, and pins itself to the pre-#81 one-shot
+`powershell.exe` transport (one process per call — a single stdin write
+always lands) when the persistent handshake fails. Scripts are unaffected:
+both bootstraps present the script with the secret on `[Console]::In`, so
+`RunPowerShell`/`RunPowerShellWithInput` keep their semantics under either
+transport.
+
+**Read stdout and stderr concurrently, not sequentially (amended
+2026-09-05).** The first `testacc-windows` run against this transport
+deadlocked reading `windows_local_user`/`windows_firewall_rule` — both backed
+by CIM/CDXML modules (`Microsoft.PowerShell.LocalAccounts`, `NetSecurity`)
+that are chatty on the error stream on a cold call — while `windows_feature`
+(`ServerManager`, no CIM) was fine. `readReplResponse` read every stdout line
+up to its end marker before touching stderr at all. `x/crypto/ssh`'s
+`Session.StderrPipe` documents exactly this hazard: stdout and stderr share
+one fixed buffer, and a stream that fills it while its sibling goes unread
+blocks the remote side. The pre-#81 transport never hit this because it
+handed `Stdout`/`Stderr` to `ssh.Session` as `io.Writer`s, which `Session.Run`
+drains with its own concurrent goroutines; `readReplResponse` now does the
+same explicitly, one goroutine per stream, joined before returning.
+`internal/winclient/transport_test.go`'s
+`TestTransportDrainsLargeStderrWithoutDeadlock` reproduces it with an
+oversized canned stderr response against the loopback server.
 
 ### Testability, which WinRM never gave us
 

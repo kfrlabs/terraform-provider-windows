@@ -472,11 +472,11 @@ $cfg = Read-LpInput
 $installerType = [string]$cfg.installer_type
 if ($installerType -ne 'msi' -and $installerType -ne 'exe') {
   Emit-Err 'invalid_parameter' ("installer_type must be 'msi' or 'exe', got: " + $installerType) @{}
-  exit 0
+  return
 }
 if ($installerType -eq 'exe' -and -not $cfg.display_name_pattern -and -not $cfg.uninstall_command) {
   Emit-Err 'invalid_parameter' "installer_type=exe requires display_name_pattern or uninstall_command" @{}
-  exit 0
+  return
 }
 
 # 1) Resolve installer file
@@ -486,7 +486,7 @@ if ($cfg.source_path) {
   $installerPath = [string]$cfg.source_path
   if (-not (Test-Path -LiteralPath $installerPath)) {
     Emit-Err 'source_not_found' ("source_path does not exist: " + $installerPath) @{ source_path = $installerPath }
-    exit 0
+    return
   }
 } elseif ($cfg.source_url) {
   $tmpDir = Join-Path $env:TEMP 'windows_legacy_package'
@@ -504,13 +504,13 @@ if ($cfg.source_path) {
     Invoke-WebRequest -Uri ([string]$cfg.source_url) -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
   } catch {
     Emit-Err 'download_failed' ("download error: " + $_.Exception.Message) @{ url = [string]$cfg.source_url }
-    exit 0
+    return
   } finally {
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $prevCB
   }
 } else {
   Emit-Err 'invalid_parameter' "either source_path or source_url is required" @{}
-  exit 0
+  return
 }
 
 # 2) Checksum verification
@@ -518,7 +518,7 @@ if ($cfg.checksum) {
   $parts = ([string]$cfg.checksum).Split(':', 2)
   if ($parts.Count -ne 2) {
     Emit-Err 'invalid_parameter' "checksum must be '<algo>:<hex>'" @{ checksum = [string]$cfg.checksum }
-    exit 0
+    return
   }
   $algo = $parts[0].ToUpperInvariant()
   $expected = $parts[1].ToLowerInvariant()
@@ -526,11 +526,11 @@ if ($cfg.checksum) {
     $got = (Get-FileHash -LiteralPath $installerPath -Algorithm $algo -ErrorAction Stop).Hash.ToLowerInvariant()
   } catch {
     Emit-Err 'checksum_failed' ("hash compute error: " + $_.Exception.Message) @{ algo = $algo }
-    exit 0
+    return
   }
   if ($got -ne $expected) {
     Emit-Err 'checksum_mismatch' ("checksum mismatch (algo=" + $algo + " expected=" + $expected + " got=" + $got + ")") @{ algo = $algo; expected = $expected; got = $got; path = $installerPath }
-    exit 0
+    return
   }
 }
 
@@ -553,15 +553,15 @@ if ($installerType -eq 'msi') {
     [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($msiInst) | Out-Null
   } catch {
     Emit-Err 'msi_inspect_failed' ("failed to read MSI ProductCode: " + $_.Exception.Message) @{ path = $installerPath }
-    exit 0
+    return
   }
   if ([string]::IsNullOrEmpty($extracted)) {
     Emit-Err 'msi_no_product_code' "MSI does not expose a ProductCode property" @{ path = $installerPath }
-    exit 0
+    return
   }
   if ($productId -and ($productId -ne $extracted)) {
     Emit-Err 'product_id_mismatch' ("configured product_id (" + $productId + ") does not match MSI ProductCode (" + $extracted + ")") @{ configured = $productId; actual = $extracted }
-    exit 0
+    return
   }
   $productId = $extracted
 }
@@ -628,7 +628,7 @@ try {
 } catch {
   foreach ($k in $envSnapshot.Keys) { [Environment]::SetEnvironmentVariable($k, $envSnapshot[$k], 'Process') }
   Emit-Err 'exec_failed' ("installer exec failed: " + $_.Exception.Message) @{ exe = $exe; log_path = $logPath }
-  exit 0
+  return
 }
 
 foreach ($k in $envSnapshot.Keys) { [Environment]::SetEnvironmentVariable($k, $envSnapshot[$k], 'Process') }
@@ -653,14 +653,14 @@ if ($installerType -eq 'exe') {
 
 if ($r.TimedOut) {
   Emit-Err 'timeout' ("installer timed out after " + $timeout + " seconds") @{ pid = [string]$r.Pid; log_path = $logPath }
-  exit 0
+  return
 }
 $exitCode = [int]$r.ExitCode
 if ($valid -notcontains $exitCode) {
   $kind = 'exit_code_invalid'
   if ($exitCode -eq 1618) { $kind = 'msi_in_progress' }
   Emit-Err $kind ("installer exited with code " + $exitCode + " (valid: " + ($valid -join ',') + ")") @{ exit_code = [string]$exitCode; log_path = $logPath }
-  exit 0
+  return
 }
 
 # 7) Cleanup downloaded source on success
@@ -687,12 +687,12 @@ if ($entries.Count -eq 0) {
     installed         = $false
     install_date      = ''
   })
-  exit 0
+  return
 }
 if ($installerType -eq 'exe' -and $entries.Count -gt 1) {
   $names = ($entries | ForEach-Object { [string]$_.DisplayName }) -join '; '
   Emit-Err 'multiple_matches' ("display_name_pattern matches multiple installed entries: " + $names) @{ matches = $names }
-  exit 0
+  return
 }
 
 $e = $entries[0]
@@ -717,14 +717,14 @@ $cfg = Read-LpInput
 $id = [string]$cfg.id
 if ([string]::IsNullOrEmpty($id)) {
   Emit-Err 'invalid_parameter' "id is required" @{}
-  exit 0
+  return
 }
 $isMsi = $id -match '^\{[0-9A-Fa-f-]{36}\}$'
 $type = if ($isMsi) { 'msi' } else { 'exe' }
 $entries = @(Get-LpUninstallEntry -Id $id -Type $type -Pattern '')
 if ($entries.Count -eq 0) {
   Emit-OK $null
-  exit 0
+  return
 }
 $e = $entries[0]
 $pidOut = if ($isMsi) { $id } else { '' }
@@ -752,7 +752,7 @@ $cfg = Read-LpInput
 $id = [string]$cfg.id
 if ([string]::IsNullOrEmpty($id)) {
   Emit-Err 'invalid_parameter' "id is required" @{}
-  exit 0
+  return
 }
 $isMsi = $id -match '^\{[0-9A-Fa-f-]{36}\}$'
 
@@ -767,7 +767,7 @@ if ($cfg.uninstall_args) { $extraUninstall = @([string[]]$cfg.uninstall_args) }
 
 if ($isMsi) {
   $entries = @(Get-LpUninstallEntry -Id $id -Type 'msi' -Pattern '')
-  if ($entries.Count -eq 0) { Emit-OK $null; exit 0 }
+  if ($entries.Count -eq 0) { Emit-OK $null; return }
   $logDir = Join-Path $env:TEMP 'windows_legacy_package'
   New-Item -ItemType Directory -Force -Path $logDir | Out-Null
   $stamp = (Get-Date).ToString('yyyyMMddHHmmss')
@@ -778,26 +778,26 @@ if ($isMsi) {
     $r = Invoke-LpProcess -FilePath 'msiexec.exe' -ArgumentList $argList -WorkingDirectory $env:TEMP -TimeoutSeconds $timeout
   } catch {
     Emit-Err 'exec_failed' ("msiexec exec failed: " + $_.Exception.Message) @{}
-    exit 0
+    return
   }
   if ($r.TimedOut) {
     Emit-Err 'timeout' ("uninstall timed out after " + $timeout + " seconds") @{ pid = [string]$r.Pid; log_path = $logPath }
-    exit 0
+    return
   }
   $exitCode = [int]$r.ExitCode
   if ($valid -notcontains $exitCode) {
     $kind = 'exit_code_invalid'
     if ($exitCode -eq 1618) { $kind = 'msi_in_progress' }
     Emit-Err $kind ("msiexec exited with code " + $exitCode + " (valid: " + ($valid -join ',') + ")") @{ exit_code = [string]$exitCode; log_path = $logPath }
-    exit 0
+    return
   }
   Emit-OK $null
-  exit 0
+  return
 }
 
 # EXE branch
 $entries = @(Get-LpUninstallEntry -Id $id -Type 'exe' -Pattern '')
-if ($entries.Count -eq 0) { Emit-OK $null; exit 0 }
+if ($entries.Count -eq 0) { Emit-OK $null; return }
 $e = $entries[0]
 $cmd = [string]$cfg.uninstall_command
 if ([string]::IsNullOrEmpty($cmd)) {
@@ -806,7 +806,7 @@ if ([string]::IsNullOrEmpty($cmd)) {
 }
 if ([string]::IsNullOrEmpty($cmd)) {
   Emit-Err 'no_uninstall_string' "matched entry has no UninstallString and no uninstall_command was provided" @{ display_name = [string]$e.DisplayName }
-  exit 0
+  return
 }
 
 $exePart = ''
@@ -819,7 +819,7 @@ if ($cmd.StartsWith('"')) {
     if ($endIdx + 1 -lt $cmd.Length) { $argPart = $cmd.Substring($endIdx + 1).Trim() }
   } else {
     Emit-Err 'invalid_parameter' ("unterminated quoted UninstallString: " + $cmd) @{}
-    exit 0
+    return
   }
 } else {
   $sp = $cmd.IndexOf(' ')
@@ -839,16 +839,16 @@ try {
   $r = Invoke-LpProcess -FilePath $exePart -ArgumentList $argList -TimeoutSeconds $timeout
 } catch {
   Emit-Err 'exec_failed' ("uninstaller exec failed: " + $_.Exception.Message) @{ exe = $exePart }
-  exit 0
+  return
 }
 if ($r.TimedOut) {
   Emit-Err 'timeout' ("uninstall timed out after " + $timeout + " seconds") @{ pid = [string]$r.Pid }
-  exit 0
+  return
 }
 $exitCode = [int]$r.ExitCode
 if ($valid -notcontains $exitCode) {
   Emit-Err 'exit_code_invalid' ("uninstaller exited with code " + $exitCode + " (valid: " + ($valid -join ',') + ")") @{ exit_code = [string]$exitCode }
-  exit 0
+  return
 }
 Emit-OK $null
 `

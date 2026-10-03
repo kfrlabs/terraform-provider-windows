@@ -76,10 +76,17 @@ function Test-PendingReboot {
 }
 
 function Ensure-FeatureCmdlets {
+  # Returns $false (after Emit-Err) instead of exiting the process: since
+  # #81 this script may run inside a long-lived, reused PowerShell session,
+  # where "exit" would kill that session instead of just this call. Callers
+  # must check the return value and stop rather than fall through to
+  # Get-WindowsFeature et al., which would otherwise overwrite the JSON
+  # envelope already emitted here with a second, less specific error.
   if (-not (Get-Command Install-WindowsFeature -ErrorAction SilentlyContinue)) {
     Emit-Err 'unsupported_sku' 'Install-WindowsFeature is not available on this host. The ServerManager module ships with Windows Server only; on client SKUs use Enable-WindowsOptionalFeature instead.' @{}
-    exit 0
+    return $false
   }
+  return $true
 }
 `
 
@@ -204,7 +211,6 @@ func toFeatureInfo(d *featureDataPayload) *FeatureInfo {
 
 // psFeatureReadBody emits the feature data (or null when not found).
 const psFeatureReadBody = `
-Ensure-FeatureCmdlets
 function Read-Feature([string]$Name) {
   try {
     $f = Get-WindowsFeature -Name $Name -ErrorAction Stop
@@ -231,7 +237,7 @@ func (f *FeatureClient) Read(ctx context.Context, name string) (*FeatureInfo, er
 	if strings.TrimSpace(name) == "" {
 		return nil, NewFeatureError(FeatureErrorInvalidParameter, "feature name is empty", nil, nil)
 	}
-	script := psFeatureReadBody + "\nRead-Feature -Name " + psQuote(name) + "\n"
+	script := psFeatureReadBody + "\nif (Ensure-FeatureCmdlets) { Read-Feature -Name " + psQuote(name) + " }\n"
 	resp, err := f.runFeatureEnvelope(ctx, "read", name, script)
 	if err != nil {
 		if IsFeatureError(err, FeatureErrorNotFound) {
@@ -252,7 +258,6 @@ func (f *FeatureClient) Read(ctx context.Context, name string) (*FeatureInfo, er
 // psFeatureInstallBody installs a feature and emits the post-state plus the
 // install result. Pre-checks for InstallState=Removed without -Source.
 const psFeatureInstallBody = `
-Ensure-FeatureCmdlets
 function Run-Install([string]$Name, [bool]$IncludeSub, [bool]$IncludeMgmt, [string]$Source, [bool]$Restart) {
   try {
     $cur = Get-WindowsFeature -Name $Name -ErrorAction Stop
@@ -309,7 +314,7 @@ func (f *FeatureClient) Install(ctx context.Context, in FeatureInput) (*FeatureI
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, nil, NewFeatureError(FeatureErrorInvalidParameter, "feature name is empty", nil, nil)
 	}
-	call := fmt.Sprintf("Run-Install -Name %s -IncludeSub:$%s -IncludeMgmt:$%s -Source %s -Restart:$%s",
+	call := fmt.Sprintf("if (Ensure-FeatureCmdlets) { Run-Install -Name %s -IncludeSub:$%s -IncludeMgmt:$%s -Source %s -Restart:$%s }",
 		psQuote(in.Name),
 		psBool(in.IncludeSubFeatures),
 		psBool(in.IncludeManagementTools),
@@ -334,7 +339,6 @@ func (f *FeatureClient) Install(ctx context.Context, in FeatureInput) (*FeatureI
 
 // psFeatureUninstallBody uninstalls a feature and reports post-state.
 const psFeatureUninstallBody = `
-Ensure-FeatureCmdlets
 function Run-Uninstall([string]$Name, [bool]$IncludeMgmt, [bool]$Restart) {
   try {
     $cur = Get-WindowsFeature -Name $Name -ErrorAction Stop
@@ -394,7 +398,7 @@ func (f *FeatureClient) Uninstall(ctx context.Context, in FeatureInput) (*Featur
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, nil, NewFeatureError(FeatureErrorInvalidParameter, "feature name is empty", nil, nil)
 	}
-	call := fmt.Sprintf("Run-Uninstall -Name %s -IncludeMgmt:$%s -Restart:$%s",
+	call := fmt.Sprintf("if (Ensure-FeatureCmdlets) { Run-Uninstall -Name %s -IncludeMgmt:$%s -Restart:$%s }",
 		psQuote(in.Name),
 		psBool(in.IncludeManagementTools),
 		psBool(in.Restart),

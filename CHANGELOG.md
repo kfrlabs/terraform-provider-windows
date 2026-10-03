@@ -4,6 +4,56 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Performance
+
+- **Breaking (internal):** `internal/winclient.Client` now keeps at most one
+  persistent PowerShell session open per client and reuses it across
+  `RunPowerShell`/`RunPowerShellWithInput` calls, instead of dialing a fresh
+  SSH connection and starting a fresh `powershell.exe` for every call. This
+  amortises costly module imports (`windows_feature`'s `ServerManager` import
+  alone is ~18s cold) across an entire Terraform run instead of paying them on
+  every single call. Calls are serialised onto the shared session; a session
+  found to be dead is transparently re-established once before the call is
+  retried. `exit` inside a script now terminates the shared session rather
+  than just that call — every resource was migrated off `exit 0` to a
+  return-value pattern (`windows_feature`, `windows_scheduled_task`,
+  `windows_legacy_package`, `windows_winget_package`), so a script that
+  reports an error no longer tears down the session it is running in
+  (#81).
+
+### Fixed
+
+- The persistent REPL session (#81) deadlocked on cold calls into chatty
+  CIM/CDXML-backed cmdlets (`windows_local_user`, `windows_firewall_rule`
+  reads use `Microsoft.PowerShell.LocalAccounts`/`NetSecurity`), hanging the
+  provider until Terraform's own timeout. `readReplResponse` read stdout to
+  completion before touching stderr; `x/crypto/ssh`'s `Session.StderrPipe`
+  documents a fixed buffer shared between the two streams, so a response
+  chatty enough on stderr to fill it before its stdout end marker blocked the
+  remote side, with nothing draining stderr to relieve it. Both streams are
+  now drained concurrently, matching how the pre-#81 transport handed
+  `Stdout`/`Stderr` to `ssh.Session` as `io.Writer`s (drained by its own
+  internal goroutines) rather than reading them out sequentially.
+- The persistent REPL session (#81) also hung when redirected PowerShell
+  output had no trailing newline (e.g. a CLIXML warning blob on stderr), so
+  the bootstrap's end marker landed glued to that output on the same wire
+  line. `readReplResponse` required an exact whole-line match and missed the
+  marker, waiting forever on a session that never sends EOF (hanging the
+  `identity-net`, `scheduling` and `storage` acceptance shards on later
+  calls of already-used sessions). End markers are now recognised as a line
+  suffix, keeping whatever precedes them verbatim as script output.
+- The persistent session (#81) stalls on Windows PowerShell 5.1: the second
+  or third stdin write of a reused `powershell.exe` session is accepted on
+  the SSH channel but never reaches the child, which blocks in its stdin
+  read forever with no EOF. Instrumented CI probes (remote transcript per
+  REPL iteration, per-call byte deltas) localised the wedge to the 5.1
+  console stdin stack under Win32-OpenSSH: identical framing under `pwsh`
+  serves arbitrarily many sequential requests, and neither write pacing, an
+  uncached stdin reader, nor the windows-2022 image changes the 5.1 outcome.
+  The persistent session now runs under `pwsh.exe`; hosts without PowerShell
+  7 transparently fall back to one `powershell.exe` process per call (the
+  pre-#81 transport), which performs a single stdin write that always lands.
+
 ### Changed
 
 - **Breaking:** the provider now connects to the target Windows host over

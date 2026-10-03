@@ -1,11 +1,14 @@
 package winclient
 
 import (
+	"bufio"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 
@@ -20,9 +23,12 @@ import (
 // it meaningful for testing host key verification — the client has no idea it
 // is talking to a test.
 //
-// What it deliberately does NOT emulate is PowerShell: it records the command
-// and stdin it receives and replays canned output. Windows semantics stay the
-// business of the acceptance suite.
+// What it deliberately does NOT emulate is PowerShell itself: instead of
+// running powershell.exe, it speaks the REPL wire protocol
+// (session.go) directly — a ready handshake, then one framed canned response
+// per request it reads — so it can play the role of the persistent REPL
+// bootstrap without a Windows host. Each request it decodes is recorded so
+// tests can assert on what the client sent.
 
 // testServerOptions configures one in-process SSH server.
 type testServerOptions struct {
@@ -32,10 +38,40 @@ type testServerOptions struct {
 	// password, when non-empty, enables password authentication.
 	password string
 
-	// Canned session output.
-	stdout     string
-	stderr     string
-	exitStatus uint32
+	// stdout/stderr/status are the canned REPL response served for every
+	// request, unless dropAfterCalls cuts the session short first.
+	stdout string
+	stderr string
+	status int
+
+	// dropAfterCalls, when > 0, closes the SSH channel after that many
+	// requests have been served (without responding to the next one),
+	// simulating a session that dies mid-use — for recovery tests.
+	dropAfterCalls int
+
+	// stderrBeforeEndMarker, when true, writes the canned stderr BEFORE the
+	// stdout end marker, matching the real bootstrap's ordering (the script
+	// writes its stderr while it runs, before the bootstrap emits the stdout
+	// end marker). The default writes stderr after the stdout end marker.
+	stderrBeforeEndMarker bool
+
+	// oneShot, when true, speaks the fallback one-shot protocol instead of
+	// the REPL: it reads a single base64 script line plus the raw stdin
+	// remainder, serves the canned response once, and exits with status.
+	// It models one powershell.exe process per call (pre-#81 transport).
+	oneShot bool
+
+	// refusePwsh, when true, drops any exec channel whose command starts
+	// with pwsh.exe without responding, simulating a host with no
+	// PowerShell 7 (Windows PowerShell 5.1 only). The client's persistent
+	// session handshake then fails and it must fall back to one-shot.
+	refusePwsh bool
+}
+
+// testRequest is one decoded REPL request the server received.
+type testRequest struct {
+	scriptB64 string
+	secretB64 string
 }
 
 // testServer is a running in-process SSH server listening on loopback.
@@ -49,7 +85,8 @@ type testServer struct {
 
 	mu           sync.Mutex
 	command      string
-	stdin        string
+	requests     []testRequest
+	connections  int
 	authAttempts []string
 }
 
@@ -148,6 +185,10 @@ func (s *testServer) serveConn(conn net.Conn, cfg *ssh.ServerConfig, opts testSe
 	defer func() { _ = sshConn.Close() }()
 	go ssh.DiscardRequests(reqs)
 
+	s.mu.Lock()
+	s.connections++
+	s.mu.Unlock()
+
 	for newChan := range chans {
 		if newChan.ChannelType() != "session" {
 			_ = newChan.Reject(ssh.UnknownChannelType, "unsupported")
@@ -161,6 +202,8 @@ func (s *testServer) serveConn(conn net.Conn, cfg *ssh.ServerConfig, opts testSe
 	}
 }
 
+// handleSession plays the role of the REPL bootstrap (psReplBootstrap in
+// session.go): a ready handshake, then a framed canned response per request.
 func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opts testServerOptions) {
 	defer func() { _ = ch.Close() }()
 
@@ -174,24 +217,97 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 		_ = ssh.Unmarshal(req.Payload, &payload)
 		_ = req.Reply(true, nil)
 
-		// Drain stdin first: the client streams the real script there and
-		// closes when done, so this is what bounds the exchange.
-		data, _ := io.ReadAll(ch)
-
 		s.mu.Lock()
 		s.command = payload.Command
-		s.stdin = string(data)
 		s.mu.Unlock()
 
-		if opts.stdout != "" {
-			_, _ = io.WriteString(ch, opts.stdout)
+		if opts.refusePwsh && strings.HasPrefix(payload.Command, "pwsh.exe") {
+			return // no pwsh here: the client's handshake must fail over
 		}
-		if opts.stderr != "" {
-			_, _ = io.WriteString(ch.Stderr(), opts.stderr)
+
+		if opts.oneShot {
+			s.serveOneShot(ch, opts)
+			return
 		}
-		_, _ = ch.SendRequest("exit-status", false,
-			ssh.Marshal(struct{ Status uint32 }{opts.exitStatus}))
+
+		_, _ = fmt.Fprintf(ch, "%stestmarker%s\n", replReadyPrefix, replReadySuffix)
+
+		in := bufio.NewReader(ch)
+		calls := 0
+		for {
+			scriptLine, err := in.ReadString('\n')
+			if err != nil {
+				break // client closed stdin: clean REPL shutdown
+			}
+			secretLine, err := in.ReadString('\n')
+			if err != nil {
+				break
+			}
+			calls++
+
+			s.mu.Lock()
+			s.requests = append(s.requests, testRequest{
+				scriptB64: strings.TrimRight(scriptLine, "\r\n"),
+				secretB64: strings.TrimRight(secretLine, "\r\n"),
+			})
+			s.mu.Unlock()
+
+			if opts.dropAfterCalls > 0 && calls > opts.dropAfterCalls {
+				return // simulate a session that died mid-use
+			}
+
+			writeFramedLine(ch, opts.stdout)
+			if opts.stderrBeforeEndMarker {
+				// Real bootstrap ordering: the script's stderr is written
+				// while it runs, before the stdout end marker.
+				writeFramedLine(ch.Stderr(), opts.stderr)
+			}
+			_, _ = fmt.Fprintf(ch, "%s%d%s\n", replEndStdoutPrefix, opts.status, replEndStdoutSuffix)
+			if !opts.stderrBeforeEndMarker {
+				writeFramedLine(ch.Stderr(), opts.stderr)
+			}
+			_, _ = fmt.Fprintf(ch.Stderr(), "%s\n", replEndStderrLine)
+		}
+
+		_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 		return
+	}
+}
+
+// serveOneShot plays the role of the one-shot bootstrap
+// (oneShotBootstrap in client.go): it reads a single base64 script line plus
+// the raw stdin remainder, serves the canned response once, and exits with
+// the canned status.
+func (s *testServer) serveOneShot(ch ssh.Channel, opts testServerOptions) {
+	in := bufio.NewReader(ch)
+	scriptLine, err := in.ReadString('\n')
+	if err != nil {
+		return
+	}
+	remainder, _ := io.ReadAll(in)
+
+	s.mu.Lock()
+	s.requests = append(s.requests, testRequest{
+		scriptB64: strings.TrimRight(scriptLine, "\r\n"),
+		secretB64: string(remainder),
+	})
+	s.mu.Unlock()
+
+	writeFramedLine(ch, opts.stdout)
+	writeFramedLine(ch.Stderr(), opts.stderr)
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(opts.status)}))
+}
+
+// writeFramedLine writes s to w followed by a newline, unless s is empty (in
+// which case nothing is written — an empty canned stdout/stderr means "no
+// output", not a blank line).
+func writeFramedLine(w interface{ Write([]byte) (int, error) }, s string) {
+	if s == "" {
+		return
+	}
+	_, _ = w.Write([]byte(s))
+	if !strings.HasSuffix(s, "\n") {
+		_, _ = w.Write([]byte("\n"))
 	}
 }
 
@@ -202,11 +318,20 @@ func (s *testServer) Command() string {
 	return s.command
 }
 
-// Stdin returns everything the client wrote to the session's stdin.
-func (s *testServer) Stdin() string {
+// Requests returns every REPL request the server decoded, across every
+// connection, in order.
+func (s *testServer) Requests() []testRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stdin
+	return append([]testRequest(nil), s.requests...)
+}
+
+// Connections returns how many separate SSH connections the client made.
+// Session reuse means repeated calls keep this at 1.
+func (s *testServer) Connections() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.connections
 }
 
 // AuthAttempts returns the authentication methods the client offered, in order.

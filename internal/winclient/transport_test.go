@@ -1,18 +1,21 @@
 package winclient
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-	"unicode/utf16"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -22,25 +25,23 @@ import (
 // Transport-level tests: a real SSH handshake against the in-process server in
 // sshtest_test.go. Unlike the tests in auth_test.go, which check how a
 // configuration is turned into callbacks, these prove that the resulting
-// client actually connects — or actually refuses to.
+// client actually connects — or actually refuses to — and, since #81, that
+// it correctly drives the persistent PowerShell REPL protocol.
 
 const testTimeout = 10 * time.Second
 
-// decodeUTF16LEBase64 reverses the wire encoding the bootstrap expects.
-func decodeUTF16LEBase64(t *testing.T, s string) string {
+// newTestClient builds a Client and registers its persistent session (if any
+// gets established) to be closed at test end. Without this, a session left
+// open forever blocks the in-process test server's per-connection goroutine
+// on its next read, which in turn hangs startTestServer's cleanup.
+func newTransportTestClient(t *testing.T, cfg Config) *Client {
 	t.Helper()
-	raw, err := base64.StdEncoding.DecodeString(s)
+	c, err := New(cfg)
 	if err != nil {
-		t.Fatalf("base64 decode: %v", err)
+		t.Fatalf("New: %v", err)
 	}
-	if len(raw)%2 != 0 {
-		t.Fatalf("UTF-16LE payload has odd length %d", len(raw))
-	}
-	units := make([]uint16, 0, len(raw)/2)
-	for i := 0; i < len(raw); i += 2 {
-		units = append(units, uint16(raw[i])|uint16(raw[i+1])<<8)
-	}
-	return string(utf16.Decode(units))
+	t.Cleanup(func() { _ = c.Close() })
+	return c
 }
 
 // knownHostsFile writes a known_hosts entry for addr and returns its path.
@@ -54,6 +55,10 @@ func knownHostsFile(t *testing.T, addr string, key ssh.PublicKey) string {
 	return path
 }
 
+// mustRun runs script and trims the single trailing newline the REPL framing
+// requires between real output and its end-of-response marker (real scripts
+// already end their JSON envelope with WriteLine's own "\n"; canned test
+// fixtures below deliberately don't include one, so this normalises both).
 func mustRun(t *testing.T, c *Client, script string) (string, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
@@ -62,7 +67,7 @@ func mustRun(t *testing.T, c *Client, script string) (string, string) {
 	if err != nil {
 		t.Fatalf("RunPowerShell: %v (stderr=%q)", err, stderr)
 	}
-	return stdout, stderr
+	return strings.TrimSuffix(stdout, "\n"), strings.TrimSuffix(stderr, "\n")
 }
 
 // A full round trip over public-key auth with the host key pinned: the case
@@ -72,7 +77,7 @@ func TestTransportPublicKeyAuthWithPinnedHostKey(t *testing.T) {
 	keyPEM, pub, _ := newClientKeypair(t)
 	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: `{"ok":true}`})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host:       "127.0.0.1",
 		Port:       srv.Port,
 		Username:   "tester",
@@ -80,9 +85,6 @@ func TestTransportPublicKeyAuthWithPinnedHostKey(t *testing.T) {
 		HostKey:    srv.AuthorizedKeyLine(),
 		Timeout:    testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 
 	stdout, _ := mustRun(t, c, "Get-Thing")
 	if stdout != `{"ok":true}` {
@@ -93,55 +95,53 @@ func TestTransportPublicKeyAuthWithPinnedHostKey(t *testing.T) {
 	}
 }
 
-// The command line must stay the fixed bootstrap and the real script must
-// arrive on stdin as UTF-16LE base64. Nothing covered this end to end before.
+// The command line must stay the fixed REPL bootstrap and the real script
+// must arrive on stdin as UTF-16LE base64, one request per call.
 func TestTransportBootstrapPutsScriptOnStdin(t *testing.T) {
 	noAgent(t)
 	keyPEM, pub, _ := newClientKeypair(t)
 	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 
 	// Non-ASCII on purpose: UTF-16LE fidelity is the reason for this encoding.
 	script := "Write-Output 'héllo ✓'"
 	mustRun(t, c, script)
 
-	if cmd := srv.Command(); cmd != bootstrapCommand() {
-		t.Errorf("command line drifted from the fixed bootstrap:\n got %q\nwant %q", cmd, bootstrapCommand())
+	if cmd := srv.Command(); cmd != replBootstrapCommand() {
+		t.Errorf("command line drifted from the fixed REPL bootstrap:\n got %q\nwant %q", cmd, replBootstrapCommand())
 	}
-	if len(srv.Command()) > 1000 {
-		t.Errorf("bootstrap command is %d chars; it must stay constant and small", len(srv.Command()))
-	}
-
-	firstLine, _, _ := strings.Cut(srv.Stdin(), "\n")
-	if got := decodeUTF16LEBase64(t, strings.TrimRight(firstLine, "\r")); got != script {
-		t.Errorf("script decoded from stdin = %q, want %q", got, script)
+	if len(srv.Command()) >= 4096 {
+		t.Errorf("bootstrap command is %d chars; it must stay constant and well under Windows' ~8191-char limit", len(srv.Command()))
 	}
 	if strings.Contains(srv.Command(), "héllo") {
 		t.Error("script body must not appear on the command line")
 	}
+
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 REPL request, got %d", len(reqs))
+	}
+	if got := decodePowerShell(t, reqs[0].scriptB64); got != script {
+		t.Errorf("script decoded from stdin = %q, want %q", got, script)
+	}
 }
 
-// Secrets passed via RunPowerShellWithInput must travel on stdin, never on the
-// command line where they could be captured by session logging.
+// Secrets passed via RunPowerShellWithInput must travel on stdin, base64
+// encoded, never on the command line where they could be captured by
+// session logging.
 func TestTransportSecretStaysOffCommandLine(t *testing.T) {
 	noAgent(t)
 	keyPEM, pub, _ := newClientKeypair(t)
 	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 
 	const secret = "correct-horse-battery-staple"
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
@@ -153,8 +153,16 @@ func TestTransportSecretStaysOffCommandLine(t *testing.T) {
 	if strings.Contains(srv.Command(), secret) {
 		t.Error("secret leaked onto the command line")
 	}
-	if !strings.Contains(srv.Stdin(), secret) {
-		t.Error("secret should have been delivered on stdin")
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 REPL request, got %d", len(reqs))
+	}
+	gotSecret, err := decodeReplSecretForTest(reqs[0].secretB64)
+	if err != nil {
+		t.Fatalf("decode secret: %v", err)
+	}
+	if gotSecret != secret {
+		t.Errorf("secret = %q, want %q", gotSecret, secret)
 	}
 }
 
@@ -162,13 +170,10 @@ func TestTransportPasswordAuth(t *testing.T) {
 	noAgent(t)
 	srv := startTestServer(t, testServerOptions{password: "s3cr3t", stdout: "ok"})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		Password: "s3cr3t", HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
 		t.Errorf("stdout = %q", stdout)
 	}
@@ -210,13 +215,10 @@ func TestTransportAgentAuth(t *testing.T) {
 
 	t.Setenv("SSH_AUTH_SOCK", sockPath)
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
 		t.Errorf("stdout = %q", stdout)
 	}
@@ -238,15 +240,12 @@ func TestTransportRejectsWrongPinnedHostKey(t *testing.T) {
 		t.Fatalf("wrap key: %v", err)
 	}
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey: string(keyPEM),
 		HostKey:    string(ssh.MarshalAuthorizedKey(impostor)),
 		Timeout:    testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
@@ -261,15 +260,12 @@ func TestTransportKnownHosts(t *testing.T) {
 	t.Run("listed host is accepted", func(t *testing.T) {
 		noAgent(t)
 		srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
-		c, err := New(Config{
+		c := newTransportTestClient(t, Config{
 			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 			PrivateKey:     string(keyPEM),
 			KnownHostsPath: knownHostsFile(t, srv.Addr, srv.HostKey),
 			Timeout:        testTimeout,
 		})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
 		if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
 			t.Errorf("stdout = %q", stdout)
 		}
@@ -290,15 +286,12 @@ func TestTransportKnownHosts(t *testing.T) {
 			t.Fatalf("wrap key: %v", err)
 		}
 
-		c, err := New(Config{
+		c := newTransportTestClient(t, Config{
 			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 			PrivateKey:     string(keyPEM),
 			KnownHostsPath: knownHostsFile(t, srv.Addr, stale),
 			Timeout:        testTimeout,
 		})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 		defer cancel()
@@ -320,17 +313,14 @@ func TestTransportKnownHosts(t *testing.T) {
 			t.Fatalf("write known_hosts: %v", err)
 		}
 
-		c, err := New(Config{
+		c := newTransportTestClient(t, Config{
 			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 			PrivateKey: string(keyPEM), KnownHostsPath: empty, Timeout: testTimeout,
 		})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 		defer cancel()
-		_, _, err = c.RunPowerShell(ctx, "Get-Thing")
+		_, _, err := c.RunPowerShell(ctx, "Get-Thing")
 		if err == nil {
 			t.Fatal("an unlisted host must be refused")
 		}
@@ -349,13 +339,10 @@ func TestTransportInsecureOptOutConnects(t *testing.T) {
 	keyPEM, pub, _ := newClientKeypair(t)
 	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey: string(keyPEM), InsecureIgnoreHostKey: true, Timeout: testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
 		t.Errorf("stdout = %q", stdout)
 	}
@@ -377,16 +364,13 @@ func TestTransportPassphraseProtectedKey(t *testing.T) {
 	}
 	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey:           string(pem.EncodeToMemory(block)),
 		PrivateKeyPassphrase: "hunter2",
 		HostKey:              srv.AuthorizedKeyLine(),
 		Timeout:              testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
 		t.Errorf("stdout = %q", stdout)
 	}
@@ -400,13 +384,10 @@ func TestTransportUnauthorizedKeyIsRejected(t *testing.T) {
 	otherPEM, _, _ := newClientKeypair(t)
 	srv := startTestServer(t, testServerOptions{authorizedKey: serverKnownPub, stdout: "ok"})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey: string(otherPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
@@ -422,46 +403,407 @@ func TestTransportFallsBackFromKeyToPassword(t *testing.T) {
 	otherPEM, _, _ := newClientKeypair(t)
 	srv := startTestServer(t, testServerOptions{password: "s3cr3t", stdout: "ok"})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey: string(otherPEM), Password: "s3cr3t",
 		HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
 		t.Errorf("stdout = %q", stdout)
 	}
 }
 
-func TestTransportNonZeroExitIsReported(t *testing.T) {
+// An uncaught PowerShell error is reported through the REPL's in-band status
+// marker (there is no longer a process exit code to read, since the
+// persistent session keeps running).
+func TestTransportScriptErrorIsReported(t *testing.T) {
 	noAgent(t)
 	keyPEM, pub, _ := newClientKeypair(t)
 	srv := startTestServer(t, testServerOptions{
 		authorizedKey: pub,
 		stderr:        "boom",
-		exitStatus:    3,
+		status:        1,
 	})
 
-	c, err := New(Config{
+	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 	_, stderr, err := c.RunPowerShell(ctx, "Get-Thing")
 	if err == nil {
-		t.Fatal("a non-zero exit status must surface as an error")
+		t.Fatal("an uncaught script error must surface as an error")
 	}
-	if !strings.Contains(err.Error(), "code 3") {
-		t.Errorf("error should carry the exit code, got: %v", err)
-	}
-	if stderr != "boom" {
+	if strings.TrimSuffix(stderr, "\n") != "boom" {
 		t.Errorf("stderr = %q, want %q", stderr, "boom")
+	}
+}
+
+// Session reuse (#81): two calls in a row must not open a second SSH
+// connection, and must both be served by the same REPL loop.
+func TestTransportReusesSessionAcrossCalls(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	mustRun(t, c, "Get-Thing")
+	mustRun(t, c, "Get-OtherThing")
+
+	if got := srv.Connections(); got != 1 {
+		t.Errorf("connections = %d, want 1 (session should be reused)", got)
+	}
+	if got := len(srv.Requests()); got != 2 {
+		t.Errorf("requests = %d, want 2", got)
+	}
+}
+
+// Concurrent callers must be serialised onto the single persistent session
+// rather than corrupting each other's request/response framing.
+func TestTransportConcurrentCallsAreSerialised(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+			defer cancel()
+			stdout, _, err := c.RunPowerShell(ctx, "Get-Thing")
+			if err != nil {
+				errs <- err
+				return
+			}
+			if strings.TrimSuffix(stdout, "\n") != "ok" {
+				errs <- errors.New("stdout = " + stdout)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent RunPowerShell: %v", err)
+	}
+
+	if got := srv.Connections(); got != 1 {
+		t.Errorf("connections = %d, want 1 (session should be reused under concurrency)", got)
+	}
+	if got := len(srv.Requests()); got != n {
+		t.Errorf("requests = %d, want %d", got, n)
+	}
+}
+
+// A session that dies mid-use (dropped connection, crashed remote process)
+// must be transparently re-established rather than permanently failing every
+// subsequent call.
+func TestTransportRecoversFromDroppedSession(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey:  pub,
+		stdout:         "ok",
+		dropAfterCalls: 1, // the second request on a given connection is never answered
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+		t.Fatalf("first call: stdout = %q", stdout)
+	}
+	// The server drops the connection after serving request 1 on it. This
+	// second call must transparently reconnect and succeed rather than
+	// surfacing the dropped session as an error.
+	if stdout, _ := mustRun(t, c, "Get-OtherThing"); stdout != "ok" {
+		t.Fatalf("second call: stdout = %q", stdout)
+	}
+
+	if got := srv.Connections(); got != 2 {
+		t.Errorf("connections = %d, want 2 (one reconnect after the drop)", got)
+	}
+}
+
+// x/crypto/ssh's Session.StderrPipe documents a fixed buffer shared between
+// stdout and stderr: if one stream isn't serviced while the other fills it,
+// the remote command blocks. A "cold" CIM/CDXML module (NetSecurity,
+// LocalAccounts) can write enough combined output to hit exactly that before
+// its own end marker. This reproduces it directly: a canned response large
+// enough to exceed the shared buffer must still come back inside the test
+// timeout, proving readReplResponse drains both streams concurrently rather
+// than stdout-then-stderr.
+func TestTransportDrainsLargeStderrWithoutDeadlock(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	large := strings.Repeat("x", 3*1024*1024) // exceeds x/crypto/ssh's shared stdout/stderr buffer
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", stderr: large})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	stdout, stderr := mustRun(t, c, "Get-Thing")
+	if stdout != "ok" {
+		t.Errorf("stdout = %q, want %q", stdout, "ok")
+	}
+	if stderr != large {
+		t.Errorf("stderr length = %d, want %d", len(stderr), len(large))
+	}
+}
+
+// The real bootstrap writes the script's stderr while the script runs,
+// BEFORE the stdout end marker — unlike the canned server default, which
+// writes stderr after it. A "cold" CIM/CDXML import (NetSecurity,
+// LocalAccounts) emits megabytes of chatter in that window; if the client
+// does not drain stderr concurrently with waiting for the stdout end
+// marker, the remote blocks on a full flow-control window and the call
+// hangs. This covers that exact ordering.
+func TestTransportDrainsLargeStderrBeforeEndMarkerWithoutDeadlock(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	large := strings.Repeat("y", 3*1024*1024)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", stderr: large, stderrBeforeEndMarker: true})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	stdout, stderr := mustRun(t, c, "Get-Thing")
+	if stdout != "ok" {
+		t.Errorf("stdout = %q, want %q", stdout, "ok")
+	}
+	if stderr != large {
+		t.Errorf("stderr length = %d, want %d", len(stderr), len(large))
+	}
+}
+
+// Redirected PowerShell streams may emit output without a trailing newline
+// (e.g. a CLIXML warning blob), gluing the end marker to that output on the
+// same line. The reader must still recognise the marker as a suffix;
+// requiring a whole-line match hangs forever on a persistent session.
+// Reproduces the testacc-windows hang on PR #89 (firewall/scheduling/
+// storage shards): the script completed, but the stderr drain never saw its
+// end marker.
+func TestReadReplResponseGluedMarkers(t *testing.T) {
+	stdout := bufio.NewReader(strings.NewReader(
+		"{\"ok\":true}\npartial-output" + replEndStdoutPrefix + "0" + replEndStdoutSuffix + "\n"))
+	stderr := bufio.NewReader(strings.NewReader(
+		"#< CLIXML\n<Objs><S S=\"warning\">chatter</S>c" + replEndStderrLine + "\n"))
+
+	out, errOut, status, err := readReplResponse(stdout, stderr)
+	if err != nil {
+		t.Fatalf("readReplResponse: %v", err)
+	}
+	if status != 0 {
+		t.Errorf("status = %d, want 0", status)
+	}
+	if want := "{\"ok\":true}\npartial-output"; out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+	if want := "#< CLIXML\n<Objs><S S=\"warning\">chatter</S>c"; errOut != want {
+		t.Errorf("stderr = %q, want %q", errOut, want)
+	}
+}
+
+// A clean marker on its own line keeps working exactly as before (no output
+// glued to it contributes nothing).
+func TestReadReplResponseCleanMarkers(t *testing.T) {
+	stdout := bufio.NewReader(strings.NewReader(
+		"{\"ok\":true}\n" + replEndStdoutPrefix + "3" + replEndStdoutSuffix + "\n"))
+	stderr := bufio.NewReader(strings.NewReader(
+		"warning line\n" + replEndStderrLine + "\n"))
+
+	out, errOut, status, err := readReplResponse(stdout, stderr)
+	if err != nil {
+		t.Fatalf("readReplResponse: %v", err)
+	}
+	if status != 3 {
+		t.Errorf("status = %d, want 3", status)
+	}
+	if out != "{\"ok\":true}\n" {
+		t.Errorf("stdout = %q", out)
+	}
+	if errOut != "warning line\n" {
+		t.Errorf("stderr = %q", errOut)
+	}
+}
+
+// decodeReplSecretForTest decodes a REPL request's raw base64 secret field
+// (see encodeReplSecret) back to plaintext for assertions.
+func decodeReplSecretForTest(b64 string) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// The persistent REPL must run under pwsh.exe, never powershell.exe 5.1:
+// repeated stdin writes to a reused 5.1 session stall server-side in
+// Win32-OpenSSH (see ADR-0010). Hosts without pwsh.exe never reach this
+// command — Client.run falls back to the one-shot transport instead.
+func TestReplBootstrapCommandUsesPwsh(t *testing.T) {
+	cmd := replBootstrapCommand()
+	if !strings.HasPrefix(cmd, "pwsh.exe ") {
+		t.Errorf("REPL bootstrap must invoke pwsh.exe, got %q", cmd)
+	}
+	if strings.Contains(cmd, "powershell.exe") {
+		t.Errorf("REPL bootstrap must not reference powershell.exe (5.1), got %q", cmd)
+	}
+}
+
+// The one-shot fallback keeps the #39 guarantee too: fixed command line,
+// script on stdin.
+func TestOneShotCommandStaysSmallAndFixed(t *testing.T) {
+	cmd := oneShotCommand()
+	if strings.HasPrefix(cmd, "pwsh.exe ") {
+		t.Errorf("one-shot fallback must use powershell.exe, got %q", cmd)
+	}
+	if len(cmd) >= 4096 {
+		t.Fatalf("one-shot command unexpectedly long: %d chars", len(cmd))
+	}
+	if cmd2 := oneShotCommand(); cmd != cmd2 {
+		t.Fatal("oneShotCommand is not deterministic")
+	}
+	large := strings.Repeat("Get-Service -Name 'svc';", 4000)
+	if strings.Contains(cmd, encodePowerShell(large)) {
+		t.Fatal("one-shot command must not contain any script payload")
+	}
+}
+
+// One-shot stdin layout: base64 script line, then the raw secret remainder
+// the script reads back via [Console]::In.
+func TestComposeOneShotStdinLayout(t *testing.T) {
+	script := "Write-Output 'héllo ✓'"
+	secret := "s3cr3t-pÄss"
+	raw, err := io.ReadAll(composeOneShotStdin(script, secret))
+	if err != nil {
+		t.Fatalf("read stdin: %v", err)
+	}
+	line1, rest, found := strings.Cut(string(raw), "\n")
+	if !found {
+		t.Fatal("stdin has no newline separating script from secret")
+	}
+	if got := decodePowerShell(t, line1); got != script {
+		t.Errorf("line 1 decodes to %q, want %q", got, script)
+	}
+	if rest != secret {
+		t.Errorf("remainder = %q, want %q", rest, secret)
+	}
+}
+
+// Fallback end to end: without pwsh.exe the client transparently serves every
+// call as one powershell.exe process per call. Each call dials its own
+// connection (no session is ever reused), and scripts arrive intact.
+func TestFallbackToOneShotWhenPwshMissing(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", oneShot: true, refusePwsh: true})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	script := "Write-Output 'héllo ✓'"
+	mustRun(t, c, script)
+	mustRun(t, c, "Get-OtherThing")
+
+	if !c.oneShot {
+		t.Error("client should have pinned itself to one-shot after pwsh was refused")
+	}
+	if got := srv.Connections(); got != 3 {
+		t.Errorf("connections = %d, want 3 (one refused pwsh attempt, then one fresh process per call)", got)
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	if got := decodePowerShell(t, reqs[0].scriptB64); got != script {
+		t.Errorf("script decoded from stdin = %q, want %q", got, script)
+	}
+}
+
+// Secrets under one-shot travel raw on stdin (never on the command line),
+// exactly as under the persistent REPL.
+func TestOneShotSecretStaysOffCommandLine(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", oneShot: true})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	c.oneShot = true
+
+	const secret = "correct-horse-battery-staple" + "\n"
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	if _, _, err := c.RunPowerShellWithInput(ctx, "Set-Password", secret); err != nil {
+		t.Fatalf("RunPowerShellWithInput: %v", err)
+	}
+
+	if strings.Contains(srv.Command(), "correct-horse") {
+		t.Error("secret leaked onto the command line")
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	if reqs[0].secretB64 != secret {
+		t.Errorf("secret remainder = %q, want %q", reqs[0].secretB64, secret)
+	}
+}
+
+// A non-zero exit from the one-shot process surfaces as an error carrying
+// both streams, mirroring the pre-#81 transport contract.
+func TestOneShotScriptErrorIsReported(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey: pub,
+		stdout:        "partial",
+		stderr:        "boom",
+		status:        1,
+		oneShot:       true,
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	c.oneShot = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	stdout, stderr, err := c.RunPowerShell(ctx, "Get-Thing")
+	if err == nil {
+		t.Fatal("a non-zero exit must surface as an error")
+	}
+	if strings.TrimSuffix(stdout, "\n") != "partial" {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if strings.TrimSuffix(stderr, "\n") != "boom" {
+		t.Errorf("stderr = %q", stderr)
 	}
 }
