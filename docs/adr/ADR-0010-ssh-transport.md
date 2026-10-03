@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-08-25
 - Amended: 2026-08-28 (persistent PowerShell session, issue #81)
+- Amended: 2026-10-03 (persistent sessions require PowerShell 7, 5.1 falls
+  back to one-shot)
 - Supersedes: none (records the transport implicitly chosen at bootstrap)
 - Relates to: ADR-0011 (host key verification), PR #78
 
@@ -28,8 +30,10 @@ than decided, and it cost us on four fronts:
 ## Decision
 
 Connect over **SSH** using `golang.org/x/crypto/ssh`, against the target's
-OpenSSH Server, invoking `powershell.exe` as the command. `masterzen/winrm` and
-its NTLM/Kerberos dependencies are dropped.
+OpenSSH Server, invoking `pwsh.exe` (PowerShell 7) as the command, with a
+one-shot `powershell.exe` (5.1) process per call as the fallback where
+PowerShell 7 is absent (see the 2026-10-03 amendment below).
+`masterzen/winrm` and its NTLM/Kerberos dependencies are dropped.
 
 The `winclient` public surface is deliberately unchanged: `RunPowerShell`,
 `RunPowerShellWithInput`, and the `-EncodedCommand` + UTF-16LE-on-stdin
@@ -104,6 +108,24 @@ this framing protocol (ready handshake, framed per-request response,
 `dropAfterCalls` to simulate a session dying mid-use) so session reuse,
 concurrent-call serialisation and recovery are covered by the default
 `make test`, with no Windows host required.
+
+**Persistent sessions require PowerShell 7; Windows PowerShell 5.1 falls
+back to one process per call (amended 2026-10-03).** Acceptance runs
+showed reused `powershell.exe` (5.1) sessions wedging after one or two
+requests: the next stdin write is accepted on the SSH channel but never
+reaches the child, which blocks in its stdin read forever with no EOF —
+while the identical framing under `pwsh.exe` serves arbitrarily many
+sequential requests (133/133 healthy sessions, depth 10, in the probe run).
+Pacing the writes, re-reading stdin off a fresh handle, and both
+windows-2022 and windows-2025 images all reproduce the 5.1 stall, so it is
+inherent to the 5.1 console stdin stack under Win32-OpenSSH, not to timing,
+framing, or image. `Client` therefore establishes its persistent session
+with `pwsh.exe`, and pins itself to the pre-#81 one-shot
+`powershell.exe` transport (one process per call — a single stdin write
+always lands) when the persistent handshake fails. Scripts are unaffected:
+both bootstraps present the script with the secret on `[Console]::In`, so
+`RunPowerShell`/`RunPowerShellWithInput` keep their semantics under either
+transport.
 
 **Read stdout and stderr concurrently, not sequentially (amended
 2026-09-05).** The first `testacc-windows` run against this transport

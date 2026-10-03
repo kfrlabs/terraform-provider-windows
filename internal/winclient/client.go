@@ -14,50 +14,13 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf16"
 
 	"golang.org/x/crypto/ssh"
 )
-
-// diagResponseTimeout bounds a single REPL call while diagnosing the PR #89
-// acceptance hang (identity-net, scheduling, storage shards stuck with both
-// drains starved and the remote silent). TEMPORARY: revert once root-caused.
-// It fires far above any legitimate single call (feature installs take a few
-// minutes) and far below the CI go-test timeout, so a wedged remote fails
-// fast with the evidence below instead of hanging until the job is killed.
-const diagResponseTimeout = 20 * time.Minute
-
-// responseTimeoutError reports a call that produced no complete REPL response
-// within diagResponseTimeout. It carries how many bytes the remote had sent
-// on each stream: zero on both means the bootstrap never executed the script
-// (stdin delivery stall), while nonzero means the script ran and stalled
-// mid-output (or its end marker was never recognised).
-type responseTimeoutError struct {
-	msg string
-}
-
-func (e *responseTimeoutError) Error() string { return e.msg }
-
-// countReader counts bytes flowing from the remote so a stuck call can
-// report how far the response got. Safe for concurrent use by the two drain
-// goroutines (each wraps a different stream).
-type countReader struct {
-	r io.Reader
-	n atomic.Uint64
-}
-
-func (c *countReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	if n > 0 {
-		c.n.Add(uint64(n))
-	}
-	return n, err
-}
-
-func (c *countReader) bytes() uint64 { return c.n.Load() }
 
 // Client wraps an SSH connection and exposes helpers to run PowerShell
 // scripts against the configured Windows host (via its OpenSSH Server,
@@ -69,6 +32,15 @@ func (c *countReader) bytes() uint64 { return c.n.Load() }
 // re-established. Calls are serialised by mu — the SSH session's stdin/
 // stdout/stderr are a single shared, ordered stream, so two calls cannot
 // safely interleave on it.
+//
+// The persistent session requires PowerShell 7 (`pwsh.exe`): repeated stdin
+// writes to a reused `powershell.exe` (5.1) session stall server-side in
+// Win32-OpenSSH — the second or third request is accepted on the channel
+// but never reaches the child, which blocks in its stdin read forever with
+// no EOF (see ADR-0010). When no `pwsh.exe` is available the client falls
+// back, permanently for its lifetime, to one `powershell.exe` process per
+// call (the pre-#81 transport): slower (cold module import per call) but
+// sound, since a single stdin write always lands.
 type Client struct {
 	cfg     Config
 	sshCfg  *ssh.ClientConfig
@@ -76,6 +48,10 @@ type Client struct {
 
 	mu      sync.Mutex
 	session *persistentSession
+	// oneShot, once true, pins this client to one powershell.exe process
+	// per call (see above). Set when establishing the persistent session
+	// fails; only touched with mu held.
+	oneShot bool
 }
 
 // New creates and validates a new SSH Client from the given Config. It does
@@ -162,6 +138,10 @@ func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin strin
 // re-established session if the existing one turns out to be dead. That
 // keeps a stale session (remote crash, dropped TCP connection, idle
 // timeout) from permanently failing every subsequent call.
+//
+// When no pwsh.exe is available the persistent session cannot be
+// established at all; the client then pins itself to the one-shot fallback
+// (one powershell.exe process per call) for the rest of its lifetime.
 func (c *Client) run(ctx context.Context, script, secret string) (string, string, error) {
 	if c == nil {
 		return "", "", fmt.Errorf("winclient: nil client")
@@ -170,24 +150,21 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.oneShot {
+		return c.runOneShot(ctx, script, secret)
+	}
+
 	if c.session == nil {
 		sess, err := newPersistentSession(ctx, c)
 		if err != nil {
-			return "", "", err
+			c.oneShot = true
+			return c.runOneShot(ctx, script, secret)
 		}
 		c.session = sess
 	}
 
 	stdout, stderr, err := c.session.run(ctx, script, secret)
 	if !isSessionBroken(err) {
-		return stdout, stderr, err
-	}
-	// A response timeout already tore the session down; surfacing it beats
-	// burning another diagResponseTimeout on a blind retry past the CI
-	// go-test timeout (TEMPORARY diagnostic, see above).
-	var rto *responseTimeoutError
-	if errors.As(err, &rto) {
-		c.session = nil
 		return stdout, stderr, err
 	}
 
@@ -200,6 +177,80 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 	}
 	c.session = sess
 	return c.session.run(ctx, script, secret)
+}
+
+// oneShotBootstrap is the constant script for the fallback transport: one
+// powershell.exe process per call. It reads a single base64 (UTF-16LE) line
+// from stdin, decodes it to the real script, and executes it. Because the
+// large payload travels on stdin rather than the command line, the command
+// line stays fixed and small — well under Windows' ~8191-char limit (#39).
+// The script itself reads any caller-supplied input from the stdin remainder
+// via [Console]::In.ReadLine() / ReadToEnd(), exactly as it does from the
+// persistent session's secret stream, so scripts work unmodified under both
+// transports. A fresh process performs exactly one stdin read, which is why
+// this path is immune to the Win32-OpenSSH multi-write stdin stall that
+// affects reused powershell.exe (5.1) sessions (see ADR-0010).
+const oneShotBootstrap = `$ErrorActionPreference='Stop'
+$b64=[Console]::In.ReadLine()
+$code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($b64))
+& ([ScriptBlock]::Create($code))`
+
+// oneShotCommand builds the fixed powershell.exe invocation for the
+// fallback transport. It does not depend on the script being run, so its
+// length is constant.
+func oneShotCommand() string {
+	return fmt.Sprintf("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encodePowerShell(oneShotBootstrap))
+}
+
+// composeOneShotStdin lays out the stdin stream the one-shot bootstrap
+// expects: the base64 (UTF-16LE) script as the first line, then any
+// caller-supplied input as the remainder. The bootstrap consumes the first
+// line; the script then reads input from the rest via [Console]::In.
+// base64 uses the standard alphabet (no newlines), so it is always exactly
+// one line.
+func composeOneShotStdin(script, input string) io.Reader {
+	return strings.NewReader(encodePowerShell(script) + "\n" + input)
+}
+
+// runOneShot dials a fresh SSH connection, opens a session running the
+// fixed one-shot bootstrap command with the script piped on stdin, and
+// returns its stdout/stderr. Used when no pwsh.exe is available for the
+// persistent session.
+func (c *Client) runOneShot(ctx context.Context, script, secret string) (string, string, error) {
+	client, err := c.dial(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = client.Close() }()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return "", "", fmt.Errorf("winclient: new ssh session: %w", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+	session.Stdin = composeOneShotStdin(script, secret)
+
+	done := make(chan error, 1)
+	go func() { done <- session.Run(oneShotCommand()) }()
+
+	select {
+	case <-ctx.Done():
+		_ = session.Close()
+		return stdout.String(), stderr.String(), ctx.Err()
+	case runErr := <-done:
+		if runErr != nil {
+			var exitErr *ssh.ExitError
+			if errors.As(runErr, &exitErr) {
+				return stdout.String(), stderr.String(), fmt.Errorf("winclient: powershell exited with code %d", exitErr.ExitStatus())
+			}
+			return stdout.String(), stderr.String(), fmt.Errorf("winclient: powershell run: %w", runErr)
+		}
+		return stdout.String(), stderr.String(), nil
+	}
 }
 
 // isSessionBroken reports whether err indicates the persistent session
@@ -237,14 +288,6 @@ type persistentSession struct {
 	stdout    *bufio.Reader
 	stderr    *bufio.Reader
 	marker    string
-
-	// createdAt and calls track session age and usage for the temporary
-	// response-timeout diagnostic below. calls is only touched with
-	// Client.mu held, which serialises every call on the session.
-	createdAt   time.Time
-	calls       int
-	stdoutCount *countReader
-	stderrCount *countReader
 }
 
 // newPersistentSession dials, starts the REPL bootstrap and waits for its
@@ -286,17 +329,12 @@ func newPersistentSession(ctx context.Context, c *Client) (*persistentSession, e
 		return nil, fmt.Errorf("winclient: start powershell REPL: %w", err)
 	}
 
-	stdoutCount := &countReader{r: stdoutPipe}
-	stderrCount := &countReader{r: stderrPipe}
 	ps := &persistentSession{
-		sshClient:   sshClient,
-		session:     session,
-		stdin:       stdin,
-		stdout:      bufio.NewReader(stdoutCount),
-		stderr:      bufio.NewReader(stderrCount),
-		createdAt:   time.Now(),
-		stdoutCount: stdoutCount,
-		stderrCount: stderrCount,
+		sshClient: sshClient,
+		session:   session,
+		stdin:     stdin,
+		stdout:    bufio.NewReader(stdoutPipe),
+		stderr:    bufio.NewReader(stderrPipe),
 	}
 
 	type readyResult struct {
@@ -336,7 +374,6 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		status         int
 		err            error
 	}
-	ps.calls++
 	done := make(chan result, 1)
 	go func() {
 		if _, err := io.WriteString(ps.stdin, encodeReplRequest(script, secret)); err != nil {
@@ -347,13 +384,6 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		done <- result{stdout, stderr, status, err}
 	}()
 
-	// TEMPORARY diagnostic for the PR #89 hang (see diagResponseTimeout):
-	// bound the wait and report how many response bytes arrived, so one CI
-	// run distinguishes a bootstrap that never executed the script (zero
-	// bytes on both streams: stdin delivery stall) from a script that ran
-	// and stalled mid-output. Revert once root-caused.
-	timer := time.NewTimer(diagResponseTimeout)
-	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		_ = ps.Close()
@@ -366,21 +396,6 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 			return r.stdout, r.stderr, fmt.Errorf("winclient: powershell script raised an uncaught error")
 		}
 		return r.stdout, r.stderr, nil
-	case <-timer.C:
-		outBytes := ps.stdoutCount.bytes()
-		errBytes := ps.stderrCount.bytes()
-		_ = ps.Close() // unstick the drains if they unblock on EOF
-		var partialOut, partialErr string
-		select {
-		case r := <-done:
-			partialOut, partialErr = r.stdout, r.stderr
-		case <-time.After(10 * time.Second):
-		}
-		return "", "", &responseTimeoutError{msg: fmt.Sprintf(
-			"winclient: TEMPORARY diagnostic: no REPL response within %s (session age %s, call #%d on this session, script %dB; server sent %d stdout bytes / %d stderr bytes; partial stdout %.300q, partial stderr %.300q)",
-			diagResponseTimeout, time.Since(ps.createdAt).Round(time.Second), ps.calls,
-			len(script), outBytes, errBytes,
-			truncate(partialOut, 300), truncate(partialErr, 300))}
 	}
 }
 

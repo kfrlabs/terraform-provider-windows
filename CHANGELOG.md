@@ -42,6 +42,17 @@ All notable changes to this project will be documented in this file.
   `identity-net`, `scheduling` and `storage` acceptance shards on later
   calls of already-used sessions). End markers are now recognised as a line
   suffix, keeping whatever precedes them verbatim as script output.
+- The persistent session (#81) stalls on Windows PowerShell 5.1: the second
+  or third stdin write of a reused `powershell.exe` session is accepted on
+  the SSH channel but never reaches the child, which blocks in its stdin
+  read forever with no EOF. Instrumented CI probes (remote transcript per
+  REPL iteration, per-call byte deltas) localised the wedge to the 5.1
+  console stdin stack under Win32-OpenSSH: identical framing under `pwsh`
+  serves arbitrarily many sequential requests, and neither write pacing, an
+  uncached stdin reader, nor the windows-2022 image changes the 5.1 outcome.
+  The persistent session now runs under `pwsh.exe`; hosts without PowerShell
+  7 transparently fall back to one `powershell.exe` process per call (the
+  pre-#81 transport), which performs a single stdin write that always lands.
 
 ### Changed
 

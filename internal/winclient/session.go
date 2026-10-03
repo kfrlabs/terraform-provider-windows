@@ -1,7 +1,7 @@
 // Package winclient: persistent PowerShell session over a single SSH
 // connection (issue #81).
 //
-// The remote side runs one long-lived powershell.exe that reads successive
+// The remote side runs one long-lived pwsh.exe that reads successive
 // requests from stdin and frames each response with a sentinel line, instead
 // of one connection + one process per call. This amortises costly module
 // imports (e.g. ServerManager for windows_feature, ~18s cold) across every
@@ -73,11 +73,17 @@ while ($true) {
 }
 `
 
-// replBootstrapCommand builds the fixed powershell.exe invocation for the
+// replBootstrapCommand builds the fixed shell invocation for the
 // persistent REPL. Its length does not depend on any script sent later,
 // matching the constant-command-line guarantee from #39.
+//
+// The host is pwsh.exe (PowerShell 7), never powershell.exe (5.1): repeated
+// stdin writes to a reused 5.1 session stall server-side in Win32-OpenSSH
+// (see ADR-0010), while pwsh sessions serve arbitrarily many sequential
+// requests. Hosts without pwsh.exe never reach this command — Client.run
+// falls back to the one-shot powershell.exe transport instead.
 func replBootstrapCommand() string {
-	return fmt.Sprintf("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encodePowerShell(psReplBootstrap))
+	return fmt.Sprintf("pwsh.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s", encodePowerShell(psReplBootstrap))
 }
 
 // encodeReplRequest lays out one request: the base64 (UTF-16LE) script on

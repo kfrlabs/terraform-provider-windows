@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -654,4 +655,155 @@ func decodeReplSecretForTest(b64 string) (string, error) {
 		return "", err
 	}
 	return string(raw), nil
+}
+
+// The persistent REPL must run under pwsh.exe, never powershell.exe 5.1:
+// repeated stdin writes to a reused 5.1 session stall server-side in
+// Win32-OpenSSH (see ADR-0010). Hosts without pwsh.exe never reach this
+// command — Client.run falls back to the one-shot transport instead.
+func TestReplBootstrapCommandUsesPwsh(t *testing.T) {
+	cmd := replBootstrapCommand()
+	if !strings.HasPrefix(cmd, "pwsh.exe ") {
+		t.Errorf("REPL bootstrap must invoke pwsh.exe, got %q", cmd)
+	}
+	if strings.Contains(cmd, "powershell.exe") {
+		t.Errorf("REPL bootstrap must not reference powershell.exe (5.1), got %q", cmd)
+	}
+}
+
+// The one-shot fallback keeps the #39 guarantee too: fixed command line,
+// script on stdin.
+func TestOneShotCommandStaysSmallAndFixed(t *testing.T) {
+	cmd := oneShotCommand()
+	if strings.HasPrefix(cmd, "pwsh.exe ") {
+		t.Errorf("one-shot fallback must use powershell.exe, got %q", cmd)
+	}
+	if len(cmd) >= 4096 {
+		t.Fatalf("one-shot command unexpectedly long: %d chars", len(cmd))
+	}
+	if cmd2 := oneShotCommand(); cmd != cmd2 {
+		t.Fatal("oneShotCommand is not deterministic")
+	}
+	large := strings.Repeat("Get-Service -Name 'svc';", 4000)
+	if strings.Contains(cmd, encodePowerShell(large)) {
+		t.Fatal("one-shot command must not contain any script payload")
+	}
+}
+
+// One-shot stdin layout: base64 script line, then the raw secret remainder
+// the script reads back via [Console]::In.
+func TestComposeOneShotStdinLayout(t *testing.T) {
+	script := "Write-Output 'héllo ✓'"
+	secret := "s3cr3t-pÄss"
+	raw, err := io.ReadAll(composeOneShotStdin(script, secret))
+	if err != nil {
+		t.Fatalf("read stdin: %v", err)
+	}
+	line1, rest, found := strings.Cut(string(raw), "\n")
+	if !found {
+		t.Fatal("stdin has no newline separating script from secret")
+	}
+	if got := decodePowerShell(t, line1); got != script {
+		t.Errorf("line 1 decodes to %q, want %q", got, script)
+	}
+	if rest != secret {
+		t.Errorf("remainder = %q, want %q", rest, secret)
+	}
+}
+
+// Fallback end to end: without pwsh.exe the client transparently serves every
+// call as one powershell.exe process per call. Each call dials its own
+// connection (no session is ever reused), and scripts arrive intact.
+func TestFallbackToOneShotWhenPwshMissing(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", oneShot: true, refusePwsh: true})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	script := "Write-Output 'héllo ✓'"
+	mustRun(t, c, script)
+	mustRun(t, c, "Get-OtherThing")
+
+	if !c.oneShot {
+		t.Error("client should have pinned itself to one-shot after pwsh was refused")
+	}
+	if got := srv.Connections(); got != 3 {
+		t.Errorf("connections = %d, want 3 (one refused pwsh attempt, then one fresh process per call)", got)
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	if got := decodePowerShell(t, reqs[0].scriptB64); got != script {
+		t.Errorf("script decoded from stdin = %q, want %q", got, script)
+	}
+}
+
+// Secrets under one-shot travel raw on stdin (never on the command line),
+// exactly as under the persistent REPL.
+func TestOneShotSecretStaysOffCommandLine(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", oneShot: true})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	c.oneShot = true
+
+	const secret = "correct-horse-battery-staple" + "\n"
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	if _, _, err := c.RunPowerShellWithInput(ctx, "Set-Password", secret); err != nil {
+		t.Fatalf("RunPowerShellWithInput: %v", err)
+	}
+
+	if strings.Contains(srv.Command(), "correct-horse") {
+		t.Error("secret leaked onto the command line")
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	if reqs[0].secretB64 != secret {
+		t.Errorf("secret remainder = %q, want %q", reqs[0].secretB64, secret)
+	}
+}
+
+// A non-zero exit from the one-shot process surfaces as an error carrying
+// both streams, mirroring the pre-#81 transport contract.
+func TestOneShotScriptErrorIsReported(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey: pub,
+		stdout:        "partial",
+		stderr:        "boom",
+		status:        1,
+		oneShot:       true,
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	c.oneShot = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	stdout, stderr, err := c.RunPowerShell(ctx, "Get-Thing")
+	if err == nil {
+		t.Fatal("a non-zero exit must surface as an error")
+	}
+	if strings.TrimSuffix(stdout, "\n") != "partial" {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if strings.TrimSuffix(stderr, "\n") != "boom" {
+		t.Errorf("stderr = %q", stderr)
+	}
 }

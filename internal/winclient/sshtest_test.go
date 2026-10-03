@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -53,6 +54,18 @@ type testServerOptions struct {
 	// writes its stderr while it runs, before the bootstrap emits the stdout
 	// end marker). The default writes stderr after the stdout end marker.
 	stderrBeforeEndMarker bool
+
+	// oneShot, when true, speaks the fallback one-shot protocol instead of
+	// the REPL: it reads a single base64 script line plus the raw stdin
+	// remainder, serves the canned response once, and exits with status.
+	// It models one powershell.exe process per call (pre-#81 transport).
+	oneShot bool
+
+	// refusePwsh, when true, drops any exec channel whose command starts
+	// with pwsh.exe without responding, simulating a host with no
+	// PowerShell 7 (Windows PowerShell 5.1 only). The client's persistent
+	// session handshake then fails and it must fall back to one-shot.
+	refusePwsh bool
 }
 
 // testRequest is one decoded REPL request the server received.
@@ -208,6 +221,15 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 		s.command = payload.Command
 		s.mu.Unlock()
 
+		if opts.refusePwsh && strings.HasPrefix(payload.Command, "pwsh.exe") {
+			return // no pwsh here: the client's handshake must fail over
+		}
+
+		if opts.oneShot {
+			s.serveOneShot(ch, opts)
+			return
+		}
+
 		_, _ = fmt.Fprintf(ch, "%stestmarker%s\n", replReadyPrefix, replReadySuffix)
 
 		in := bufio.NewReader(ch)
@@ -250,6 +272,30 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 		_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 		return
 	}
+}
+
+// serveOneShot plays the role of the one-shot bootstrap
+// (oneShotBootstrap in client.go): it reads a single base64 script line plus
+// the raw stdin remainder, serves the canned response once, and exits with
+// the canned status.
+func (s *testServer) serveOneShot(ch ssh.Channel, opts testServerOptions) {
+	in := bufio.NewReader(ch)
+	scriptLine, err := in.ReadString('\n')
+	if err != nil {
+		return
+	}
+	remainder, _ := io.ReadAll(in)
+
+	s.mu.Lock()
+	s.requests = append(s.requests, testRequest{
+		scriptB64: strings.TrimRight(scriptLine, "\r\n"),
+		secretB64: string(remainder),
+	})
+	s.mu.Unlock()
+
+	writeFramedLine(ch, opts.stdout)
+	writeFramedLine(ch.Stderr(), opts.stderr)
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(opts.status)}))
 }
 
 // writeFramedLine writes s to w followed by a newline, unless s is empty (in
