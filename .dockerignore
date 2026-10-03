@@ -1,0 +1,8 @@
+# Keep the build context small: sources only, no history or outputs.
+.git/
+dist/
+terraform-provider-windows*.exe
+terraform-provider-windows
+.terraform/
+*.tfstate
+*.tfstate.backup

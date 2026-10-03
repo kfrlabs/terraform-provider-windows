@@ -1,0 +1,42 @@
+# Build the terraform-provider-windows binary for Windows (amd64) via Docker.
+#
+# Usage (from the repository root):
+#   docker build -f Dockerfile.windows -t tfwin-provider-windows:latest .
+#   docker create --name tfwin-extract tfwin-provider-windows:latest
+#   docker cp tfwin-extract:/out/. ./dist/
+#   docker rm tfwin-extract
+#
+# The daemon never sees a host mount: the source is COPYied into the image,
+# so this also works when the Docker daemon runs on a different host than
+# the client (e.g. inside a dev container).
+#
+# Stages:
+#   base          — dependencies downloaded (cached unless go.mod/go.sum change)
+#   build-windows — GOOS=windows GOARCH=amd64 CGO_ENABLED=0 cross-compile
+#   unit-tests    — full short test suite (no Windows host required)
+#   <default>     — scratch image holding only the .exe for extraction
+
+ARG GO_VERSION=1.25
+
+FROM golang:${GO_VERSION}-bookworm AS base
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . ./
+
+FROM base AS build-windows
+ARG PROVIDER_VERSION=0.1.0
+RUN mkdir -p /out && \
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+    go build -trimpath \
+      -ldflags "-s -w -X main.version=${PROVIDER_VERSION}" \
+      -o "/out/terraform-provider-windows_v${PROVIDER_VERSION}_windows_amd64.exe" \
+      . && \
+    ls -la /out
+
+FROM base AS unit-tests
+RUN go vet ./... && \
+    go test -short -count=1 -timeout 120s ./...
+
+FROM scratch
+COPY --from=build-windows /out/ /
