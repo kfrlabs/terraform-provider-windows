@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and adjust to your lab target.
+windows_host     = "172.18.122.201"
+windows_port     = 2222
+windows_username = "tfacc"
+windows_password = "Zx9-Terra!2026"
+
+test_suffix = "cli"
+
+enable_network_tests = false
+enable_feature_test  = false
+enable_hostname_test = false

@@ -41,6 +41,14 @@ New-NetFirewallRule -DisplayName tfacc-ssh -Direction Inbound `
 Override the password with `--build-arg TFACC_PASSWORD=...`. It must not
 contain the account name `tfacc` and must stay under 15 characters, see below.
 
+Override the PowerShell version with `--build-arg POWERSHELL_VERSION=...`
+(default `7.4.6`). ServerCore ships Windows PowerShell 5.1 only, and the
+provider only reuses a persistent session under PowerShell 7: without pwsh
+in the image every call falls back to one `powershell.exe` process per call
+(see ADR-0010), so the lab would exercise the slow fallback path instead of
+the persistent transport under test. The build fails if the installed
+version does not match the pin.
+
 ## Run the suite against it
 
 From the repository root, on any machine that can reach the published port:
