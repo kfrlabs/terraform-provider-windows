@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- New `test/terraform-cli` workspace exercising all 15 resources and 11 data
+  sources through the Terraform CLI only (`init`/`fmt`/`validate`, mocked
+  `terraform test`, plus `plan`/`apply`/output cross-checks/idempotence/
+  `destroy` via `run-tests.sh --apply`). Flag-gated scenarios for container
+  limitations (firewall, network packages, Windows feature, hostname rename).
+  Live run against `tfacc-win`: 19/19 applied, 5/5 resource-vs-data checks
+  PASS. Surfaced provider bugs #99, #100, #101, #102 (documented in the
+  suite README with workarounds).
+
 ### Performance
 
 - **Breaking (internal):** `internal/winclient.Client` now keeps at most one
