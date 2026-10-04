@@ -46,6 +46,7 @@ var (
 	_ resource.Resource                     = (*windowsLocalUserResource)(nil)
 	_ resource.ResourceWithConfigure        = (*windowsLocalUserResource)(nil)
 	_ resource.ResourceWithImportState      = (*windowsLocalUserResource)(nil)
+	_ resource.ResourceWithModifyPlan       = (*windowsLocalUserResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsLocalUserResource)(nil)
 )
 
@@ -497,6 +498,42 @@ func (r *windowsLocalUserResource) Configure(
 }
 
 // ---------------------------------------------------------------------------
+// ModifyPlan
+// ---------------------------------------------------------------------------
+
+// ModifyPlan marks password_last_set unknown whenever a password rotation is
+// planned. The attribute is Computed + UseStateForUnknown, so without this
+// the plan preserves the prior state value while Update persists the fresh
+// PasswordLastSet timestamp read back from Windows, and Terraform aborts
+// with "Provider produced inconsistent result after apply" on every
+// rotation (password_wo_version bump or legacy password value change).
+func (r *windowsLocalUserResource) ModifyPlan(
+	ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse,
+) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return // destroy, or create where everything is already unknown
+	}
+
+	var plan, prior windowsLocalUserModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Same rotation signals as Update step 3 (EC-6): version bump covers
+	// both the legacy `password` and WriteOnly `password_wo` paths, while
+	// the value comparisons cover the legacy path (post-import recovery).
+	if !localUserPasswordVersionChanged(plan, prior) &&
+		(plan.Password.IsNull() || plan.Password.Equal(prior.Password)) {
+		return
+	}
+
+	plan.PasswordLastSet = types.StringUnknown()
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+}
+
+// ---------------------------------------------------------------------------
 // Create
 // ---------------------------------------------------------------------------
 
@@ -510,8 +547,11 @@ func (r *windowsLocalUserResource) Configure(
 func (r *windowsLocalUserResource) Create(
 	ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse,
 ) {
-	var plan windowsLocalUserModel
+	var plan, config windowsLocalUserModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if !req.Config.Raw.IsNull() {
+		resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -544,10 +584,11 @@ func (r *windowsLocalUserResource) Create(
 
 	// Require password at Create time. Accept either the legacy `password`
 	// attribute or the WriteOnly `password_wo` (mutually exclusive — see
-	// ConfigValidators). The framework populates both fields of `plan` from
-	// the user configuration; for `password_wo` the value is dropped from
-	// state by resp.State.Set() automatically.
-	password, attrPath := effectiveLocalUserPassword(plan)
+	// ConfigValidators). The WriteOnly value is null in the plan handed to
+	// ApplyResourceChange, so it must be read from req.Config (same pattern
+	// as windows_file content_wo); for `password_wo` the value is dropped
+	// from state by resp.State.Set() automatically.
+	password, attrPath := effectiveLocalUserPassword(plan, config)
 	if password == "" {
 		resp.Diagnostics.AddAttributeError(
 			attrPath,
@@ -583,21 +624,47 @@ func (r *windowsLocalUserResource) Create(
 // be non-null per the ConfigValidator, so the order of checks is purely
 // for diagnostic-message routing — it does not introduce ambiguity.
 //
+// WriteOnly values are null in the plan handed to ApplyResourceChange, so
+// the `password_wo` candidate must come from config (windows_file
+// content_wo precedent). The plan value is still consulted as a fallback
+// for callers that bypass Config (unit tests driving Plan only).
+//
 // Returns ("", path.Root("password")) when neither attribute is set, so
 // the legacy attribute path is reported by default for back-compat with
 // existing diagnostic-message tests.
-func effectiveLocalUserPassword(m windowsLocalUserModel) (string, path.Path) {
-	if !m.PasswordWO.IsNull() && !m.PasswordWO.IsUnknown() {
-		if v := m.PasswordWO.ValueString(); v != "" {
+func effectiveLocalUserPassword(plan, config windowsLocalUserModel) (string, path.Path) {
+	if !config.PasswordWO.IsNull() && !config.PasswordWO.IsUnknown() {
+		if v := config.PasswordWO.ValueString(); v != "" {
 			return v, path.Root("password_wo")
 		}
 	}
-	if !m.Password.IsNull() && !m.Password.IsUnknown() {
-		if v := m.Password.ValueString(); v != "" {
+	if !plan.PasswordWO.IsNull() && !plan.PasswordWO.IsUnknown() {
+		if v := plan.PasswordWO.ValueString(); v != "" {
+			return v, path.Root("password_wo")
+		}
+	}
+	if !plan.Password.IsNull() && !plan.Password.IsUnknown() {
+		if v := plan.Password.ValueString(); v != "" {
+			return v, path.Root("password")
+		}
+	}
+	if !config.Password.IsNull() && !config.Password.IsUnknown() {
+		if v := config.Password.ValueString(); v != "" {
 			return v, path.Root("password")
 		}
 	}
 	return "", path.Root("password")
+}
+
+// localUserPasswordVersionChanged reports whether password_wo_version
+// changed between prior state and plan. Unknown values (first apply, import
+// paths) never count as a change: Int64 Equal returns false when either
+// side is unknown, which would otherwise trigger a spurious rotation.
+func localUserPasswordVersionChanged(plan, prior windowsLocalUserModel) bool {
+	if plan.PasswordWoVersion.IsUnknown() || prior.PasswordWoVersion.IsUnknown() {
+		return false
+	}
+	return !plan.PasswordWoVersion.Equal(prior.PasswordWoVersion)
 }
 
 // ---------------------------------------------------------------------------
@@ -670,9 +737,12 @@ func (r *windowsLocalUserResource) Read(
 func (r *windowsLocalUserResource) Update(
 	ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse,
 ) {
-	var plan, prior windowsLocalUserModel
+	var plan, prior, config windowsLocalUserModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if !req.Config.Raw.IsNull() {
+		resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -724,12 +794,12 @@ func (r *windowsLocalUserResource) Update(
 	//      in plan). Covers post-import recovery (EC-11) for the legacy
 	//      attribute. The WriteOnly equivalent is also covered through
 	//      version bumping.
-	needsPasswordRotation := !plan.PasswordWoVersion.Equal(prior.PasswordWoVersion) ||
+	needsPasswordRotation := localUserPasswordVersionChanged(plan, prior) ||
 		(!plan.Password.IsNull() && !plan.Password.Equal(prior.Password)) ||
 		(!plan.Password.IsNull() && prior.Password.IsNull())
 
 	if needsPasswordRotation {
-		pw, attrPath := effectiveLocalUserPassword(plan)
+		pw, attrPath := effectiveLocalUserPassword(plan, config)
 		if pw == "" {
 			resp.Diagnostics.AddAttributeError(
 				attrPath,

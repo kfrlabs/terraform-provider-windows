@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -771,5 +772,167 @@ func TestSubscriptionXMLType_SchemaWiring(t *testing.T) {
 
 	if !subscriptionXMLValueOrNull("").IsNull() {
 		t.Error("subscriptionXMLValueOrNull(\"\") must be null")
+	}
+}
+
+// TestScheduledTaskUpdate_PwBumpedFailClosed is a table unit test for the
+// two Update branches extracted into helpers (issue #99 re-review): the
+// password_wo_version bump gate (including first-time principal with
+// version 0/0 + password) and the fail-closed guard for Password logon
+// with an empty effective password. Pure unit test: no Windows host.
+func TestScheduledTaskUpdate_PwBumpedFailClosed(t *testing.T) {
+	ctx := context.Background()
+
+	mkPrincipal := func(version int64, legacySet bool, legacyValue string) windowsScheduledTaskPrincipalModel {
+		pm := windowsScheduledTaskPrincipalModel{
+			UserID:            types.StringValue("svc"),
+			PasswordWO:        types.StringNull(),
+			PasswordWoVersion: types.Int64Value(version),
+			LogonType:         types.StringValue("Password"),
+			RunLevel:          types.StringValue("Limited"),
+		}
+		if legacySet {
+			pm.Password = types.StringValue(legacyValue)
+		} else {
+			pm.Password = types.StringNull()
+		}
+		return pm
+	}
+	mkModel := func(pm windowsScheduledTaskPrincipalModel) windowsScheduledTaskModel {
+		obj, diags := types.ObjectValueFrom(ctx, scheduledTaskPrincipalAttrTypes, pm)
+		if diags.HasError() {
+			t.Fatalf("ObjectValueFrom: %v", diags)
+		}
+		return windowsScheduledTaskModel{Principal: obj}
+	}
+
+	cases := []struct {
+		name              string
+		planPm            windowsScheduledTaskPrincipalModel
+		statePm           windowsScheduledTaskPrincipalModel
+		configLegacySet   bool
+		priorHasPrincipal bool
+		logonType         string
+		effectivePassword string
+		wantBumped        bool
+		wantFailClosed    bool
+		wantDiagAttr      string
+	}{
+		{
+			name:              "first-time 0/0 with password sends",
+			planPm:            mkPrincipal(0, false, ""),
+			statePm:           mkPrincipal(0, false, ""),
+			priorHasPrincipal: false,
+			logonType:         "Password",
+			effectivePassword: "s3cr3t",
+			wantBumped:        true,
+			wantFailClosed:    false,
+			wantDiagAttr:      "password_wo",
+		},
+		{
+			name:              "first-time 0/0 missing password fails closed",
+			planPm:            mkPrincipal(0, false, ""),
+			statePm:           mkPrincipal(0, false, ""),
+			priorHasPrincipal: false,
+			logonType:         "Password",
+			effectivePassword: "",
+			wantBumped:        false,
+			wantFailClosed:    true,
+			wantDiagAttr:      "password_wo",
+		},
+		{
+			name:              "first-time missing password legacy intent routes at password",
+			planPm:            mkPrincipal(0, true, ""),
+			statePm:           mkPrincipal(0, false, ""),
+			priorHasPrincipal: false,
+			logonType:         "Password",
+			effectivePassword: "",
+			wantBumped:        false,
+			wantFailClosed:    true,
+			wantDiagAttr:      "password",
+		},
+		{
+			name:              "version bump without password fails closed",
+			planPm:            mkPrincipal(2, false, ""),
+			statePm:           mkPrincipal(1, false, ""),
+			priorHasPrincipal: true,
+			logonType:         "Password",
+			effectivePassword: "",
+			wantBumped:        true,
+			wantFailClosed:    true,
+			wantDiagAttr:      "password_wo",
+		},
+		{
+			name:              "version bump without password legacy intent routes at password",
+			planPm:            mkPrincipal(2, false, ""),
+			statePm:           mkPrincipal(1, false, ""),
+			configLegacySet:   true,
+			priorHasPrincipal: true,
+			logonType:         "Password",
+			effectivePassword: "",
+			wantBumped:        true,
+			wantFailClosed:    true,
+			wantDiagAttr:      "password",
+		},
+		{
+			name:              "version bump with password sends",
+			planPm:            mkPrincipal(2, false, ""),
+			statePm:           mkPrincipal(1, false, ""),
+			priorHasPrincipal: true,
+			logonType:         "Password",
+			effectivePassword: "n3w-s3cr3t",
+			wantBumped:        true,
+			wantFailClosed:    false,
+			wantDiagAttr:      "password_wo",
+		},
+		{
+			name:              "steady-state no bump allows unrelated updates",
+			planPm:            mkPrincipal(1, false, ""),
+			statePm:           mkPrincipal(1, false, ""),
+			priorHasPrincipal: true,
+			logonType:         "Password",
+			effectivePassword: "",
+			wantBumped:        false,
+			wantFailClosed:    false,
+			wantDiagAttr:      "password_wo",
+		},
+		{
+			name:              "non-Password logon never fails closed",
+			planPm:            mkPrincipal(2, false, ""),
+			statePm:           mkPrincipal(1, false, ""),
+			priorHasPrincipal: true,
+			logonType:         "S4U",
+			effectivePassword: "",
+			wantBumped:        true,
+			wantFailClosed:    false,
+			wantDiagAttr:      "password_wo",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotBumped := deriveScheduledTaskPwBumped(
+				tc.planPm.PasswordWoVersion.ValueInt64(),
+				tc.statePm.PasswordWoVersion.ValueInt64(),
+				tc.priorHasPrincipal,
+				tc.effectivePassword,
+			)
+			if gotBumped != tc.wantBumped {
+				t.Errorf("pwBumped = %v, want %v", gotBumped, tc.wantBumped)
+			}
+			gotFail := scheduledTaskPasswordFailClosed(tc.logonType, tc.effectivePassword, gotBumped, tc.priorHasPrincipal)
+			if gotFail != tc.wantFailClosed {
+				t.Errorf("failClosed = %v, want %v", gotFail, tc.wantFailClosed)
+			}
+
+			planModel := mkModel(tc.planPm)
+			configPm := mkPrincipal(0, tc.configLegacySet, "")
+			configModel := mkModel(configPm)
+			gotPath := scheduledTaskPasswordDiagPath(ctx, &planModel, &configModel)
+			wantPath := path.Root("principal").AtName(tc.wantDiagAttr)
+			if gotPath.String() != wantPath.String() {
+				t.Errorf("diag path = %q, want %q", gotPath.String(), wantPath.String())
+			}
+		})
 	}
 }

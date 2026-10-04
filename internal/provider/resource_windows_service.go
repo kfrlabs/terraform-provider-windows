@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -70,8 +71,9 @@ type windowsServiceModel struct {
 	// DEPRECATED in favour of ServicePasswordWO (Tier 3, TPF v1.14+).
 	ServicePassword types.String `tfsdk:"service_password"`
 	// ServicePasswordWO is WriteOnly: never persisted in state. Read from
-	// req.Plan during Create/Update; the framework drops it on
-	// resp.State.Set(). Mutually exclusive with ServicePassword.
+	// req.Config during Create/Update (the plan value is null at apply);
+	// the framework drops it on resp.State.Set(). Mutually exclusive
+	// with ServicePassword.
 	ServicePasswordWO types.String `tfsdk:"service_password_wo"`
 	Dependencies      types.List   `tfsdk:"dependencies"`
 }
@@ -243,8 +245,11 @@ func (r *windowsServiceResource) ImportState(ctx context.Context, req resource.I
 
 // Create creates the service on Windows and persists the full returned state.
 func (r *windowsServiceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan windowsServiceModel
+	var plan, config windowsServiceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if !req.Config.Raw.IsNull() {
+		resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -270,7 +275,7 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 		StartType:       plan.StartType.ValueString(),
 		DesiredStatus:   plan.Status.ValueString(),
 		ServiceAccount:  plan.ServiceAccount.ValueString(),
-		ServicePassword: effectiveServicePassword(plan),
+		ServicePassword: effectiveServicePassword(plan, config),
 		Dependencies:    deps,
 	}
 
@@ -319,9 +324,12 @@ func (r *windowsServiceResource) Read(ctx context.Context, req resource.ReadRequ
 
 // Update applies in-place changes to the service.
 func (r *windowsServiceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, prior windowsServiceModel
+	var plan, prior, config windowsServiceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if !req.Config.Raw.IsNull() {
+		resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -359,7 +367,7 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 		StartType:       plan.StartType.ValueString(),
 		DesiredStatus:   plan.Status.ValueString(),
 		ServiceAccount:  plan.ServiceAccount.ValueString(),
-		ServicePassword: effectiveServicePassword(plan),
+		ServicePassword: effectiveServicePassword(plan, config),
 		Dependencies:    deps,
 	}
 
@@ -437,12 +445,12 @@ func modelFromState(s *winclient.ServiceState, prior windowsServiceModel) window
 	// service_password is never read from Windows (SS6). Carry the prior
 	// state value through unchanged on the legacy attribute.
 	out.ServicePassword = prior.ServicePassword
-	// service_password_wo is WriteOnly: the framework strips it from state
-	// regardless of what we set here, so the explicit assignment is for
-	// clarity only. Carry the plan/config value through during the
-	// in-memory phase of Create/Update so any downstream consumer reading
-	// `final` before resp.State.Set() observes the user-supplied value.
-	out.ServicePasswordWO = prior.ServicePasswordWO
+	// service_password_wo is WriteOnly: never persisted in state. The
+	// framework strips WriteOnly attributes on resp.State.Set, so assign
+	// null explicitly (matching scheduled_task buildPrincipalModel and the
+	// local_user omission) instead of copying the prior value into the
+	// state-bound model.
+	out.ServicePasswordWO = types.StringNull()
 
 	// dependencies
 	depVals := make([]attr.Value, 0, len(s.Dependencies))
@@ -463,7 +471,7 @@ func addServiceDiag(diags *diag.Diagnostics, summary string, err error) {
 		if len(se.Context) > 0 {
 			detail += "\n\nContext:"
 			for k, v := range se.Context {
-				if k == "service_password" {
+				if strings.HasPrefix(k, "service_password") {
 					continue
 				}
 				detail += fmt.Sprintf("\n  %s = %s", k, v)
@@ -561,15 +569,26 @@ func credentialAttrSet(m windowsServiceModel) (string, bool) {
 // preserves the pre-Tier-3 behaviour (the SCM call interprets an empty
 // password as "no password change" depending on context).
 //
-// Callable from Plan-typed inputs only: WriteOnly attributes are read
-// from req.Plan during Create / Update (the framework populates them
-// before stripping on State write). Reading from req.State would
-// always return null for the WriteOnly field.
-func effectiveServicePassword(m windowsServiceModel) string {
-	if !m.ServicePasswordWO.IsNull() && !m.ServicePasswordWO.IsUnknown() {
-		if v := m.ServicePasswordWO.ValueString(); v != "" {
+// The WriteOnly value is null in the plan handed to ApplyResourceChange,
+// so it must be read from config (windows_file content_wo precedent).
+// The plan value is still consulted as a fallback for callers that bypass
+// Config (unit tests driving Plan only).
+func effectiveServicePassword(plan, config windowsServiceModel) string {
+	if !config.ServicePasswordWO.IsNull() && !config.ServicePasswordWO.IsUnknown() {
+		if v := config.ServicePasswordWO.ValueString(); v != "" {
 			return v
 		}
 	}
-	return m.ServicePassword.ValueString()
+	if !plan.ServicePasswordWO.IsNull() && !plan.ServicePasswordWO.IsUnknown() {
+		if v := plan.ServicePasswordWO.ValueString(); v != "" {
+			return v
+		}
+	}
+	if !plan.ServicePassword.IsNull() && !plan.ServicePassword.IsUnknown() {
+		return plan.ServicePassword.ValueString()
+	}
+	if !config.ServicePassword.IsNull() && !config.ServicePassword.IsUnknown() {
+		return config.ServicePassword.ValueString()
+	}
+	return ""
 }
