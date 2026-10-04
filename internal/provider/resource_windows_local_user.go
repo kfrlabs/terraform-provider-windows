@@ -46,6 +46,7 @@ var (
 	_ resource.Resource                     = (*windowsLocalUserResource)(nil)
 	_ resource.ResourceWithConfigure        = (*windowsLocalUserResource)(nil)
 	_ resource.ResourceWithImportState      = (*windowsLocalUserResource)(nil)
+	_ resource.ResourceWithModifyPlan       = (*windowsLocalUserResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsLocalUserResource)(nil)
 )
 
@@ -494,6 +495,42 @@ func (r *windowsLocalUserResource) Configure(
 		return
 	}
 	r.user = winclient.NewLocalUserClient(c)
+}
+
+// ---------------------------------------------------------------------------
+// ModifyPlan
+// ---------------------------------------------------------------------------
+
+// ModifyPlan marks password_last_set unknown whenever a password rotation is
+// planned. The attribute is Computed + UseStateForUnknown, so without this
+// the plan preserves the prior state value while Update persists the fresh
+// PasswordLastSet timestamp read back from Windows, and Terraform aborts
+// with "Provider produced inconsistent result after apply" on every
+// rotation (password_wo_version bump or legacy password value change).
+func (r *windowsLocalUserResource) ModifyPlan(
+	ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse,
+) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return // destroy, or create where everything is already unknown
+	}
+
+	var plan, prior windowsLocalUserModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Same rotation signals as Update step 3 (EC-6): version bump covers
+	// both the legacy `password` and WriteOnly `password_wo` paths, while
+	// the value comparisons cover the legacy path (post-import recovery).
+	if !localUserPasswordVersionChanged(plan, prior) &&
+		(plan.Password.IsNull() || plan.Password.Equal(prior.Password)) {
+		return
+	}
+
+	plan.PasswordLastSet = types.StringUnknown()
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 // ---------------------------------------------------------------------------
