@@ -173,3 +173,69 @@ resource "windows_local_user" "imp" {
 		},
 	})
 }
+
+// TestAccWindowsLocalUser_PasswordWo_CreateAndRotate — issue #99: a user
+// created with only password_wo + password_wo_version must succeed, and a
+// password_wo_version bump must rotate the password. The WriteOnly value is
+// null in the plan at apply time, so the provider reads it from req.Config
+// (windows_file content_wo precedent).
+func TestAccWindowsLocalUser_PasswordWo_CreateAndRotate(t *testing.T) {
+	testAccLocalUserPreCheck(t)
+
+	name := "usr-wo-" + userSuffix()
+	var originalSID string
+	cfg := func(pw string, ver int) string {
+		return fmt.Sprintf(`
+resource "windows_local_user" "wo" {
+  name                = %q
+  password_wo         = %q
+  password_wo_version = %d
+}
+`, name, pw, ver)
+	}
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg("Tr0ub4dour&Zx9!Xyz-Wo1-Qw7mK", 1),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_local_user.wo", "name", name),
+					resource.TestCheckResourceAttr("windows_local_user.wo", "password_wo_version", "1"),
+					resource.TestCheckResourceAttrSet("windows_local_user.wo", "sid"),
+					resource.TestMatchResourceAttr("windows_local_user.wo", "sid", regexp.MustCompile(`^S-1-5-`)),
+					resource.TestCheckNoResourceAttr("windows_local_user.wo", "password_wo"),
+					resource.TestCheckResourceAttrWith(
+						"windows_local_user.wo", "sid",
+						func(v string) error {
+							if v == "" {
+								return fmt.Errorf("sid must be non-empty after create")
+							}
+							originalSID = v
+							return nil
+						},
+					),
+				),
+			},
+			{
+				Config: cfg("Tr0ub4dour&Zx9!Xyz-Wo2-Rt4pL", 2),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_local_user.wo", "password_wo_version", "2"),
+					resource.TestCheckResourceAttrSet("windows_local_user.wo", "sid"),
+					resource.TestCheckNoResourceAttr("windows_local_user.wo", "password_wo"),
+					resource.TestCheckResourceAttrWith(
+						"windows_local_user.wo", "sid",
+						func(v string) error {
+							if originalSID == "" {
+								return fmt.Errorf("originalSID was empty; step1 sid capture failed")
+							}
+							if v != originalSID {
+								return fmt.Errorf("SID changed on password rotation: %q -> %q", originalSID, v)
+							}
+							return nil
+						},
+					),
+				),
+			},
+		},
+	})
+}
