@@ -940,9 +940,12 @@ if ($null -ne %s -and %s -ne '') { $_stRegParams['Description'] = %s }
 	if input.Principal != nil && input.Principal.Password != nil {
 		// principal.password is read from stdin (never embedded in the script
 		// body, see ADR-LU-3 / ADR-ST-3). The Go side dispatches via
-		// runSTEnvelopeWithInput when this branch is taken.
+		// runSTEnvelopeWithInput when this branch is taken. An empty stdin
+		// read is rejected with an invalid_input diagnostic (phase=register)
+		// rather than letting Register-ScheduledTask fail cryptically
+		// ("Parameter set cannot be resolved", issue #101).
 		sb.WriteString("$_stRegPassword = [Console]::In.ReadLine()\n")
-		sb.WriteString("if ($null -eq $_stRegPassword) { $_stRegPassword = '' }\n")
+		sb.WriteString("if ([string]::IsNullOrEmpty($_stRegPassword)) { Emit-Err 'invalid_input' 'Scheduled task password was empty on stdin while a Password principal was requested.' @{ phase = 'register' }; return }\n")
 		sb.WriteString("$_stRegParams['Password'] = $_stRegPassword\n")
 	}
 
@@ -1032,8 +1035,11 @@ $_stSetParams = @{
 
 	if input.Principal != nil && input.Principal.Password != nil {
 		// principal.password is read from stdin (see Create for rationale).
+		// An empty stdin read is rejected with an invalid_input diagnostic
+		// (phase=update) rather than letting Set-ScheduledTask fail
+		// cryptically (issue #101).
 		sb.WriteString("$_stSetPassword = [Console]::In.ReadLine()\n")
-		sb.WriteString("if ($null -eq $_stSetPassword) { $_stSetPassword = '' }\n")
+		sb.WriteString("if ([string]::IsNullOrEmpty($_stSetPassword)) { Emit-Err 'invalid_input' 'Scheduled task password was empty on stdin while a Password principal was requested.' @{ phase = 'update' }; return }\n")
 		sb.WriteString("$_stSetParams['Password'] = $_stSetPassword\n")
 	}
 

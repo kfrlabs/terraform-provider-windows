@@ -1231,6 +1231,145 @@ func TestSTUpdate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	}
 }
 
+// TestSTCreate_PasswordEmptyStdinGuard is the #101 regression guard: when a
+// Password principal is requested but stdin delivers nothing, the Create
+// script must fail fast with a typed invalid_input diagnostic
+// (phase=register) instead of letting Register-ScheduledTask fail
+// cryptically ("Parameter set cannot be resolved"). The password value must
+// never appear in the script body.
+func TestSTCreate_PasswordEmptyStdinGuard(t *testing.T) {
+	const secret = "S3cr3t#Pwd!ForSchedTask"
+	var capturedScript string
+
+	_, impl := newSTTestClient(t)
+	defer stubSTRunInput(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
+		capturedScript = script
+		return buildMinimalPayloadJSON(t, "PwTask", `\`), "", nil
+	})()
+
+	pw := secret
+	input := ScheduledTaskInput{
+		Name: "PwTask", Path: `\`, Enabled: true,
+		Principal: &ScheduledTaskPrincipalInput{
+			UserID: `DOMAIN\svc`, Password: &pw, LogonType: "Password",
+		},
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	}
+	if _, err := impl.Create(context.Background(), input); err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+
+	if strings.Contains(capturedScript, secret) {
+		t.Fatal("SECURITY: principal.password leaked in PS script body")
+	}
+	for _, want := range []string{
+		"[string]::IsNullOrEmpty($_stRegPassword)",
+		"Emit-Err 'invalid_input'",
+		"phase = 'register'",
+		"password was empty on stdin while a Password principal was requested",
+	} {
+		if !strings.Contains(capturedScript, want) {
+			t.Errorf("create script missing empty-stdin guard %q", want)
+		}
+	}
+	if strings.Contains(capturedScript, "if ($null -eq $_stRegPassword) { $_stRegPassword = '' }") {
+		t.Error("create script still silently coerces an empty stdin password to ''")
+	}
+	if strings.Contains(capturedScript, "one-shot") || strings.Contains(capturedScript, "5.1") {
+		t.Error("create guard message must stay transport-neutral (explanation belongs in Go comments only)")
+	}
+}
+
+// TestSTUpdate_PasswordEmptyStdinGuard mirrors the Create guard for the
+// Update path (phase=update, Set-ScheduledTask).
+func TestSTUpdate_PasswordEmptyStdinGuard(t *testing.T) {
+	const secret = "Rotat3d!ForSchedTask#42"
+	var capturedScript string
+
+	_, impl := newSTTestClient(t)
+	defer stubSTRunInput(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
+		capturedScript = script
+		return buildMinimalPayloadJSON(t, "PwTask", `\`), "", nil
+	})()
+
+	pw := secret
+	input := ScheduledTaskInput{
+		Name: "PwTask", Path: `\`, Enabled: true,
+		Principal: &ScheduledTaskPrincipalInput{
+			UserID: `DOMAIN\svc`, Password: &pw, LogonType: "Password",
+		},
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	}
+	if _, err := impl.Update(context.Background(), `\PwTask`, input); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+
+	if strings.Contains(capturedScript, secret) {
+		t.Fatal("SECURITY: principal.password leaked in PS script body")
+	}
+	for _, want := range []string{
+		"[string]::IsNullOrEmpty($_stSetPassword)",
+		"Emit-Err 'invalid_input'",
+		"phase = 'update'",
+		"password was empty on stdin while a Password principal was requested",
+	} {
+		if !strings.Contains(capturedScript, want) {
+			t.Errorf("update script missing empty-stdin guard %q", want)
+		}
+	}
+	if strings.Contains(capturedScript, "if ($null -eq $_stSetPassword) { $_stSetPassword = '' }") {
+		t.Error("update script still silently coerces an empty stdin password to ''")
+	}
+	if strings.Contains(capturedScript, "one-shot") || strings.Contains(capturedScript, "5.1") {
+		t.Error("update guard message must stay transport-neutral (explanation belongs in Go comments only)")
+	}
+}
+
+// TestSTCreate_PasswordEmptyStdinDiagnostic pins the Go side of the #101
+// guard contract: the envelope the guard emits maps to invalid_input with the
+// register phase, and carries no password material (ADR-ST-3).
+func TestSTCreate_PasswordEmptyStdinDiagnostic(t *testing.T) {
+	const secret = "S3cr3t#Pwd!ForSchedTask"
+	_, impl := newSTTestClient(t)
+	defer stubSTRunInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+		return `{"ok":false,"kind":"invalid_input","message":"Scheduled task password was empty on stdin while a Password principal was requested.","context":{"phase":"register"}}` + "\n", "", nil
+	})()
+
+	pw := secret
+	input := ScheduledTaskInput{
+		Name: "PwTask", Path: `\`, Enabled: true,
+		Principal: &ScheduledTaskPrincipalInput{
+			UserID: `DOMAIN\svc`, Password: &pw, LogonType: "Password",
+		},
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	}
+	_, err := impl.Create(context.Background(), input)
+	if err == nil {
+		t.Fatal("expected invalid_input error for an undelivered stdin password")
+	}
+	if !IsScheduledTaskError(err, ScheduledTaskErrorInvalidInput) {
+		t.Fatalf("expected invalid_input, got: %v", err)
+	}
+	var ste *ScheduledTaskError
+	if !errors.As(err, &ste) {
+		t.Fatalf("expected *ScheduledTaskError, got %T", err)
+	}
+	if ste.Context["phase"] != "register" {
+		t.Errorf("phase = %q, want register", ste.Context["phase"])
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Error("SECURITY: password leaked into error string")
+	}
+	for k, v := range ste.Context {
+		if strings.Contains(k+":"+v, secret) {
+			t.Errorf("SECURITY: password leaked into error context key %q", k)
+		}
+	}
+}
+
 func TestSTCreate_RecursiveFolderCreation(t *testing.T) {
 	// EC-2: sub-folder created via Ensure-TaskFolder call in script
 	_, impl := newSTTestClient(t)
