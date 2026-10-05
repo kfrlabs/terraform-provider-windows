@@ -4,6 +4,10 @@
 //   - Metadata + Schema shape / attribute presence + sensitive flags
 //   - scheduledTaskNameValidator: valid names, reserved-char names, empty
 //   - scheduledTaskPathValidator: valid paths, invalid paths
+//   - duration validators: settings.execution_time_limit (days or less; year and
+//     month components would be approximated by ToTimeSpan) vs trigger
+//     execution_time_limit/delay (full XSD grammar, stored verbatim)
+//   - durationValue: value-semantic equality across equivalent spellings
 //   - scheduledTaskErrDiag: ScheduledTaskError path + plain error path
 //   - strOrNull helper
 //   - Resource.Configure: nil ProviderData, wrong type
@@ -21,6 +25,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -28,6 +33,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -241,6 +247,106 @@ func TestScheduledTaskPathValidator_Null(t *testing.T) {
 	}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Error("null value should not be rejected by path validator")
+	}
+}
+
+// stDurationAccepted reports whether a validator chain stays silent for d.
+func stDurationAccepted(v validator.String, d string) bool {
+	resp := &validator.StringResponse{}
+	v.ValidateString(context.Background(), validator.StringRequest{
+		ConfigValue: types.StringValue(d),
+	}, resp)
+	return !resp.Diagnostics.HasError()
+}
+
+func TestScheduledTaskSettingsDurationValidator_Valid(t *testing.T) {
+	// settings.execution_time_limit is converted through XmlConvert::ToTimeSpan
+	// on apply (the cmdlet parameter is [TimeSpan]), and read back verbatim as
+	// the ISO 8601 string. Every XSD duration of days or less is therefore
+	// TimeSpan-expressible and safe, including day forms: P3D is exactly 72h.
+	v := stringvalidator.RegexMatches(scheduledTaskDurationRegex, scheduledTaskDurationDesc)
+	cases := []string{
+		"PT72H", "PT0S", "PT5M", "PT1H", "PT4H", "PT1440M",
+		"PT1M30S", "PT0.5S", "PT1H30M", "PT1H30M15S", "PT30S",
+		"P3D", "P1DT2H", "P3DT0H0M0S", "P1D", "PT0H", "PT0072H",
+		// Redundant or non-canonical spellings are fine: the attribute compares
+		// by duration value, so an equivalent re-read spelling is not a drift.
+		"PT1H0M", "PT60M", "PT1H60M",
+	}
+	for _, d := range cases {
+		if !stDurationAccepted(v, d) {
+			t.Errorf("valid settings duration %q rejected", d)
+		}
+	}
+}
+
+func TestScheduledTaskSettingsDurationValidator_Invalid(t *testing.T) {
+	// Year and month components are rejected because XmlConvert::ToTimeSpan
+	// would silently approximate them as 365- and 30-day intervals rather than
+	// converting them exactly. Component-less forms ("P", "PT", "P3DT") carry
+	// no duration and do make ToTimeSpan throw. TimeSpan forms ("3.00:00:00")
+	// are not valid configuration, and negative durations are
+	// xs:negativeDuration.
+	v := stringvalidator.RegexMatches(scheduledTaskDurationRegex, scheduledTaskDurationDesc)
+	cases := []string{
+		"bogus", "3.00:00:00", "00:00:00", "72H", "-PT1H", "-P1D", "",
+		"P", "PT", "P3DT", "P1YT", "T",
+		"P1Y", "P1M", "P1Y2M3D", "P1M4DT2H5M", "P1YT2H",
+	}
+	for _, d := range cases {
+		if stDurationAccepted(v, d) {
+			t.Errorf("invalid settings duration %q should be rejected", d)
+		}
+	}
+}
+
+func TestScheduledTaskTriggerDurationValidator_Valid(t *testing.T) {
+	// Trigger execution_time_limit/delay are string-typed CIM properties
+	// assigned and reported verbatim, so the full XSD grammar is safe there,
+	// including year and month components, and including every spelling
+	// settings.execution_time_limit must reject.
+	v := stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)
+	cases := []string{
+		"P3D", "P1DT2H", "P3DT0H0M0S", "PT1440M", "PT72H",
+		"PT5M", "PT1H30M15S", "PT0.5S", "PT0S", "P1D",
+		"P1Y", "P1M", "P1M4DT2H5M", "P1Y2M3D", "P1YT2H",
+	}
+	for _, d := range cases {
+		if !stDurationAccepted(v, d) {
+			t.Errorf("valid trigger duration %q rejected", d)
+		}
+	}
+}
+
+func TestScheduledTaskTriggerDurationValidator_Invalid(t *testing.T) {
+	// TimeSpan forms are not valid configuration, component-less forms carry no
+	// duration, and xs:negativeDuration is rejected. Unlike the settings
+	// attribute, year/month components ARE valid here.
+	v := stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)
+	cases := []string{
+		"bogus", "3.00:00:00", "00:00:00", "72H", "-PT1H", "",
+		"P", "PT", "P3DT", "T", "PTS",
+	}
+	for _, d := range cases {
+		if stDurationAccepted(v, d) {
+			t.Errorf("invalid trigger duration %q should be rejected", d)
+		}
+	}
+}
+
+// TestScheduledTaskDurationValidators_SettingsStricterThanTrigger pins the one
+// intentional asymmetry: settings.execution_time_limit must reject the
+// TimeSpan-inexpressible year/month forms that triggers accept.
+func TestScheduledTaskDurationValidators_SettingsStricterThanTrigger(t *testing.T) {
+	settings := stringvalidator.RegexMatches(scheduledTaskDurationRegex, scheduledTaskDurationDesc)
+	trigger := stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)
+	for _, d := range []string{"P1Y", "P1M", "P1Y2M3D", "P1M4DT2H5M"} {
+		if stDurationAccepted(settings, d) {
+			t.Errorf("settings duration %q should be rejected (not TimeSpan-expressible)", d)
+		}
+		if !stDurationAccepted(trigger, d) {
+			t.Errorf("trigger duration %q should be accepted (verbatim string property)", d)
+		}
 	}
 }
 
@@ -772,6 +878,201 @@ func TestSubscriptionXMLType_SchemaWiring(t *testing.T) {
 
 	if !subscriptionXMLValueOrNull("").IsNull() {
 		t.Error("subscriptionXMLValueOrNull(\"\") must be null")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// durationValue semantic equality
+// ---------------------------------------------------------------------------
+
+func TestDurationsEquivalent(t *testing.T) {
+	// Equivalent spellings of the same length must compare equal: the apply
+	// path hands Windows a [TimeSpan], so a re-serialisation may legitimately
+	// come back as P3D where the configuration said PT72H. Without value
+	// comparison that is a hard "provider produced inconsistent result after
+	// apply" on an Optional+Computed attribute that has a default.
+	equal := [][2]string{
+		{"PT72H", "P3D"},
+		{"PT72H", "P3DT0H0M0S"},
+		{"PT72H", "72:00:00"},
+		{"PT72H", "3.00:00:00"},
+		{"PT4H", "PT240M"},
+		{"PT4H", "PT4H0M0S"},
+		{"PT4H", "PT0H240M0S"},
+		{"PT1H30M15S", "PT1H30M15.0000000S"},
+		{"PT0S", "0.00:00:00"},
+		{"PT0.5S", "00:00:00.5000000"},
+		{"P1M4DT2H5M", "P34DT2H5M"},
+		{"P1Y", "P365D"},
+		{"PT1440M", "P1D"},
+		{"PT72H", "PT72H"},
+	}
+	for _, c := range equal {
+		if !durationsEquivalent(c[0], c[1]) {
+			t.Errorf("durationsEquivalent(%q, %q) = false, want true", c[0], c[1])
+		}
+		if !durationsEquivalent(c[1], c[0]) {
+			t.Errorf("durationsEquivalent(%q, %q) = false, want true (symmetric)", c[1], c[0])
+		}
+	}
+}
+
+func TestDurationsEquivalent_NotEqual(t *testing.T) {
+	// Different lengths, unparseable values, and out-of-range magnitudes must
+	// never compare equal: an unparseable value falls back to strict string
+	// equality rather than matching something else.
+	notEqual := [][2]string{
+		{"PT72H", "PT71H"},
+		{"PT72H", "P1D"},
+		{"PT72H", "PT0S"},
+		{"PT0S", "PT0.000000001S"},
+		{"PT72H", "PT72H0M1S"},
+		{"PT72H", "bogus"},
+		{"bogus", "bogus2"},
+		{"", "PT0S"},
+		{"PT72H", "99999999999999999999999:00:00"},
+		{"PT9999999999999H", "PT72H"},
+		// Overflow witnesses: these wrap to 0 / MinInt64 if the components are
+		// multiplied before being range-checked, which would make an absurd
+		// duration compare equal to PT0S or to a legitimate value.
+		{"P144115188075855872D", "PT0S"},
+		{"P144115188075855872D", "PT72H"},
+		{"PT576460752303423488H", "PT72H"},
+		{"PT0S", "P144115188075855872D"},
+		{"99999999999999999999999:00:00", "PT0S"},
+		{"PT9223372036.9S", "-PT9223372036.809551616S"},
+	}
+	for _, c := range notEqual {
+		if durationsEquivalent(c[0], c[1]) {
+			t.Errorf("durationsEquivalent(%q, %q) = true, want false", c[0], c[1])
+		}
+	}
+}
+
+func TestDurationValue_StringSemanticEquals(t *testing.T) {
+	ctx := context.Background()
+	// The dangerous case for #100: planned PT72H, state re-read as P3D. This
+	// must be "no change", not an inconsistent-result error.
+	planned := durationValueOf("PT72H")
+	state := durationValueOf("P3D")
+	ok, diags := planned.StringSemanticEquals(ctx, state)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !ok {
+		t.Error("PT72H and P3D must compare semantically equal")
+	}
+	ok, diags = planned.StringSemanticEquals(ctx, durationValueOf("PT71H"))
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if ok {
+		t.Error("PT72H and PT71H must not compare equal")
+	}
+	// Null and unknown never match.
+	ok, _ = planned.StringSemanticEquals(ctx, durationValueOrNull(""))
+	if ok {
+		t.Error("a known duration must not equal null")
+	}
+	ok, _ = planned.StringSemanticEquals(ctx, durationValue{StringValue: basetypes.NewStringUnknown()})
+	if ok {
+		t.Error("a known duration must not equal unknown")
+	}
+	// A type mismatch is reported, not silently treated as equal.
+	if _, diags := planned.StringSemanticEquals(ctx, basetypes.NewStringValue("P3D")); !diags.HasError() {
+		t.Error("expected a diagnostic for a non-durationValue argument")
+	}
+}
+
+func TestDurationValue_Type(t *testing.T) {
+	ctx := context.Background()
+	if got := durationValueOf("PT72H").Type(ctx); got.String() != "durationType" {
+		t.Errorf("Type() = %q, want durationType", got.String())
+	}
+	// The type must round-trip through the framework's Terraform conversion.
+	ty := durationType{}
+	val, diags := ty.ValueFromString(ctx, basetypes.NewStringValue("P3D"))
+	if diags.HasError() {
+		t.Fatalf("ValueFromString diagnostics: %v", diags)
+	}
+	if _, ok := val.(durationValue); !ok {
+		t.Errorf("ValueFromString returned %T, want durationValue", val)
+	}
+	tfVal, err := ty.ValueFromTerraform(ctx, tftypes.NewValue(tftypes.String, "PT72H"))
+	if err != nil {
+		t.Fatalf("ValueFromTerraform: %v", err)
+	}
+	if _, ok := tfVal.(durationValue); !ok {
+		t.Errorf("ValueFromTerraform returned %T, want durationValue", tfVal)
+	}
+	if !(durationType{}).Equal(durationType{}) {
+		t.Error("durationType must equal itself")
+	}
+}
+
+// TestModelToInput_DurationAttributesUseSchemaType drives modelToInput with
+// settings and trigger objects built from the SCHEMA attr types, not from a
+// hand-rolled map. This is the exact mismatch that broke Create and Update when
+// settings.execution_time_limit first gained a CustomType while the model field
+// and the attr-types map still said types.String: reflect.Into then fails with
+// "Cannot use attr.Value types.String, only ...durationValue is supported".
+// Building the objects from the shared attr-types maps keeps the test honest
+// about what the framework hands to As().
+func TestModelToInput_DurationAttributesUseSchemaType(t *testing.T) {
+	ctx := context.Background()
+	settings := types.ObjectValueMust(scheduledTaskSettingsAttrTypes, map[string]attr.Value{
+		"allow_demand_start":             types.BoolValue(true),
+		"allow_hard_terminate":           types.BoolValue(true),
+		"start_when_available":           types.BoolValue(false),
+		"run_only_if_network_available":  types.BoolValue(false),
+		"execution_time_limit":           durationValueOf("PT4H"),
+		"multiple_instances":             types.StringValue("Queue"),
+		"disallow_start_if_on_batteries": types.BoolValue(true),
+		"stop_if_going_on_batteries":     types.BoolValue(true),
+		"wake_to_run":                    types.BoolValue(false),
+		"run_only_if_idle":               types.BoolValue(false),
+	})
+	trigger := types.ObjectValueMust(scheduledTaskTriggerAttrTypes, map[string]attr.Value{
+		"type":                 types.StringValue("Daily"),
+		"enabled":              types.BoolValue(true),
+		"start_boundary":       types.StringValue("2026-01-01T00:00:00Z"),
+		"end_boundary":         types.StringNull(),
+		"execution_time_limit": types.StringValue("PT5M"),
+		"delay":                types.StringValue("PT1M"),
+		"days_interval":        types.Int64Value(1),
+		"days_of_week":         types.ListValueMust(types.StringType, []attr.Value{}),
+		"weeks_interval":       types.Int64Null(),
+		"user_id":              types.StringNull(),
+		"subscription":         subscriptionXMLValueOrNull(""),
+	})
+	m := &windowsScheduledTaskModel{
+		Name:        types.StringValue("T"),
+		Path:        types.StringValue(`\`),
+		Description: types.StringValue(""),
+		Enabled:     types.BoolValue(true),
+		Principal:   types.ObjectNull(scheduledTaskPrincipalAttrTypes),
+		Actions:     types.ListNull(types.ObjectType{AttrTypes: scheduledTaskActionAttrTypes}),
+		Triggers:    types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, []attr.Value{trigger}),
+		Settings:    settings,
+	}
+	in, diags := modelToInput(ctx, m)
+	if diags.HasError() {
+		t.Fatalf("modelToInput diagnostics: %v", diags)
+	}
+	if in.Settings == nil {
+		t.Fatal("expected settings to be converted")
+	}
+	if in.Settings.ExecutionTimeLimit != "PT4H" {
+		t.Errorf("settings ETL = %q, want PT4H", in.Settings.ExecutionTimeLimit)
+	}
+	if len(in.Triggers) != 1 {
+		t.Fatalf("expected 1 trigger, got %d", len(in.Triggers))
+	}
+	if in.Triggers[0].ExecutionTimeLimit != "PT5M" {
+		t.Errorf("trigger ETL = %q, want PT5M", in.Triggers[0].ExecutionTimeLimit)
+	}
+	if in.Triggers[0].Delay != "PT1M" {
+		t.Errorf("trigger delay = %q, want PT1M", in.Triggers[0].Delay)
 	}
 }
 

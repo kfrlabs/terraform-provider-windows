@@ -9,7 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +47,44 @@ import (
 // is more than enough for nominal cases while still bounding pathological
 // hangs (e.g. SSH degradation, slow DC for principals).
 const stDefaultTimeout = 5 * time.Minute
+
+// stXSDTimePart matches the time half of an XSD duration, separator included,
+// requiring at least one of the H/M/S components so that a bare "PT" cannot
+// match: TnH, TnM, TnS, TnHnM, TnHnMnS (seconds may carry a fraction).
+const stXSDTimePart = `T(?:\d+H(?:\d+M)?(?:\d+(?:\.\d+)?S)?|\d+M(?:\d+(?:\.\d+)?S)?|\d+(?:\.\d+)?S)`
+
+// stXSDDatePart matches the date half of an XSD duration, requiring at least one
+// of the Y/M/D components. Components must appear in Y, M, D order, so the
+// alternation enumerates the three legal shapes (D, MD, YMD) plus Y-only and
+// M-only. The alternation is self-contained: always embed it in a non-capturing
+// group when composing it into a larger pattern.
+const stXSDDatePart = `(?:(?:\d+Y)?(?:\d+M)?\d+D|\d+Y|\d+M)`
+
+// scheduledTaskDurationRegex accepts the XSD/ISO 8601 durations that
+// settings.execution_time_limit carries: days or less (PnD, PTnH, PTnM, PTnS,
+// e.g. P3D, PT72H, PT1H30M15S; PT0S runs indefinitely). The value is converted
+// through XmlConvert::ToTimeSpan on apply — the New-ScheduledTaskSettingsSet
+// -ExecutionTimeLimit parameter is [TimeSpan] — and XmlConvert::ToTimeSpan
+// approximates years and months as 365 and 30 days respectively, so those
+// components are rejected here rather than silently turned into an arbitrary
+// interval. Day components are exact: P3D is 72h.
+//
+// At least one component is required: a bare "P" or "PT" carries no duration
+// and also makes ToTimeSpan throw.
+var scheduledTaskDurationRegex = regexp.MustCompile(`^P(?:(?:\d+D)` + stXSDTimePart + `|\d+D|` + stXSDTimePart + `)$`)
+
+const scheduledTaskDurationDesc = "must be an ISO 8601 duration of days or less (e.g. PT72H, P3D, PT1H30M15S; PT0S runs indefinitely)"
+
+// scheduledTaskTriggerDurationRegex accepts the full XSD/ISO 8601 duration
+// grammar for trigger execution_time_limit/delay, including year and month
+// components (P1M4DT2H5M). Those are string-typed CIM properties assigned and
+// reported verbatim, and trigger durations are documented in that format, so
+// any schema-valid duration round-trips unchanged there — the settings-level
+// XmlConvert::ToTimeSpan restriction does not apply. At least one component is
+// required, as above.
+var scheduledTaskTriggerDurationRegex = regexp.MustCompile(`^P(?:` + stXSDDatePart + `(?:` + stXSDTimePart + `)?|` + stXSDTimePart + `)$`)
+
+const scheduledTaskTriggerDurationDesc = "must be an ISO 8601 duration (e.g. PT72H, P3D, P1M4DT2H5M; PT0S runs indefinitely)"
 
 // Framework interface assertions.
 var (
@@ -100,7 +140,7 @@ var scheduledTaskSettingsAttrTypes = map[string]attr.Type{
 	"allow_hard_terminate":           types.BoolType,
 	"start_when_available":           types.BoolType,
 	"run_only_if_network_available":  types.BoolType,
-	"execution_time_limit":           types.StringType,
+	"execution_time_limit":           durationType{},
 	"multiple_instances":             types.StringType,
 	"disallow_start_if_on_batteries": types.BoolType,
 	"stop_if_going_on_batteries":     types.BoolType,
@@ -145,16 +185,16 @@ type windowsScheduledTaskTriggerModel struct {
 }
 
 type windowsScheduledTaskSettingsModel struct {
-	AllowDemandStart           types.Bool   `tfsdk:"allow_demand_start"`
-	AllowHardTerminate         types.Bool   `tfsdk:"allow_hard_terminate"`
-	StartWhenAvailable         types.Bool   `tfsdk:"start_when_available"`
-	RunOnlyIfNetworkAvailable  types.Bool   `tfsdk:"run_only_if_network_available"`
-	ExecutionTimeLimit         types.String `tfsdk:"execution_time_limit"`
-	MultipleInstances          types.String `tfsdk:"multiple_instances"`
-	DisallowStartIfOnBatteries types.Bool   `tfsdk:"disallow_start_if_on_batteries"`
-	StopIfGoingOnBatteries     types.Bool   `tfsdk:"stop_if_going_on_batteries"`
-	WakeToRun                  types.Bool   `tfsdk:"wake_to_run"`
-	RunOnlyIfIdle              types.Bool   `tfsdk:"run_only_if_idle"`
+	AllowDemandStart           types.Bool    `tfsdk:"allow_demand_start"`
+	AllowHardTerminate         types.Bool    `tfsdk:"allow_hard_terminate"`
+	StartWhenAvailable         types.Bool    `tfsdk:"start_when_available"`
+	RunOnlyIfNetworkAvailable  types.Bool    `tfsdk:"run_only_if_network_available"`
+	ExecutionTimeLimit         durationValue `tfsdk:"execution_time_limit"`
+	MultipleInstances          types.String  `tfsdk:"multiple_instances"`
+	DisallowStartIfOnBatteries types.Bool    `tfsdk:"disallow_start_if_on_batteries"`
+	StopIfGoingOnBatteries     types.Bool    `tfsdk:"stop_if_going_on_batteries"`
+	WakeToRun                  types.Bool    `tfsdk:"wake_to_run"`
+	RunOnlyIfIdle              types.Bool    `tfsdk:"run_only_if_idle"`
 }
 
 type windowsScheduledTaskModel struct {
@@ -549,11 +589,13 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						},
 						"execution_time_limit": schema.StringAttribute{
 							Optional:            true,
-							MarkdownDescription: "ISO 8601 per-trigger time cap.",
+							Validators:          []validator.String{stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)},
+							MarkdownDescription: "ISO 8601 per-trigger time cap. Assigned to Windows as an XSD string and compared verbatim.",
 						},
 						"delay": schema.StringAttribute{
 							Optional:            true,
-							MarkdownDescription: "ISO 8601 delay before task start (AtStartup/AtLogon/OnEvent).",
+							Validators:          []validator.String{stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)},
+							MarkdownDescription: "ISO 8601 delay before task start (AtStartup/AtLogon/OnEvent). Assigned to Windows as an XSD string and compared verbatim.",
 						},
 						"days_interval": schema.Int64Attribute{
 							Optional: true, Computed: true,
@@ -601,7 +643,14 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 					"allow_hard_terminate":          schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Allow forcible termination."},
 					"start_when_available":          schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Start on next opportunity if missed."},
 					"run_only_if_network_available": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Only start with network."},
-					"execution_time_limit":          schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("PT72H"), MarkdownDescription: "Max runtime (ISO 8601). `PT0S` disables."},
+					"execution_time_limit": schema.StringAttribute{
+						Optional:            true,
+						Computed:            true,
+						Default:             stringdefault.StaticString("PT72H"),
+						Validators:          []validator.String{stringvalidator.RegexMatches(scheduledTaskDurationRegex, scheduledTaskDurationDesc)},
+						MarkdownDescription: "Max runtime (ISO 8601). `PT0S` runs indefinitely. Converted to a `TimeSpan` on apply because the cmdlet requires one; compared by value, so an equivalent re-read spelling does not drift.",
+						CustomType:          durationType{},
+					},
 					"multiple_instances": schema.StringAttribute{
 						Optional: true, Computed: true, Default: stringdefault.StaticString("Queue"),
 						Validators:          []validator.String{stringvalidator.OneOf("Parallel", "Queue", "IgnoreNew", "StopExisting")},
@@ -1158,7 +1207,7 @@ func stateToModel(ctx context.Context, s *winclient.ScheduledTaskState, priorMod
 			AllowHardTerminate:         types.BoolValue(s.Settings.AllowHardTerminate),
 			StartWhenAvailable:         types.BoolValue(s.Settings.StartWhenAvailable),
 			RunOnlyIfNetworkAvailable:  types.BoolValue(s.Settings.RunOnlyIfNetworkAvailable),
-			ExecutionTimeLimit:         types.StringValue(s.Settings.ExecutionTimeLimit),
+			ExecutionTimeLimit:         durationValueOf(s.Settings.ExecutionTimeLimit),
 			MultipleInstances:          types.StringValue(s.Settings.MultipleInstances),
 			DisallowStartIfOnBatteries: types.BoolValue(s.Settings.DisallowStartIfOnBatteries),
 			StopIfGoingOnBatteries:     types.BoolValue(s.Settings.StopIfGoingOnBatteries),
@@ -1174,7 +1223,7 @@ func stateToModel(ctx context.Context, s *winclient.ScheduledTaskState, priorMod
 			AllowHardTerminate:         types.BoolValue(s.Settings.AllowHardTerminate),
 			StartWhenAvailable:         types.BoolValue(s.Settings.StartWhenAvailable),
 			RunOnlyIfNetworkAvailable:  types.BoolValue(s.Settings.RunOnlyIfNetworkAvailable),
-			ExecutionTimeLimit:         types.StringValue(s.Settings.ExecutionTimeLimit),
+			ExecutionTimeLimit:         durationValueOf(s.Settings.ExecutionTimeLimit),
 			MultipleInstances:          types.StringValue(s.Settings.MultipleInstances),
 			DisallowStartIfOnBatteries: types.BoolValue(s.Settings.DisallowStartIfOnBatteries),
 			StopIfGoingOnBatteries:     types.BoolValue(s.Settings.StopIfGoingOnBatteries),
@@ -1451,6 +1500,264 @@ func (t subscriptionXMLType) ValueFromTerraform(ctx context.Context, in tftypes.
 
 func (t subscriptionXMLType) ValueType(context.Context) attr.Value {
 	return subscriptionXMLValue{}
+}
+
+// durationValue is the framework value type for the ISO 8601 duration
+// attributes. It implements value-semantic equality so that equivalent
+// spellings of the same duration compare equal, avoiding both a "provider
+// produced inconsistent result after apply" error on create and a false diff on
+// later refresh.
+//
+// The state value is never rewritten: the raw string Windows reports is kept
+// as-is. Equality is only relaxed at comparison time, because the attribute is
+// Optional+Computed with a default, so any spelling difference on a
+// semantically identical value would otherwise be a hard apply failure.
+//
+// Which spelling comes back is not guaranteed: TaskSettings.ExecutionTimeLimit
+// is documented as a String in the PnYnMnDTnHnMnS format, but the apply path
+// hands Windows a [TimeSpan], so a re-serialisation could legitimately produce
+// P3D where the configuration said PT72H. Comparing by value is correct in both
+// cases.
+type durationValue struct {
+	basetypes.StringValue
+}
+
+func durationValueOf(s string) durationValue {
+	return durationValue{StringValue: types.StringValue(s)}
+}
+
+func durationValueOrNull(s string) durationValue {
+	if s == "" {
+		return durationValue{StringValue: types.StringNull()}
+	}
+	return durationValueOf(s)
+}
+
+func (v durationValue) Equal(o attr.Value) bool {
+	other, ok := o.(durationValue)
+	if !ok {
+		return false
+	}
+	return v.StringValue.Equal(other.StringValue)
+}
+
+func (v durationValue) Type(context.Context) attr.Type {
+	return durationType{}
+}
+
+func (v durationValue) StringSemanticEquals(_ context.Context, newValuable basetypes.StringValuable) (bool, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	other, ok := newValuable.(durationValue)
+	if !ok {
+		diags.AddError("Semantic Equality Check Error",
+			fmt.Sprintf("expected durationValue, got %T", newValuable))
+		return false, diags
+	}
+	if v.IsNull() || v.IsUnknown() || other.IsNull() || other.IsUnknown() {
+		return false, diags
+	}
+	return durationsEquivalent(v.ValueString(), other.ValueString()), diags
+}
+
+// durationType is the attr.Type counterpart of durationValue.
+type durationType struct {
+	basetypes.StringType
+}
+
+func (t durationType) Equal(o attr.Type) bool {
+	other, ok := o.(durationType)
+	if !ok {
+		return false
+	}
+	return t.StringType.Equal(other.StringType)
+}
+
+func (t durationType) String() string {
+	return "durationType"
+}
+
+func (t durationType) ValueFromString(_ context.Context, in basetypes.StringValue) (basetypes.StringValuable, diag.Diagnostics) {
+	return durationValue{StringValue: in}, nil
+}
+
+func (t durationType) ValueFromTerraform(ctx context.Context, in tftypes.Value) (attr.Value, error) {
+	attrValue, err := t.StringType.ValueFromTerraform(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	stringValue, ok := attrValue.(basetypes.StringValue)
+	if !ok {
+		return nil, fmt.Errorf("unexpected value type %T for durationType", attrValue)
+	}
+	valuable, diags := t.ValueFromString(ctx, stringValue)
+	if diags.HasError() {
+		return nil, fmt.Errorf("error converting StringValue to durationValue: %v", diags)
+	}
+	return valuable, nil
+}
+
+func (t durationType) ValueType(context.Context) attr.Value {
+	return durationValue{}
+}
+
+// xsdDurationRe matches the XSD duration grammar used by Task Scheduler,
+// including the optional week form and an optional negative sign.
+var xsdDurationRe = regexp.MustCompile(`^(-?)P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$`)
+
+// dotNetTimeSpanRe matches the .NET TimeSpan.ToString() form, "[d.]hh:mm:ss.fffffff".
+var dotNetTimeSpanRe = regexp.MustCompile(`^(-)?(?:(\d+)\.)?(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d+))?$`)
+
+// durationsEquivalent reports whether two duration spellings denote the same
+// length of time. It falls back to exact string equality when either side
+// cannot be parsed, so an unexpected value still compares strictly rather than
+// silently matching something else.
+func durationsEquivalent(a, b string) bool {
+	if a == b {
+		return true
+	}
+	da, okA := durationNanos(a)
+	db, okB := durationNanos(b)
+	if !okA || !okB {
+		return false
+	}
+	return da == db
+}
+
+// durationNanos converts an XSD duration or a .NET TimeSpan string to
+// nanoseconds. It reports false for anything it cannot parse and for values
+// large enough to overflow the nanosecond range, keeping the comparison
+// conservative.
+//
+// Year and month components use the same 365- and 30-day estimate as
+// XmlConvert::ToTimeSpan, so a value means the same length here as it does on
+// the apply path.
+func durationNanos(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	if m := xsdDurationRe.FindStringSubmatch(s); m != nil {
+		sign := int64(1)
+		if m[1] == "-" {
+			sign = -1
+		}
+		seconds, fracNanos := parseSeconds(m[8])
+		if seconds < 0 {
+			return 0, false
+		}
+		// Each component is range-checked against the remaining budget
+		// BEFORE it is multiplied. An int64 overflow wraps rather than
+		// saturating, so validating the accumulated total afterwards would
+		// let a huge component wrap to a small value and compare equal to a
+		// legitimate duration.
+		total, ok := stCheckedAdd(0, atoi64(m[2]), 365*86400)
+		if !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, atoi64(m[3]), 30*86400); !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, atoi64(m[4]), 7*86400); !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, atoi64(m[5]), 86400); !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, atoi64(m[6]), 3600); !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, atoi64(m[7]), 60); !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, seconds, 1); !ok {
+			return 0, false
+		}
+		return sign * (total*int64(time.Second) + fracNanos), true
+	}
+	if m := dotNetTimeSpanRe.FindStringSubmatch(s); m != nil {
+		sign := int64(1)
+		if m[1] == "-" {
+			sign = -1
+		}
+		fracNanos := int64(0)
+		if m[6] != "" {
+			frac, err := strconv.ParseFloat("0."+m[6], 64)
+			if err != nil {
+				return 0, false
+			}
+			// Sub-nanosecond precision is below Windows tick granularity.
+			fracNanos = int64(math.Round(frac * 1e9))
+		}
+		total, ok := stCheckedAdd(0, atoi64(m[2]), 86400)
+		if !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, atoi64(m[3]), 3600); !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, atoi64(m[4]), 60); !ok {
+			return 0, false
+		}
+		if total, ok = stCheckedAdd(total, atoi64(m[5]), 1); !ok {
+			return 0, false
+		}
+		return sign * (total*int64(time.Second) + fracNanos), true
+	}
+	return 0, false
+}
+
+// stCheckedAdd adds count*multiplier to total, reporting false when the result
+// would exceed stMaxDurationSeconds. The bound is checked before multiplying, so
+// no intermediate value can overflow.
+func stCheckedAdd(total, count, multiplier int64) (int64, bool) {
+	if count < 0 || count > stMaxDurationSeconds/multiplier {
+		return 0, false
+	}
+	sum := total + count*multiplier
+	if sum > stMaxDurationSeconds {
+		return 0, false
+	}
+	return sum, true
+}
+
+// parseSeconds splits an XSD seconds component into whole seconds and
+// nanoseconds. It returns a negative whole-second count for a malformed value.
+func parseSeconds(s string) (int64, int64) {
+	if s == "" {
+		return 0, 0
+	}
+	dot := strings.IndexByte(s, '.')
+	if dot < 0 {
+		return atoi64(s), 0
+	}
+	whole := atoi64(s[:dot])
+	frac, err := strconv.ParseFloat("0."+s[dot+1:], 64)
+	if err != nil {
+		return -1, 0
+	}
+	return whole, int64(math.Round(frac * 1e9))
+}
+
+// stMaxDurationSeconds bounds a duration to roughly 290 years. One second is
+// held back from the int64 nanosecond ceiling so that adding the
+// fractional-nanosecond remainder (up to 999_999_999) to the scaled total can
+// never wrap.
+const stMaxDurationSeconds = int64(math.MaxInt64)/int64(time.Second) - 1
+
+// atoi64 parses a non-negative decimal group, reporting 0 for an absent group.
+// Overflow saturates, which durationNanos then rejects via its range check.
+func atoi64(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return math.MaxInt64
+	}
+	if n > uint64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(n)
 }
 
 // scheduledTaskErrDiag converts a ScheduledTaskError to Terraform diagnostics.

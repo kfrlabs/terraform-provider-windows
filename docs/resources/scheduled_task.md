@@ -162,10 +162,10 @@ Optional:
 
 - `days_interval` (Number) Daily recurrence interval. Only valid for `Daily`. Windows default: 1.
 - `days_of_week` (List of String) Weekday names. Required non-empty for `Weekly`.
-- `delay` (String) ISO 8601 delay before task start (AtStartup/AtLogon/OnEvent).
+- `delay` (String) ISO 8601 delay before task start (AtStartup/AtLogon/OnEvent). Assigned to Windows as an XSD string and compared verbatim.
 - `enabled` (Boolean) Whether this trigger is enabled. Defaults to `true`.
 - `end_boundary` (String) RFC 3339 deactivation datetime.
-- `execution_time_limit` (String) ISO 8601 per-trigger time cap.
+- `execution_time_limit` (String) ISO 8601 per-trigger time cap. Assigned to Windows as an XSD string and compared verbatim.
 - `start_boundary` (String) RFC 3339 activation datetime. Required for Once/Daily/Weekly (EC-7).
 - `subscription` (String) XPath event query. Required for `OnEvent` (ADR-ST-5).
 - `user_id` (String) Restrict `AtLogon` trigger to a specific user.
@@ -195,7 +195,7 @@ Optional:
 - `allow_demand_start` (Boolean) Allow on-demand start.
 - `allow_hard_terminate` (Boolean) Allow forcible termination.
 - `disallow_start_if_on_batteries` (Boolean) Do not start on battery.
-- `execution_time_limit` (String) Max runtime (ISO 8601). `PT0S` disables.
+- `execution_time_limit` (String) Max runtime (ISO 8601). `PT0S` runs indefinitely. Converted to a `TimeSpan` on apply because the cmdlet requires one; compared by value, so an equivalent re-read spelling does not drift.
 - `multiple_instances` (String) Concurrent instance policy.
 - `run_only_if_idle` (Boolean) Only run when idle.
 - `run_only_if_network_available` (Boolean) Only start with network.

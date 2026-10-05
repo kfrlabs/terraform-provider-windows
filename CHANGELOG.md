@@ -34,6 +34,21 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_scheduled_task` could not be created with any `settings` block
+  (#100): the configured ISO 8601 `settings.execution_time_limit` was passed
+  straight to `New-ScheduledTaskSettingsSet -ExecutionTimeLimit`, which takes a
+  `[TimeSpan]` ("Cannot convert value PT72H") — and since the attribute is
+  Optional+Computed with a default, even an empty `settings` block failed. The
+  generated PowerShell now converts the value with
+  `[System.Xml.XmlConvert]::ToTimeSpan`. The value is stored as reported and
+  compared by duration, so an equivalent spelling (`P3D` versus `PT72H`) does not
+  drift. The attribute is validated as an XSD duration of days or less: year and
+  month components are rejected because `ToTimeSpan` would silently approximate
+  them as 365- and 30-day intervals. Trigger `execution_time_limit`/`delay` take
+  no such conversion — they are string-typed CIM properties assigned verbatim —
+  so they keep the full XSD grammar (`P3D`, `P1DT2H`, `P1M4DT2H5M`) and are
+  compared verbatim. `PT0S` runs indefinitely on both, as documented by
+  Microsoft.
 - The persistent REPL session (#81) deadlocked on cold calls into chatty
   CIM/CDXML-backed cmdlets (`windows_local_user`, `windows_firewall_rule`
   reads use `Microsoft.PowerShell.LocalAccounts`/`NetSecurity`), hanging the
