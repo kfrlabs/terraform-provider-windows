@@ -697,8 +697,11 @@ func (r *windowsScheduledTaskResource) Configure(_ context.Context, req resource
 
 // Create creates a new Windows Scheduled Task.
 func (r *windowsScheduledTaskResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan windowsScheduledTaskModel
+	var plan, config windowsScheduledTaskModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if !req.Config.Raw.IsNull() {
+		resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -719,6 +722,12 @@ func (r *windowsScheduledTaskResource) Create(ctx context.Context, req resource.
 
 	input, diags := modelToInput(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// WriteOnly principal.password_wo is null in the plan at apply time;
+	// overlay the config value (windows_file content_wo precedent).
+	resp.Diagnostics.Append(overlayScheduledTaskPasswordFromConfig(ctx, &input, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -776,9 +785,12 @@ func (r *windowsScheduledTaskResource) Read(ctx context.Context, req resource.Re
 
 // Update applies in-place changes to the Scheduled Task.
 func (r *windowsScheduledTaskResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, currentState windowsScheduledTaskModel
+	var plan, currentState, config windowsScheduledTaskModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &currentState)...)
+	if !req.Config.Raw.IsNull() {
+		resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -797,6 +809,13 @@ func (r *windowsScheduledTaskResource) Update(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// WriteOnly principal.password_wo is null in the plan at apply time;
+	// overlay the config value before the bump gate below decides whether
+	// to keep or clear it (windows_file content_wo precedent).
+	resp.Diagnostics.Append(overlayScheduledTaskPasswordFromConfig(ctx, &planInput, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// Only send password if password_wo_version bumped
 	planPwVersion := int64(0)
@@ -811,10 +830,25 @@ func (r *windowsScheduledTaskResource) Update(ctx context.Context, req resource.
 		resp.Diagnostics.Append(currentState.Principal.As(ctx, &sp, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true})...)
 		statePwVersion = sp.PasswordWoVersion.ValueInt64()
 	}
-	pwBumped := planPwVersion != statePwVersion
+	priorHasPrincipal := !currentState.Principal.IsNull() && !currentState.Principal.IsUnknown()
+	pwBumped := deriveScheduledTaskPwBumped(planPwVersion, statePwVersion, priorHasPrincipal, scheduledTaskEffectivePassword(planInput))
 	if !pwBumped && planInput.Principal != nil {
 		// No bump: clear password so it's not re-sent
 		planInput.Principal.Password = nil
+	}
+	// Fail closed: a rotation — or a first-time Password principal — with
+	// no effective password would otherwise silently register a task that
+	// cannot log on. Mirrors the local_user "password required for
+	// rotation" guard. Steady-state no-bump updates (prior principal, no
+	// version change) still pass so unrelated attribute updates succeed.
+	if planInput.Principal != nil && scheduledTaskPasswordFailClosed(planInput.Principal.LogonType, scheduledTaskEffectivePassword(planInput), pwBumped, priorHasPrincipal) {
+		resp.Diagnostics.AddAttributeError(
+			scheduledTaskPasswordDiagPath(ctx, &plan, &config),
+			"password required for rotation",
+			"password_wo_version changed but neither `password` nor `password_wo` is set. "+
+				"Provide a non-empty value on one of them.",
+		)
+		return
 	}
 
 	id := currentState.ID.ValueString()
@@ -1002,6 +1036,95 @@ func modelToInput(ctx context.Context, m *windowsScheduledTaskModel) (winclient.
 	}
 
 	return input, diags
+}
+
+// overlayScheduledTaskPasswordFromConfig copies principal.password_wo from
+// config into the converted input. WriteOnly values are null in the plan
+// handed to ApplyResourceChange, so the plan-derived input carries no
+// password at apply time (windows_file content_wo precedent). No-op when
+// there is no principal, when config has no principal, or when the config
+// WriteOnly value is null/unknown/empty. Never clears an input password:
+// callers apply the password_wo_version bump gate afterwards.
+func overlayScheduledTaskPasswordFromConfig(ctx context.Context, input *winclient.ScheduledTaskInput, config *windowsScheduledTaskModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if input == nil || input.Principal == nil || config == nil {
+		return diags
+	}
+	if config.Principal.IsNull() || config.Principal.IsUnknown() {
+		return diags
+	}
+	var pm windowsScheduledTaskPrincipalModel
+	diags.Append(config.Principal.As(ctx, &pm, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true})...)
+	if diags.HasError() {
+		return diags
+	}
+	if pm.PasswordWO.IsNull() || pm.PasswordWO.IsUnknown() {
+		return diags
+	}
+	if pw := pm.PasswordWO.ValueString(); pw != "" {
+		input.Principal.Password = &pw
+	}
+	return diags
+}
+
+// scheduledTaskEffectivePassword returns the effective plaintext held by a
+// converted input ("" when nil). Centralises the nil/empty checks for the
+// bump gate and the fail-closed guard below.
+func scheduledTaskEffectivePassword(input winclient.ScheduledTaskInput) string {
+	if input.Principal == nil || input.Principal.Password == nil {
+		return ""
+	}
+	return *input.Principal.Password
+}
+
+// deriveScheduledTaskPwBumped reports whether Update must (re-)send the
+// principal password: version bump, or first-time principal with a newly
+// supplied non-empty effective password (prior state had no principal so
+// the version gate compares 0 against 0 and would silently drop it).
+func deriveScheduledTaskPwBumped(planPwVersion, statePwVersion int64, priorHasPrincipal bool, effectivePassword string) bool {
+	if planPwVersion != statePwVersion {
+		return true
+	}
+	if !priorHasPrincipal && effectivePassword != "" {
+		return true
+	}
+	return false
+}
+
+// scheduledTaskPasswordFailClosed reports whether Update must fail closed:
+// Password logon with an empty effective password on rotation or on a
+// first-time principal. Steady-state no-bump updates (prior principal, no
+// version change) return false so unrelated attribute updates still
+// succeed; the plan-time cross-field validator remains the primary guard
+// there.
+func scheduledTaskPasswordFailClosed(logonType, effectivePassword string, pwBumped, priorHasPrincipal bool) bool {
+	if logonType != "Password" {
+		return false
+	}
+	if effectivePassword != "" {
+		return false
+	}
+	return pwBumped || !priorHasPrincipal
+}
+
+// scheduledTaskPasswordDiagPath routes the fail-closed diagnostic at the
+// credential attribute the operator intended (effectiveLocalUserPassword
+// precedent): legacy `principal.password` when set in plan or config,
+// else `principal.password_wo`.
+func scheduledTaskPasswordDiagPath(ctx context.Context, plan, config *windowsScheduledTaskModel) path.Path {
+	for _, m := range []*windowsScheduledTaskModel{plan, config} {
+		if m == nil || m.Principal.IsNull() || m.Principal.IsUnknown() {
+			continue
+		}
+		var pm windowsScheduledTaskPrincipalModel
+		if d := m.Principal.As(ctx, &pm, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); d.HasError() {
+			continue
+		}
+		if !pm.Password.IsNull() && !pm.Password.IsUnknown() {
+			return path.Root("principal").AtName("password")
+		}
+	}
+	return path.Root("principal").AtName("password_wo")
 }
 
 // ---------------------------------------------------------------------------

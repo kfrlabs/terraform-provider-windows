@@ -1051,6 +1051,125 @@ func TestLocalUserUpdate_Disable(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ModifyPlan — password_last_set unknown on rotation (issue #99 CI shard)
+// ---------------------------------------------------------------------------
+
+func TestLocalUserModifyPlan_RotationMarksPasswordLastSetUnknown(t *testing.T) {
+	r := &windowsLocalUserResource{}
+	s := windowsLocalUserSchemaDefinition()
+
+	rawState := luObj(map[string]tftypes.Value{
+		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":                  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		"password_last_set":   tftypes.NewValue(tftypes.String, "2026-10-04T12:50:36Z"),
+	})
+	// Plan as produced by UseStateForUnknown: prior timestamp preserved,
+	// version bumped to rotate.
+	rawPlan := luObj(map[string]tftypes.Value{
+		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":                  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+		"password_last_set":   tftypes.NewValue(tftypes.String, "2026-10-04T12:50:36Z"),
+	})
+
+	req := resource.ModifyPlanRequest{
+		Config: tfsdk.Config{Schema: s, Raw: rawPlan},
+		State:  tfsdk.State{Schema: s, Raw: rawState},
+		Plan:   tfsdk.Plan{Schema: s, Raw: rawPlan},
+	}
+	resp := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s, Raw: rawPlan}}
+
+	r.ModifyPlan(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ModifyPlan unexpected errors: %v", luDiagDetails(resp.Diagnostics))
+	}
+
+	var plan windowsLocalUserModel
+	resp.Plan.Get(context.Background(), &plan)
+	if !plan.PasswordLastSet.IsUnknown() {
+		t.Errorf("password_last_set must be Unknown when password_wo_version bumps, got %q", plan.PasswordLastSet.ValueString())
+	}
+}
+
+func TestLocalUserModifyPlan_NoRotationPreservesPasswordLastSet(t *testing.T) {
+	r := &windowsLocalUserResource{}
+	s := windowsLocalUserSchemaDefinition()
+
+	rawState := luObj(map[string]tftypes.Value{
+		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":                  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		"password_last_set":   tftypes.NewValue(tftypes.String, "2026-10-04T12:50:36Z"),
+	})
+	rawPlan := luObj(map[string]tftypes.Value{
+		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":                  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		"password_last_set":   tftypes.NewValue(tftypes.String, "2026-10-04T12:50:36Z"),
+	})
+
+	req := resource.ModifyPlanRequest{
+		Config: tfsdk.Config{Schema: s, Raw: rawPlan},
+		State:  tfsdk.State{Schema: s, Raw: rawState},
+		Plan:   tfsdk.Plan{Schema: s, Raw: rawPlan},
+	}
+	resp := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s, Raw: rawPlan}}
+
+	r.ModifyPlan(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ModifyPlan unexpected errors: %v", luDiagDetails(resp.Diagnostics))
+	}
+
+	var plan windowsLocalUserModel
+	resp.Plan.Get(context.Background(), &plan)
+	if plan.PasswordLastSet.IsUnknown() {
+		t.Error("password_last_set must NOT be Unknown when no rotation is planned")
+	}
+	if plan.PasswordLastSet.ValueString() != "2026-10-04T12:50:36Z" {
+		t.Errorf("password_last_set must be preserved, got %q", plan.PasswordLastSet.ValueString())
+	}
+}
+
+func TestLocalUserModifyPlan_LegacyPasswordChangeMarksPasswordLastSetUnknown(t *testing.T) {
+	r := &windowsLocalUserResource{}
+	s := windowsLocalUserSchemaDefinition()
+
+	rawState := luObj(map[string]tftypes.Value{
+		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":                  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"password":            tftypes.NewValue(tftypes.String, "OldP@ssw0rd!"),
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		"password_last_set":   tftypes.NewValue(tftypes.String, "2026-10-04T12:50:36Z"),
+	})
+	rawPlan := luObj(map[string]tftypes.Value{
+		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":                  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"password":            tftypes.NewValue(tftypes.String, "NewP@ssw0rd!"),
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		"password_last_set":   tftypes.NewValue(tftypes.String, "2026-10-04T12:50:36Z"),
+	})
+
+	req := resource.ModifyPlanRequest{
+		Config: tfsdk.Config{Schema: s, Raw: rawPlan},
+		State:  tfsdk.State{Schema: s, Raw: rawState},
+		Plan:   tfsdk.Plan{Schema: s, Raw: rawPlan},
+	}
+	resp := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s, Raw: rawPlan}}
+
+	r.ModifyPlan(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ModifyPlan unexpected errors: %v", luDiagDetails(resp.Diagnostics))
+	}
+
+	var plan windowsLocalUserModel
+	resp.Plan.Get(context.Background(), &plan)
+	if !plan.PasswordLastSet.IsUnknown() {
+		t.Errorf("password_last_set must be Unknown when legacy password value changes, got %q", plan.PasswordLastSet.ValueString())
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Delete handler — EC-2 builtin guard
 // ---------------------------------------------------------------------------
 
