@@ -28,6 +28,7 @@ const (
 	ScheduledTaskErrorPasswordForbidden ScheduledTaskErrorKind = "password_forbidden"
 	ScheduledTaskErrorPermissionDenied  ScheduledTaskErrorKind = "permission_denied"
 	ScheduledTaskErrorRunning           ScheduledTaskErrorKind = "task_running"
+	ScheduledTaskErrorInvalidInput      ScheduledTaskErrorKind = "invalid_input"
 	ScheduledTaskErrorUnknown           ScheduledTaskErrorKind = "unknown"
 )
 
@@ -85,6 +86,7 @@ var (
 	ErrScheduledTaskPasswordForbidden = &ScheduledTaskError{Kind: ScheduledTaskErrorPasswordForbidden}
 	ErrScheduledTaskPermissionDenied  = &ScheduledTaskError{Kind: ScheduledTaskErrorPermissionDenied}
 	ErrScheduledTaskRunning           = &ScheduledTaskError{Kind: ScheduledTaskErrorRunning}
+	ErrScheduledTaskInvalidInput      = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidInput}
 	ErrScheduledTaskUnknown           = &ScheduledTaskError{Kind: ScheduledTaskErrorUnknown}
 )
 

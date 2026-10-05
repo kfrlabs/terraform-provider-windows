@@ -15,7 +15,7 @@ PASS, second plan empty, destroy clean.**
 | `02-storage.tf` | `windows_directory` (x3), `windows_file` (x2), `windows_file_acl` |
 | `03-registry-env.tf` | `windows_registry_value` (REG_SZ, EXPAND_SZ, MULTI_SZ, DWORD, QWORD, BINARY), `windows_environment_variable` (machine + user) |
 | `04-network.tf` | `windows_firewall_rule` (inbound allow + outbound block, gated) |
-| `05-scheduling-service.tf` | `windows_scheduled_task` (SYSTEM principal), `windows_service` |
+| `05-scheduling-service.tf` | `windows_scheduled_task` (SYSTEM principal, `settings` + trigger duration), `windows_service` |
 | `06-packages-feature-hostname.tf` | `windows_legacy_package`, `windows_winget_package`, `windows_feature`, `windows_hostname` (all gated) |
 | `07-datasources.tf` | All 11 data sources (gated ones with `count`, like the resources) |
 | `08-outputs-checks.tf` | Outputs + 4 `check` resource-vs-data blocks that fail the `apply` |
@@ -98,12 +98,6 @@ documented).
   and 1.16. The Go acceptance suite only exercises legacy `password`, so
   this path was untested. **Workaround:** fixture uses legacy `password`
   (like the Go suite). Fix: read write-only values from `req.Config`.
-- **[#100](https://github.com/kfrlabs/terraform-provider-windows/issues/100) — `settings.execution_time_limit` default `PT72H` passed raw to
-  `New-ScheduledTaskSettingsSet -ExecutionTimeLimit`**, which requires a
-  `TimeSpan` ("Cannot convert value PT72H"). Any `settings` block fails
-  Create — including an empty one, since defaults are merged in
-  (`buildSettingsFragment`). **Workaround:** fixture omits `settings`.
-  Fix: convert ISO 8601 to `[TimeSpan]` in the generated PowerShell.
 - **[#101](https://github.com/kfrlabs/terraform-provider-windows/issues/101) — Password principal unusable on PowerShell 5.1 one-shot targets.**
   With legacy `password`, `Register-ScheduledTask` fails with "Parameter
   set cannot be resolved" on this `pwsh`-less container (password travels
@@ -128,3 +122,24 @@ documented).
   resources leaves the (now empty) parent key behind — Delete removes
   values, not keys. The suite's destroy leaves the target clean apart from
   that empty key (removed manually after the run).
+
+## Fixed since that run
+
+- **[#100](https://github.com/kfrlabs/terraform-provider-windows/issues/100) — `settings.execution_time_limit` passed raw to
+  `New-ScheduledTaskSettingsSet -ExecutionTimeLimit`**, which requires a
+  `TimeSpan` ("Cannot convert value PT72H"), so any `settings` block failed
+  Create. The generated PowerShell now converts the configured ISO 8601 value
+  with `[System.Xml.XmlConvert]::ToTimeSpan`. The accepted sets differ per
+  attribute:
+  - `settings.execution_time_limit` goes through `ToTimeSpan`, which would
+    approximate year and month components as 365- and 30-day intervals, so it
+    accepts XSD durations of days or less (`PT4H`, `PT72H`, `PT0S`, `P3D`,
+    `PT1440M`). It is compared by duration, so an equivalent re-read spelling
+    does not drift.
+  - trigger `execution_time_limit`/`delay` are string-typed CIM properties
+    assigned and read back verbatim, so they accept the full XSD grammar
+    (`P3D`, `P1DT2H`, `P3DT0H0M0S`, `P1M4DT2H5M`) and are compared verbatim.
+
+  The fixture declares `settings` and a trigger duration again; re-run
+  `./run-tests.sh --apply` to confirm end-to-end on a PS7 host or a host whose
+  `Register-ScheduledTask` accepts a password principal.

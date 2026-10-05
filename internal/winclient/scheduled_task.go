@@ -488,7 +488,8 @@ func mapSTKind(k string) ScheduledTaskErrorKind {
 		ScheduledTaskErrorPasswordRequired,
 		ScheduledTaskErrorPasswordForbidden,
 		ScheduledTaskErrorPermissionDenied,
-		ScheduledTaskErrorRunning:
+		ScheduledTaskErrorRunning,
+		ScheduledTaskErrorInvalidInput:
 		return ScheduledTaskErrorKind(k)
 	}
 	return ScheduledTaskErrorUnknown
@@ -546,10 +547,16 @@ func stPayloadToState(p *stTaskPayload) *ScheduledTaskState {
 			dow = []string{}
 		}
 		s.Triggers[i] = ScheduledTaskTriggerState{
-			Type:               t.Type,
-			Enabled:            t.Enabled,
-			StartBoundary:      normalizeDT(t.StartBoundary),
-			EndBoundary:        normalizeDT(t.EndBoundary),
+			Type:          t.Type,
+			Enabled:       t.Enabled,
+			StartBoundary: normalizeDT(t.StartBoundary),
+			EndBoundary:   normalizeDT(t.EndBoundary),
+			// Trigger execution_time_limit/delay are string-typed CIM
+			// properties assigned verbatim on write and reported back
+			// verbatim by Get-ScheduledTask, so the read path must not
+			// rewrite them: the matching schema attributes are Optional-only
+			// (not Computed), so Terraform requires planned == applied
+			// exactly. See buildTriggersFragment.
 			ExecutionTimeLimit: t.ExecutionTimeLimit,
 			Delay:              t.Delay,
 			DaysInterval:       t.DaysInterval,
@@ -561,10 +568,15 @@ func stPayloadToState(p *stTaskPayload) *ScheduledTaskState {
 	}
 	if p.Settings != nil {
 		s.Settings = &ScheduledTaskSettingsState{
-			AllowDemandStart:           p.Settings.AllowDemandStart,
-			AllowHardTerminate:         p.Settings.AllowHardTerminate,
-			StartWhenAvailable:         p.Settings.StartWhenAvailable,
-			RunOnlyIfNetworkAvailable:  p.Settings.RunOnlyIfNetworkAvailable,
+			AllowDemandStart:          p.Settings.AllowDemandStart,
+			AllowHardTerminate:        p.Settings.AllowHardTerminate,
+			StartWhenAvailable:        p.Settings.StartWhenAvailable,
+			RunOnlyIfNetworkAvailable: p.Settings.RunOnlyIfNetworkAvailable,
+			// Verbatim, like the trigger durations: settings.execution_time_limit
+			// is applied as a TimeSpan (see buildSettingsFragment) but
+			// TaskSettings.ExecutionTimeLimit is a string property documented in
+			// XSD form (PnYnMnDTnHnMnS, where PT0S means "run indefinitely"), so
+			// Get-ScheduledTask reports the configured spelling back unchanged.
 			ExecutionTimeLimit:         p.Settings.ExecutionTimeLimit,
 			MultipleInstances:          p.Settings.MultipleInstances,
 			DisallowStartIfOnBatteries: p.Settings.DisallowStartIfOnBatteries,
@@ -660,6 +672,13 @@ func buildTriggersFragment(triggers []ScheduledTaskTriggerInput) string {
 			sb.WriteString(fmt.Sprintf("try { %s.Delay = %s } catch {}\n", vn, psQuote(t.Delay)))
 		}
 		if t.ExecutionTimeLimit != "" {
+			// MSFT_TaskTrigger.ExecutionTimeLimit is a string-typed CIM
+			// property carrying an XSD duration (PnYnMnDTnHnMnS, per
+			// Trigger.ExecutionTimeLimit docs), so the ISO value is
+			// assigned verbatim — unlike SettingsSet, which takes a
+			// TimeSpan and needs XmlConvert (see buildSettingsFragment).
+			// The silent catch skips CIM trigger types that do not expose
+			// the property; covered by TestBuildTriggersFragment tests.
 			sb.WriteString(fmt.Sprintf("try { %s.ExecutionTimeLimit = %s } catch {}\n", vn, psQuote(t.ExecutionTimeLimit)))
 		}
 		sb.WriteString(fmt.Sprintf("$_stTriggers += %s\n", vn))
@@ -687,6 +706,15 @@ func buildPrincipalFragment(p *ScheduledTaskPrincipalInput) string {
 }
 
 // buildSettingsFragment returns a PS fragment for $_stSettings.
+// New-ScheduledTaskSettingsSet -ExecutionTimeLimit takes a TimeSpan, so the
+// ISO 8601 value is converted via XmlConvert (PT0S -> TimeSpan.Zero runs
+// indefinitely).
+// Both the conversion and the cmdlet call sit inside one guard: they run before
+// the register try/catch further down the script, so a throw there would escape
+// and surface as a bare "no JSON envelope" transport error instead of a
+// classified invalid_input. The schema validator already rejects every value
+// ToTimeSpan cannot convert, so this is defence in depth for direct winclient
+// callers that bypass it.
 func buildSettingsFragment(s *ScheduledTaskSettingsInput, enabled bool) string {
 	if s == nil {
 		return fmt.Sprintf("$_stSettings = New-ScheduledTaskSettingsSet\n$_stSettings.Enabled = $%s\n", psBool(enabled))
@@ -699,24 +727,29 @@ func buildSettingsFragment(s *ScheduledTaskSettingsInput, enabled bool) string {
 	if mi == "" {
 		mi = "Queue"
 	}
+	// mi is schema-allowlisted (Parallel|Queue|IgnoreNew|StopExisting) and
+	// additionally psQuote-hardened as defense in depth.
 	line := fmt.Sprintf(
-		"$_stSettings = New-ScheduledTaskSettingsSet"+
+		"try {"+
+			" $_stETL = [System.Xml.XmlConvert]::ToTimeSpan(%s)"+
+			"; $_stSettings = New-ScheduledTaskSettingsSet"+
 			" -AllowDemandStart:$%s"+
 			" -AllowHardTerminate:$%s"+
 			" -StartWhenAvailable:$%s"+
 			" -RunOnlyIfNetworkAvailable:$%s"+
-			" -ExecutionTimeLimit %s"+
+			" -ExecutionTimeLimit $_stETL"+
 			" -MultipleInstances %s"+
 			" -DisallowStartIfOnBatteries:$%s"+
 			" -StopIfGoingOnBatteries:$%s"+
 			" -WakeToRun:$%s"+
-			" -RunOnlyIfIdle:$%s\n",
+			" -RunOnlyIfIdle:$%s"+
+			" } catch { Emit-Err 'invalid_input' ('Invalid settings block: ' + $_.Exception.Message) @{}; return }\n",
+		psQuote(etl),
 		psBool(s.AllowDemandStart),
 		psBool(s.AllowHardTerminate),
 		psBool(s.StartWhenAvailable),
 		psBool(s.RunOnlyIfNetworkAvailable),
-		psQuote(etl),
-		mi,
+		psQuote(mi),
 		psBool(s.DisallowStartIfOnBatteries),
 		psBool(s.StopIfGoingOnBatteries),
 		psBool(s.WakeToRun),

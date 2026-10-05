@@ -27,14 +27,21 @@ resource "windows_scheduled_task" "fixture" {
       type           = "Daily"
       start_boundary = "2026-01-01T02:00:00Z"
       days_interval  = 1
+      # Trigger durations are string-typed CIM properties assigned and read
+      # back verbatim, so the full XSD grammar is valid here — including forms
+      # settings.execution_time_limit must reject (P1M4DT2H5M).
+      execution_time_limit = "PT5M"
+      delay                = "PT1M"
     }
   ]
 
-  # NOTE: no `settings` block on purpose (issue #100, see README): the
-  # provider defaults settings.execution_time_limit to "PT72H" and passes the
-  # raw ISO 8601 string to New-ScheduledTaskSettingsSet -ExecutionTimeLimit,
-  # which requires a TimeSpan ("Cannot convert value PT72H"). Any settings
-  # block fails Create until the provider converts ISO 8601 to TimeSpan.
+  # settings.execution_time_limit is converted through XmlConvert::ToTimeSpan
+  # on apply because New-ScheduledTaskSettingsSet -ExecutionTimeLimit is a
+  # [TimeSpan]. Any XSD duration of days or less works (P3D is exactly 72h);
+  # year/month components are rejected, since ToTimeSpan would approximate them.
+  settings = {
+    execution_time_limit = "PT4H"
+  }
 }
 
 resource "windows_service" "fixture" {

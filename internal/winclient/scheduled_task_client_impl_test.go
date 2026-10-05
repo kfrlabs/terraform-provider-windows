@@ -10,8 +10,9 @@
 //   - buildSettingsFragment: nil (defaults), full settings, enabled flag
 //   - buildOnEventFragment: XML injection contains Subscription + Enabled nodes
 //   - hasOnEventTrigger / hasNonEventTrigger
-//   - stPayloadToState: full round-trip, nil payload, nil days_of_week normalised
-//   - mapSTKind: all known kinds + unknown fallback
+//   - stPayloadToState: full round-trip, nil payload, nil days_of_week normalised,
+//     durations (settings + triggers) stored verbatim
+//   - mapSTKind: all known kinds + unknown fallback, sentinel round-trip
 //   - runSTEnvelope: ctx cancel, transport error, empty stdout, bad JSON, error envelope
 //   - Read: happy path, not-found (nil,nil), permission_denied, malformed JSON
 //   - Create: happy path, already_exists, builtin path guard, SYSTEM principal (EC-3)
@@ -407,20 +408,70 @@ func TestBuildSettingsFragment_Full(t *testing.T) {
 		RunOnlyIfIdle:              false,
 	}
 	got := buildSettingsFragment(s, true)
-	if !strings.Contains(got, "PT1H") {
-		t.Errorf("expected PT1H execution time limit, got: %s", got)
+	if !strings.Contains(got, "[System.Xml.XmlConvert]::ToTimeSpan('PT1H')") {
+		t.Errorf("expected ToTimeSpan('PT1H') execution time limit, got: %s", got)
 	}
-	if !strings.Contains(got, "IgnoreNew") {
+	if !strings.Contains(got, "-MultipleInstances 'IgnoreNew'") {
 		t.Errorf("expected IgnoreNew, got: %s", got)
 	}
 }
 
 func TestBuildSettingsFragment_DefaultsETL(t *testing.T) {
-	// Empty ETL → default PT72H
+	// Empty ETL → default PT72H, converted to TimeSpan for the cmdlet
 	s := &ScheduledTaskSettingsInput{}
 	got := buildSettingsFragment(s, true)
-	if !strings.Contains(got, "PT72H") {
-		t.Errorf("expected default PT72H, got: %s", got)
+	if !strings.Contains(got, "[System.Xml.XmlConvert]::ToTimeSpan('PT72H')") {
+		t.Errorf("expected default ToTimeSpan('PT72H'), got: %s", got)
+	}
+}
+
+func TestBuildSettingsFragment_PT0SDisables(t *testing.T) {
+	// PT0S disables the limit: ToTimeSpan('PT0S') yields TimeSpan.Zero,
+	// which is the unlimited sentinel (must still be passed, not omitted —
+	// omitting would fall back to the cmdlet default PT72H).
+	s := &ScheduledTaskSettingsInput{ExecutionTimeLimit: "PT0S"}
+	got := buildSettingsFragment(s, true)
+	if !strings.Contains(got, "[System.Xml.XmlConvert]::ToTimeSpan('PT0S')") {
+		t.Errorf("expected ToTimeSpan('PT0S'), got: %s", got)
+	}
+}
+
+func TestBuildSettingsFragment_ETLQuoteDoubling(t *testing.T) {
+	// A single quote inside the duration must be doubled (psQuote), never
+	// terminating the PowerShell string literal.
+	s := &ScheduledTaskSettingsInput{ExecutionTimeLimit: "PT1H' OR '1'='1"}
+	got := buildSettingsFragment(s, true)
+	if !strings.Contains(got, "ToTimeSpan('PT1H'' OR ''1''=''1')") {
+		t.Errorf("expected doubled quotes in ETL literal, got: %s", got)
+	}
+}
+
+func TestBuildSettingsFragment_InvalidDurationErrorPath(t *testing.T) {
+	// A malformed duration throws in ToTimeSpan outside the register
+	// try/catch, so the fragment must fail fast with invalid_input.
+	s := &ScheduledTaskSettingsInput{ExecutionTimeLimit: "bogus"}
+	got := buildSettingsFragment(s, true)
+	if !strings.Contains(got, "[System.Xml.XmlConvert]::ToTimeSpan('bogus')") {
+		t.Errorf("expected ToTimeSpan('bogus'), got: %s", got)
+	}
+	if !strings.Contains(got, "Emit-Err 'invalid_input'") {
+		t.Errorf("expected invalid_input error path, got: %s", got)
+	}
+}
+
+func TestBuildTriggersFragment_ExecutionTimeLimitRawString(t *testing.T) {
+	// MSFT_TaskTrigger.ExecutionTimeLimit is a string-typed CIM property
+	// (XSD duration), so the ISO value must be assigned verbatim — no
+	// XmlConvert::ToTimeSpan conversion (that is SettingsSet-only).
+	triggers := []ScheduledTaskTriggerInput{
+		{Type: "Once", StartBoundary: "2026-01-01T00:00:00Z", ExecutionTimeLimit: "PT1H"},
+	}
+	got := buildTriggersFragment(triggers)
+	if !strings.Contains(got, ".ExecutionTimeLimit = 'PT1H'") {
+		t.Errorf("expected raw ISO assignment, got: %s", got)
+	}
+	if strings.Contains(got, "XmlConvert") {
+		t.Errorf("trigger ETL must not use XmlConvert, got: %s", got)
 	}
 }
 
@@ -570,6 +621,50 @@ func TestStPayloadToState_NilSettings(t *testing.T) {
 	}
 }
 
+func TestSTRead_SettingsDurationVerbatim(t *testing.T) {
+	// TaskSettings.ExecutionTimeLimit is documented as a String property
+	// (PnYnMnDTnHnMnS), so Get-ScheduledTask reports the ISO 8601 spelling
+	// verbatim. settings.execution_time_limit is Optional+Computed, so Terraform
+	// compares planned and applied values exactly: any rewriting here would
+	// raise "Provider produced inconsistent result after apply". A
+	// non-canonical-but-valid spelling such as "P3D" or "PT1440M" must survive
+	// the read untouched, exactly like the trigger durations.
+	cases := []string{"PT72H", "PT4H", "PT0S", "P3D", "PT1440M", "P1DT2H"}
+	for _, etl := range cases {
+		t.Run(etl, func(t *testing.T) {
+			_, impl := newSTTestClient(t)
+			payload := map[string]any{
+				"name": "T", "path": `\`, "description": "", "enabled": true,
+				"state": "Ready", "last_run_time": "", "last_task_result": int64(0),
+				"next_run_time": "",
+				"principal":     map[string]any{"user_id": "SYSTEM", "logon_type": "ServiceAccount", "run_level": "Limited"},
+				"actions":       []map[string]any{{"execute": "cmd.exe", "arguments": "", "working_directory": ""}},
+				"triggers":      []any{},
+				"settings": map[string]any{
+					"allow_demand_start": true, "allow_hard_terminate": true,
+					"start_when_available": false, "run_only_if_network_available": false,
+					"execution_time_limit": etl, "multiple_instances": "Queue",
+					"disallow_start_if_on_batteries": true, "stop_if_going_on_batteries": true,
+					"wake_to_run": false, "run_only_if_idle": false,
+				},
+			}
+			defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+				return stOKEnvelope(t, payload), "", nil
+			})()
+			state, err := impl.Read(context.Background(), `\T`)
+			if err != nil {
+				t.Fatalf("Read error: %v", err)
+			}
+			if state.Settings == nil {
+				t.Fatal("expected non-nil settings")
+			}
+			if got := state.Settings.ExecutionTimeLimit; got != etl {
+				t.Errorf("settings ETL = %q, want verbatim %q", got, etl)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // mapSTKind
 // ---------------------------------------------------------------------------
@@ -586,12 +681,48 @@ func TestMapSTKind(t *testing.T) {
 		"password_forbidden": ScheduledTaskErrorPasswordForbidden,
 		"permission_denied":  ScheduledTaskErrorPermissionDenied,
 		"task_running":       ScheduledTaskErrorRunning,
+		"invalid_input":      ScheduledTaskErrorInvalidInput,
 		"totally_unknown":    ScheduledTaskErrorUnknown,
 		"":                   ScheduledTaskErrorUnknown,
 	}
 	for in, want := range cases {
 		if got := mapSTKind(in); got != want {
 			t.Errorf("mapSTKind(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestScheduledTaskSentinels(t *testing.T) {
+	// Every kind reachable through mapSTKind has a sentinel carrying it, so
+	// callers can match with errors.Is whatever kind the remote reported.
+	cases := []struct {
+		sentinel error
+		kind     ScheduledTaskErrorKind
+	}{
+		{ErrScheduledTaskAlreadyExists, ScheduledTaskErrorAlreadyExists},
+		{ErrScheduledTaskNotFound, ScheduledTaskErrorNotFound},
+		{ErrScheduledTaskBuiltinTask, ScheduledTaskErrorBuiltinTask},
+		{ErrScheduledTaskInvalidPath, ScheduledTaskErrorInvalidPath},
+		{ErrScheduledTaskInvalidTrigger, ScheduledTaskErrorInvalidTrigger},
+		{ErrScheduledTaskInvalidAction, ScheduledTaskErrorInvalidAction},
+		{ErrScheduledTaskPasswordRequired, ScheduledTaskErrorPasswordRequired},
+		{ErrScheduledTaskPasswordForbidden, ScheduledTaskErrorPasswordForbidden},
+		{ErrScheduledTaskPermissionDenied, ScheduledTaskErrorPermissionDenied},
+		{ErrScheduledTaskRunning, ScheduledTaskErrorRunning},
+		{ErrScheduledTaskInvalidInput, ScheduledTaskErrorInvalidInput},
+		{ErrScheduledTaskUnknown, ScheduledTaskErrorUnknown},
+	}
+	for _, c := range cases {
+		var ste *ScheduledTaskError
+		if !errors.As(c.sentinel, &ste) || ste.Kind != c.kind {
+			t.Errorf("%T does not carry kind %q", c.sentinel, c.kind)
+			continue
+		}
+		// A remote-reported error of that kind must match the sentinel, and the
+		// kind mapped from the wire must round-trip to it.
+		wire := NewScheduledTaskError(mapSTKind(string(c.kind)), "from remote", nil, nil)
+		if !errors.Is(wire, c.sentinel) {
+			t.Errorf("errors.Is(%q, %T) = false, want true", c.kind, c.sentinel)
 		}
 	}
 }
