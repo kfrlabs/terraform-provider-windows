@@ -184,16 +184,26 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 // from stdin, decodes it to the real script, and executes it. Because the
 // large payload travels on stdin rather than the command line, the command
 // line stays fixed and small — well under Windows' ~8191-char limit (#39).
-// The script itself reads any caller-supplied input from the stdin remainder
-// via [Console]::In.ReadLine() / ReadToEnd(), exactly as it does from the
-// persistent session's secret stream, so scripts work unmodified under both
-// transports. A fresh process performs exactly one stdin read, which is why
-// this path is immune to the Win32-OpenSSH multi-write stdin stall that
-// affects reused powershell.exe (5.1) sessions (see ADR-0010).
+// The stdin remainder (any caller-supplied input) is buffered and rebound
+// onto [Console]::In via [Console]::SetIn backed by a MemoryStream —
+// mirroring the persistent session's secret stream (session.go) — so the
+// script's own [Console]::In.ReadLine() / ReadToEnd() calls observe the full
+// input even on PowerShell 5.1, where a second read from the live pipe does
+// not reliably observe the remainder (#101). The rebind preserves the
+// decoded string; byte fidelity still depends on Console.InputEncoding.
+// Scripts work unmodified under both transports. A fresh process performs a bounded stdin read sequence,
+// which is why this path is immune to the Win32-OpenSSH multi-write stdin
+// stall that affects reused powershell.exe (5.1) sessions (see ADR-0010).
 const oneShotBootstrap = `$ErrorActionPreference='Stop'
 $b64=[Console]::In.ReadLine()
 $code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($b64))
-& ([ScriptBlock]::Create($code))`
+$__wcSecret=[Console]::In.ReadToEnd()
+if ($null -eq $__wcSecret) { $__wcSecret='' }
+$__wcSecretBytes=[Text.Encoding]::UTF8.GetBytes($__wcSecret)
+$__wcSecretReader=New-Object IO.StreamReader(New-Object IO.MemoryStream(,$__wcSecretBytes))
+$__wcPrevIn=[Console]::In
+[Console]::SetIn($__wcSecretReader)
+try { & ([ScriptBlock]::Create($code)) } finally { [Console]::SetIn($__wcPrevIn) }`
 
 // oneShotCommand builds the fixed powershell.exe invocation for the
 // fallback transport. It does not depend on the script being run, so its
@@ -205,7 +215,9 @@ func oneShotCommand() string {
 // composeOneShotStdin lays out the stdin stream the one-shot bootstrap
 // expects: the base64 (UTF-16LE) script as the first line, then any
 // caller-supplied input as the remainder. The bootstrap consumes the first
-// line; the script then reads input from the rest via [Console]::In.
+// line, buffers the remainder and rebinds it onto [Console]::In (via
+// [Console]::SetIn, mirroring the persistent session), so the script then
+// reads input via [Console]::In.
 // base64 uses the standard alphabet (no newlines), so it is always exactly
 // one line.
 func composeOneShotStdin(script, input string) io.Reader {

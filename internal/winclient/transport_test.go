@@ -775,6 +775,156 @@ func TestOneShotSecretStaysOffCommandLine(t *testing.T) {
 	}
 }
 
+// Scheduled task Create with a Password principal over the one-shot fallback
+// (#101): without pwsh.exe the call is served as one powershell.exe process,
+// the password travels on stdin only — never in the script body or on the
+// command line — and the call succeeds end to end.
+func TestScheduledTaskCreateWithPassword_OneShot(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey: pub,
+		stdout:        buildMinimalPayloadJSON(t, "PwTask", `\`),
+		oneShot:       true,
+		refusePwsh:    true,
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	impl := NewScheduledTaskClient(c)
+
+	const secret = "S3cr3t#Pwd!ForSchedTask-OneShot"
+	pw := secret
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	state, err := impl.Create(ctx, ScheduledTaskInput{
+		Name: "PwTask", Path: `\`, Enabled: true,
+		Principal: &ScheduledTaskPrincipalInput{
+			UserID: `DOMAIN\svc`, Password: &pw, LogonType: "Password",
+		},
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	})
+	if err != nil {
+		t.Fatalf("Create over one-shot: %v", err)
+	}
+	if state == nil || state.Name != "PwTask" {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+
+	if !c.oneShot {
+		t.Error("client should have pinned itself to one-shot after pwsh was refused")
+	}
+	if strings.Contains(srv.Command(), secret) {
+		t.Error("SECURITY: password leaked onto the command line")
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	if got := decodePowerShell(t, reqs[0].scriptB64); strings.Contains(got, secret) {
+		t.Error("SECURITY: password leaked into one-shot script body")
+	}
+	if !strings.Contains(reqs[0].secretB64, secret) {
+		t.Errorf("password not piped on one-shot stdin; remainder=%q", reqs[0].secretB64)
+	}
+}
+
+// Scheduled task Update with a Password principal over the one-shot fallback
+// (#101): mirrors the Create path — the update is served as one
+// powershell.exe process (phase=update), the password travels on stdin only
+// and stays off the command line and script body.
+func TestScheduledTaskUpdateWithPassword_OneShot(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey: pub,
+		stdout:        buildMinimalPayloadJSON(t, "PwTask", `\`),
+		oneShot:       true,
+		refusePwsh:    true,
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	impl := NewScheduledTaskClient(c)
+
+	const secret = "Rotat3d!ForSchedTask#42-OneShot"
+	pw := secret
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	state, err := impl.Update(ctx, `\PwTask`, ScheduledTaskInput{
+		Name: "PwTask", Path: `\`, Enabled: true,
+		Principal: &ScheduledTaskPrincipalInput{
+			UserID: `DOMAIN\svc`, Password: &pw, LogonType: "Password",
+		},
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	})
+	if err != nil {
+		t.Fatalf("Update over one-shot: %v", err)
+	}
+	if state == nil || state.Name != "PwTask" {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+
+	if !c.oneShot {
+		t.Error("client should have pinned itself to one-shot after pwsh was refused")
+	}
+	if strings.Contains(srv.Command(), secret) {
+		t.Error("SECURITY: password leaked onto the command line")
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	if got := decodePowerShell(t, reqs[0].scriptB64); strings.Contains(got, secret) {
+		t.Error("SECURITY: password leaked into one-shot script body")
+	}
+	if !strings.Contains(reqs[0].secretB64, secret) {
+		t.Errorf("password not piped on one-shot stdin; remainder=%q", reqs[0].secretB64)
+	}
+}
+
+// ReadToEnd-based scripts (file content delivery, file_acl JSON bodies)
+// must observe the full stdin remainder over one-shot, including embedded
+// newlines that a single ReadLine would truncate. Small deterministic case
+// only: multi-MB payloads double-buffer here (ReadToEnd string + UTF-8 bytes
+// + MemoryStream) — large-file behaviour is a perf follow-up, not asserted.
+func TestOneShotReadToEndSeesRemainder(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", oneShot: true})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	c.oneShot = true
+
+	const script = `$raw=[Console]::In.ReadToEnd()`
+	const remainder = "line1\nline2\n{\"path\":\"C:\\\\temp\\\\f.txt\"}\n"
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	if _, _, err := c.RunPowerShellWithInput(ctx, script, remainder); err != nil {
+		t.Fatalf("RunPowerShellWithInput: %v", err)
+	}
+
+	reqs := srv.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	if got := decodePowerShell(t, reqs[0].scriptB64); got != script {
+		t.Errorf("script decoded from stdin = %q, want %q", got, script)
+	}
+	if reqs[0].secretB64 != remainder {
+		t.Errorf("ReadToEnd remainder = %q, want %q", reqs[0].secretB64, remainder)
+	}
+}
+
 // A non-zero exit from the one-shot process surfaces as an error carrying
 // both streams, mirroring the pre-#81 transport contract.
 func TestOneShotScriptErrorIsReported(t *testing.T) {
