@@ -194,7 +194,27 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 // Scripts work unmodified under both transports. A fresh process performs a bounded stdin read sequence,
 // which is why this path is immune to the Win32-OpenSSH multi-write stdin
 // stall that affects reused powershell.exe (5.1) sessions (see ADR-0010).
+//
+// The first statement after $ErrorActionPreference forces the console
+// encoding to UTF-8 (#102). Every response byte reaches Go through
+// [Console]::Out.WriteLine (see the Emit-OK emitters), and with a redirected
+// stdout [Console]::OutputEncoding is the OEM/ANSI code page on powershell.exe
+// 5.1, not UTF-8 — so non-ASCII text (a windows_service or
+// windows_local_group description, for instance) was destroyed on that hop
+// before encoding/json ever saw it. Both knobs are set:
+// [Console]::OutputEncoding for what PowerShell writes to the console
+// (and the decoding of native exes' stdout),
+// $OutputEncoding for the outbound pipe. New-Object Text.UTF8Encoding $false is the BOM-less encoder — NOT
+// the [Text.Encoding]::UTF8 static property, which emits a BOM on redirected
+// stdout that would prefix the JSON line. The assignments run before [Console]::In is
+// touched and before anything is written, since [Console]::Out builds its
+// writer from the encoding in force when it is first used. They are guarded
+// because $ErrorActionPreference is 'Stop': a host that refuses them must
+// degrade to the previous behaviour instead of failing every call.
 const oneShotBootstrap = `$ErrorActionPreference='Stop'
+$__wcUtf8NoBom = New-Object Text.UTF8Encoding $false
+try { [Console]::OutputEncoding = $__wcUtf8NoBom } catch { }
+try { $OutputEncoding = $__wcUtf8NoBom } catch { }
 $b64=[Console]::In.ReadLine()
 $code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($b64))
 $__wcSecret=[Console]::In.ReadToEnd()

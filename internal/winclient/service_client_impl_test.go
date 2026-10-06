@@ -133,6 +133,10 @@ func TestExtractLastJSONLine(t *testing.T) {
 		{"no json here", ""},
 		{"{\"a\":1}\n{\"b\":2}\n", `{"b":2}`},
 		{"  {\"ok\":true}  ", `{"ok":true}`},
+		// BOM defense for #102: a BOM-emitting encoder must not hide the envelope.
+		{"\uFEFF{\"ok\":true}\n", `{"ok":true}`},
+		{"  \uFEFF{\"ok\":true}\n", `{"ok":true}`},
+		{"\uFEFF  {\"ok\":true}\n", `{"ok":true}`},
 	}
 	for _, tc := range cases {
 		if got := extractLastJSONLine(tc.in); got != tc.want {

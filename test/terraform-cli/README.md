@@ -109,6 +109,24 @@ documented).
   in `description` comes back as `-`, tripping "inconsistent result after
   apply". Same for any non-ASCII sent through the 5.1 transport.
   **Workaround:** ASCII-only descriptions in the fixture.
+  **Fix (`fix/102-utf8-console-output-encoding`):** both bootstraps
+  (`oneShotBootstrap`, `psReplBootstrap`) force `[Console]::OutputEncoding` /
+  `$OutputEncoding` to UTF-8 before any read/write, and the Go/SSH layer is
+  pinned byte-preserving by the corpus probe
+  (`TestTransportNonASCIIOutputRoundTripsBothTransports`: em-dash, accented,
+  CJK on both transports) plus the bootstrap guards in `client_test.go`.
+  Re-run `./run-tests.sh --apply` with a non-ASCII description to confirm
+  end-to-end. State written while mangled (e.g. `-` stored for `—`) shows a
+  one-time diff as the true value reads back — expected, accept and apply
+  once. Must not regress the persistent-`pwsh` path.
+   Verified-vs-assumed: the `sc.exe qc` / `qdescription` path in
+   `windows_service` read-state is only assumed fixed — `sc.exe` output may
+   still decode OEM bytes as UTF-8 (`U+FFFD`). Requires a live 5.1 e2e run
+   with a non-ASCII service description to inspect for `U+FFFD`; if it
+   shows, future options are codepage 65001 around the `sc.exe` calls or
+   switching to `Get-Service` / `Get-CimInstance`. Note: one-shot stdin via
+   `[Console]::In.ReadToEnd` remains OEM while the persistent transport is
+   base64 — out of scope for #102, tracked as a follow-up, no logic change.
 - **L1 — no Windows Firewall in containers.** `New-NetFirewallRule` fails
   with "no more endpoints available from the endpoint mapper" (WFAS
   unavailable under container isolation). Gated behind
