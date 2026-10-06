@@ -38,7 +38,24 @@ const (
 // means existing scripts' [Console]::In.ReadLine() / ReadToEnd() calls work
 // unmodified: ReadToEnd() hits the end of the secret's own MemoryStream, not
 // the outer pipe, so it never blocks waiting for the next request.
+//
+// Console encoding is forced to UTF-8 once, before the handshake marker, so
+// it covers every write for the whole session rather than being re-applied per
+// call (#102): with a redirected stdout [Console]::OutputEncoding is the
+// OEM/ANSI code page rather than UTF-8, and every response byte reaches Go
+// through [Console]::Out.WriteLine, so non-ASCII text was destroyed on that
+// hop before encoding/json ever saw it. Both knobs are set:
+// [Console]::OutputEncoding for what PowerShell writes to the console
+// (and the decoding of native exes' stdout),
+// $OutputEncoding for the outbound pipe. New-Object Text.UTF8Encoding $false
+// is the BOM-less encoder — NOT the [Text.Encoding]::UTF8 static property,
+// which emits a BOM that would prefix the handshake marker. Both assignments are
+// guarded because $ErrorActionPreference is 'Stop': a host that refuses them
+// must degrade to the previous behaviour instead of failing the handshake.
 const psReplBootstrap = `$ErrorActionPreference = 'Stop'
+$__wcUtf8NoBom = New-Object Text.UTF8Encoding $false
+try { [Console]::OutputEncoding = $__wcUtf8NoBom } catch { }
+try { $OutputEncoding = $__wcUtf8NoBom } catch { }
 $__wcMarker = [guid]::NewGuid().ToString('N')
 [Console]::Out.WriteLine('` + replReadyPrefix + `' + $__wcMarker + '` + replReadySuffix + `')
 [Console]::Out.Flush()
@@ -199,6 +216,9 @@ func readReplResponse(stdout, stderr *bufio.Reader) (out, errOut string, status 
 func readReplReady(stdout *bufio.Reader) (marker string, err error) {
 	line, err := stdout.ReadString('\n')
 	trimmed := strings.TrimRight(line, "\r\n")
+	// Belt-and-braces for #102: a BOM-emitting encoder would prefix the
+	// handshake marker with U+FEFF and break the HasPrefix match.
+	trimmed = strings.TrimPrefix(trimmed, "\uFEFF")
 	if !strings.HasPrefix(trimmed, replReadyPrefix) || !strings.HasSuffix(trimmed, replReadySuffix) {
 		if err == nil {
 			err = fmt.Errorf("unexpected handshake line %q", trimmed)

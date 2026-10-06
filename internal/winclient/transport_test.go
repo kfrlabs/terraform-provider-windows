@@ -647,6 +647,19 @@ func TestReadReplResponseCleanMarkers(t *testing.T) {
 	}
 }
 
+// BOM defense for #102: a BOM-emitting encoder prefixes the handshake line
+// with U+FEFF; readReplReady must still recognise the marker.
+func TestReadReplReadyStripsBOM(t *testing.T) {
+	const marker = "0123456789abcdef0123456789abcdef"
+	stdout := bufio.NewReader(strings.NewReader(
+		"\uFEFF" + replReadyPrefix + marker + replReadySuffix + "\n"))
+	if got, err := readReplReady(stdout); err != nil {
+		t.Fatalf("readReplReady with BOM: %v", err)
+	} else if got != marker {
+		t.Errorf("readReplReady with BOM = %q, want %q", got, marker)
+	}
+}
+
 // decodeReplSecretForTest decodes a REPL request's raw base64 secret field
 // (see encodeReplSecret) back to plaintext for assertions.
 func decodeReplSecretForTest(b64 string) (string, error) {
@@ -956,4 +969,54 @@ func TestOneShotScriptErrorIsReported(t *testing.T) {
 	if strings.TrimSuffix(stderr, "\n") != "boom" {
 		t.Errorf("stderr = %q", stderr)
 	}
+}
+
+// Corpus round-trip probe for #102: non-ASCII stdout must reach Go
+// byte-for-byte on both transports. The canned server never executes
+// PowerShell — it serves the UTF-8 envelope verbatim — so a failure here
+// would implicate the Go/SSH layer, while a pass isolates the historical
+// corruption to the Windows console encoding (OEM/ANSI code page on a
+// redirected stdout), now forced to UTF-8 by both bootstraps. Covers the
+// issue corpus: em-dash U+2014, accented Latin, CJK.
+func TestTransportNonASCIIOutputRoundTripsBothTransports(t *testing.T) {
+	const corpus = "em-dash \u2014 caf\u00e9 na\u00efve \u2713 \u00dcn\u00efc\u00f8d\u00e9 \u65e5\u672c\u8a9e"
+	if len(corpus) == len([]rune(corpus)) {
+		t.Fatal("corpus is pure ASCII, it would not exercise multi-byte handling")
+	}
+	canned := `{"ok":true,"data":{"description":"` + corpus + `"}}`
+
+	t.Run("persistent", func(t *testing.T) {
+		noAgent(t)
+		keyPEM, pub, _ := newClientKeypair(t)
+		srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: canned})
+
+		c := newTransportTestClient(t, Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+		})
+
+		if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != canned {
+			t.Errorf("persistent stdout = %q (%d bytes), want %q (%d bytes)", stdout, len(stdout), canned, len(canned))
+		} else if !strings.Contains(stdout, "\u2014") {
+			t.Errorf("persistent stdout lost the em-dash: %q", stdout)
+		}
+	})
+
+	t.Run("oneShot", func(t *testing.T) {
+		noAgent(t)
+		keyPEM, pub, _ := newClientKeypair(t)
+		srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: canned, oneShot: true})
+
+		c := newTransportTestClient(t, Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+		})
+		c.oneShot = true
+
+		if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != canned {
+			t.Errorf("one-shot stdout = %q (%d bytes), want %q (%d bytes)", stdout, len(stdout), canned, len(canned))
+		} else if !strings.Contains(stdout, "\u2014") {
+			t.Errorf("one-shot stdout lost the em-dash: %q", stdout)
+		}
+	})
 }

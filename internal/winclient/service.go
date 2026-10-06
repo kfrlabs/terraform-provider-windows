@@ -239,7 +239,11 @@ func (s *ServiceClient) runEnvelopeWithInput(ctx context.Context, op, name, scri
 func extractLastJSONLine(stdout string) string {
 	lines := strings.Split(strings.ReplaceAll(stdout, "\r\n", "\n"), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		trim := strings.TrimSpace(lines[i])
+		// Belt-and-braces for #102: strip one leading BOM before the
+		// prefix match so a BOM-emitting encoder cannot hide the envelope.
+		// Trim on both sides of the BOM so "  \uFEFF{...}" and "\uFEFF  {...}"
+		// normalize before the HasPrefix check.
+		trim := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "\uFEFF"))
 		if strings.HasPrefix(trim, "{") {
 			return trim
 		}
