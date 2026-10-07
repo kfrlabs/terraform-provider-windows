@@ -468,8 +468,11 @@ func (r *windowsWingetPackageResource) Delete(ctx context.Context, req resource.
 
 // ImportState parses the import ID in "<source>:<package_id>" format (EC-11).
 // The split is performed on the first colon only, for future-proofing against
-// package IDs that might contain colons. The subsequent Read call populates
-// all computed attributes.
+// package IDs that might contain colons. Only the identity attributes (id,
+// package_id, source) are seeded here — every other attribute is left null
+// with its schema type intact so the subsequent Read call can populate the
+// computed attributes. A full-model Set with a zero timeouts.Value would
+// produce an untyped empty object and fail with a Value Conversion Error.
 func (r *windowsWingetPackageResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	id := req.ID
 	parts := strings.SplitN(id, ":", 2)
@@ -490,16 +493,9 @@ func (r *windowsWingetPackageResource) ImportState(ctx context.Context, req reso
 
 	// Seed the state with just enough for Read to run.
 	// version and override are unknown at import time → null (correct semantic).
-	imported := windowsWingetPackageModel{
-		ID:               types.StringValue(id),
-		PackageID:        types.StringValue(packageID),
-		Source:           types.StringValue(source),
-		Version:          types.StringNull(),
-		Override:         types.StringNull(),
-		InstalledVersion: types.StringValue(""),
-		Name:             types.StringValue(""),
-	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &imported)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("package_id"), packageID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("source"), source)...)
 }
 
 // ---------------------------------------------------------------------------

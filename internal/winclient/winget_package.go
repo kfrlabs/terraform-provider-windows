@@ -9,13 +9,17 @@
 //
 //	EC-1  Microsoft.WinGet.Client module missing → module_missing error.
 //	EC-2  Package already installed at Create → already_installed error (pre-flight).
-//	EC-3  Drift: Read returns (nil, nil) when Get-WinGetPackage returns nothing.
+//	EC-3  Drift: Read returns (nil, nil) when Get-WinGetPackage returns nothing;
+//	      Uninstall treats both PackageNotInstalled status and the
+//	      NoPackageFoundException ("No packages matched...") as success.
 //	EC-4  Pinned version not in catalog → version_not_available error.
 //	EC-5  msstore interactive/policy block → blocked_by_policy error.
 //	EC-6  RebootRequired status → WingetPackageState.RebootRequired = true, no error.
 //	EC-7  Elevation required → permission_denied error.
 //	EC-8  Network failure → retry once (5 s) before returning source_unreachable.
-//	EC-9  Package renamed/removed from catalog → catalog_error error.
+//	EC-9  Package renamed/removed from catalog, or Install/Update resolving an
+//	      unknown id (NoPackageFoundException "No packages matched...") →
+//	      catalog_error error.
 //	EC-10 winget mutex held → retry 3x (5 s / 15 s / 30 s) before returning resource_in_use.
 //	EC-11 Malformed import ID → validated at resource layer, not here.
 //	EC-12 override quoting → handled by psQuote at substitution time.
@@ -72,7 +76,7 @@ function Classify-WP([string]$Msg) {
   if ($Msg -match 'BlockedByPolicy|RequiresInteractive')                          { return 'blocked_by_policy' }
   if ($Msg -match '[Ee]levation|[Aa]ccess.*[Dd]enied|requires elevation')        { return 'permission_denied' }
   if ($Msg -match 'SourceError|DownloadError|[Nn]etwork error|[Cc]onnection|[Cc]onnect') { return 'source_unreachable' }
-  if ($Msg -match 'CatalogError|not found in catalog')                           { return 'catalog_error' }
+  if ($Msg -match 'CatalogError|not found in catalog|No packages matched') { return 'catalog_error' }
   if ($Msg -match 'ResourceInUse|another transaction|another instance')          { return 'resource_in_use' }
   return 'unknown'
 }
@@ -295,6 +299,14 @@ try {
   Emit-OK ([ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $reboot })
 } catch {
   $errMsg = $_.Exception.Message
+  if ($errMsg -match 'No packages matched') {
+    # The package is not installed (Uninstall-WinGetPackage throws
+    # NoPackageFoundException instead of returning PackageNotInstalled when
+    # nothing matches). Absent is the desired state for Delete, so report
+    # success for idempotency (EC-3).
+    Emit-OK ([ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $false })
+    return
+  }
   Emit-Err (Classify-WP $errMsg) $errMsg @{ package_id = $wpId; source = $wpSrc }
 }
 `
@@ -547,7 +559,9 @@ func (w *WingetPackageClientImpl) Update(ctx context.Context, input WingetPackag
 }
 
 // Uninstall removes the package via Uninstall-WinGetPackage. PackageNotInstalled
-// status is treated as success for idempotency (EC-3). RebootRequired is
+// status is treated as success for idempotency (EC-3), as is a
+// NoPackageFoundException ("No packages matched...") thrown when nothing is
+// installed under the given id. RebootRequired is
 // propagated via WingetPackageState.RebootRequired = true with nil error (EC-6).
 func (w *WingetPackageClientImpl) Uninstall(ctx context.Context, packageID, source string) (*WingetPackageState, error) {
 	script := wpReplace(wpUninstallBody, packageID, source, "", "")
