@@ -324,13 +324,9 @@ func (v scheduledTaskPrincipalCrossFieldValidator) ValidateResource(
 		return
 	}
 
-	// EC-4: when logon_type=Password, EITHER credential attribute must be set.
-	if logonType == "Password" && !pwSet && !pwWoSet {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("principal").AtName("password"),
-			"Missing required attribute",
-			`password (or password_wo) is required when logon_type is "Password" (EC-4).`)
-	}
+	// EC-4 is checked after WriteOnly values are overlaid from req.Config in
+	// Create/Update. The framework intentionally omits WriteOnly values from
+	// ValidateConfig, so checking them here rejects valid password_wo configs.
 	// EC-5: forbidden logon types must have neither credential attribute.
 	for _, forbidden := range []string{"Interactive", "S4U", "Group", "ServiceAccount"} {
 		if logonType == forbidden && (pwSet || pwWoSet) {
@@ -417,6 +413,16 @@ func (v scheduledTaskTriggerCrossFieldValidator) ValidateResource(
 				"Conflicting attribute",
 				fmt.Sprintf(`user_id (trigger-level) is only valid for "AtLogon" triggers, got %q (EC-7).`, tt))
 		}
+		if !t.Delay.IsNull() && !t.Delay.IsUnknown() && t.Delay.ValueString() != "" && !scheduledTaskTriggerAllowsDelay(tt) {
+			// MSFT_TaskDailyTrigger / MSFT_TaskTimeTrigger (Once) /
+			// MSFT_TaskWeeklyTrigger expose no Delay property: assigning it
+			// throws, the winclient try/catch swallows it, Windows registers
+			// the trigger without delay, and apply then fails with
+			// "inconsistent result after apply". Fail fast at plan instead.
+			resp.Diagnostics.AddAttributeError(trigPath.AtName("delay"),
+				"Conflicting attribute",
+				fmt.Sprintf(`delay is only valid for "AtLogon", "AtStartup" and "OnEvent" triggers, got %q (EC-7).`, tt))
+		}
 		if tt == "OnEvent" {
 			if t.Subscription.IsNull() || t.Subscription.IsUnknown() || t.Subscription.ValueString() == "" {
 				resp.Diagnostics.AddAttributeError(trigPath.AtName("subscription"),
@@ -428,6 +434,15 @@ func (v scheduledTaskTriggerCrossFieldValidator) ValidateResource(
 				"Conflicting attribute",
 				fmt.Sprintf(`subscription must not be set when trigger type is %q (EC-7).`, tt))
 		}
+	}
+}
+
+func scheduledTaskTriggerAllowsDelay(triggerType string) bool {
+	switch triggerType {
+	case "AtLogon", "AtStartup", "OnEvent":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -731,6 +746,10 @@ func (r *windowsScheduledTaskResource) Create(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	resp.Diagnostics.Append(validateScheduledTaskPrincipalCredentials(input, true)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	state, err := r.stClient.Create(ctx, input)
 	if err != nil {
@@ -813,6 +832,31 @@ func (r *windowsScheduledTaskResource) Update(ctx context.Context, req resource.
 	// overlay the config value before the bump gate below decides whether
 	// to keep or clear it (windows_file content_wo precedent).
 	resp.Diagnostics.Append(overlayScheduledTaskPasswordFromConfig(ctx, &planInput, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// WriteOnly values can make the nested principal's computed siblings
+	// unknown/null in the update plan. Keep the existing identity fields when
+	// the plan omitted them; otherwise Set-ScheduledTask would receive an empty
+	// User alongside a valid password and Windows reports a misleading
+	// "user name or password is incorrect" error.
+	if planInput.Principal != nil && !currentState.Principal.IsNull() && !currentState.Principal.IsUnknown() {
+		var priorPrincipal windowsScheduledTaskPrincipalModel
+		resp.Diagnostics.Append(currentState.Principal.As(ctx, &priorPrincipal, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true})...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if planInput.Principal.UserID == "" && !priorPrincipal.UserID.IsNull() && !priorPrincipal.UserID.IsUnknown() {
+			planInput.Principal.UserID = priorPrincipal.UserID.ValueString()
+		}
+		if planInput.Principal.LogonType == "" && !priorPrincipal.LogonType.IsNull() && !priorPrincipal.LogonType.IsUnknown() {
+			planInput.Principal.LogonType = priorPrincipal.LogonType.ValueString()
+		}
+		if planInput.Principal.RunLevel == "" && !priorPrincipal.RunLevel.IsNull() && !priorPrincipal.RunLevel.IsUnknown() {
+			planInput.Principal.RunLevel = priorPrincipal.RunLevel.ValueString()
+		}
+	}
+	resp.Diagnostics.Append(validateScheduledTaskPrincipalCredentials(planInput, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -1058,11 +1102,64 @@ func overlayScheduledTaskPasswordFromConfig(ctx context.Context, input *winclien
 	if diags.HasError() {
 		return diags
 	}
+	// The principal object may carry unknown optional/computed siblings in the
+	// apply plan when a WriteOnly field is present. Restore explicitly
+	// configured identity fields from Config before the client builds the
+	// Register/Set parameter set.
+	if !pm.UserID.IsNull() && !pm.UserID.IsUnknown() {
+		input.Principal.UserID = pm.UserID.ValueString()
+	}
+	if !pm.LogonType.IsNull() && !pm.LogonType.IsUnknown() {
+		input.Principal.LogonType = pm.LogonType.ValueString()
+	}
+	if !pm.RunLevel.IsNull() && !pm.RunLevel.IsUnknown() {
+		input.Principal.RunLevel = pm.RunLevel.ValueString()
+	}
 	if pm.PasswordWO.IsNull() || pm.PasswordWO.IsUnknown() {
 		return diags
 	}
 	if pw := pm.PasswordWO.ValueString(); pw != "" {
+		if input.Principal.Password != nil && *input.Principal.Password != "" {
+			diags.AddAttributeError(
+				path.Root("principal").AtName("password_wo"),
+				"Conflicting attributes",
+				"`principal.password` and `principal.password_wo` are mutually exclusive.",
+			)
+			return diags
+		}
 		input.Principal.Password = &pw
+	}
+	return diags
+}
+
+// validateScheduledTaskPrincipalCredentials validates the effective password
+// after WriteOnly values have been overlaid from config. requirePassword is
+// true for Create; Update separately enforces the version-bump fail-closed
+// rule while allowing unrelated steady-state changes without resending a
+// password.
+func validateScheduledTaskPrincipalCredentials(input winclient.ScheduledTaskInput, requirePassword bool) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if input.Principal == nil {
+		return diags
+	}
+	password := scheduledTaskEffectivePassword(input)
+	logonType := input.Principal.LogonType
+	if logonType == "Password" && requirePassword && password == "" {
+		diags.AddAttributeError(
+			path.Root("principal").AtName("password_wo"),
+			"Missing required attribute",
+			`password (or password_wo) is required when logon_type is "Password" (EC-4).`,
+		)
+	}
+	for _, forbidden := range []string{"Interactive", "S4U", "Group", "ServiceAccount"} {
+		if logonType == forbidden && password != "" {
+			diags.AddAttributeError(
+				path.Root("principal").AtName("password_wo"),
+				"Conflicting attribute",
+				fmt.Sprintf("a password must not be set when principal.logon_type is %q (EC-5).", forbidden),
+			)
+			break
+		}
 	}
 	return diags
 }
@@ -1258,6 +1355,17 @@ func buildPrincipalModel(ctx context.Context, s *winclient.ScheduledTaskPrincipa
 		pm.UserID = types.StringValue(s.UserID)
 	} else {
 		pm.UserID = types.StringValue("SYSTEM")
+	}
+	// PowerShell/Task Scheduler can return a local account as its short SAM
+	// name even when configuration supplied COMPUTER\user. Preserve the
+	// configured representation during Create/Read so Framework does not
+	// report an inconsistent nested principal after registration.
+	if priorHasPrincipal {
+		var prior windowsScheduledTaskPrincipalModel
+		if d := priorModel.Principal.As(ctx, &prior, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); !d.HasError() &&
+			!prior.UserID.IsNull() && !prior.UserID.IsUnknown() {
+			pm.UserID = prior.UserID
+		}
 	}
 
 	// password (legacy): semantic write-only — preserve from prior model so

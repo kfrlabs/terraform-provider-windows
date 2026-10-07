@@ -253,6 +253,12 @@ func TestWPMapKind_UnknownFallback(t *testing.T) {
 	}
 }
 
+func TestWPClassifierRecognizesCatalogConnectionFailure(t *testing.T) {
+	if !strings.Contains(wpHeader, "[Cc]onnect") {
+		t.Fatal("WinGet errors mentioning catalog connection failures must map to source_unreachable")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // wpReplace
 // ---------------------------------------------------------------------------

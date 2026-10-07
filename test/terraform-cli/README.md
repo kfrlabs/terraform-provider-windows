@@ -42,13 +42,17 @@ cross-check for them.
 
 ```bash
 cd test/terraform-cli
-cp terraform.tfvars.example terraform.tfvars   # adjust host/password
+cp terraform.tfvars.example terraform.tfvars   # adjust the target host/port/user
+export WINDOWS_PASSWORD='<temporary-lab-password>'
+export TF_VAR_svc_password='<different-temporary-user-password>'
 ./run-tests.sh            # offline: init, fmt, validate, mocked test
 ./run-tests.sh --apply    # + plan, apply, output verify, empty-plan check, destroy
 ```
 
-`--apply` needs the Windows target from `terraform.tfvars`
-(`test/windows-container/README.md` to raise `tfacc-win`). The final
+For key-based auth, set `WINDOWS_PRIVATE_KEY_PATH` instead of `WINDOWS_PASSWORD`.
+Keep credentials in environment variables or untracked local files; never add
+them to the example tfvars or repository. `--apply` needs the Windows target
+from `terraform.tfvars` (`test/windows-container/README.md` to raise `tfacc-win`). The final
 `destroy` cleans up; `test_suffix` isolates this workspace from the historic
 `test/terraform` fixtures and the Go suite on a shared host.
 
@@ -80,31 +84,24 @@ and passed. Output: `dist/terraform-provider-windows_v0.1.0_windows_amd64.exe`
 (21 MB, `MZ` / PE verified, deterministic — same SHA256 as the previous
 build for the same version).
 
-## Findings (live apply, 2026-10-04)
+## Historical findings (live apply, 2026-10-04)
 
-Bugs / limitations hit for real while driving this suite against the lab
-container. `P` = provider bug (Go, out of scope for this fixture — worked
-around here, fix in the provider). `L` = environment limitation (gated or
-documented).
+These findings describe the source tree as it stood on 2026-10-04. The
+2026-10-06 E2E campaign replayed the password and task paths against Windows
+Server 2025 PowerShell 5.1 and corrected the regressions noted below.
 
-- **[#99](https://github.com/kfrlabs/terraform-provider-windows/issues/99) — `password_wo` never reaches Create** (`windows_local_user`, and by
-  code inspection every WriteOnly attribute: task principal `password_wo`,
-  `content_wo`, `service_password_wo`). Literal or variable-sourced alike:
-  the framework nullifies write-only attributes in the plan handed to
-  `ApplyResourceChange` (see `tf_rpc=ApplyResourceChange` + `Nullifying
-  write-only attribute` in `TF_LOG=DEBUG`), but Create reads
-  `req.Plan.Get` instead of `req.Config`, so it always sees null and fails
-  with "password is required at Create time". Reproduced on Terraform 1.13
-  and 1.16. The Go acceptance suite only exercises legacy `password`, so
-  this path was untested. **Workaround:** fixture uses legacy `password`
-  (like the Go suite). Fix: read write-only values from `req.Config`.
-- **[#101](https://github.com/kfrlabs/terraform-provider-windows/issues/101) — Password principal unusable on PowerShell 5.1 one-shot targets.**
-  With legacy `password`, `Register-ScheduledTask` fails with "Parameter
-  set cannot be resolved" on this `pwsh`-less container (password travels
-  via stdin, which behaves differently in the one-shot fallback than in the
-  persistent `pwsh` session). A SYSTEM-principal task applies cleanly.
-  **Workaround:** fixture runs the task as SYSTEM. Re-test Password
-  principals on a PS7 host.
+- **[#99](https://github.com/kfrlabs/terraform-provider-windows/issues/99) — WriteOnly values previously failed on Create.**
+  The current resources overlay WriteOnly values from `req.Config` at apply
+  time. This campaign verified `windows_local_user.password_wo`,
+  `windows_scheduled_task.principal.password_wo` create/rotation, and
+  `windows_service.service_password_wo` create/update. Terraform states were
+  checked to ensure the plaintext was absent.
+- **[#101](https://github.com/kfrlabs/terraform-provider-windows/issues/101) — Password principals previously failed on PowerShell 5.1.**
+  This campaign found that `Register-ScheduledTask`/`Set-ScheduledTask`
+  cannot combine `-Principal` with `-Password`; the provider now uses their
+  `-User`/`-Password` parameter sets and preserves the principal identity.
+  Password principal create, version rotation, description update, idempotence,
+  and destroy all passed on the PS 5.1 test host.
 - **[#102](https://github.com/kfrlabs/terraform-provider-windows/issues/102) — non-ASCII descriptions do not round-trip.** `—` (em-dash)
   in `description` comes back as `-`, tripping "inconsistent result after
   apply". Same for any non-ASCII sent through the 5.1 transport.
@@ -154,10 +151,12 @@ documented).
     accepts XSD durations of days or less (`PT4H`, `PT72H`, `PT0S`, `P3D`,
     `PT1440M`). It is compared by duration, so an equivalent re-read spelling
     does not drift.
-  - trigger `execution_time_limit`/`delay` are string-typed CIM properties
-    assigned and read back verbatim, so they accept the full XSD grammar
-    (`P3D`, `P1DT2H`, `P3DT0H0M0S`, `P1M4DT2H5M`) and are compared verbatim.
+  - trigger `execution_time_limit` is a string-typed CIM property assigned
+    and read back verbatim, so it accepts the full XSD grammar
+    (`P3D`, `P1DT2H`, `P3DT0H0M0S`, `P1M4DT2H5M`).
+  - trigger `delay` is only valid for `AtLogon`, `AtStartup`, and `OnEvent`;
+    the resource now rejects it for `Once`, `Daily`, and `Weekly` rather than
+    silently dropping it on Windows.
 
-  The fixture declares `settings` and a trigger duration again; re-run
-  `./run-tests.sh --apply` to confirm end-to-end on a PS7 host or a host whose
-  `Register-ScheduledTask` accepts a password principal.
+  The fixture declares a settings block, a daily trigger duration, and an
+  AtStartup delay; the 2026-10-06 E2E run verified all three on PS 5.1.

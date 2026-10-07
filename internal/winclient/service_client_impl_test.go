@@ -505,6 +505,12 @@ func TestUpdate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	if !strings.Contains(capturedScript, "[Console]::In.ReadLine()") {
 		t.Errorf("script does not read password from stdin (no ReadLine call)")
 	}
+	if !strings.Contains(capturedScript, "Invoke-CimMethod -InputObject $svcCim -MethodName Change") {
+		t.Errorf("password Update must change service credentials through Win32_Service.Change:\n%s", capturedScript)
+	}
+	if strings.Contains(capturedScript, "'Credential'") {
+		t.Errorf("Set-Service does not support Credential:\n%s", capturedScript)
+	}
 	if !strings.Contains(capturedStdin, secret) {
 		t.Errorf("password not piped on stdin; stdin=%q", capturedStdin)
 	}

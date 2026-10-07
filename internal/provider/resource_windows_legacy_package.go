@@ -90,6 +90,75 @@ type windowsLegacyPackageResource struct {
 	lp winclient.LegacyPackageClient
 }
 
+type legacyPackageStringForceReplaceOnKnownPriorState struct{}
+
+func (legacyPackageStringForceReplaceOnKnownPriorState) Description(context.Context) string {
+	return "Requires replacement when a known prior value changes."
+}
+
+func (legacyPackageStringForceReplaceOnKnownPriorState) MarkdownDescription(context.Context) string {
+	return "Requires replacement when a known prior value changes. During import, unobservable installer configuration is adopted into state without reinstalling the package."
+}
+
+func (legacyPackageStringForceReplaceOnKnownPriorState) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() || req.PlanValue.IsUnknown() {
+		return
+	}
+	if !req.PlanValue.Equal(req.StateValue) {
+		resp.RequiresReplace = true
+	}
+}
+
+func legacyPackageStringRequiresReplaceOnKnownPriorState() planmodifier.String {
+	return legacyPackageStringForceReplaceOnKnownPriorState{}
+}
+
+type legacyPackageBoolForceReplaceOnKnownPriorState struct{}
+
+func (legacyPackageBoolForceReplaceOnKnownPriorState) Description(context.Context) string {
+	return "Requires replacement when a known prior value changes."
+}
+
+func (legacyPackageBoolForceReplaceOnKnownPriorState) MarkdownDescription(context.Context) string {
+	return "Requires replacement when a known prior value changes. During import, unobservable installer configuration is adopted into state without reinstalling the package."
+}
+
+func (legacyPackageBoolForceReplaceOnKnownPriorState) PlanModifyBool(_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() || req.PlanValue.IsUnknown() {
+		return
+	}
+	if !req.PlanValue.Equal(req.StateValue) {
+		resp.RequiresReplace = true
+	}
+}
+
+func legacyPackageBoolRequiresReplaceOnKnownPriorState() planmodifier.Bool {
+	return legacyPackageBoolForceReplaceOnKnownPriorState{}
+}
+
+type legacyPackageListForceReplaceOnKnownPriorState struct{}
+
+func (legacyPackageListForceReplaceOnKnownPriorState) Description(context.Context) string {
+	return "Requires replacement when a known prior value changes."
+}
+
+func (legacyPackageListForceReplaceOnKnownPriorState) MarkdownDescription(context.Context) string {
+	return "Requires replacement when a known prior value changes. During import, unobservable installer configuration is adopted into state without reinstalling the package."
+}
+
+func (legacyPackageListForceReplaceOnKnownPriorState) PlanModifyList(_ context.Context, req planmodifier.ListRequest, resp *planmodifier.ListResponse) {
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() || req.PlanValue.IsUnknown() {
+		return
+	}
+	if !req.PlanValue.Equal(req.StateValue) {
+		resp.RequiresReplace = true
+	}
+}
+
+func legacyPackageListRequiresReplaceOnKnownPriorState() planmodifier.List {
+	return legacyPackageListForceReplaceOnKnownPriorState{}
+}
+
 // ---------------------------------------------------------------------------
 // Model — must match the schema attribute keys 1:1
 // ---------------------------------------------------------------------------
@@ -150,7 +219,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "Logical Terraform identifier and display label for the package.",
 				MarkdownDescription: "Logical Terraform identifier and display label for the package. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
@@ -165,7 +234,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "Installer engine. msi uses msiexec; exe runs the binary directly.",
 				MarkdownDescription: "Installer engine. `msi` uses `msiexec.exe`; `exe` runs the binary directly via `Start-Process`. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 				Validators: []validator.String{
 					stringvalidator.OneOf("msi", "exe"),
@@ -177,7 +246,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "Local path on the target Windows host to the .msi/.exe file. Mutually exclusive with source_url.",
 				MarkdownDescription: "Local path on the target Windows host to the `.msi`/`.exe` file. Mutually exclusive with `source_url`. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
@@ -192,7 +261,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "HTTP/HTTPS URL fetched on the target host into $env:TEMP before exec. Mutually exclusive with source_path.",
 				MarkdownDescription: "HTTP/HTTPS URL fetched on the target host into `$env:TEMP` before exec. Mutually exclusive with `source_path`. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
@@ -207,7 +276,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "Expected installer checksum, format <algo>:<hex>. Verified before exec.",
 				MarkdownDescription: "Expected installer checksum, format `<algo>:<hex>` where `<algo>` is one of `sha256`, `sha1`, `md5`. Verified before exec. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
@@ -222,7 +291,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "Disable TLS cert validation when fetching source_url. Not recommended; use only for internal CAs.",
 				MarkdownDescription: "Disable TLS certificate validation when fetching `source_url`. **Not recommended** — use only for internal CAs. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.RequiresReplace(),
+					legacyPackageBoolRequiresReplaceOnKnownPriorState(),
 				},
 			},
 
@@ -232,7 +301,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "MSI ProductCode GUID. Auto-extracted from the MSI at Create when omitted.",
 				MarkdownDescription: "MSI **ProductCode** GUID (`{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`). Auto-extracted from the MSI at Create when omitted. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 					stringplanmodifier.UseStateForUnknown(),
 				},
 				Validators: []validator.String{
@@ -248,7 +317,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "Wildcard/regex matched against DisplayName under HKLM Uninstall (and Wow6432Node) to locate EXE installs. Required for exe when uninstall_command is empty.",
 				MarkdownDescription: "Wildcard/regex matched against `DisplayName` under `HKLM:\\SOFTWARE\\...\\Uninstall\\*` (and `Wow6432Node`) to locate EXE installs. Required for `installer_type=exe` when `uninstall_command` is empty. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 			},
 
@@ -257,6 +326,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Optional:            true,
 				Description:         "Extra args to the installer. MSI defaults injected by provider (/i,/qn,/norestart,/l*v <log>); EXE has no defaults.",
 				MarkdownDescription: "Extra arguments to the installer. MSI defaults injected by provider (`/i`, `/qn`, `/norestart`, `/l*v <log>`); EXE has no defaults. Immutable (ForceNew).",
+				PlanModifiers:       []planmodifier.List{legacyPackageListRequiresReplaceOnKnownPriorState()},
 			},
 
 			"uninstall_args": schema.ListAttribute{
@@ -264,6 +334,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Optional:            true,
 				Description:         "Extra args for uninstallation. MSI default ['/x',<product_id>,'/qn','/norestart']; appended to UninstallString for EXE.",
 				MarkdownDescription: "Extra arguments for uninstallation. MSI default `['/x', <product_id>, '/qn', '/norestart']`; appended to `UninstallString` for EXE. Immutable (ForceNew).",
+				PlanModifiers:       []planmodifier.List{legacyPackageListRequiresReplaceOnKnownPriorState()},
 			},
 
 			"uninstall_command": schema.StringAttribute{
@@ -271,7 +342,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "Explicit EXE uninstall command when registry UninstallString is unreliable.",
 				MarkdownDescription: "Explicit EXE uninstall command when registry `UninstallString` is unreliable. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 			},
 
@@ -287,7 +358,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Description:         "CWD for the installer process. Defaults to the parent dir of the resolved installer.",
 				MarkdownDescription: "Working directory for the installer process. Defaults to the parent directory of the resolved installer. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 			},
 
@@ -478,10 +549,14 @@ func (r *windowsLegacyPackageResource) Read(ctx context.Context, req resource.Re
 		return
 	}
 	if remote == nil {
+		tflog.Debug(ctx, "windows_legacy_package Read found no uninstall entry", map[string]interface{}{"id": id})
 		// Drift: the package was removed out of band.
 		resp.State.RemoveResource(ctx)
 		return
 	}
+	tflog.Debug(ctx, "windows_legacy_package Read refreshed", map[string]interface{}{
+		"id": id, "installed": remote.Installed, "installed_version": remote.InstalledVersion,
+	})
 
 	r.applyState(&state, remote)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

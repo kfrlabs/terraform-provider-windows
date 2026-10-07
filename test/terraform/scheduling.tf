@@ -21,7 +21,7 @@ resource "windows_scheduled_task" "pushed_test" {
   principal = {
     user_id             = ".\\${windows_local_user.svc_app.name}"
     logon_type          = "Password"
-    password_wo         = "Xk7!mQ2#nR9w"
+    password_wo         = var.svc_password
     password_wo_version = 1
     run_level           = "Limited"
   }

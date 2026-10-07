@@ -2,7 +2,8 @@
 windows_host     = "172.18.122.201"
 windows_port     = 2222
 windows_username = "tfacc"
-windows_password = "Zx9-Terra!2026"
+# Supply WINDOWS_PASSWORD (or a WINDOWS_PRIVATE_KEY_PATH) via the environment.
+# Supply TF_VAR_svc_password via the environment for the fixture local user.
 
 test_suffix = "cli"
 

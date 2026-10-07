@@ -310,6 +310,27 @@ func TestNormaliseStrArr_NonEmpty(t *testing.T) {
 	}
 }
 
+func TestNormaliseFirewallAddress(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		want  string
+	}{
+		{input: "198.51.100.0/255.255.255.0", want: "198.51.100.0/24"},
+		{input: "198.51.100.7/255.255.255.0", want: "198.51.100.7/24"},
+		{input: "192.0.2.0/24", want: "192.0.2.0/24"},
+		{input: "2001:db8::/64", want: "2001:db8::/64"},
+		{input: "Any", want: "Any"},
+		{input: "LocalSubnet", want: "LocalSubnet"},
+		{input: "198.51.100.0/255.0.255.0", want: "198.51.100.0/255.0.255.0"},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := normaliseFirewallAddress(tt.input); got != tt.want {
+				t.Errorf("normaliseFirewallAddress(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // buildFirewallParams
 // ---------------------------------------------------------------------------
@@ -384,6 +405,12 @@ func TestBuildFirewallParams_UpdateNoGroup(t *testing.T) {
 	got := buildFirewallParams("update", "RULE-UPD", "PersistentStore", input)
 	if strings.Contains(got, "ShouldBeIgnored") {
 		t.Error("Group must NOT be included in Update params")
+	}
+	if !strings.Contains(got, "NewDisplayName = 'Updated Rule'") {
+		t.Errorf("Update must use NewDisplayName when selecting by Name:\n%s", got)
+	}
+	if strings.Contains(got, "  DisplayName =") {
+		t.Errorf("Update must not use DisplayName with Name (different parameter set):\n%s", got)
 	}
 }
 
@@ -474,6 +501,27 @@ func TestParseFirewallRuleState_Valid(t *testing.T) {
 	}
 	if len(state.RemotePort) == 0 {
 		t.Error("RemotePort should not be empty (normalised to [Any])")
+	}
+}
+
+func TestParseFirewallRuleState_NormalisesDottedIPv4Mask(t *testing.T) {
+	data := testFRStateData
+	dataCopy := make(map[string]any, len(data))
+	for key, value := range data {
+		dataCopy[key] = value
+	}
+	dataCopy["remote_address"] = []string{"198.51.100.0/255.255.255.0"}
+	raw, err := json.Marshal(dataCopy)
+	if err != nil {
+		t.Fatalf("marshal firewall state: %v", err)
+	}
+	resp := &psResponse{OK: true, Data: json.RawMessage(raw)}
+	state, err := parseFirewallRuleState(resp, "PersistentStore")
+	if err != nil {
+		t.Fatalf("parseFirewallRuleState: %v", err)
+	}
+	if len(state.RemoteAddress) != 1 || state.RemoteAddress[0] != "198.51.100.0/24" {
+		t.Errorf("RemoteAddress = %v, want [198.51.100.0/24]", state.RemoteAddress)
 	}
 }
 

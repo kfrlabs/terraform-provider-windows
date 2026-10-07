@@ -10,9 +10,10 @@ SHELL ["powershell", "-NoProfile", "-Command", "$ErrorActionPreference='Stop';"]
 # Local admin account used by the provider over SSH. The password must not
 # contain the account name, and must stay under 15 characters to avoid the
 # interactive net.exe prompt.
-ARG TFACC_PASSWORD='Zx9-Terra!2026'
+ARG TFACC_PASSWORD
 
-RUN $p = ConvertTo-SecureString $env:TFACC_PASSWORD -AsPlainText -Force ; \
+RUN if ([string]::IsNullOrWhiteSpace($env:TFACC_PASSWORD)) { throw 'TFACC_PASSWORD build argument is required.' } ; \
+    $p = ConvertTo-SecureString $env:TFACC_PASSWORD -AsPlainText -Force ; \
     New-LocalUser -Name tfacc -Password $p -PasswordNeverExpires -AccountNeverExpires | Out-Null ; \
     Add-LocalGroupMember -Group Administrators -Member tfacc
 

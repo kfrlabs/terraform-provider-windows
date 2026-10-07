@@ -39,6 +39,8 @@ One file per resource family, all applied together from this directory:
 ```bash
 cd test/terraform
 cp terraform.tfvars.example terraform.tfvars   # edit if your container differs
+export WINDOWS_PASSWORD='<temporary-lab-password>'
+export TF_VAR_svc_password='<different-temporary-user-password>'
 terraform init
 terraform plan
 terraform apply
@@ -49,6 +51,8 @@ terraform destroy
 Defaults in `terraform.tfvars.example` match the container as documented in
 `test/windows-container/README.md` (`WINDOWS_HOST=<lab host>`, port `2222`,
 user `tfacc`). Point `windows_host` at your own container/host if different.
+Supply credentials out of band with `WINDOWS_PASSWORD` (or
+`WINDOWS_PRIVATE_KEY_PATH`) and `TF_VAR_svc_password`; do not commit them.
 
 ### Which provider build this runs against
 

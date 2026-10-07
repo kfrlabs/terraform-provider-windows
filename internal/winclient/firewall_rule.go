@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 )
 
@@ -307,8 +309,14 @@ func buildFirewallParams(op, name, policyStore string, input FirewallRuleInput) 
 	sb.WriteString(fmt.Sprintf("  Name        = %s\n", psQuote(name)))
 	sb.WriteString(fmt.Sprintf("  PolicyStore = %s\n", psQuote(policyStore)))
 
-	// Required mutable root attributes
-	sb.WriteString(fmt.Sprintf("  DisplayName = %s\n", psQuote(input.DisplayName)))
+	// Set-NetFirewallRule uses -NewDisplayName when selecting a rule by Name;
+	// -DisplayName selects a different parameter set and cannot be combined
+	// with -Name. New-NetFirewallRule uses -DisplayName on Create.
+	displayNameParam := "DisplayName"
+	if op == "update" {
+		displayNameParam = "NewDisplayName"
+	}
+	sb.WriteString(fmt.Sprintf("  %s = %s\n", displayNameParam, psQuote(input.DisplayName)))
 	sb.WriteString(fmt.Sprintf("  Direction   = %s\n", psQuote(input.Direction)))
 	sb.WriteString(fmt.Sprintf("  Action      = %s\n", psQuote(input.Action)))
 
@@ -467,6 +475,45 @@ func normaliseStrArr(s []string) []string {
 	return s
 }
 
+// normaliseFirewallAddress converts Windows' dotted IPv4 subnet-mask form
+// (for example, 198.51.100.0/255.255.255.0) to Terraform's CIDR form
+// (198.51.100.0/24). Windows Firewall returns the former after accepting the
+// latter, which otherwise makes Create return an inconsistent state to
+// Terraform. Non-CIDR address tokens (Any, LocalSubnet, ranges, and so on) are
+// preserved verbatim.
+func normaliseFirewallAddress(value string) string {
+	address, mask, hasMask := strings.Cut(value, "/")
+	if !hasMask {
+		return value
+	}
+
+	if maskIP := net.ParseIP(mask); maskIP != nil {
+		maskIPv4 := maskIP.To4()
+		if maskIPv4 == nil {
+			return value
+		}
+		ones, bits := net.IPMask(maskIPv4).Size()
+		if bits != net.IPv4len*8 || ones < 0 {
+			return value
+		}
+		addressIP := net.ParseIP(address)
+		if addressIP == nil || addressIP.To4() == nil {
+			return value
+		}
+		return addressIP.String() + "/" + strconv.Itoa(ones)
+	}
+	return value
+}
+
+func normaliseFirewallAddressArr(addresses []string) []string {
+	addresses = normaliseStrArr(addresses)
+	normalised := make([]string, len(addresses))
+	for i, address := range addresses {
+		normalised[i] = normaliseFirewallAddress(address)
+	}
+	return normalised
+}
+
 // parseFirewallRuleState parses the psResponse.Data field into a
 // *FirewallRuleState. Returns (nil, nil) when Data is JSON null (rule gone).
 func parseFirewallRuleState(resp *psResponse, policyStore string) (*FirewallRuleState, error) {
@@ -501,8 +548,8 @@ func parseFirewallRuleState(resp *psResponse, policyStore string) (*FirewallRule
 		Protocol:            j.Protocol,
 		LocalPort:           normaliseStrArr(j.LocalPort),
 		RemotePort:          normaliseStrArr(j.RemotePort),
-		LocalAddress:        normaliseStrArr(j.LocalAddress),
-		RemoteAddress:       normaliseStrArr(j.RemoteAddress),
+		LocalAddress:        normaliseFirewallAddressArr(j.LocalAddress),
+		RemoteAddress:       normaliseFirewallAddressArr(j.RemoteAddress),
 		Program:             j.Program,
 		Service:             j.Service,
 		InterfaceType:       j.InterfaceType,

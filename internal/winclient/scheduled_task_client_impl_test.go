@@ -459,6 +459,44 @@ func TestBuildSettingsFragment_InvalidDurationErrorPath(t *testing.T) {
 	}
 }
 
+func TestBuildSettingsFragment_PS51CmdletParamNames(t *testing.T) {
+	// Regression test: New-ScheduledTaskSettingsSet on PowerShell 5.1 does
+	// not accept -AllowDemandStart / -AllowHardTerminate /
+	// -DisallowStartIfOnBatteries / -StopIfGoingOnBatteries (E2E failure:
+	// "A parameter cannot be found that matches parameter name
+	// 'AllowDemandStart'"). The cmdlet exposes the negative-polarity
+	// -DisallowDemandStart / -DisallowHardTerminate / -AllowStartIfOnBatteries
+	// / -DontStopIfGoingOnBatteries, so schema values must be negated.
+	s := &ScheduledTaskSettingsInput{
+		AllowDemandStart:           true,
+		AllowHardTerminate:         true,
+		DisallowStartIfOnBatteries: true,
+		StopIfGoingOnBatteries:     true,
+	}
+	got := buildSettingsFragment(s, true)
+	for _, bad := range []string{"-AllowDemandStart:", "-AllowHardTerminate:", "-DisallowStartIfOnBatteries:", "-StopIfGoingOnBatteries:"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("fragment must not use unknown cmdlet parameter %q, got: %s", bad, got)
+		}
+	}
+	for _, want := range []string{"-DisallowDemandStart:$false", "-DisallowHardTerminate:$false", "-AllowStartIfOnBatteries:$false", "-DontStopIfGoingOnBatteries:$false"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected negated cmdlet parameter %q, got: %s", want, got)
+		}
+	}
+	// Inverted inputs must flip the negated switches back on.
+	s.AllowDemandStart = false
+	s.AllowHardTerminate = false
+	s.DisallowStartIfOnBatteries = false
+	s.StopIfGoingOnBatteries = false
+	got = buildSettingsFragment(s, true)
+	for _, want := range []string{"-DisallowDemandStart:$true", "-DisallowHardTerminate:$true", "-AllowStartIfOnBatteries:$true", "-DontStopIfGoingOnBatteries:$true"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected negated cmdlet parameter %q, got: %s", want, got)
+		}
+	}
+}
+
 func TestBuildTriggersFragment_ExecutionTimeLimitRawString(t *testing.T) {
 	// MSFT_TaskTrigger.ExecutionTimeLimit is a string-typed CIM property
 	// (XSD duration), so the ISO value must be assigned verbatim — no
@@ -1186,6 +1224,15 @@ func TestSTCreate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	if !strings.Contains(capturedScript, "[Console]::In.ReadLine()") {
 		t.Errorf("script does not read password from stdin (no ReadLine call)")
 	}
+	for _, want := range []string{
+		"$_stRegParams.Remove('Principal')",
+		"$_stRegParams['User'] = 'DOMAIN\\svc'",
+		"$_stRegParams['RunLevel'] = 'Limited'",
+	} {
+		if !strings.Contains(capturedScript, want) {
+			t.Errorf("password Register-ScheduledTask must use the User parameter set (%q missing):\n%s", want, capturedScript)
+		}
+	}
 	if !strings.Contains(capturedStdin, secret) {
 		t.Errorf("password not piped on stdin; stdin=%q", capturedStdin)
 	}
@@ -1219,12 +1266,27 @@ func TestSTUpdate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	if _, err := impl.Update(context.Background(), `\PwTask`, input); err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
+	t.Logf("generated Update script: %s", capturedScript)
 
 	if strings.Contains(capturedScript, secret) {
 		t.Fatalf("SECURITY: principal.password leaked in PS script body:\n%s", capturedScript)
 	}
 	if !strings.Contains(capturedScript, "[Console]::In.ReadLine()") {
 		t.Errorf("script does not read password from stdin (no ReadLine call)")
+	}
+	for _, want := range []string{
+		"$_stSetParams.Remove('Principal')",
+		"$_stSetParams['User'] = 'DOMAIN\\svc'",
+		"if ([string]$_stDescTask.Description -ne '')",
+		"Export-ScheduledTask",
+		"Register-ScheduledTask -TaskName",
+	} {
+		if !strings.Contains(capturedScript, want) {
+			t.Errorf("password Set-ScheduledTask must use the User parameter set (%q missing):\n%s", want, capturedScript)
+		}
+	}
+	if strings.Contains(capturedScript, "Set-ScheduledTask -InputObject $_stDescTask") {
+		t.Error("Password principal description update must re-register XML with credentials, not Set-ScheduledTask -InputObject")
 	}
 	if !strings.Contains(capturedStdin, secret) {
 		t.Errorf("password not piped on stdin; stdin=%q", capturedStdin)

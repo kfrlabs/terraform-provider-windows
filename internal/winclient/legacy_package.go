@@ -538,22 +538,27 @@ if ($cfg.checksum) {
 $productId = [string]$cfg.product_id
 if ($installerType -eq 'msi') {
   $extracted = ''
+  $msiInst = $null
+  $db = $null
+  $view = $null
   try {
     $msiInst = New-Object -ComObject WindowsInstaller.Installer
-    $db = $msiInst.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $msiInst, @($installerPath, 0))
-    $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT Value FROM Property WHERE Property='ProductCode'"))
-    [void]$view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
-    $rec = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+    $db = $msiInst.OpenDatabase($installerPath, 0)
+    $view = $db.OpenView("SELECT Value FROM Property WHERE Property='ProductCode'")
+    $view.Execute()
+    $rec = $view.Fetch()
     if ($rec) {
-      $extracted = [string]$rec.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec, @(1))
+      $extracted = [string]$rec.StringData(1)
     }
-    [void]$view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
-    [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($view) | Out-Null
-    [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($db) | Out-Null
-    [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($msiInst) | Out-Null
   } catch {
     Emit-Err 'msi_inspect_failed' ("failed to read MSI ProductCode: " + $_.Exception.Message) @{ path = $installerPath }
     return
+  } finally {
+    foreach ($comObject in @($view, $db, $msiInst)) {
+      if ($null -ne $comObject -and [System.Runtime.InteropServices.Marshal]::IsComObject($comObject)) {
+        [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($comObject) | Out-Null
+      }
+    }
   }
   if ([string]::IsNullOrEmpty($extracted)) {
     Emit-Err 'msi_no_product_code' "MSI does not expose a ProductCode property" @{ path = $installerPath }
@@ -725,6 +730,27 @@ $entries = @(Get-LpUninstallEntry -Id $id -Type $type -Pattern '')
 if ($entries.Count -eq 0) {
   Emit-OK $null
   return
+}
+if ($isMsi) {
+  # Windows Installer can leave an empty Uninstall registry key after
+  # msiexec /x. A matching key name alone is not proof the product is still
+  # installed; consult the Installer API so external uninstall is detected.
+  $msiInst = $null
+  try {
+    $msiInst = New-Object -ComObject WindowsInstaller.Installer
+    $productState = [int]$msiInst.ProductState($id)
+  } catch {
+    Emit-Err 'msi_inspect_failed' ("failed to query MSI ProductState: " + $_.Exception.Message) @{ product_id = $id }
+    return
+  } finally {
+    if ($null -ne $msiInst -and [System.Runtime.InteropServices.Marshal]::IsComObject($msiInst)) {
+      [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($msiInst) | Out-Null
+    }
+  }
+  if ($productState -notin @(3, 4, 5)) {
+    Emit-OK $null
+    return
+  }
 }
 $e = $entries[0]
 $pidOut = if ($isMsi) { $id } else { '' }

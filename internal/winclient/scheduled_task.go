@@ -705,6 +705,60 @@ func buildPrincipalFragment(p *ScheduledTaskPrincipalInput) string {
 	return line + "\n"
 }
 
+func buildPasswordPrincipalParamsFragment(paramName string, p *ScheduledTaskPrincipalInput, includeRunLevel bool) string {
+	userID := p.UserID
+	if userID == "" {
+		userID = "SYSTEM"
+	}
+	fragment := fmt.Sprintf("%s.Remove('Principal')\n%s['User'] = %s\n", paramName, paramName, psQuote(userID))
+	if includeRunLevel {
+		runLevel := p.RunLevel
+		if runLevel == "" {
+			runLevel = "Limited"
+		}
+		fragment += fmt.Sprintf("%s['RunLevel'] = %s\n", paramName, psQuote(runLevel))
+	}
+	return fragment
+}
+
+func buildTaskDescriptionUpdateFragment(taskName, taskPath, description string, principal *ScheduledTaskPrincipalInput) string {
+	fragment := fmt.Sprintf(
+		"  $_stDescTask = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop\n"+
+			"  if ([string]$_stDescTask.Description -ne %s) {\n",
+		psQuote(taskName), psQuote(taskPath), psQuote(description),
+	)
+	if principal != nil && principal.Password != nil {
+		userID := principal.UserID
+		if userID == "" {
+			userID = "SYSTEM"
+		}
+		fragment += fmt.Sprintf(
+			"    $_stDescXML = [xml](Export-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop)\n"+
+				"    $_stRegInfo = $_stDescXML.Task.RegistrationInfo\n"+
+				"    if ($null -eq $_stRegInfo) {\n"+
+				"      $_stRegInfo = $_stDescXML.CreateElement('RegistrationInfo', $_stDescXML.DocumentElement.NamespaceURI)\n"+
+				"      $null = $_stDescXML.Task.AppendChild($_stRegInfo)\n"+
+				"    }\n"+
+				"    $_stDescNode = $_stRegInfo.SelectSingleNode('./*[local-name()=\"Description\"]')\n"+
+				"    if ($null -eq $_stDescNode) {\n"+
+				"      $_stDescNode = $_stDescXML.CreateElement('Description', $_stDescXML.DocumentElement.NamespaceURI)\n"+
+				"      $null = $_stRegInfo.AppendChild($_stDescNode)\n"+
+				"    }\n"+
+				"    $_stDescNode.InnerText = %s\n"+
+				"    Register-ScheduledTask -TaskName %s -TaskPath %s -Xml $_stDescXML.OuterXml -User %s -Password $_stSetPassword -Force -ErrorAction Stop | Out-Null\n",
+			psQuote(taskName), psQuote(taskPath), psQuote(description),
+			psQuote(taskName), psQuote(taskPath), psQuote(userID),
+		)
+	} else {
+		fragment += fmt.Sprintf(
+			"    $_stDescTask.Description = %s\n"+
+				"    Set-ScheduledTask -InputObject $_stDescTask -ErrorAction Stop | Out-Null\n",
+			psQuote(description),
+		)
+	}
+	return fragment + "  }\n"
+}
+
 // buildSettingsFragment returns a PS fragment for $_stSettings.
 // New-ScheduledTaskSettingsSet -ExecutionTimeLimit takes a TimeSpan, so the
 // ISO 8601 value is converted via XmlConvert (PT0S -> TimeSpan.Zero runs
@@ -729,29 +783,40 @@ func buildSettingsFragment(s *ScheduledTaskSettingsInput, enabled bool) string {
 	}
 	// mi is schema-allowlisted (Parallel|Queue|IgnoreNew|StopExisting) and
 	// additionally psQuote-hardened as defense in depth.
+	//
+	// NOTE: the cmdlet parameter names differ from the CIM property names the
+	// Read path reports (and the schema mirrors). New-ScheduledTaskSettingsSet
+	// on PowerShell 5.1 exposes -DisallowDemandStart / -DisallowHardTerminate
+	// (negative polarity), -AllowStartIfOnBatteries (negated vs the schema's
+	// disallow_start_if_on_batteries) and -DontStopIfGoingOnBatteries (negated
+	// vs stop_if_going_on_batteries). The Allow* spellings used here previously
+	// do not exist and every task with a settings block failed to register
+	// with "A parameter cannot be found that matches parameter name
+	// 'AllowDemandStart'". Go-side negation keeps the schema (and Read output)
+	// in the positive CIM polarity.
 	line := fmt.Sprintf(
 		"try {"+
 			" $_stETL = [System.Xml.XmlConvert]::ToTimeSpan(%s)"+
 			"; $_stSettings = New-ScheduledTaskSettingsSet"+
-			" -AllowDemandStart:$%s"+
-			" -AllowHardTerminate:$%s"+
+			" -DisallowDemandStart:$%s"+
+			" -DisallowHardTerminate:$%s"+
 			" -StartWhenAvailable:$%s"+
 			" -RunOnlyIfNetworkAvailable:$%s"+
 			" -ExecutionTimeLimit $_stETL"+
 			" -MultipleInstances %s"+
-			" -DisallowStartIfOnBatteries:$%s"+
-			" -StopIfGoingOnBatteries:$%s"+
+			" -AllowStartIfOnBatteries:$%s"+
+			" -DontStopIfGoingOnBatteries:$%s"+
 			" -WakeToRun:$%s"+
 			" -RunOnlyIfIdle:$%s"+
 			" } catch { Emit-Err 'invalid_input' ('Invalid settings block: ' + $_.Exception.Message) @{}; return }\n",
 		psQuote(etl),
-		psBool(s.AllowDemandStart),
-		psBool(s.AllowHardTerminate),
+		psBool(!s.AllowDemandStart),
+		psBool(!s.AllowHardTerminate),
 		psBool(s.StartWhenAvailable),
 		psBool(s.RunOnlyIfNetworkAvailable),
 		psQuote(mi),
-		psBool(s.DisallowStartIfOnBatteries),
-		psBool(s.StopIfGoingOnBatteries),
+		psBool(!s.DisallowStartIfOnBatteries),
+		psBool(!s.StopIfGoingOnBatteries),
 		psBool(s.WakeToRun),
 		psBool(s.RunOnlyIfIdle),
 	)
@@ -946,6 +1011,11 @@ if ($null -ne %s -and %s -ne '') { $_stRegParams['Description'] = %s }
 		// ("Parameter set cannot be resolved", issue #101).
 		sb.WriteString("$_stRegPassword = [Console]::In.ReadLine()\n")
 		sb.WriteString("if ([string]::IsNullOrEmpty($_stRegPassword)) { Emit-Err 'invalid_input' 'Scheduled task password was empty on stdin while a Password principal was requested.' @{ phase = 'register' }; return }\n")
+		// Register-ScheduledTask's -Principal parameter set does not accept
+		// -Password. Password principals must use the -User/-Password parameter
+		// set, with RunLevel passed separately; mixing Principal and Password
+		// fails on Windows with "Parameter set cannot be resolved".
+		sb.WriteString(buildPasswordPrincipalParamsFragment("$_stRegParams", input.Principal, true))
 		sb.WriteString("$_stRegParams['Password'] = $_stRegPassword\n")
 	}
 
@@ -1040,6 +1110,9 @@ $_stSetParams = @{
 		// cryptically (issue #101).
 		sb.WriteString("$_stSetPassword = [Console]::In.ReadLine()\n")
 		sb.WriteString("if ([string]::IsNullOrEmpty($_stSetPassword)) { Emit-Err 'invalid_input' 'Scheduled task password was empty on stdin while a Password principal was requested.' @{ phase = 'update' }; return }\n")
+		// Set-ScheduledTask has a separate -User/-Password parameter set too;
+		// it cannot be combined with -Principal.
+		sb.WriteString(buildPasswordPrincipalParamsFragment("$_stSetParams", input.Principal, false))
 		sb.WriteString("$_stSetParams['Password'] = $_stSetPassword\n")
 	}
 
@@ -1052,19 +1125,23 @@ $_stSetParams = @{
 	// from the configuration has to clear it on the host too, and an empty
 	// string is how that is expressed. Inside the same try so a failure is
 	// classified like any other update failure.
-	sb.WriteString(fmt.Sprintf(`
+	sb.WriteString(`
 try {
+  $_stUpdatePhase = 'set'
   Set-ScheduledTask @_stSetParams | Out-Null
-  $_stDescTask = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop
-  $_stDescTask.Description = %s
-  Set-ScheduledTask -InputObject $_stDescTask -ErrorAction Stop | Out-Null
+  $_stUpdatePhase = 'description'
+`)
+	sb.WriteString(buildTaskDescriptionUpdateFragment(taskName, taskPath, input.Description, input.Principal))
+	sb.WriteString(`
 } catch {
   $msg = $_.Exception.Message
-  if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $msg @{ phase = 'update' }; return }
-  if ($msg -match 'argument' -or $msg -match 'invalid' -or $msg -match 'parameter') { Emit-Err 'invalid_input' $msg @{ phase = 'update' }; return }
-  Emit-Err 'unknown' $msg @{ phase = 'update' }; return
+  $phase = if ([string]::IsNullOrEmpty($_stUpdatePhase)) { 'update' } else { $_stUpdatePhase }
+  $detail = $msg + ' (phase=' + $phase + ', user=' + [string]$_stSetParams['User'] + ')'
+  if ($msg -match 'Access is denied' -or $msg -match 'UnauthorizedAccess') { Emit-Err 'permission_denied' $detail @{ phase = $phase }; return }
+  if ($msg -match 'argument' -or $msg -match 'invalid' -or $msg -match 'parameter') { Emit-Err 'invalid_input' $detail @{ phase = $phase }; return }
+  Emit-Err 'unknown' $detail @{ phase = $phase }; return
 }
-`, psQuote(taskName), psQuote(taskPath), psQuote(input.Description)))
+`)
 
 	// OnEvent XML injection (ADR-ST-5)
 	if hasOnEventTrigger(input.Triggers) {
