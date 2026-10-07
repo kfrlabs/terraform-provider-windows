@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	schemavalidator "github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -393,26 +394,43 @@ func TestWingetPackageResource_ImportState_Valid(t *testing.T) {
 			Schema: schemaResp.Schema,
 		},
 	}
-	// ImportState should not panic and should not add errors.
-	func() {
-		defer func() {
-			if rcv := recover(); rcv != nil {
-				t.Logf("ImportState panicked (expected in unit tests without full state): %v", rcv)
-			}
-		}()
-		r.ImportState(context.Background(), req, resp)
-	}()
+	r.ImportState(context.Background(), req, resp)
 
+	// Regression guard: seeding the full model with a zero timeouts.Value
+	// used to fail here with "Value Conversion Error ... Path: timeouts".
+	// ImportState must only set the identity attributes and leave the rest
+	// null for the subsequent Read.
 	if resp.Diagnostics.HasError() {
-		t.Logf("ImportState diagnostics: %v", resp.Diagnostics)
-		// In unit tests without a real TF state, diagnostics may occur from
-		// Set(); the important check is that the error is NOT an invalid-format error.
-		for _, d := range resp.Diagnostics.Errors() {
-			if strings.Contains(d.Summary(), "Invalid import ID format") {
-				t.Errorf("should not produce invalid-format error for valid ID %q: %v",
-					req.ID, d.Detail())
-			}
-		}
+		t.Fatalf("ImportState valid ID must not error: %v", resp.Diagnostics)
+	}
+	ctx := context.Background()
+	var id, packageID, source types.String
+	resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("id"), &id)...)
+	resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("package_id"), &packageID)...)
+	resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("source"), &source)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("GetAttribute: %v", resp.Diagnostics)
+	}
+	if id.ValueString() != "winget:Microsoft.VisualStudioCode" {
+		t.Errorf("id = %q", id.ValueString())
+	}
+	if packageID.ValueString() != "Microsoft.VisualStudioCode" {
+		t.Errorf("package_id = %q", packageID.ValueString())
+	}
+	if source.ValueString() != "winget" {
+		t.Errorf("source = %q", source.ValueString())
+	}
+	var version, override types.String
+	resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("version"), &version)...)
+	resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("override"), &override)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("GetAttribute: %v", resp.Diagnostics)
+	}
+	if !version.IsNull() {
+		t.Errorf("version should be null after import, got %q", version.ValueString())
+	}
+	if !override.IsNull() {
+		t.Errorf("override should be null after import, got %q", override.ValueString())
 	}
 }
 

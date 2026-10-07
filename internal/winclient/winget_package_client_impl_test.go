@@ -259,6 +259,23 @@ func TestWPClassifierRecognizesCatalogConnectionFailure(t *testing.T) {
 	}
 }
 
+func TestWPClassifierMapsNoPackagesMatchedToCatalogError(t *testing.T) {
+	// Install-WinGetPackage / Update-WinGetPackage / Uninstall-WinGetPackage
+	// throw NoPackageFoundException ("No packages matched the given input
+	// criteria.") when the id resolves to nothing. That must surface as
+	// catalog_error (actionable), not unknown. The mapping lives in the
+	// PowerShell Classify-WP function, so pin the script text.
+	found := false
+	for _, line := range strings.Split(wpHeader, "\n") {
+		if strings.Contains(line, "catalog_error") && strings.Contains(line, "No packages matched") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Classify-WP must map 'No packages matched' to 'catalog_error'")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // wpReplace
 // ---------------------------------------------------------------------------
@@ -1030,6 +1047,47 @@ func TestWPUninstall_PackageNotInstalled(t *testing.T) {
 	}
 	if st == nil {
 		t.Fatal("expected non-nil state")
+	}
+}
+
+func TestWPUninstallBody_TreatsNoPackageFoundAsSuccess(t *testing.T) {
+	// Uninstall-WinGetPackage throws NoPackageFoundException ("No packages
+	// matched...") instead of returning a PackageNotInstalled status when
+	// nothing is installed under the given id. The uninstall catch block must
+	// convert that into an Emit-OK empty state (EC-3 idempotency) rather than
+	// an error, so `terraform destroy` succeeds when the package is already
+	// gone. Pin the script text since the branch lives in PowerShell.
+	catchIdx := strings.Index(wpUninstallBody, "} catch {")
+	if catchIdx < 0 {
+		t.Fatal("wpUninstallBody must contain a catch block")
+	}
+	catchBlock := wpUninstallBody[catchIdx:]
+	if !strings.Contains(catchBlock, "No packages matched") {
+		t.Error("uninstall catch block must guard on 'No packages matched'")
+	}
+	if !strings.Contains(catchBlock, "Emit-OK") {
+		t.Error("uninstall catch block must Emit-OK (success) for an absent package")
+	}
+}
+
+func TestWPRunRetryable_CatalogErrorNotRetried(t *testing.T) {
+	// catalog_error (e.g. unknown id) is deterministic: no retry, surfaced as-is.
+	_, wp := wpNewClient(t)
+	callCount := 0
+	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+		callCount++
+		return `{"ok":false,"kind":"catalog_error","message":"No packages matched the given input criteria.","context":{}}` + "\n", "", nil
+	})()
+
+	_, err := wp.runRetryable(context.Background(), "Install", "Bogus.NoSuch", "script")
+	if err == nil {
+		t.Fatal("expected catalog_error")
+	}
+	if !IsWingetPackageError(err, WingetPackageErrorCatalogError) {
+		t.Errorf("expected catalog_error, got %v", err)
+	}
+	if callCount != 1 {
+		t.Errorf("catalog_error must not be retried, callCount = %d", callCount)
 	}
 }
 
