@@ -93,7 +93,9 @@ jobs:
             Copy-Item -Recurse -Force C:\Windows\System32\OpenSSH (Join-Path $ctx 'OpenSSH')
             Copy-Item -Force (Join-Path $env:GITHUB_WORKSPACE 'test\windows-container\Dockerfile') $ctx
             Copy-Item -Force (Join-Path $env:GITHUB_WORKSPACE 'test\windows-container\entrypoint.cmd') $ctx
-            docker build -t tfacc-win:latest $ctx
+            # Dockerfile requires TFACC_PASSWORD (no default). Reuse the lab
+            # credential already in env (from secrets.LAB_WINDOWS_PASSWORD).
+            docker build --build-arg TFACC_PASSWORD=$env:WINDOWS_PASSWORD -t tfacc-win:latest $ctx
             docker run -d --name tfacc-win -p 2222:22 tfacc-win:latest
             Start-Sleep -Seconds 5
           } else {
