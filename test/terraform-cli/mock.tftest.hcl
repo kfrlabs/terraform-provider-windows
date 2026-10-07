@@ -118,7 +118,7 @@ variables {
   windows_host          = "192.0.2.1"
   windows_port          = 2222
   windows_username      = "tfacc"
-  windows_password      = "mock-only-no-network"
+  svc_password          = ""
   test_suffix           = "mock"
   enable_firewall_tests = true
 }

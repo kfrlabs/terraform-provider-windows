@@ -18,12 +18,16 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	schemavalidator "github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -76,6 +80,22 @@ func TestFirewallRuleResource_Schema_ResourceLevelCall(t *testing.T) {
 	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
 	if len(resp.Schema.Attributes) == 0 {
 		t.Error("Schema() produced empty schema")
+	}
+}
+
+func TestFirewallRuleResource_GroupUsesPriorStateBeforeRequiresReplace(t *testing.T) {
+	group, ok := windowsFirewallRuleSchemaDefinition().Attributes["group"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("group schema attribute is not a string attribute")
+	}
+	if len(group.PlanModifiers) != 2 {
+		t.Fatalf("group has %d plan modifiers, want UseStateForUnknown and RequiresReplace", len(group.PlanModifiers))
+	}
+	if !reflect.DeepEqual(group.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
+		t.Errorf("first group plan modifier = %T, want UseStateForUnknown", group.PlanModifiers[0])
+	}
+	if !strings.Contains(fmt.Sprintf("%T", group.PlanModifiers[1]), "requiresReplaceIfModifier") {
+		t.Errorf("second group plan modifier = %T, want RequiresReplace", group.PlanModifiers[1])
 	}
 }
 

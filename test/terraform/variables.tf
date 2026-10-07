@@ -15,10 +15,10 @@ variable "windows_username" {
   description = "Local admin account baked into the tfacc-win image."
 }
 
-variable "windows_password" {
+variable "svc_password" {
   type        = string
   sensitive   = true
-  description = "Password for windows_username. Public default documented in test/windows-container/README.md — never reuse it outside a throwaway lab target."
+  description = "Temporary password for test service users. Supply it out of band; do not commit it."
 }
 
 variable "windows_insecure_ignore_host_key" {

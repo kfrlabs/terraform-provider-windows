@@ -2,18 +2,19 @@
 # NOTE: principal/actions/triggers/settings are TPF attributes (object syntax
 # with `= { }` / `= [ { } ]`), not nested blocks.
 
-# NOTE: no `principal` block on purpose (issue #101, see README): a
-# Password principal fails Register on PowerShell 5.1 one-shot targets
-# (this container has no pwsh, so the provider falls back to one
-# powershell.exe per call and the stdin-delivered password does not reach
-# Register). The task runs as SYSTEM by default, which still exercises the
-# full resource + data source lifecycle. Re-add a Password principal when
-# validating against a host with PowerShell 7 (persistent session).
 resource "windows_scheduled_task" "fixture" {
   name        = "CliTest-${var.test_suffix}"
   path        = "\\CliTest\\"
   description = "terraform-cli fixture task - managed by Terraform."
   enabled     = true
+
+  principal = {
+    user_id             = windows_local_user.svc.name
+    logon_type          = "Password"
+    password_wo         = var.svc_password
+    password_wo_version = 1
+    run_level           = "Limited"
+  }
 
   actions = [
     {
@@ -31,7 +32,15 @@ resource "windows_scheduled_task" "fixture" {
       # back verbatim, so the full XSD grammar is valid here — including forms
       # settings.execution_time_limit must reject (P1M4DT2H5M).
       execution_time_limit = "PT5M"
-      delay                = "PT1M"
+      # NOTE: no `delay` here on purpose — MSFT Daily/Weekly/Once triggers
+      # expose no Delay property (only AtLogon/AtStartup/OnEvent do), so
+      # Windows silently drops it and apply fails with "inconsistent result
+      # after apply". The validator rejects delay on these types (EC-7).
+    },
+    {
+      # AtStartup exercises the trigger-level `delay` path end to end.
+      type  = "AtStartup"
+      delay = "PT1M"
     }
   ]
 

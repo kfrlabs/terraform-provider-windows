@@ -431,6 +431,75 @@ func TestSTResource_ConfigValidators(t *testing.T) {
 	}
 }
 
+func TestScheduledTaskTriggerAllowsDelay(t *testing.T) {
+	for _, tt := range []struct {
+		triggerType string
+		want        bool
+	}{
+		{triggerType: "AtLogon", want: true},
+		{triggerType: "AtStartup", want: true},
+		{triggerType: "OnEvent", want: true},
+		{triggerType: "Once", want: false},
+		{triggerType: "Daily", want: false},
+		{triggerType: "Weekly", want: false},
+	} {
+		t.Run(tt.triggerType, func(t *testing.T) {
+			if got := scheduledTaskTriggerAllowsDelay(tt.triggerType); got != tt.want {
+				t.Errorf("scheduledTaskTriggerAllowsDelay(%q) = %t, want %t", tt.triggerType, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateScheduledTaskPrincipalCredentials(t *testing.T) {
+	password := "not-in-state"
+	for _, tt := range []struct {
+		name            string
+		principal       *winclient.ScheduledTaskPrincipalInput
+		requirePassword bool
+		wantError       bool
+	}{
+		{
+			name: "password principal has effective credential",
+			principal: &winclient.ScheduledTaskPrincipalInput{
+				LogonType: "Password",
+				Password:  &password,
+			},
+			requirePassword: true,
+		},
+		{
+			name: "password principal missing credential on create",
+			principal: &winclient.ScheduledTaskPrincipalInput{
+				LogonType: "Password",
+			},
+			requirePassword: true,
+			wantError:       true,
+		},
+		{
+			name: "steady-state update may omit password",
+			principal: &winclient.ScheduledTaskPrincipalInput{
+				LogonType: "Password",
+			},
+			requirePassword: false,
+		},
+		{
+			name: "forbidden logon type rejects credential",
+			principal: &winclient.ScheduledTaskPrincipalInput{
+				LogonType: "S4U",
+				Password:  &password,
+			},
+			wantError: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			diags := validateScheduledTaskPrincipalCredentials(winclient.ScheduledTaskInput{Principal: tt.principal}, tt.requirePassword)
+			if gotError := diags.HasError(); gotError != tt.wantError {
+				t.Fatalf("HasError() = %t, want %t; diagnostics: %v", gotError, tt.wantError, diags)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Create / Read / Update / Delete / Import — with fake client
 // ---------------------------------------------------------------------------
@@ -675,7 +744,7 @@ func TestStateToModel_PrincipalPasswordPreserved(t *testing.T) {
 
 	// Build a prior model with password set
 	priorPrincipal, _ := types.ObjectValueFrom(ctx, scheduledTaskPrincipalAttrTypes, windowsScheduledTaskPrincipalModel{
-		UserID:            types.StringValue("SYSTEM"),
+		UserID:            types.StringValue(`LAB-WINDOCKER-0\svc`),
 		Password:          types.StringValue("s3cr3t"),
 		PasswordWoVersion: types.Int64Value(1),
 		LogonType:         types.StringValue("Password"),
@@ -702,6 +771,9 @@ func TestStateToModel_PrincipalPasswordPreserved(t *testing.T) {
 	}
 	if pm.Password.ValueString() != "s3cr3t" {
 		t.Errorf("password should be preserved from prior, got: %q", pm.Password.ValueString())
+	}
+	if pm.UserID.ValueString() != `LAB-WINDOCKER-0\svc` {
+		t.Errorf("configured local account representation should be preserved, got: %q", pm.UserID.ValueString())
 	}
 }
 

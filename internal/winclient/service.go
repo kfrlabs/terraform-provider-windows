@@ -621,19 +621,28 @@ try {
   $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
   if (-not $existing) { Emit-Err 'not_found' "service '$name' does not exist" @{}; return }
 
-  # Set-Service: display_name, description, start_type, credential
+  # Set-Service handles display_name, description, and start_type only.
   $setArgs = @{ Name = $name; StartupType = $stype }
   if ($display) { $setArgs['DisplayName'] = $display }
   if ($desc -ne $null) { $setArgs['Description'] = $desc }
-  if ($account -and $password) {
-    $sec  = ConvertTo-SecureString $password -AsPlainText -Force
-    $cred = New-Object System.Management.Automation.PSCredential($account, $sec)
-    $setArgs['Credential'] = $cred
-  }
   Set-Service @setArgs
 
-  # Account without password (built-in) via sc.exe obj=
-  if ($account -and -not $password) {
+  # Win32_Service.Change updates the service account without putting the
+  # password on sc.exe's command line. Set-Service has no Credential parameter.
+  # Return codes are WMI Win32_Service.Change values (0=success, 2=access
+  # denied, 15=service logon failed, 21=invalid parameter, 22=invalid account
+  # name), not sc.exe exit codes (5/87).
+  if ($account -and $password) {
+    $svcCim = Get-CimInstance Win32_Service -Filter ("Name='$name'") -ErrorAction Stop
+    $change = Invoke-CimMethod -InputObject $svcCim -MethodName Change -Arguments @{ StartName = $account; StartPassword = $password } -ErrorAction Stop
+    $changeCode = [int]$change.ReturnValue
+    if ($changeCode -ne 0) {
+      $changeKind = switch ($changeCode) { 2 { 'permission_denied' } 15 { 'invalid_parameter' } 21 { 'invalid_parameter' } 22 { 'invalid_parameter' } default { 'unknown' } }
+      Emit-Err $changeKind ("Win32_Service.Change returned " + $changeCode + "; verify the service account name and password") @{ win32_code = $changeCode }
+      return
+    }
+  } elseif ($account) {
+    # Built-in or passwordless service account.
     $out = & sc.exe config $name obj= $account 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { Emit-Err (Classify $out) ("sc.exe config obj= failed: " + $out.Trim()) @{}; return }
   }

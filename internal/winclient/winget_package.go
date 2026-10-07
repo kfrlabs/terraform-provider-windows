@@ -71,7 +71,7 @@ function Classify-WP([string]$Msg) {
   if ($Msg -match 'NoApplicableInstaller|InvalidVersion|no applicable installer') { return 'version_not_available' }
   if ($Msg -match 'BlockedByPolicy|RequiresInteractive')                          { return 'blocked_by_policy' }
   if ($Msg -match '[Ee]levation|[Aa]ccess.*[Dd]enied|requires elevation')        { return 'permission_denied' }
-  if ($Msg -match 'SourceError|DownloadError|[Nn]etwork error|[Cc]onnection')    { return 'source_unreachable' }
+  if ($Msg -match 'SourceError|DownloadError|[Nn]etwork error|[Cc]onnection|[Cc]onnect') { return 'source_unreachable' }
   if ($Msg -match 'CatalogError|not found in catalog')                           { return 'catalog_error' }
   if ($Msg -match 'ResourceInUse|another transaction|another instance')          { return 'resource_in_use' }
   return 'unknown'

@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -69,6 +70,65 @@ func TestLegacyPackageResource_Schema_AllAttributes(t *testing.T) {
 	}
 	if resp.Schema.MarkdownDescription == "" {
 		t.Error("MarkdownDescription should be non-empty")
+	}
+}
+
+func TestLegacyPackageForceNewModifiersAdoptImportedAttributes(t *testing.T) {
+	ctx := context.Background()
+	stringModifier := legacyPackageStringRequiresReplaceOnKnownPriorState()
+	stringResponse := &planmodifier.StringResponse{}
+	stringModifier.PlanModifyString(ctx, planmodifier.StringRequest{
+		PlanValue:  types.StringValue("https://example.invalid/package.msi"),
+		StateValue: types.StringNull(),
+	}, stringResponse)
+	if stringResponse.RequiresReplace {
+		t.Fatal("unobservable ForceNew string should be adopted after import, not replaced")
+	}
+	stringResponse = &planmodifier.StringResponse{}
+	stringModifier.PlanModifyString(ctx, planmodifier.StringRequest{
+		PlanValue:  types.StringValue("https://example.invalid/new.msi"),
+		StateValue: types.StringValue("https://example.invalid/old.msi"),
+	}, stringResponse)
+	if !stringResponse.RequiresReplace {
+		t.Fatal("changing a known ForceNew string must still replace")
+	}
+
+	boolModifier := legacyPackageBoolRequiresReplaceOnKnownPriorState()
+	boolResponse := &planmodifier.BoolResponse{}
+	boolModifier.PlanModifyBool(ctx, planmodifier.BoolRequest{
+		PlanValue:  types.BoolValue(true),
+		StateValue: types.BoolNull(),
+	}, boolResponse)
+	if boolResponse.RequiresReplace {
+		t.Fatal("unobservable ForceNew bool should be adopted after import, not replaced")
+	}
+	boolResponse = &planmodifier.BoolResponse{}
+	boolModifier.PlanModifyBool(ctx, planmodifier.BoolRequest{
+		PlanValue:  types.BoolValue(true),
+		StateValue: types.BoolValue(false),
+	}, boolResponse)
+	if !boolResponse.RequiresReplace {
+		t.Fatal("changing a known ForceNew bool must still replace")
+	}
+
+	oldArgs, diags := types.ListValueFrom(ctx, types.StringType, []string{"/old"})
+	if diags.HasError() {
+		t.Fatalf("old list value: %v", diags)
+	}
+	newArgs, diags := types.ListValueFrom(ctx, types.StringType, []string{"/new"})
+	if diags.HasError() {
+		t.Fatalf("new list value: %v", diags)
+	}
+	listModifier := legacyPackageListRequiresReplaceOnKnownPriorState()
+	listResponse := &planmodifier.ListResponse{}
+	listModifier.PlanModifyList(ctx, planmodifier.ListRequest{PlanValue: newArgs, StateValue: types.ListNull(types.StringType)}, listResponse)
+	if listResponse.RequiresReplace {
+		t.Fatal("unobservable ForceNew list should be adopted after import, not replaced")
+	}
+	listResponse = &planmodifier.ListResponse{}
+	listModifier.PlanModifyList(ctx, planmodifier.ListRequest{PlanValue: newArgs, StateValue: oldArgs}, listResponse)
+	if !listResponse.RequiresReplace {
+		t.Fatal("changing a known ForceNew list must still replace")
 	}
 }
 

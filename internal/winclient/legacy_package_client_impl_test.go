@@ -27,6 +27,35 @@ func lpNewClient(t *testing.T) (*Client, *LegacyPackageClientImpl) {
 	return c, NewLegacyPackageClient(c)
 }
 
+func TestLegacyPackageMSIProductCodeUsesPowerShellCOMMethods(t *testing.T) {
+	for _, want := range []string{
+		"$db = $msiInst.OpenDatabase($installerPath, 0)",
+		"$view = $db.OpenView(\"SELECT Value FROM Property WHERE Property='ProductCode'\")",
+		"$view.Execute()",
+		"$rec = $view.Fetch()",
+		"$rec.StringData(1)",
+	} {
+		if !strings.Contains(lpCreateBody, want) {
+			t.Errorf("MSI inspection script is missing direct COM call %q", want)
+		}
+	}
+	if strings.Contains(lpCreateBody, "InvokeMember('OpenDatabase'") {
+		t.Error("MSI inspection must use direct PowerShell COM invocation; reflection binding fails with DISP_E_TYPEMISMATCH on Windows Server 2025")
+	}
+}
+
+func TestLegacyPackageReadChecksMsiProductState(t *testing.T) {
+	for _, want := range []string{
+		"$msiInst.ProductState($id)",
+		"if ($productState -notin @(3, 4, 5))",
+		"Emit-OK $null",
+	} {
+		if !strings.Contains(lpReadBody, want) {
+			t.Errorf("MSI Read drift detection is missing %q", want)
+		}
+	}
+}
+
 // stubLPInput replaces the package-level runPSInput hook for the duration of
 // the test. It returns a restorer the caller MUST defer.
 func stubLPInput(fn func(ctx context.Context, c *Client, script, stdin string) (string, string, error)) func() {

@@ -6,8 +6,8 @@ directly. Everything the tests create lands inside the container and disappears
 with it.
 
 This is a **local test fixture**, not something to expose: the account is a
-throwaway local admin, `StrictModes` is off, and the default password below is
-public. Run it on a trusted network and delete it afterwards.
+throwaway local admin and `StrictModes` is off. Supply a unique temporary
+password at build time, run it on a trusted network, and delete it afterwards.
 
 ## Requirements
 
@@ -30,7 +30,8 @@ Copy-Item -Recurse C:\Windows\System32\OpenSSH C:\tfacc\OpenSSH
 # copy Dockerfile and entrypoint.cmd from this directory into C:\tfacc
 
 cd C:\tfacc
-docker build -t tfacc-win:latest .
+$env:TFACC_PASSWORD = Read-Host 'Enter a unique temporary test password'
+docker build --build-arg TFACC_PASSWORD=$env:TFACC_PASSWORD -t tfacc-win:latest .
 docker run -d --name tfacc-win -p 2222:22 tfacc-win:latest
 
 # Only if the host firewall blocks the published port.
@@ -38,8 +39,9 @@ New-NetFirewallRule -DisplayName tfacc-ssh -Direction Inbound `
   -Protocol TCP -LocalPort 2222 -Action Allow
 ```
 
-Override the password with `--build-arg TFACC_PASSWORD=...`. It must not
-contain the account name `tfacc` and must stay under 15 characters, see below.
+`TFACC_PASSWORD` is required. Keep it out of source control and do not reuse a
+real credential. It must not contain the account name `tfacc` and must stay
+under 15 characters, see below.
 
 Override the PowerShell version with `--build-arg POWERSHELL_VERSION=...`
 (default `7.4.6`). ServerCore ships Windows PowerShell 5.1 only, and the
@@ -58,7 +60,7 @@ export TF_ACC=1
 export WINDOWS_HOST=<host>
 export WINDOWS_PORT=2222
 export WINDOWS_USERNAME=tfacc
-export WINDOWS_PASSWORD='Zx9-Terra!2026'
+export WINDOWS_PASSWORD='<your-unique-throwaway-password>'
 export WINDOWS_INSECURE_IGNORE_HOST_KEY=true
 
 go test -tags acceptance ./internal/provider/ -run TestAccWindowsFile -v -timeout 35m

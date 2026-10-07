@@ -15,12 +15,6 @@ variable "windows_username" {
   description = "SSH local admin account on the target."
 }
 
-variable "windows_password" {
-  type        = string
-  sensitive   = true
-  description = "Password for windows_username. Throwaway lab credential only."
-}
-
 variable "windows_insecure_ignore_host_key" {
   type        = bool
   default     = true
@@ -36,8 +30,7 @@ variable "test_suffix" {
 variable "svc_password" {
   type        = string
   sensitive   = true
-  default     = "Xk7!mQ2#nR9w"
-  description = "Password for the fixture local user and scheduled-task principal. Must not contain the account name."
+  description = "Temporary password for the fixture local user. Supply through TF_VAR_svc_password or an untracked terraform.tfvars file; do not commit it."
 }
 
 variable "enable_firewall_tests" {

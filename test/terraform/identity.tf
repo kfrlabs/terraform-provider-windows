@@ -17,7 +17,7 @@ resource "windows_local_user" "svc_app" {
   name                         = "svc-app-${var.test_suffix}"
   full_name                    = "AppSuite Service Account"
   description                  = "Runs the pushed-test fixture task and service."
-  password_wo                  = "Xk7!mQ2#nR9w"
+  password_wo                  = var.svc_password
   password_wo_version          = 1
   enabled                      = true
   password_never_expires       = true

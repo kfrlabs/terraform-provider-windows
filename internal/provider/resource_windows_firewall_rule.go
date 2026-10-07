@@ -205,6 +205,7 @@ func windowsFirewallRuleSchemaDefinition() schema.Schema {
 				Description: "Rule group (RuleGroup). Immutable after creation (ForceNew). " +
 					"Set-NetFirewallRule cannot rename a Group.",
 				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
