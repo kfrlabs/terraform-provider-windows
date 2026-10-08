@@ -3,16 +3,16 @@
 page_title: "windows_winget_package Resource - windows"
 subcategory: ""
 description: |-
-  Manages the install / update / uninstall lifecycle of a Windows software package via the Microsoft Windows Package Manager (winget) using the official PowerShell module Microsoft.WinGet.Client. Access is performed over SSH + PowerShell. The module must already be installed on the target host; the provider does not auto-install it.
-  Install scope is always SystemOrUnknown (machine-level), silent mode is always enforced, and package/source agreements are always auto-accepted.
+  Manages the install / update / uninstall lifecycle of a Windows software package via the Microsoft Windows Package Manager (winget) by executing `winget.exe` directly. Access is performed over SSH + PowerShell. `winget.exe` (Microsoft App Installer) must already be present on the target host; the provider does not install it.
+  Install scope is always machine-level (`--scope machine`), silent mode is always enforced, and package/source agreements are always auto-accepted.
   Import format: <source>:<package_id> (e.g. winget:Microsoft.VisualStudioCode).
 ---
 
 # windows_winget_package (Resource)
 
-Manages the install / update / uninstall lifecycle of a Windows software package via the Microsoft Windows Package Manager (`winget`) using the official PowerShell module `Microsoft.WinGet.Client`. Access is performed over SSH + PowerShell. The module **must** already be installed on the target host; the provider does **not** auto-install it.
+Manages the install / update / uninstall lifecycle of a Windows software package via the Microsoft Windows Package Manager (`winget`) by executing `winget.exe` directly. Access is performed over SSH + PowerShell. `winget.exe` (Microsoft App Installer) **must** already be present on the target host; the provider does **not** install it.
 
-Install scope is always `SystemOrUnknown` (machine-level), silent mode is always enforced, and package/source agreements are always auto-accepted.
+Install scope is always machine-level (`--scope machine`), silent mode is always enforced, and package/source agreements are always auto-accepted.
 
 **Import format**: `<source>:<package_id>` (e.g. `winget:Microsoft.VisualStudioCode`).
 
@@ -66,20 +66,20 @@ resource "windows_winget_package" "windows_terminal" {
 
 ### Required
 
-- `package_id` (String) winget catalog identifier (e.g. `Microsoft.VisualStudioCode`). Matched exactly via `-MatchOption Equals`. Immutable after creation (ForceNew). Length 1–255.
+- `package_id` (String) winget catalog identifier (e.g. `Microsoft.VisualStudioCode`). Matched exactly via `--exact`. Immutable after creation (ForceNew). Length 1–255.
 
 ### Optional
 
-- `override` (String) Raw extra arguments forwarded to the underlying installer via `-Override` on `Install-WinGetPackage` (e.g. MSI properties). Immutable after creation (ForceNew). Max 4096 chars. Must not contain control characters (U+0000–U+001F, U+007F). **Do not embed secrets here**: this value is logged by winget and stored in Terraform state in plaintext.
+- `override` (String) Raw extra arguments forwarded to the underlying installer via `--override` on `winget install` (e.g. MSI properties). Immutable after creation (ForceNew). Max 4096 chars. Must not contain control characters (U+0000–U+001F, U+007F). **Do not embed secrets here**: this value is logged by winget and stored in Terraform state in plaintext.
 - `source` (String) winget source (catalog) name. Defaults to `winget`. Allowed: `winget`, `msstore`. Immutable after creation (ForceNew).
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
-- `version` (String) Pinned package version (e.g. `1.85.2`). When null/absent, the *latest available* version is targeted: Create installs latest, Read does **not** flag drift on newer upstream versions, and Update is a no-op if any version is installed. When set, a config change triggers `Update-WinGetPackage` in-place (not ForceNew). Clearing back to null upgrades to latest. Length 1–128 when set.
+- `version` (String) Pinned package version (e.g. `1.85.2`). When null/absent, the *latest available* version is targeted: Create installs latest, Read does **not** flag drift on newer upstream versions, and Update is a no-op if any version is installed. When set, a config change triggers `winget upgrade` in-place (not ForceNew). Clearing back to null upgrades to latest. Length 1–128 when set.
 
 ### Read-Only
 
 - `id` (String) Composite Terraform identifier formatted as `<source>:<package_id>` (e.g. `winget:Microsoft.VisualStudioCode`). Set on creation and stable for the resource lifetime.
-- `installed_version` (String) Version actually installed on the host (`.InstalledVersion` from `Get-WinGetPackage`). Populated on Create, Read, and Update.
-- `name` (String) Human-readable package display name (`.Name` from `Get-WinGetPackage`). Populated on Create, Read, and Update.
+- `installed_version` (String) Version actually installed on the host (reported by `winget list`). Populated on Create, Read, and Update.
+- `name` (String) Human-readable package display name (reported by `winget list`). Populated on Create, Read, and Update.
 
 <a id="nestedatt--timeouts"></a>
 ### Nested Schema for `timeouts`

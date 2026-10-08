@@ -5,7 +5,7 @@
 // Requires (all must be set to activate acceptance tests):
 //   - TF_ACC=1
 //   - WINDOWS_HOST / WINDOWS_USERNAME / WINDOWS_PASSWORD env vars
-//   - A Windows target with SSH enabled and Microsoft.WinGet.Client installed
+//   - A Windows target with SSH enabled and winget.exe (App Installer) available
 //
 // Test scenarios covered:
 //
@@ -41,7 +41,7 @@ func testAccWingetPackageDSPreCheck(t *testing.T) {
 // (id, name, installed_version, is_installed) are populated.
 func TestAccWindowsWingetPackageDataSource_Basic(t *testing.T) {
 	testAccWingetPackageDSPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target with Microsoft.PowerShell installed via winget")
+	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target with winget.exe available")
 	/*
 			resource.Test(t, resource.TestCase{
 				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,

@@ -1,28 +1,40 @@
 // Package winclient — WingetPackageClientImpl
 //
-// Implements WingetPackageClient by executing Microsoft.WinGet.Client
-// PowerShell cmdlets over SSH. Every PowerShell script is emitted through
-// the standard JSON envelope (Emit-OK / Emit-Err) so output is
-// locale-independent and machine-parseable.
+// Implements WingetPackageClient by executing winget.exe directly (no
+// PowerShell module required) from PowerShell scripts run over SSH. Every
+// script is emitted through the standard JSON envelope (Emit-OK / Emit-Err)
+// so output is machine-parseable.
+//
+// Locale independence: winget's human-readable output is localized, so
+// results are never classified from message text. Outcomes are derived from
+// winget's process exit codes (HRESULTs), which are stable across languages.
+// The only text parsing left is the "winget list" table, which is located by
+// its dashed separator line and read by column order, not by header names.
+//
+// winget.exe is resolved by its real path under %ProgramFiles%\WindowsApps
+// (highest version wins), because the "winget" App Execution Alias only
+// exists in interactive user profiles and is missing for SYSTEM.
 //
 // Edge cases handled:
 //
-//	EC-1  Microsoft.WinGet.Client module missing → module_missing error.
+//	EC-1  winget.exe not found → module_missing error (kind name kept for
+//	      compatibility with the resource layer).
 //	EC-2  Package already installed at Create → already_installed error (pre-flight).
-//	EC-3  Drift: Read returns (nil, nil) when Get-WinGetPackage returns nothing;
-//	      Uninstall treats both PackageNotInstalled status and the
-//	      NoPackageFoundException ("No packages matched...") as success.
+//	EC-3  Drift: Read returns (nil, nil) when "winget list" reports no match
+//	      (exit code NO_APPLICATIONS_FOUND); Uninstall treats the same exit
+//	      code as success.
 //	EC-4  Pinned version not in catalog → version_not_available error.
-//	EC-5  msstore interactive/policy block → blocked_by_policy error.
-//	EC-6  RebootRequired status → WingetPackageState.RebootRequired = true, no error.
+//	EC-5  msstore / Group Policy block → blocked_by_policy error.
+//	EC-6  Reboot exit codes → WingetPackageState.RebootRequired = true, no error.
 //	EC-7  Elevation required → permission_denied error.
 //	EC-8  Network failure → retry once (5 s) before returning source_unreachable.
 //	EC-9  Package renamed/removed from catalog, or Install/Update resolving an
-//	      unknown id (NoPackageFoundException "No packages matched...") →
-//	      catalog_error error.
-//	EC-10 winget mutex held → retry 3x (5 s / 15 s / 30 s) before returning resource_in_use.
+//	      unknown id (NO_APPLICATIONS_FOUND) → catalog_error error.
+//	EC-10 winget transaction in progress → retry 3x (5 s / 15 s / 30 s) before
+//	      returning resource_in_use.
 //	EC-11 Malformed import ID → validated at resource layer, not here.
-//	EC-12 override quoting → handled by psQuote at substitution time.
+//	EC-12 override quoting → psQuote at substitution time, then a Windows
+//	      command-line quoting pass (ConvertTo-WinArg) when starting winget.exe.
 package winclient
 
 import (
@@ -52,13 +64,29 @@ func NewWingetPackageClient(c *Client) *WingetPackageClientImpl {
 // ---------------------------------------------------------------------------
 
 // wpHeader is prepended to every winget script. It defines:
-//   - Emit-OK / Emit-Err  : JSON envelope emitters (locale-independent).
-//   - Classify-WP         : maps error message fragments to WingetPackageErrorKind strings.
-//   - Assert-WinGetModule  : pre-flight that checks and imports Microsoft.WinGet.Client;
-//     emits Emit-Err 'module_missing' + return on failure (EC-1).
+//   - Emit-OK / Emit-Err   : JSON envelope emitters.
+//   - $WG_* constants      : winget exit codes (signed 32-bit HRESULTs).
+//   - Classify-WG          : maps an exit code to a WingetPackageErrorKind string.
+//   - Resolve-WingetPath   : finds the real winget.exe (works for SYSTEM).
+//   - Assert-Winget        : pre-flight; emits 'module_missing' + returns $false (EC-1).
+//   - Invoke-Winget        : runs winget.exe, captures stdout/stderr/exit code.
+//   - Get-WPState          : reads the installed state of one package.
 const wpHeader = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
+
+# winget exit codes as signed 32-bit integers.
+# Reference: https://github.com/microsoft/winget-cli/blob/master/doc/windows/package-manager/winget/returnCodes.md
+$WG_NO_APPS       = -1978335212            # 0x8A150014 NO_APPLICATIONS_FOUND
+$WG_NO_MANIFEST   = -1978335209            # 0x8A150017 NO_MANIFEST_FOUND
+$WG_NO_INSTALLER  = -1978335216            # 0x8A150010 NO_APPLICABLE_INSTALLER
+$WG_POLICY        = @(-1978335205, -1978335204, -1978335174, -1978334961, -1978335114)  # MSSTORE(_APP)_BLOCKED, BLOCKED_BY_POLICY, INSTALL_BLOCKED_BY_POLICY, AUTH_INTERACTIVE_REQUIRED
+$WG_ADMIN         = @(-1978335207)         # 0x8A150019 COMMAND_REQUIRES_ADMIN
+$WG_NETWORK       = @(-1978335224, -1978335163, -1978335157, -1978335123, -1978334969)  # DOWNLOAD_FAILED, SOURCE_OPEN_FAILED, FAILED_TO_OPEN_ALL_SOURCES, SERVICE_UNAVAILABLE, INSTALL_NO_NETWORK
+$WG_BUSY          = @(-1978334975, -1978334974, -1978334973)  # INSTALL_PACKAGE_IN_USE, INSTALL_IN_PROGRESS, INSTALL_FILE_IN_USE
+$WG_ALREADY       = @(-1978335135, -1978334963)  # PACKAGE_ALREADY_INSTALLED, INSTALL_ALREADY_INSTALLED
+$WG_REBOOT_OK     = @(-1978334967, -1978334965)  # REBOOT_REQUIRED_TO_FINISH, REBOOT_INITIATED (operation succeeded)
+$WG_NO_UPDATE     = @(-1978335189, -1978335153)  # UPDATE_NOT_APPLICABLE, UPGRADE_VERSION_NOT_NEWER
 
 function Emit-OK([object]$Data) {
   $obj = [ordered]@{ ok = $true; data = $Data }
@@ -71,33 +99,218 @@ function Emit-Err([string]$Kind, [string]$Msg, [hashtable]$Ctx) {
   [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
 }
 
-function Classify-WP([string]$Msg) {
-  if ($Msg -match 'NoApplicableInstaller|InvalidVersion|no applicable installer') { return 'version_not_available' }
-  if ($Msg -match 'BlockedByPolicy|RequiresInteractive')                          { return 'blocked_by_policy' }
-  if ($Msg -match '[Ee]levation|[Aa]ccess.*[Dd]enied|requires elevation')        { return 'permission_denied' }
-  if ($Msg -match 'SourceError|DownloadError|[Nn]etwork error|[Cc]onnection|[Cc]onnect') { return 'source_unreachable' }
-  if ($Msg -match 'CatalogError|not found in catalog|No packages matched') { return 'catalog_error' }
-  if ($Msg -match 'ResourceInUse|another transaction|another instance')          { return 'resource_in_use' }
+function Classify-WG([int]$Code, [bool]$HasVersion) {
+  if ($Code -eq $WG_NO_INSTALLER)  { return 'version_not_available' }
+  if ($Code -eq $WG_NO_MANIFEST)   { if ($HasVersion) { return 'version_not_available' } else { return 'catalog_error' } }
+  if ($Code -in $WG_POLICY)        { return 'blocked_by_policy' }
+  if ($Code -in $WG_ADMIN)         { return 'permission_denied' }
+  if ($Code -in $WG_NETWORK)       { return 'source_unreachable' }
+  if ($Code -eq $WG_NO_APPS)       { return 'catalog_error' }
+  if ($Code -in $WG_BUSY)          { return 'resource_in_use' }
+  if ($Code -in $WG_ALREADY)       { return 'already_installed' }
   return 'unknown'
 }
 
-function Assert-WinGetModule {
+function Get-WGTail($R) {
+  $text  = [string]$R.Output + [Environment]::NewLine + [string]$R.Error
+  $lines = @($text -split '\r?\n' | Where-Object { $_ -and $_.Trim() })
+  return (($lines | Select-Object -Last 3) -join ' | ')
+}
+
+# Emits an error envelope classified from a winget exit code.
+function Emit-WGErr([int]$Code, [string]$What, [string]$Tail, [bool]$HasVersion, [hashtable]$Ctx) {
+  if (-not $Ctx) { $Ctx = @{} }
+  $hex = '0x{0:X8}' -f $Code
+  $Ctx['exit_code'] = $hex
+  $Ctx['output']    = $Tail
+  Emit-Err (Classify-WG $Code $HasVersion) ($What + ' (winget exit code ' + $hex + ')') $Ctx
+}
+
+# Throws an exception that carries the winget exit code and output tail.
+function Throw-WGFailure($R, [string]$What) {
+  $ex = New-Object System.Exception($What)
+  $ex.Data['ExitCode'] = [int]$R.ExitCode
+  $ex.Data['Tail']     = Get-WGTail $R
+  throw $ex
+}
+
+# Emits an error envelope from a caught error record (winget failure or not).
+function Emit-FromCatch($Err, [hashtable]$Ctx, [bool]$HasVersion) {
+  $ex = $Err.Exception
+  if ($ex.Data.Contains('ExitCode')) {
+    Emit-WGErr ([int]$ex.Data['ExitCode']) $ex.Message ([string]$ex.Data['Tail']) $HasVersion $Ctx
+  } else {
+    Emit-Err 'unknown' $ex.Message $Ctx
+  }
+}
+
+function Resolve-WingetPath {
+  if ($script:WingetPath -and (Test-Path -LiteralPath $script:WingetPath)) { return $script:WingetPath }
+
+  # The "winget" alias is per-user and absent for SYSTEM: use the real executable
+  # and sort the version folders numerically (1.10 > 1.9), not alphabetically.
+  $pf = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+  $patterns = @(
+    ($pf + '\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe'),
+    ($pf + '\WindowsApps\Microsoft.DesktopAppInstaller_*_arm64__8wekyb3d8bbwe\winget.exe')
+  )
+  $found = Get-ChildItem -Path $patterns -ErrorAction SilentlyContinue |
+    Sort-Object { try { [version](($_.Directory.Name -split '_')[1]) } catch { [version]'0.0' } } |
+    Select-Object -Last 1
+  if ($found) { $script:WingetPath = $found.FullName; return $script:WingetPath }
+
+  # Fallback for interactive user sessions where only the alias exists
+  $cmd = Get-Command 'winget.exe' -ErrorAction SilentlyContinue
+  if ($cmd) { $script:WingetPath = $cmd.Source; return $script:WingetPath }
+  return $null
+}
+
+function Assert-Winget {
   # Returns $true on success, $false (after Emit-Err) on failure. Since #81
   # this script runs inside a long-lived, reused PowerShell session, where
   # "exit" would kill the session instead of just this call; callers must
   # check the return value and stop rather than fall through.
-  $m = @(Get-Module -ListAvailable 'Microsoft.WinGet.Client' -ErrorAction SilentlyContinue)
-  if ($m.Count -eq 0) {
-    Emit-Err 'module_missing' 'Microsoft.WinGet.Client PowerShell module is not available on this host. Install it with: Install-Module Microsoft.WinGet.Client -Scope AllUsers' @{}
-    return $false
-  }
-  try {
-    Import-Module 'Microsoft.WinGet.Client' -ErrorAction Stop
-  } catch {
-    Emit-Err 'module_missing' ('Failed to import Microsoft.WinGet.Client: ' + $_.Exception.Message) @{}
+  if (-not (Resolve-WingetPath)) {
+    Emit-Err 'module_missing' 'winget.exe was not found on this host. Install the Microsoft App Installer (Microsoft.DesktopAppInstaller) package.' @{}
     return $false
   }
   return $true
+}
+
+# Quotes one argument following the Windows command-line rules
+# (CommandLineToArgvW), so values with spaces or embedded quotes survive.
+function ConvertTo-WinArg([string]$Arg) {
+  if ($Arg -eq '') { return '""' }
+  if ($Arg -notmatch '[\s"]') { return $Arg }
+  $sb = New-Object System.Text.StringBuilder
+  [void]$sb.Append('"')
+  $bs = 0
+  foreach ($ch in $Arg.ToCharArray()) {
+    if ($ch -eq [char]92) { $bs++; continue }
+    if ($ch -eq [char]34) {
+      [void]$sb.Append([char]92, ($bs * 2 + 1))
+      [void]$sb.Append([char]34)
+      $bs = 0
+      continue
+    }
+    if ($bs -gt 0) { [void]$sb.Append([char]92, $bs); $bs = 0 }
+    [void]$sb.Append($ch)
+  }
+  if ($bs -gt 0) { [void]$sb.Append([char]92, ($bs * 2)) }
+  [void]$sb.Append('"')
+  return $sb.ToString()
+}
+
+function Invoke-Winget([string[]]$WgArgs, [int]$TimeoutSec = 120) {
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName               = $script:WingetPath
+  $psi.Arguments              = (($WgArgs | ForEach-Object { ConvertTo-WinArg $_ }) -join ' ')
+  $psi.UseShellExecute        = $false
+  $psi.CreateNoWindow         = $true
+  $psi.RedirectStandardInput  = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError  = $true
+  $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+  $psi.StandardErrorEncoding  = [System.Text.Encoding]::UTF8
+
+  $p = [System.Diagnostics.Process]::Start($psi)
+  try {
+    $p.StandardInput.Close()  # winget must never wait for input
+    # Read both streams asynchronously to avoid pipe-buffer deadlocks
+    $outTask = $p.StandardOutput.ReadToEndAsync()
+    $errTask = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+      try { $p.Kill() } catch { }
+      throw ('winget timed out after ' + $TimeoutSec + ' seconds: ' + $psi.Arguments)
+    }
+    $p.WaitForExit()  # flush the async readers
+    return [pscustomobject]@{
+      ExitCode = [int]$p.ExitCode
+      Output   = [string]$outTask.Result
+      Error    = [string]$errTask.Result
+    }
+  } finally {
+    $p.Dispose()
+  }
+}
+
+# Parses the fixed-width table printed by "winget list". The header is located
+# through the dashed separator line and columns are taken by order
+# (Name, Id, Version), so the parser does not depend on the OS language.
+function ConvertFrom-WGTable([string]$Text) {
+  # Progress spinners rewrite a line with carriage returns: keep the last part
+  $lines = @($Text -split '\r?\n' | ForEach-Object { ($_ -split '\r')[-1] })
+  $sep = -1
+  for ($i = 1; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '^-{5,}\s*$' -and $lines[$i - 1].Trim() -ne '') { $sep = $i; break }
+  }
+  if ($sep -lt 0) { return @() }
+  $starts = @([regex]::Matches($lines[$sep - 1], '\S+') | ForEach-Object { $_.Index })
+  if ($starts.Count -lt 3) { return @() }
+
+  $rows = @()
+  for ($i = $sep + 1; $i -lt $lines.Count; $i++) {
+    $line = $lines[$i]
+    if ($line.Trim() -eq '') { break }
+    $cells = @()
+    for ($c = 0; $c -lt 3; $c++) {
+      $s = $starts[$c]
+      $e = if ($c -lt $starts.Count - 1) { $starts[$c + 1] } else { $line.Length }
+      if ($s -ge $line.Length) {
+        $cells += ''
+      } else {
+        $cells += $line.Substring($s, [Math]::Min($e - $s, $line.Length - $s)).Trim()
+      }
+    }
+    $rows += [pscustomobject]@{
+      Name    = $cells[0]
+      Id      = $cells[1]
+      Version = ($cells[2] -replace '^[<>~]\s*', '')
+    }
+  }
+  return $rows
+}
+
+# Fallback used when the table version is empty or truncated: "winget export"
+# produces JSON, which is neither localized nor truncated.
+function Get-VersionFromExport([string]$Id, [string]$Src) {
+  $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('winget-export-' + [guid]::NewGuid().ToString('N') + '.json')
+  try {
+    $null = Invoke-Winget @('export', '--output', $tmp, '--source', $Src, '--include-versions', '--accept-source-agreements', '--disable-interactivity') 300
+    if (-not (Test-Path -LiteralPath $tmp)) { return '' }
+    $json = Get-Content -LiteralPath $tmp -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($s in @($json.Sources)) {
+      foreach ($pkg in @($s.Packages)) {
+        if ([string]$pkg.PackageIdentifier -ieq $Id) { return [string]$pkg.Version }
+      }
+    }
+    return ''
+  } finally {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  }
+}
+
+# Returns the installed state of one package, or $null when it is not installed.
+# Throws (via Throw-WGFailure) on any other winget failure.
+function Get-WPState([string]$Id, [string]$Src) {
+  $r = Invoke-Winget @('list', '--id', $Id, '--exact', '--source', $Src, '--accept-source-agreements', '--disable-interactivity') 120
+  if ($r.ExitCode -eq $WG_NO_APPS) { return $null }
+  if ($r.ExitCode -ne 0) { Throw-WGFailure $r ('winget list failed for ' + $Id + ' from ' + $Src) }
+
+  $row = ConvertFrom-WGTable $r.Output | Select-Object -First 1
+  $name = ''
+  $ver  = ''
+  if ($row) { $name = [string]$row.Name; $ver = [string]$row.Version }
+  # winget truncates long cells with an ellipsis when its output is redirected
+  if ($ver -eq '' -or $ver.Contains([string][char]0x2026)) { $ver = Get-VersionFromExport $Id $Src }
+
+  return [ordered]@{
+    package_id        = $Id
+    source            = $Src
+    installed_version = $ver
+    name              = $name
+    reboot_required   = $false
+  }
 }
 `
 
@@ -114,23 +327,12 @@ function Assert-WinGetModule {
 const wpReadBody = `
 $wpId  = @@ID@@
 $wpSrc = @@SRC@@
-if (-not (Assert-WinGetModule)) { return }
+if (-not (Assert-Winget)) { return }
 try {
-  $pkgs = @(Get-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -ErrorAction Stop)
-  if ($pkgs.Count -eq 0) {
-    Emit-OK $null
-  } else {
-    $p = $pkgs[0]
-    Emit-OK ([ordered]@{
-      package_id        = [string]$p.Id
-      source            = $wpSrc
-      installed_version = [string]$p.InstalledVersion
-      name              = [string]$p.Name
-      reboot_required   = $false
-    })
-  }
+  # $null (not installed) is emitted as "data": null → drift (EC-3)
+  Emit-OK (Get-WPState $wpId $wpSrc)
 } catch {
-  Emit-Err (Classify-WP $_.Exception.Message) $_.Exception.Message @{ package_id = $wpId; source = $wpSrc }
+  Emit-FromCatch $_ @{ package_id = $wpId; source = $wpSrc } $false
 }
 `
 
@@ -139,69 +341,44 @@ $wpId  = @@ID@@
 $wpSrc = @@SRC@@
 $wpVer = @@VER@@
 $wpOvr = @@OVERRIDE@@
-if (-not (Assert-WinGetModule)) { return }
+if (-not (Assert-Winget)) { return }
+$ctx = @{ package_id = $wpId; source = $wpSrc }
 try {
-  # EC-2: pre-flight existence check before Install
-  $existing = @(Get-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -ErrorAction SilentlyContinue)
-  if ($existing.Count -gt 0) {
-    $existVer = [string]$existing[0].InstalledVersion
+  # EC-2: pre-flight existence check before install
+  $existing = Get-WPState $wpId $wpSrc
+  if ($null -ne $existing) {
+    $existVer = [string]$existing['installed_version']
     $importId = $wpSrc + ':' + $wpId
     Emit-Err 'already_installed' ('Package ' + $wpId + ' is already installed (version ' + $existVer + ') from source ' + $wpSrc + '. Import with: terraform import windows_winget_package.<name> ' + $importId) @{ installed_version = $existVer }
     return
   }
-  $params = @{
-    Id                      = $wpId
-    Source                  = $wpSrc
-    MatchOption             = 'Equals'
-    Mode                    = 'Silent'
-    Scope                   = 'SystemOrUnknown'
-    AcceptPackageAgreements = $true
-    AcceptSourceAgreements  = $true
-  }
-  if ($wpVer -ne '') { $params['Version'] = $wpVer }
-  if ($wpOvr -ne '') { $params['Override'] = $wpOvr }
-  $result = Install-WinGetPackage @params
-  $status = [string]$result.Status
-  if ($status -eq 'NoApplicableInstaller' -or $status -eq 'InvalidVersion') {
-    Emit-Err 'version_not_available' ('Version ' + $wpVer + ' not available for ' + $wpId + ' on source ' + $wpSrc + ' (status: ' + $status + ')') @{ status = $status }
+
+  $wgArgs = @('install', '--id', $wpId, '--exact', '--source', $wpSrc, '--silent', '--scope', 'machine',
+              '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
+  if ($wpVer -ne '') { $wgArgs += @('--version', $wpVer) }
+  if ($wpOvr -ne '') { $wgArgs += @('--override', $wpOvr) }
+
+  $r = Invoke-Winget $wgArgs 1800
+  $reboot = $false
+  if ($r.ExitCode -in $WG_REBOOT_OK) {
+    $reboot = $true
+  } elseif ($r.ExitCode -in $WG_NO_UPDATE) {
+    # Race: the package appeared (or reached the requested version) between
+    # the EC-2 pre-flight and the install — e.g. winget auto-upgraded an
+    # existing install and reports UPDATE_NOT_APPLICABLE. Re-read below.
+  } elseif ($r.ExitCode -ne 0) {
+    Emit-WGErr $r.ExitCode ('winget install failed for ' + $wpId + ' from ' + $wpSrc) (Get-WGTail $r) ($wpVer -ne '') $ctx
     return
   }
-  if ($status -eq 'BlockedByPolicy' -or $status -eq 'RequiresInteractive') {
-    Emit-Err 'blocked_by_policy' ('Package ' + $wpId + ' from ' + $wpSrc + ' is blocked by policy or requires interactive authentication. Consider source=winget.') @{ status = $status }
-    return
+
+  $state = Get-WPState $wpId $wpSrc
+  if ($null -eq $state) {
+    $state = [ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $false }
   }
-  if ($status -eq 'ResourceInUse') {
-    Emit-Err 'resource_in_use' 'winget resource in use (another transaction is in progress)' @{ status = $status }
-    return
-  }
-  if ($status -eq 'DownloadError' -or $status -eq 'SourceError') {
-    Emit-Err 'source_unreachable' ('Network/source error installing ' + $wpId + ' from ' + $wpSrc + ' (status: ' + $status + ')') @{ status = $status }
-    return
-  }
-  if ($status -ne 'Ok' -and $status -ne 'RebootRequired' -and $status -ne 'AlreadyInstalled') {
-    $extCode = ''
-    if ($null -ne $result.ExtendedErrorCode) { $extCode = [string]$result.ExtendedErrorCode }
-    Emit-Err 'unknown' ('Install-WinGetPackage returned status ' + $status + ' for ' + $wpId + ' (ExtendedErrorCode: ' + $extCode + ')') @{ status = $status; extended_error_code = $extCode }
-    return
-  }
-  $reboot = ($status -eq 'RebootRequired')
-  $pkgs2 = @(Get-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -ErrorAction SilentlyContinue)
-  $instVer2 = ''
-  $pkgName2 = ''
-  if ($pkgs2.Count -gt 0) {
-    $instVer2 = [string]$pkgs2[0].InstalledVersion
-    $pkgName2 = [string]$pkgs2[0].Name
-  }
-  Emit-OK ([ordered]@{
-    package_id        = $wpId
-    source            = $wpSrc
-    installed_version = $instVer2
-    name              = $pkgName2
-    reboot_required   = $reboot
-  })
+  $state['reboot_required'] = $reboot
+  Emit-OK $state
 } catch {
-  $errMsg = $_.Exception.Message
-  Emit-Err (Classify-WP $errMsg) $errMsg @{ package_id = $wpId; source = $wpSrc }
+  Emit-FromCatch $_ $ctx ($wpVer -ne '')
 }
 `
 
@@ -209,105 +386,62 @@ const wpUpdateBody = `
 $wpId  = @@ID@@
 $wpSrc = @@SRC@@
 $wpVer = @@VER@@
-if (-not (Assert-WinGetModule)) { return }
+if (-not (Assert-Winget)) { return }
+$ctx = @{ package_id = $wpId; source = $wpSrc }
 try {
-  $params = @{
-    Id                      = $wpId
-    Source                  = $wpSrc
-    MatchOption             = 'Equals'
-    Mode                    = 'Silent'
-    Scope                   = 'SystemOrUnknown'
-    AcceptPackageAgreements = $true
-    AcceptSourceAgreements  = $true
-  }
-  if ($wpVer -ne '') { $params['Version'] = $wpVer }
-  $result = Update-WinGetPackage @params
-  $status = [string]$result.Status
-  if ($status -eq 'NoApplicableInstaller' -or $status -eq 'InvalidVersion') {
-    Emit-Err 'version_not_available' ('Version ' + $wpVer + ' not available for ' + $wpId + ' on source ' + $wpSrc + ' (status: ' + $status + ')') @{ status = $status }
+  $current = Get-WPState $wpId $wpSrc
+  if ($null -eq $current) {
+    Emit-Err 'unknown' ('Cannot update ' + $wpId + ': package is not currently installed.') $ctx
     return
   }
-  if ($status -eq 'CatalogError') {
-    Emit-Err 'catalog_error' ('Package ' + $wpId + ' was not found in catalog on source ' + $wpSrc + '. It may have been renamed or removed. Consider: terraform destroy + re-import under the new ID.') @{ status = $status }
+
+  $wgArgs = @('upgrade', '--id', $wpId, '--exact', '--source', $wpSrc, '--silent', '--include-unknown',
+              '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
+  if ($wpVer -ne '') { $wgArgs += @('--version', $wpVer) }
+
+  $r = Invoke-Winget $wgArgs 1800
+  $reboot = $false
+  if ($r.ExitCode -in $WG_REBOOT_OK) {
+    $reboot = $true
+  } elseif ($r.ExitCode -in $WG_NO_UPDATE) {
+    # Already at the latest / requested version: nothing to do
+  } elseif ($r.ExitCode -ne 0) {
+    Emit-WGErr $r.ExitCode ('winget upgrade failed for ' + $wpId + ' from ' + $wpSrc) (Get-WGTail $r) ($wpVer -ne '') $ctx
     return
   }
-  if ($status -eq 'BlockedByPolicy' -or $status -eq 'RequiresInteractive') {
-    Emit-Err 'blocked_by_policy' ('Package ' + $wpId + ' from ' + $wpSrc + ' is blocked by policy or requires interactive authentication.') @{ status = $status }
-    return
+
+  $state = Get-WPState $wpId $wpSrc
+  if ($null -eq $state) {
+    $state = [ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $false }
   }
-  if ($status -eq 'ResourceInUse') {
-    Emit-Err 'resource_in_use' 'winget resource in use (another transaction is in progress)' @{ status = $status }
-    return
-  }
-  if ($status -eq 'DownloadError' -or $status -eq 'SourceError') {
-    Emit-Err 'source_unreachable' ('Network/source error updating ' + $wpId + ' from ' + $wpSrc + ' (status: ' + $status + ')') @{ status = $status }
-    return
-  }
-  if ($status -eq 'PackageNotInstalled') {
-    Emit-Err 'unknown' ('Cannot update ' + $wpId + ': package is not currently installed (PackageNotInstalled).') @{ status = $status }
-    return
-  }
-  if ($status -ne 'Ok' -and $status -ne 'RebootRequired' -and $status -ne 'NoAvailableUpgrade' -and $status -ne 'AlreadyInstalled') {
-    $extCode = ''
-    if ($null -ne $result.ExtendedErrorCode) { $extCode = [string]$result.ExtendedErrorCode }
-    Emit-Err 'unknown' ('Update-WinGetPackage returned status ' + $status + ' for ' + $wpId + ' (ExtendedErrorCode: ' + $extCode + ')') @{ status = $status; extended_error_code = $extCode }
-    return
-  }
-  $reboot = ($status -eq 'RebootRequired')
-  $pkgs2 = @(Get-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -ErrorAction SilentlyContinue)
-  $instVer2 = ''
-  $pkgName2 = ''
-  if ($pkgs2.Count -gt 0) {
-    $instVer2 = [string]$pkgs2[0].InstalledVersion
-    $pkgName2 = [string]$pkgs2[0].Name
-  }
-  Emit-OK ([ordered]@{
-    package_id        = $wpId
-    source            = $wpSrc
-    installed_version = $instVer2
-    name              = $pkgName2
-    reboot_required   = $reboot
-  })
+  $state['reboot_required'] = $reboot
+  Emit-OK $state
 } catch {
-  $errMsg = $_.Exception.Message
-  Emit-Err (Classify-WP $errMsg) $errMsg @{ package_id = $wpId; source = $wpSrc }
+  Emit-FromCatch $_ $ctx ($wpVer -ne '')
 }
 `
 
 const wpUninstallBody = `
 $wpId  = @@ID@@
 $wpSrc = @@SRC@@
-if (-not (Assert-WinGetModule)) { return }
+if (-not (Assert-Winget)) { return }
+$ctx = @{ package_id = $wpId; source = $wpSrc }
 try {
-  $result = Uninstall-WinGetPackage -Id $wpId -Source $wpSrc -MatchOption Equals -Mode Silent -Scope SystemOrUnknown
-  $status = [string]$result.Status
-  if ($status -eq 'PackageNotInstalled') {
-    Emit-OK ([ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $false })
+  $r = Invoke-Winget @('uninstall', '--id', $wpId, '--exact', '--source', $wpSrc, '--silent',
+                       '--accept-source-agreements', '--disable-interactivity') 1800
+  $reboot = $false
+  if ($r.ExitCode -eq $WG_NO_APPS) {
+    # Nothing matched: the package is not installed. Absent is the desired
+    # state for Delete, so report success for idempotency (EC-3).
+  } elseif ($r.ExitCode -in $WG_REBOOT_OK) {
+    $reboot = $true
+  } elseif ($r.ExitCode -ne 0) {
+    Emit-WGErr $r.ExitCode ('winget uninstall failed for ' + $wpId + ' from ' + $wpSrc) (Get-WGTail $r) $false $ctx
     return
   }
-  if ($status -eq 'ResourceInUse') {
-    Emit-Err 'resource_in_use' 'winget resource in use (another transaction is in progress)' @{ status = $status }
-    return
-  }
-  if ($status -ne 'Ok' -and $status -ne 'RebootRequired') {
-    $extCode = ''
-    if ($null -ne $result.ExtendedErrorCode) { $extCode = [string]$result.ExtendedErrorCode }
-    Emit-Err 'unknown' ('Uninstall-WinGetPackage returned status ' + $status + ' for ' + $wpId + ' (ExtendedErrorCode: ' + $extCode + ')') @{ status = $status; extended_error_code = $extCode }
-    return
-  }
-  $reboot = ($status -eq 'RebootRequired')
   Emit-OK ([ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $reboot })
 } catch {
-  $errMsg = $_.Exception.Message
-  if ($errMsg -match 'No packages matched') {
-    # The package is not installed (Uninstall-WinGetPackage throws
-    # NoPackageFoundException instead of returning PackageNotInstalled when
-    # nothing matches). Absent is the desired state for Delete, so report
-    # success for idempotency (EC-3).
-    Emit-OK ([ordered]@{ package_id = $wpId; source = $wpSrc; installed_version = ''; name = ''; reboot_required = $false })
-    return
-  }
-  Emit-Err (Classify-WP $errMsg) $errMsg @{ package_id = $wpId; source = $wpSrc }
+  Emit-FromCatch $_ $ctx $false
 }
 `
 
@@ -467,7 +601,7 @@ func (w *WingetPackageClientImpl) runRetryable(ctx context.Context, op, pkgID, s
 			return resp, nil
 		}
 
-		// EC-10: winget mutex held — retry with exponential back-off
+		// EC-10: winget transaction in progress — retry with exponential back-off
 		if IsWingetPackageError(err, WingetPackageErrorResourceInUse) && riuAttempts < len(riuDelays) {
 			delay := riuDelays[riuAttempts]
 			riuAttempts++
@@ -504,9 +638,9 @@ func (w *WingetPackageClientImpl) runRetryable(ctx context.Context, op, pkgID, s
 // WingetPackageClient interface implementation
 // ---------------------------------------------------------------------------
 
-// Install adds a new package via Install-WinGetPackage. The PowerShell script
-// includes EC-1 (module pre-flight) and EC-2 (existence pre-flight). Always
-// uses Mode=Silent, Scope=SystemOrUnknown, and auto-accepts agreements.
+// Install adds a new package via "winget install". The PowerShell script
+// includes EC-1 (winget pre-flight) and EC-2 (existence pre-flight). Always
+// uses --silent, --scope machine, and auto-accepts agreements.
 //
 // Returns (*WingetPackageState, nil) on success. RebootRequired = true signals
 // that the host must be rebooted (EC-6); the caller emits a warning diagnostic.
@@ -520,9 +654,9 @@ func (w *WingetPackageClientImpl) Install(ctx context.Context, input WingetPacka
 	return parseWPState(resp)
 }
 
-// Read retrieves the current installed state via Get-WinGetPackage
-// -MatchOption Equals. Returns (nil, nil) when the package is not installed
-// (EC-3 drift handling — caller must call resp.State.RemoveResource).
+// Read retrieves the current installed state via "winget list --exact".
+// Returns (nil, nil) when the package is not installed (EC-3 drift handling —
+// caller must call resp.State.RemoveResource).
 func (w *WingetPackageClientImpl) Read(ctx context.Context, packageID, source string) (*WingetPackageState, error) {
 	script := wpReplace(wpReadBody, packageID, source, "", "")
 	resp, err := w.runWPEnvelope(ctx, "Read", packageID, script)
@@ -532,9 +666,9 @@ func (w *WingetPackageClientImpl) Read(ctx context.Context, packageID, source st
 	return parseWPState(resp)
 }
 
-// Update applies a version change via Update-WinGetPackage. When
-// input.Version is "" (cleared to null in config), the cmdlet is called
-// without -Version to advance to the latest release.
+// Update applies a version change via "winget upgrade". When input.Version
+// is "" (cleared to null in config), the command is run without --version to
+// advance to the latest release.
 //
 // If the installed version already matches the desired version (race or
 // external upgrade), the method is a no-op and returns the current state.
@@ -558,11 +692,10 @@ func (w *WingetPackageClientImpl) Update(ctx context.Context, input WingetPackag
 	return parseWPState(resp)
 }
 
-// Uninstall removes the package via Uninstall-WinGetPackage. PackageNotInstalled
-// status is treated as success for idempotency (EC-3), as is a
-// NoPackageFoundException ("No packages matched...") thrown when nothing is
-// installed under the given id. RebootRequired is
-// propagated via WingetPackageState.RebootRequired = true with nil error (EC-6).
+// Uninstall removes the package via "winget uninstall". The NO_APPLICATIONS_FOUND
+// exit code (nothing installed under the given id) is treated as success for
+// idempotency (EC-3). Reboot exit codes are propagated via
+// WingetPackageState.RebootRequired = true with nil error (EC-6).
 func (w *WingetPackageClientImpl) Uninstall(ctx context.Context, packageID, source string) (*WingetPackageState, error) {
 	script := wpReplace(wpUninstallBody, packageID, source, "", "")
 	resp, err := w.runRetryable(ctx, "Uninstall", packageID, script)

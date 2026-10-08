@@ -2,8 +2,7 @@
 //
 // Read-only data source returning the state of a single winget-managed
 // package on a remote Windows host. Mirrors the windows_winget_package
-// resource Read path via PowerShell Remoting (SSH) using the
-// Microsoft.WinGet.Client module.
+// resource Read path by executing winget.exe directly over SSH.
 //
 // REUSES the existing winclient.WingetPackageClient interface from the
 // twin resource — no new winclient files, no new client interface, no new
@@ -67,7 +66,7 @@ func (d *windowsWingetPackageDataSource) Metadata(_ context.Context, req datasou
 func (d *windowsWingetPackageDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = datasourceschema.Schema{
 		MarkdownDescription: "Reads the state of a single winget-managed package on a remote Windows host " +
-			"via SSH + the `Microsoft.WinGet.Client` PowerShell module. " +
+			"by executing `winget.exe` directly over SSH. " +
 			"Returns a Terraform error if the package is absent from both the winget catalog and ARP.",
 
 		Attributes: map[string]datasourceschema.Attribute{
