@@ -17,7 +17,7 @@ terraform {
   required_providers {
     windows = {
       source  = "kfrlabs/windows"
-      version = "~> 0.0"
+      version = "~> 0.1"
     }
   }
 }
@@ -62,14 +62,12 @@ resource "windows_service" "app" {
 
 ### Optional
 
-> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
-
 - `dependencies` (List of String) Ordered list of short service names this service depends on.
 - `description` (String) Textual description of the service.
 - `display_name` (String) Human-readable display name shown in services.msc. Defaults to name if omitted.
 - `service_account` (String) Account under which the service runs. Defaults to LocalSystem.
 - `service_password` (String, Sensitive, Deprecated) **Deprecated, use `service_password_wo`.** Password for `service_account`. Sensitive and semantic write-only on the Windows side (not read back), but **persisted as a Sensitive value in `terraform.tfstate`** under the legacy attribute. For a no-state-leak alternative see `service_password_wo`.
-- `service_password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only password for `service_account` (TPF v1.14+). Same Windows-side semantics as `service_password` (sent to `Set-Service` / SCM on every Create / Update), **but the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
+- `service_password_wo` (String, Sensitive) Write-only password for `service_account` (TPF v1.14+). Same Windows-side semantics as `service_password` (sent to `Set-Service` / SCM on every Create / Update), **but the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
 
 Mutually exclusive with `service_password`. Because the WriteOnly value is re-read from configuration on every plan, no separate version counter is required for rotation: change the value and re-apply.
 - `start_type` (String) Service start mode. One of: Automatic, AutomaticDelayedStart, Manual, Disabled.

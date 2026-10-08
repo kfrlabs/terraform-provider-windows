@@ -140,4 +140,4 @@ step (this scaffold) is followed by per-resource generation agents:
 
 ## License
 
-See `LICENSE` (to be added).
+MPL-2.0 — see `LICENSE`.

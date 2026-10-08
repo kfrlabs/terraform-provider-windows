@@ -26,7 +26,7 @@ terraform {
   required_providers {
     windows = {
       source  = "kfrlabs/windows"
-      version = "~> 0.0"
+      version = "~> 0.1"
     }
   }
 }
@@ -126,8 +126,6 @@ Constraints:
 
 ### Optional
 
-> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
-
 - `account_expires` (String) RFC3339 timestamp at which the account expires (e.g. `"2027-12-31T23:59:59Z"`). When set, `account_never_expires` must be `false`. Must be in the future at Create time (EC-13). At Update time, past values are forwarded to Windows without blocking.
 - `account_never_expires` (Boolean) When true (default), the account never expires (-AccountNeverExpires). When false, the account expires at account_expires. Mutually exclusive with account_expires when true (EC-14, ADR-LU-8).
 - `description` (String) Optional free-text description of the user account.
@@ -141,7 +139,7 @@ The plaintext is injected via stdin inside the PowerShell script and **never app
 
 After `terraform import`, this attribute is `null`. Set it in HCL before the next apply (EC-11).
 - `password_never_expires` (Boolean) When true, the account password never expires regardless of the local password policy. Maps to -PasswordNeverExpires.
-- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only password for the user account (TPF v1.14+ WriteOnly). Same semantics as `password` regarding stdin injection and Windows password policy, **but the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
+- `password_wo` (String, Sensitive) Write-only password for the user account (TPF v1.14+ WriteOnly). Same semantics as `password` regarding stdin injection and Windows password policy, **but the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
 
 Because the value is not in state, Terraform cannot detect changes to the password content. Rotation is driven exclusively by `password_wo_version`: increment the version and re-apply with the new password value. The provider calls `Set-LocalUser -Password` whenever the version changes between prior state and current plan.
 

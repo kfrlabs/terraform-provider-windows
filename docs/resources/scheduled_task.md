@@ -17,7 +17,7 @@ terraform {
   required_providers {
     windows = {
       source  = "kfrlabs/windows"
-      version = "~> 0.0"
+      version = "~> 0.1"
     }
   }
 }
@@ -179,7 +179,7 @@ Optional:
 
 - `logon_type` (String) Authentication mode. One of: Password|S4U|Interactive|Group|ServiceAccount|InteractiveOrPassword.
 - `password` (String, Sensitive, Deprecated) **Deprecated, use `password_wo`.** Account password (ADR-ST-3). Required when `logon_type="Password"` (EC-4). Sensitive on the wire **but persisted in `terraform.tfstate`**.
-- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only account password (TPF v1.14+ WriteOnly). Same Windows-side semantics as `password` (ADR-ST-3) but **the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
+- `password_wo` (String, Sensitive) Write-only account password (TPF v1.14+ WriteOnly). Same Windows-side semantics as `password` (ADR-ST-3) but **the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
 
 Mutually exclusive with `password`. Rotation is driven exclusively by `password_wo_version`: increment the version and re-apply with the new value. The provider re-registers the principal whenever the version changes between prior state and current plan.
 - `password_wo_version` (Number) Increment to rotate the password without task replacement (EC-6 / ADR-ST-3).

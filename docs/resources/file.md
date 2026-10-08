@@ -20,7 +20,7 @@ terraform {
   required_providers {
     windows = {
       source  = "kfrlabs/windows"
-      version = "~> 0.0"
+      version = "~> 0.1"
     }
   }
 }
@@ -110,13 +110,11 @@ variable "license" { sensitive = true }
 
 ### Optional
 
-> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
-
 - `attributes` (List of String) File attributes to enforce: hidden, readonly, archive, system, temporary.
 - `content` (String) Inline text content, written using `encoding`. Stored in state.
 - `content_base64` (String) Base64-encoded binary content. Stored in state.
-- `content_base64_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only base64 content: never persisted to state or plan. Requires `content_wo_version`.
-- `content_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only inline text content: never persisted to state or plan. Requires `content_wo_version`.
+- `content_base64_wo` (String, Sensitive) Write-only base64 content: never persisted to state or plan. Requires `content_wo_version`.
+- `content_wo` (String, Sensitive) Write-only inline text content: never persisted to state or plan. Requires `content_wo_version`.
 - `content_wo_version` (String) Arbitrary version token for write-only content. Terraform cannot diff a write-only value, so bumping this token is what triggers a rewrite.
 - `create_parents` (Boolean) Create missing parent directories. They are never removed on destroy.
 - `download_on` (String) `terraform` (default): the provider downloads and streams the bytes over SSH. `target`: the Windows host downloads the URL itself (requires `source_url_sha256`).
