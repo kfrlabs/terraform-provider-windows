@@ -253,26 +253,31 @@ func TestWPMapKind_UnknownFallback(t *testing.T) {
 	}
 }
 
-func TestWPClassifierRecognizesCatalogConnectionFailure(t *testing.T) {
-	if !strings.Contains(wpHeader, "[Cc]onnect") {
-		t.Fatal("WinGet errors mentioning catalog connection failures must map to source_unreachable")
+func TestWPClassifierRecognizesNetworkFailures(t *testing.T) {
+	// winget's human-readable output is localized, so failures are classified
+	// from process exit codes (HRESULTs), not message text. The $WG_NETWORK
+	// set must be non-empty and Classify-WG must map it to source_unreachable.
+	if !strings.Contains(wpHeader, "$WG_NETWORK") {
+		t.Fatal("wpHeader must define the $WG_NETWORK exit-code set")
+	}
+	if !strings.Contains(wpHeader, "'source_unreachable'") {
+		t.Fatal("Classify-WG must map network failures to 'source_unreachable'")
 	}
 }
 
-func TestWPClassifierMapsNoPackagesMatchedToCatalogError(t *testing.T) {
-	// Install-WinGetPackage / Update-WinGetPackage / Uninstall-WinGetPackage
-	// throw NoPackageFoundException ("No packages matched the given input
-	// criteria.") when the id resolves to nothing. That must surface as
-	// catalog_error (actionable), not unknown. The mapping lives in the
-	// PowerShell Classify-WP function, so pin the script text.
+func TestWPClassifierMapsNoApplicationsFoundToCatalogError(t *testing.T) {
+	// "winget install/upgrade" resolving an unknown id exits NO_APPLICATIONS_FOUND
+	// (0x8A150014). That must surface as catalog_error (actionable), not
+	// unknown. The mapping lives in the PowerShell Classify-WG function, so pin
+	// the script text.
 	found := false
 	for _, line := range strings.Split(wpHeader, "\n") {
-		if strings.Contains(line, "catalog_error") && strings.Contains(line, "No packages matched") {
+		if strings.Contains(line, "$WG_NO_APPS") && strings.Contains(line, "catalog_error") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("Classify-WP must map 'No packages matched' to 'catalog_error'")
+		t.Fatal("Classify-WG must map $WG_NO_APPS to 'catalog_error'")
 	}
 }
 
@@ -1050,23 +1055,31 @@ func TestWPUninstall_PackageNotInstalled(t *testing.T) {
 	}
 }
 
-func TestWPUninstallBody_TreatsNoPackageFoundAsSuccess(t *testing.T) {
-	// Uninstall-WinGetPackage throws NoPackageFoundException ("No packages
-	// matched...") instead of returning a PackageNotInstalled status when
-	// nothing is installed under the given id. The uninstall catch block must
-	// convert that into an Emit-OK empty state (EC-3 idempotency) rather than
-	// an error, so `terraform destroy` succeeds when the package is already
-	// gone. Pin the script text since the branch lives in PowerShell.
-	catchIdx := strings.Index(wpUninstallBody, "} catch {")
-	if catchIdx < 0 {
-		t.Fatal("wpUninstallBody must contain a catch block")
+func TestWPUninstallBody_TreatsNoApplicationsFoundAsSuccess(t *testing.T) {
+	// "winget uninstall" exits NO_APPLICATIONS_FOUND ($WG_NO_APPS,
+	// 0x8A150014) when nothing is installed under the given id. The uninstall
+	// body must convert that into an Emit-OK empty state (EC-3 idempotency)
+	// rather than an error, so `terraform destroy` succeeds when the package
+	// is already gone. Pin the script text since the branch lives in
+	// PowerShell.
+	if !strings.Contains(wpUninstallBody, "$WG_NO_APPS") {
+		t.Error("uninstall body must guard on $WG_NO_APPS (NO_APPLICATIONS_FOUND)")
 	}
-	catchBlock := wpUninstallBody[catchIdx:]
-	if !strings.Contains(catchBlock, "No packages matched") {
-		t.Error("uninstall catch block must guard on 'No packages matched'")
+	noAppsIdx := strings.Index(wpUninstallBody, "$WG_NO_APPS")
+	if !strings.Contains(wpUninstallBody[noAppsIdx:], "Emit-OK") {
+		t.Error("uninstall body must Emit-OK (success) for an absent package")
 	}
-	if !strings.Contains(catchBlock, "Emit-OK") {
-		t.Error("uninstall catch block must Emit-OK (success) for an absent package")
+}
+
+func TestWPInstallBody_TreatsNoUpdateNeededAsSuccess(t *testing.T) {
+	// Race: the package can appear (or reach the requested version) between
+	// the EC-2 pre-flight and "winget install", which then exits
+	// UPDATE_NOT_APPLICABLE / UPGRADE_VERSION_NOT_NEWER ($WG_NO_UPDATE).
+	// The install body must treat that as success and re-read state instead
+	// of failing with 'unknown'. Pin the script text since the branch lives
+	// in PowerShell.
+	if !strings.Contains(wpInstallBody, "$WG_NO_UPDATE") {
+		t.Error("install body must handle $WG_NO_UPDATE (already at desired state)")
 	}
 }
 

@@ -1,8 +1,8 @@
 // Terraform resource lifecycle for windows_winget_package.
 //
 // Manages the install / update / uninstall lifecycle of a Windows software
-// package via the Microsoft Windows Package Manager (winget) using the
-// official PowerShell module Microsoft.WinGet.Client over SSH.
+// package via the Microsoft Windows Package Manager (winget) by executing
+// winget.exe directly over SSH (no PowerShell module required).
 //
 // Spec alignment: windows_winget_package spec v1 (2026-05-01).
 // Framework:      terraform-plugin-framework v1.13.0.
@@ -76,7 +76,7 @@ type windowsWingetPackageModel struct {
 	Source    types.String `tfsdk:"source"`
 	Override  types.String `tfsdk:"override"`
 
-	// Computed observability attributes populated from Get-WinGetPackage.
+	// Computed observability attributes populated from "winget list".
 	InstalledVersion types.String `tfsdk:"installed_version"`
 	Name             types.String `tfsdk:"name"`
 
@@ -97,12 +97,12 @@ func (r *windowsWingetPackageResource) Metadata(_ context.Context, req resource.
 func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the install / update / uninstall lifecycle of a Windows " +
-			"software package via the Microsoft Windows Package Manager (`winget`) using the " +
-			"official PowerShell module `Microsoft.WinGet.Client`. " +
+			"software package via the Microsoft Windows Package Manager (`winget`) by " +
+			"executing `winget.exe` directly. " +
 			"Access is performed over SSH + PowerShell. " +
-			"The module **must** already be installed on the target host; " +
-			"the provider does **not** auto-install it.\n\n" +
-			"Install scope is always `SystemOrUnknown` (machine-level), " +
+			"`winget.exe` (Microsoft App Installer) **must** already be present on the target host; " +
+			"the provider does **not** install it.\n\n" +
+			"Install scope is always machine-level (`--scope machine`), " +
 			"silent mode is always enforced, and package/source agreements are " +
 			"always auto-accepted.\n\n" +
 			"**Import format**: `<source>:<package_id>` " +
@@ -127,7 +127,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 			"package_id": schema.StringAttribute{
 				Required: true,
 				Description: "winget catalog identifier (e.g. `Microsoft.VisualStudioCode`). " +
-					"Matched exactly via `-MatchOption Equals`. " +
+					"Matched exactly via `--exact`. " +
 					"Immutable after creation (ForceNew). Length 1–255.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -149,7 +149,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 					"When null/absent, the *latest available* version is targeted: " +
 					"Create installs latest, Read does **not** flag drift on newer " +
 					"upstream versions, and Update is a no-op if any version is installed. " +
-					"When set, a config change triggers `Update-WinGetPackage` in-place " +
+					"When set, a config change triggers `winget upgrade` in-place " +
 					"(not ForceNew). Clearing back to null upgrades to latest. " +
 					"Length 1–128 when set.",
 				Validators: []validator.String{
@@ -181,7 +181,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 			"override": schema.StringAttribute{
 				Optional: true,
 				Description: "Raw extra arguments forwarded to the underlying installer " +
-					"via `-Override` on `Install-WinGetPackage` " +
+					"via `--override` on `winget install` " +
 					"(e.g. MSI properties). " +
 					"Immutable after creation (ForceNew). Max 4096 chars. " +
 					"Must not contain control characters (U+0000–U+001F, U+007F). " +
@@ -201,7 +201,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 			"installed_version": schema.StringAttribute{
 				Computed: true,
 				Description: "Version actually installed on the host " +
-					"(`.InstalledVersion` from `Get-WinGetPackage`). " +
+					"(reported by `winget list`). " +
 					"Populated on Create, Read, and Update.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -211,7 +211,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 			"name": schema.StringAttribute{
 				Computed: true,
 				Description: "Human-readable package display name " +
-					"(`.Name` from `Get-WinGetPackage`). " +
+					"(reported by `winget list`). " +
 					"Populated on Create, Read, and Update.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -257,7 +257,7 @@ func (r *windowsWingetPackageResource) ConfigValidators(_ context.Context) []res
 // CRUD handlers
 // ---------------------------------------------------------------------------
 
-// Create installs a new package via Install-WinGetPackage (EC-1, EC-2
+// Create installs a new package via "winget install" (EC-1, EC-2
 // pre-flights are inside the client). Populates computed attributes on success.
 func (r *windowsWingetPackageResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan windowsWingetPackageModel
@@ -316,7 +316,7 @@ func (r *windowsWingetPackageResource) Create(ctx context.Context, req resource.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Read refreshes the computed attributes from Get-WinGetPackage. If the
+// Read refreshes the computed attributes from "winget list". If the
 // package is absent (EC-3 drift), the resource is removed from state so
 // Terraform re-creates it on the next apply. The desired `version` attribute
 // is preserved unchanged (ADR-WP-5: no permadiff on "latest" semantics).
@@ -352,7 +352,7 @@ func (r *windowsWingetPackageResource) Read(ctx context.Context, req resource.Re
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update applies a version change via Update-WinGetPackage. Only triggered
+// Update applies a version change via "winget upgrade". Only triggered
 // when the `version` attribute changes in the plan. All other mutable changes
 // are either ForceNew (package_id, source, override) or computed
 // (installed_version, name).
@@ -419,9 +419,9 @@ func (r *windowsWingetPackageResource) Update(ctx context.Context, req resource.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Delete uninstalls the package via Uninstall-WinGetPackage. PackageNotInstalled
-// is treated as success for idempotency (EC-3). A RebootRequired status emits
-// a warning but does not fail the deletion (EC-6).
+// Delete uninstalls the package via "winget uninstall".
+// NO_APPLICATIONS_FOUND is treated as success for idempotency (EC-3).
+// A reboot exit code emits a warning but does not fail the deletion (EC-6).
 func (r *windowsWingetPackageResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state windowsWingetPackageModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)

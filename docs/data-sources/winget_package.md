@@ -3,12 +3,12 @@
 page_title: "windows_winget_package Data Source - windows"
 subcategory: ""
 description: |-
-  Reads the state of a single winget-managed package on a remote Windows host via SSH + the Microsoft.WinGet.Client PowerShell module. Returns a Terraform error if the package is absent from both the winget catalog and ARP.
+  Reads the state of a single winget-managed package on a remote Windows host by executing `winget.exe` directly over SSH. Returns a Terraform error if the package is absent from both the winget catalog and ARP.
 ---
 
 # windows_winget_package (Data Source)
 
-Reads the state of a single winget-managed package on a remote Windows host via SSH + the `Microsoft.WinGet.Client` PowerShell module. Returns a Terraform error if the package is absent from both the winget catalog and ARP.
+Reads the state of a single winget-managed package on a remote Windows host by executing `winget.exe` directly over SSH. Returns a Terraform error if the package is absent from both the winget catalog and ARP.
 
 ## Example Usage
 

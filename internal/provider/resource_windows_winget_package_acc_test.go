@@ -7,18 +7,17 @@
 //   - TF_ACC=1
 //   - A reachable Windows host with SSH enabled
 //   - Env vars: WINDOWS_HOST, WINDOWS_USERNAME, WINDOWS_PASSWORD
-//   - The target host must have the Microsoft.WinGet.Client PowerShell module
-//     installed (Install-Module Microsoft.WinGet.Client -Scope AllUsers)
+//   - The target host must have winget.exe (Microsoft App Installer) available
 //   - The calling user must be a local Administrator on the target host
 //   - winget source "winget" must be reachable from the target host
 //
 // The suite covers:
 //   - Create + Read + check attributes (package_id, source, installed_version, name, id)
-//   - Update in-place (version change triggers Update-WinGetPackage, no destroy)
+//   - Update in-place (version change triggers "winget upgrade", no destroy)
 //   - Update with ForceNew (package_id or source change triggers destroy+recreate)
 //   - Import by "<source>:<package_id>"
-//   - Drift detection: out-of-band Uninstall-WinGetPackage detected on next plan
-//   - Delete + CheckDestroy (Get-WinGetPackage returns nothing after destroy)
+//   - Drift detection: out-of-band uninstall detected on next plan
+//   - Delete + CheckDestroy ("winget list" reports nothing after destroy)
 //   - RebootRequired warning emitted (hard to test without a reboot-requiring package)
 //
 // On CI without a Windows host every test skips via testAccWingetPreCheck (same
@@ -46,10 +45,10 @@ func testAccWingetPreCheck(t *testing.T) {
 
 // TestAccWindowsWingetPackage_Basic is the baseline create + read + destroy
 // scenario. It verifies:
-//   - Install-WinGetPackage succeeds and the state is populated from the Read pipeline
+//   - "winget install" succeeds and the state is populated from the Read pipeline
 //   - id is set to "<source>:<package_id>"
 //   - installed_version and name are populated
-//   - Destroy calls Uninstall-WinGetPackage and the package is removed
+//   - Destroy calls "winget uninstall" and the package is removed
 //
 // Skeleton: activate with github.com/hashicorp/terraform-plugin-testing.
 func TestAccWindowsWingetPackage_Basic(t *testing.T) {
@@ -94,7 +93,7 @@ func TestAccWindowsWingetPackage_PinnedVersion(t *testing.T) {
 }
 
 // TestAccWindowsWingetPackage_UpdateVersion asserts that changing the version
-// attribute triggers Update-WinGetPackage in-place (no destroy + recreate).
+// attribute triggers "winget upgrade" in-place (no destroy + recreate).
 func TestAccWindowsWingetPackage_UpdateVersion(t *testing.T) {
 	testAccWingetPreCheck(t)
 	t.Skip("SKELETON: see TestAccWindowsWingetPackage_Basic")
@@ -165,7 +164,7 @@ func TestAccWindowsWingetPackage_DriftDetection(t *testing.T) {
 	t.Skip("SKELETON: see TestAccWindowsWingetPackage_Basic")
 	// Steps:
 	// 1. Create the package
-	// 2. Run Uninstall-WinGetPackage out-of-band via SSH exec
+	// 2. Run "winget uninstall" out-of-band via SSH exec
 	// 3. Refresh-only plan → expect non-empty plan (resource removed from state)
 	// 4. Apply → package re-installed
 }
@@ -196,7 +195,7 @@ func TestAccWindowsWingetPackage_AlreadyInstalled(t *testing.T) {
 }
 
 // TestAccWindowsWingetPackage_WithOverride verifies that the -Override
-// flag is forwarded to Install-WinGetPackage without errors.
+// flag is forwarded to "winget install" via --override without errors.
 func TestAccWindowsWingetPackage_WithOverride(t *testing.T) {
 	testAccWingetPreCheck(t)
 	t.Skip("SKELETON: see TestAccWindowsWingetPackage_Basic")
@@ -246,13 +245,13 @@ resource "windows_winget_package" "test" {
 }
 
 // testAccCheckWingetPackageDestroyed returns a CheckDestroyFunc that verifies
-// the package is no longer installed via Get-WinGetPackage.
+// the package is no longer installed via "winget list".
 //
 //nolint:unused
 func testAccCheckWingetPackageDestroyed(packageID, source string) func() error {
 	return func() error {
 		// Implementation: connect to the Windows host via SSH and run
-		// Get-WinGetPackage -Id <packageID> -Source <source> -MatchOption Equals
+		// "winget list" --id <packageID> --exact --source <source>
 		// Expect empty result.
 		return nil
 	}

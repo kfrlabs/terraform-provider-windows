@@ -387,7 +387,7 @@ func TestWingetPackageDataSource_Read_ModuleMissing(t *testing.T) {
 	fake := &fakeWingetPackageClient{
 		readErr: winclient.NewWingetPackageError(
 			winclient.WingetPackageErrorModuleMissing,
-			"Microsoft.WinGet.Client module is not available", nil, nil,
+			"winget.exe was not found on this host", nil, nil,
 		),
 	}
 	ds := &windowsWingetPackageDataSource{client: fake}
@@ -400,7 +400,7 @@ func TestWingetPackageDataSource_Read_ModuleMissing(t *testing.T) {
 		t.Fatal("expected diagnostic for module_missing error")
 	}
 	combined := strings.Join(dsWPDiagSummaries(resp.Diagnostics), " | ")
-	if !strings.Contains(combined, "module_missing") && !strings.Contains(combined, "Microsoft.WinGet.Client") {
+	if !strings.Contains(combined, "module_missing") && !strings.Contains(combined, "winget.exe") {
 		t.Errorf("expected module_missing context in diagnostics: %v", combined)
 	}
 }

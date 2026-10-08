@@ -24,17 +24,17 @@ import (
 type WingetPackageErrorKind string
 
 const (
-	// WingetPackageErrorModuleMissing is returned when the
-	// Microsoft.WinGet.Client PowerShell module is not importable (EC-1).
+	// WingetPackageErrorModuleMissing is returned when winget.exe is not
+	// found on the host (EC-1). The kind name is kept for compatibility.
 	WingetPackageErrorModuleMissing WingetPackageErrorKind = "module_missing"
 
 	// WingetPackageErrorAlreadyInstalled is returned when Install detects a
-	// pre-existing package via the pre-flight Get-WinGetPackage (EC-2).
+	// pre-existing package via the pre-flight "winget list" (EC-2).
 	WingetPackageErrorAlreadyInstalled WingetPackageErrorKind = "already_installed"
 
-	// WingetPackageErrorVersionNotAvailable is returned when
-	// Install-WinGetPackage or Update-WinGetPackage reports
-	// NoApplicableInstaller or InvalidVersion (EC-4).
+	// WingetPackageErrorVersionNotAvailable is returned when "winget
+	// install/upgrade" reports NO_APPLICABLE_INSTALLER, or NO_MANIFEST_FOUND
+	// for a pinned version (EC-4).
 	WingetPackageErrorVersionNotAvailable WingetPackageErrorKind = "version_not_available"
 
 	// WingetPackageErrorBlockedByPolicy is returned when the source requires
@@ -158,8 +158,8 @@ var (
 // operation. Consumed by Install and Update.
 //
 // Zero-value / empty-string semantics for optional fields:
-//   - Version ""  → latest available (no -Version flag passed to winget).
-//   - Override "" → no -Override flag passed to Install-WinGetPackage.
+//   - Version ""  → latest available (no --version flag passed to winget).
+//   - Override "" → no --override flag passed to "winget install".
 type WingetPackageInput struct {
 	// PackageID is the winget catalog identifier. Required.
 	PackageID string
@@ -171,7 +171,7 @@ type WingetPackageInput struct {
 	Version string
 
 	// Override is the raw argument string for the underlying installer's
-	// -Override parameter. Empty means no -Override flag is passed.
+	// --override parameter. Empty means no --override flag is passed.
 	Override string
 }
 
@@ -182,8 +182,8 @@ type WingetPackageInput struct {
 // WingetPackageState holds the observed state of a winget-managed package as
 // returned by the Read pipeline.
 //
-// RebootRequired signals that the last Install/Update/Uninstall reported
-// winget status RebootRequired. The resource handler converts this into a
+// RebootRequired signals that the last Install/Update/Uninstall reported a
+// winget reboot exit code. The resource handler converts this into a
 // Terraform warning diagnostic without failing (EC-6). This field is never
 // persisted in Terraform state.
 type WingetPackageState struct {
@@ -199,7 +199,7 @@ type WingetPackageState struct {
 	// Name is the human-readable package display name.
 	Name string
 
-	// RebootRequired indicates that winget reported a RebootRequired status.
+	// RebootRequired indicates that winget reported a reboot exit code.
 	// Transient: always false when returned by Read.
 	RebootRequired bool
 }
@@ -208,8 +208,8 @@ type WingetPackageState struct {
 // WingetPackageClient — CRUD interface
 // ---------------------------------------------------------------------------
 
-// WingetPackageClient defines the contract for managing Windows packages via
-// the Microsoft.WinGet.Client PowerShell module over SSH.
+// WingetPackageClient defines the contract for managing Windows packages by
+// executing winget.exe directly over SSH (no PowerShell module required).
 //
 // All methods accept a context.Context for cancellation and timeout
 // propagation. All errors are returned as *WingetPackageError (wrapped in
@@ -217,25 +217,25 @@ type WingetPackageState struct {
 // programmatic branching.
 //
 // Notable invariants:
-//   - Install performs EC-1 (module check) and EC-2 (existence pre-flight).
+//   - Install performs EC-1 (winget.exe check) and EC-2 (existence pre-flight).
 //   - Read returns (nil, nil) on absent package (EC-3 drift).
-//   - Uninstall treats PackageNotInstalled as success (EC-3 idempotency).
-//   - RebootRequired status sets WingetPackageState.RebootRequired = true and
-//     does NOT cause an error (EC-6).
+//   - Uninstall treats NO_APPLICATIONS_FOUND as success (EC-3 idempotency).
+//   - Reboot exit codes set WingetPackageState.RebootRequired = true and
+//     do NOT cause an error (EC-6).
 //   - EC-10 (ResourceInUse): retried 3× with 5 s / 15 s / 30 s back-off.
 //   - EC-8 (network failure): retried once after 5 s.
 type WingetPackageClient interface {
-	// Install adds a new package via Install-WinGetPackage.
+	// Install adds a new package via "winget install".
 	Install(ctx context.Context, input WingetPackageInput) (*WingetPackageState, error)
 
 	// Read retrieves the current installed state. Returns (nil, nil) when not
 	// installed (EC-3).
 	Read(ctx context.Context, packageID, source string) (*WingetPackageState, error)
 
-	// Update applies a version change via Update-WinGetPackage.
+	// Update applies a version change via "winget upgrade".
 	Update(ctx context.Context, input WingetPackageInput) (*WingetPackageState, error)
 
-	// Uninstall removes the package. PackageNotInstalled is treated as
-	// success. RebootRequired is propagated via the returned state (EC-6).
+	// Uninstall removes the package. NO_APPLICATIONS_FOUND is treated as
+	// success. Reboot exit codes are propagated via the returned state (EC-6).
 	Uninstall(ctx context.Context, packageID, source string) (*WingetPackageState, error)
 }
