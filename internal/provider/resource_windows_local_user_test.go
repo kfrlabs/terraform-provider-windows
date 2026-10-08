@@ -724,6 +724,20 @@ func TestAddLocalUserDiag_PlainError(t *testing.T) {
 	}
 }
 
+func TestAddLocalUserDiag_WithCause(t *testing.T) {
+	var diags diag.Diagnostics
+	err := winclient.NewLocalUserError(winclient.LocalUserErrorUnknown,
+		"SSH transport error during \"read\"", errors.New("winclient: dial: connection refused"),
+		map[string]string{"host": "win01"})
+	addLocalUserDiag(&diags, "Read failed", err)
+	if !diags.HasError() {
+		t.Fatal("expected error diagnostic")
+	}
+	if !strings.Contains(luDiagDetails(diags)[0], "winclient: dial") {
+		t.Errorf("detail missing cause: %v", luDiagDetails(diags))
+	}
+}
+
 // errSimple implements the error interface for plain errors without winclient.
 type errSimple string
 

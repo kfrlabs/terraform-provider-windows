@@ -774,6 +774,27 @@ func TestAddHostnameDiag_PlainError(t *testing.T) {
 	}
 }
 
+func TestAddHostnameDiag_WithCause(t *testing.T) {
+	var diags diag.Diagnostics
+	he := winclient.NewHostnameError(
+		winclient.HostnameErrorUnreachable,
+		"SSH transport error during \"read\"",
+		errors.New("winclient: ssh handshake: host key mismatch"),
+		map[string]string{"host": "WIN01", "port": "2222", "transport": "ssh"},
+	)
+	addHostnameDiag(&diags, "Read failed", he)
+	if !diags.HasError() {
+		t.Fatal("expected error diagnostic")
+	}
+	detail := diags.Errors()[0].Detail()
+	if !strings.Contains(detail, "winclient: ssh handshake") {
+		t.Errorf("detail should contain cause: %s", detail)
+	}
+	if !strings.Contains(detail, "unreachable") {
+		t.Errorf("detail should still contain kind: %s", detail)
+	}
+}
+
 func TestAddHostnameDiag_StructuredErrorNoContext(t *testing.T) {
 	var diags diag.Diagnostics
 	he := winclient.NewHostnameError(

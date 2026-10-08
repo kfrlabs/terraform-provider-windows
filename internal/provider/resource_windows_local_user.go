@@ -1007,6 +1007,9 @@ func addLocalUserDiag(diags *diag.Diagnostics, summary string, err error) {
 				detail += fmt.Sprintf("\n  %s = %s", k, v)
 			}
 		}
+		if lue.Cause != nil {
+			detail += "\n\nCause: " + lue.Cause.Error()
+		}
 		if lue.Kind != "" {
 			detail += fmt.Sprintf("\n\nKind: %s", lue.Kind)
 		}

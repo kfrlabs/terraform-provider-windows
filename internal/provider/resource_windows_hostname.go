@@ -367,6 +367,9 @@ func addHostnameDiag(diags *diag.Diagnostics, summary string, err error) {
 				detail += fmt.Sprintf("\n  %s = %s", k, v)
 			}
 		}
+		if he.Cause != nil {
+			detail += "\n\nCause: " + he.Cause.Error()
+		}
 		if he.Kind != "" {
 			detail += fmt.Sprintf("\n\nKind: %s", he.Kind)
 		}

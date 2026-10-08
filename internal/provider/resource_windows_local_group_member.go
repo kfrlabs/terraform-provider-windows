@@ -612,6 +612,9 @@ func addLocalGroupMemberDiag(diags *diag.Diagnostics, summary string, err error)
 				detail += fmt.Sprintf("\n  %s = %s", k, v)
 			}
 		}
+		if lgme.Cause != nil {
+			detail += "\n\nCause: " + lgme.Cause.Error()
+		}
 		if lgme.Kind != "" {
 			detail += fmt.Sprintf("\n\nKind: %s", lgme.Kind)
 		}
@@ -627,6 +630,9 @@ func addLocalGroupMemberDiag(diags *diag.Diagnostics, summary string, err error)
 			for k, v := range lge.Context {
 				detail += fmt.Sprintf("\n  %s = %s", k, v)
 			}
+		}
+		if lge.Cause != nil {
+			detail += "\n\nCause: " + lge.Cause.Error()
 		}
 		diags.AddError(summary, detail)
 		return

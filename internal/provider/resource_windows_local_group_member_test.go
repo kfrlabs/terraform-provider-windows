@@ -480,6 +480,23 @@ func TestAddLGMDiag_GenericError(t *testing.T) {
 	}
 }
 
+func TestAddLGMDiag_WithCause(t *testing.T) {
+	var diags diag.Diagnostics
+	lgme := winclient.NewLocalGroupMemberError(
+		winclient.LocalGroupMemberErrorUnknown,
+		"SSH transport error during \"read\"",
+		errors.New("winclient: dial: connection refused"),
+		map[string]string{"host": "win01"},
+	)
+	addLocalGroupMemberDiag(&diags, "operation failed", lgme)
+	if !diags.HasError() {
+		t.Fatal("expected error diagnostic")
+	}
+	if !strings.Contains(diags[0].Detail(), "winclient: dial") {
+		t.Errorf("detail should contain cause: %s", diags[0].Detail())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // addLocalGroupMemberCreateDiag helper — per-kind routing
 // ---------------------------------------------------------------------------

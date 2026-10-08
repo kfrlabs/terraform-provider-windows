@@ -541,6 +541,9 @@ func addLocalGroupDiag(diags *diag.Diagnostics, summary string, err error) {
 				detail += fmt.Sprintf("\n  %s = %s", k, v)
 			}
 		}
+		if lge.Cause != nil {
+			detail += "\n\nCause: " + lge.Cause.Error()
+		}
 		if lge.Kind != "" {
 			detail += fmt.Sprintf("\n\nKind: %s", lge.Kind)
 		}
