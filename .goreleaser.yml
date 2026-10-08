@@ -3,6 +3,10 @@
 # Produces the registry-compatible release archives:
 #   terraform-provider-windows_<version>_<os>_<arch>.zip
 # each holding the provider binary, plus SHA256SUMS and its GPG signature.
+# Matrix: windows/linux (amd64, arm64, 386, armv6) + darwin (amd64, arm64)
+# + freebsd (amd64, arm64, 386, armv6). The 386/arm entries restore the
+# v0.0.3-v0.0.14 matrix dropped by v0.1.0 (windows_386, windows_arm,
+# linux_386, linux_arm, freebsd_*).
 # A GitHub release is cut by .github/workflows/release.yml on every v* tag.
 
 version: 2
@@ -25,9 +29,19 @@ builds:
       - windows
       - linux
       - darwin
+      - freebsd
     goarch:
       - amd64
       - arm64
+      - "386"
+      - arm
+    goarm:
+      - "6"
+    ignore:
+      - goos: darwin
+        goarch: "386"
+      - goos: darwin
+        goarch: arm
     binary: "{{ .ProjectName }}_v{{ .Version }}"
 
 archives:
