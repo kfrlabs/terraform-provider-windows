@@ -325,6 +325,23 @@ func TestAddServiceDiag_PlainError(t *testing.T) {
 	}
 }
 
+func TestAddServiceDiag_WithCause(t *testing.T) {
+	diags := &diag.Diagnostics{}
+	se := winclient.NewServiceError(
+		winclient.ServiceErrorUnknown, "SSH transport error during \"read\"",
+		errors.New("winclient: dial: connection refused"),
+		map[string]string{"host": "WIN01"},
+	)
+	addServiceDiag(diags, "Read failed", se)
+	if !diags.HasError() {
+		t.Fatal("expected error diag")
+	}
+	detail := (*diags)[0].Detail()
+	if !strings.Contains(detail, "winclient: dial") {
+		t.Errorf("detail missing cause: %s", detail)
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Resource.Configure
 // -----------------------------------------------------------------------------

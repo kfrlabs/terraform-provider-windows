@@ -477,6 +477,9 @@ func addServiceDiag(diags *diag.Diagnostics, summary string, err error) {
 				detail += fmt.Sprintf("\n  %s = %s", k, v)
 			}
 		}
+		if se.Cause != nil {
+			detail += "\n\nCause: " + se.Cause.Error()
+		}
 		if se.Kind != "" {
 			detail += fmt.Sprintf("\n\nKind: %s", se.Kind)
 		}

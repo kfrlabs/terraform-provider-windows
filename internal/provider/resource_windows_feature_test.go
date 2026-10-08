@@ -170,6 +170,23 @@ func TestAddFeatureDiag_PlainError(t *testing.T) {
 	}
 }
 
+func TestAddFeatureDiag_WithCause(t *testing.T) {
+	diags := &diag.Diagnostics{}
+	fe := winclient.NewFeatureError(
+		winclient.FeatureErrorUnknown,
+		"SSH transport error during \"read\"",
+		errors.New("winclient: dial: connection refused"),
+		map[string]string{"host": "WIN01"},
+	)
+	addFeatureDiag(diags, "Read failed", fe)
+	if !diags.HasError() {
+		t.Fatal("expected error diag")
+	}
+	if !strings.Contains((*diags)[0].Detail(), "winclient: dial") {
+		t.Errorf("missing cause in detail: %s", (*diags)[0].Detail())
+	}
+}
+
 // -----------------------------------------------------------------------------
 // modelFromFeature + applyInstallResult
 // -----------------------------------------------------------------------------
