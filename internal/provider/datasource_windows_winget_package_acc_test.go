@@ -41,7 +41,7 @@ func testAccWingetPackageDSPreCheck(t *testing.T) {
 // (id, name, installed_version, is_installed) are populated.
 func TestAccWindowsWingetPackageDataSource_Basic(t *testing.T) {
 	testAccWingetPackageDSPreCheck(t)
-	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target with Microsoft.PowerShell installed via winget")
+	t.Skip("SKELETON: requires github.com/hashicorp/terraform-plugin-testing and a live Windows target with winget.exe available")
 	/*
 			resource.Test(t, resource.TestCase{
 				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
