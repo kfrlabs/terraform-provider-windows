@@ -3,8 +3,8 @@
 page_title: "windows_winget_package Resource - windows"
 subcategory: ""
 description: |-
-  Manages the install / update / uninstall lifecycle of a Windows software package via the Microsoft Windows Package Manager (winget) by executing `winget.exe` directly. Access is performed over SSH + PowerShell. `winget.exe` (Microsoft App Installer) must already be present on the target host; the provider does not install it.
-  Install scope is always machine-level (`--scope machine`), silent mode is always enforced, and package/source agreements are always auto-accepted.
+  Manages the install / update / uninstall lifecycle of a Windows software package via the Microsoft Windows Package Manager (winget) by executing winget.exe directly. Access is performed over SSH + PowerShell. winget.exe (Microsoft App Installer) must already be present on the target host; the provider does not install it.
+  Install scope is always machine-level (--scope machine), silent mode is always enforced, and package/source agreements are always auto-accepted.
   Import format: <source>:<package_id> (e.g. winget:Microsoft.VisualStudioCode).
 ---
 
@@ -23,7 +23,7 @@ terraform {
   required_providers {
     windows = {
       source  = "kfrlabs/windows"
-      version = "~> 0.0"
+      version = "~> 0.1"
     }
   }
 }

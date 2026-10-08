@@ -1,0 +1,58 @@
+# Release: builds registry-compatible provider archives on every v* tag.
+#
+# Push a tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) and this
+# workflow runs GoReleaser, which compiles the provider for every supported
+# OS/arch, zips each binary, and attaches the checksums (+ GPG signature) to
+# the GitHub release. The Terraform Registry picks the release up from there.
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   - GPG_PRIVATE_KEY : ASCII-armoured private key used to sign the checksums
+#   - GPG_PASSPHRASE  : its passphrase
+# The signing fingerprint is read from the imported key itself
+# (steps.gpg.outputs.fingerprint), so no GPG_FINGERPRINT secret is needed.
+# The Registry also requires the matching public key registered on the
+# release account's registry settings.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  goreleaser:
+    name: goreleaser release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: import GPG key
+        id: gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: v2
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}

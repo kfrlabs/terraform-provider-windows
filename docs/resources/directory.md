@@ -37,7 +37,7 @@ resource "windows_directory" "scratch" {
 
 # A directory under a path whose parents must already exist.
 resource "windows_directory" "strict_parent" {
-  path                       = "C:\\ProgramData\\app\\strict"
+  path                      = "C:\\ProgramData\\app\\strict"
   create_parent_directories = false
 }
 
@@ -59,7 +59,7 @@ resource "windows_directory" "decommissioned" {
 ### Optional
 
 - `attributes` (List of String) Directory attributes to enforce: hidden, readonly, system.
-- `create_parent_directories` (Boolean) Create missing parent directories. They are never removed on destroy. Defaults to `true`.
+- `create_parent_directories` (Boolean) Create missing parent directories. They are never removed on destroy.
 - `ensure` (String) Whether the directory should be "present" (default) or "absent".
 - `recursive_delete` (Boolean) When true, deleting the resource removes the directory's content as well (`Remove-Item -Recurse`). When false (default), deleting a non-empty directory fails explicitly rather than silently discarding files not managed by Terraform.
 
@@ -69,14 +69,6 @@ resource "windows_directory" "decommissioned" {
 - `id` (String) Normalised absolute path of the directory. Identical to the import ID format.
 - `item_count` (Number) Number of items (files and sub-directories) directly contained in the directory (non-recursive).
 - `last_write_time` (String) Last write timestamp of the directory, ISO 8601 UTC.
-
-## Behavior notes
-
-- **Idempotent create:** unlike `windows_file`, creating a `windows_directory` that already exists on the host is **not** an error — a pre-existing directory is adopted. Only a path that resolves to an existing *file* is rejected (`type_conflict`).
-- **Parent directories:** when `create_parent_directories = false` and a parent directory is missing, `Create` fails with an explicit, typed error instead of surfacing a raw PowerShell exception.
-- **Deleting a non-empty directory:** with `recursive_delete = false` (the default), deleting a non-empty directory fails explicitly (`not_empty`) rather than silently discarding files Terraform does not manage. Set `recursive_delete = true` to allow `Remove-Item -Recurse` on destroy.
-- **Drift:** if the directory is removed out-of-band, the next `Read` detects it and Terraform plans to recreate it (unless `ensure = "absent"`, in which case the configuration and the host have already converged).
-- **ACLs and ownership:** not handled by this resource. Pair it with `windows_file_acl`, which accepts a directory path as its target.
 
 ## Import
 
