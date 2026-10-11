@@ -387,6 +387,23 @@ func TestAddLocalGroupDiag_PlainError(t *testing.T) {
 	}
 }
 
+func TestAddLocalGroupDiag_WithCause(t *testing.T) {
+	diags := &diag.Diagnostics{}
+	lge := winclient.NewLocalGroupError(
+		winclient.LocalGroupErrorUnknown,
+		"SSH transport error during \"read\"",
+		errors.New("winclient: dial: connection refused"),
+		map[string]string{"host": "win01"},
+	)
+	addLocalGroupDiag(diags, "Read failed", lge)
+	if !diags.HasError() {
+		t.Fatal("expected error diagnostic")
+	}
+	if !strings.Contains(diags.Errors()[0].Detail(), "winclient: dial") {
+		t.Errorf("detail should contain cause: %s", diags.Errors()[0].Detail())
+	}
+}
+
 func TestAddLocalGroupDiag_BuiltinGroupKind(t *testing.T) {
 	diags := &diag.Diagnostics{}
 	lge := winclient.NewLocalGroupError(

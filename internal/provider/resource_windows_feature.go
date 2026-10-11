@@ -412,6 +412,9 @@ func addFeatureDiag(diags *diag.Diagnostics, summary string, err error) {
 				detail += fmt.Sprintf("\n  %s = %s", k, v)
 			}
 		}
+		if fe.Cause != nil {
+			detail += "\n\nCause: " + fe.Cause.Error()
+		}
 		if fe.Kind != "" {
 			detail += fmt.Sprintf("\n\nKind: %s", fe.Kind)
 		}
