@@ -144,8 +144,10 @@ jobs:
         env:
           TF_CLI_CONFIG_FILE: ${{ runner.temp }}/terraformrc
         run: |
+          shopt -s nullglob
           fail=0
-          for f in examples/resources/*/*.tf examples/data-sources/*/*.tf; do
+          files=(examples/resources/*/*.tf examples/data-sources/*/*.tf)
+          for f in "${files[@]}"; do
             d=$(mktemp -d)
             cp "$f" "$d/main.tf"
             grep -o 'var\.[A-Za-z0-9_]*' "$f" | sort -u | sed 's/var\./variable "/;s/$/" {}/' > "$d/variables.tf"
