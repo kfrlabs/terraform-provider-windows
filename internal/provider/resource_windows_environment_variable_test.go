@@ -35,6 +35,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -95,17 +96,52 @@ func envVarObjectType() tftypes.Object {
 		"value":  tftypes.String,
 		"scope":  tftypes.String,
 		"expand": tftypes.Bool,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// evNullTimeoutsValue is the absent value for the `timeouts {}` block.
+func evNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
+}
+
+// evTimeoutsValue builds a `timeouts {}` value carrying a duration for one
+// named operation (create/read/update/delete), the rest null.
+func evTimeoutsValue(op, d string) tftypes.Value {
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	vals[op] = tftypes.NewValue(tftypes.String, d)
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, vals)
 }
 
 // evObjBase returns a base tftypes.Value map for the envVar schema.
 func evObjBase() map[string]tftypes.Value {
 	return map[string]tftypes.Value{
-		"id":     tftypes.NewValue(tftypes.String, nil),
-		"name":   tftypes.NewValue(tftypes.String, "JAVA_HOME"),
-		"value":  tftypes.NewValue(tftypes.String, "/usr/lib/jvm"),
-		"scope":  tftypes.NewValue(tftypes.String, "machine"),
-		"expand": tftypes.NewValue(tftypes.Bool, false),
+		"id":       tftypes.NewValue(tftypes.String, nil),
+		"name":     tftypes.NewValue(tftypes.String, "JAVA_HOME"),
+		"value":    tftypes.NewValue(tftypes.String, "/usr/lib/jvm"),
+		"scope":    tftypes.NewValue(tftypes.String, "machine"),
+		"expand":   tftypes.NewValue(tftypes.Bool, false),
+		"timeouts": evNullTimeoutsValue(),
 	}
 }
 
@@ -121,14 +157,14 @@ func evObj(overrides map[string]tftypes.Value) tftypes.Value {
 // evState builds a tfsdk.State for the environment variable schema.
 func evState(t *testing.T, overrides map[string]tftypes.Value) tfsdk.State {
 	t.Helper()
-	s := windowsEnvVarSchemaDefinition()
+	s := windowsEnvVarSchemaDefinition(context.Background())
 	return tfsdk.State{Raw: evObj(overrides), Schema: s}
 }
 
 // evPlan builds a tfsdk.Plan for the environment variable schema.
 func evPlan(t *testing.T, overrides map[string]tftypes.Value) tfsdk.Plan {
 	t.Helper()
-	s := windowsEnvVarSchemaDefinition()
+	s := windowsEnvVarSchemaDefinition(context.Background())
 	return tfsdk.Plan{Raw: evObj(overrides), Schema: s}
 }
 
@@ -329,14 +365,14 @@ func TestEnvVarMetadata(t *testing.T) {
 }
 
 func TestEnvVarSchema_HasRequiredAttributes(t *testing.T) {
-	s := windowsEnvVarSchemaDefinition()
-	for _, k := range []string{"id", "name", "value", "scope", "expand"} {
+	s := windowsEnvVarSchemaDefinition(context.Background())
+	for _, k := range []string{"id", "name", "value", "scope", "expand", "timeouts"} {
 		if _, ok := s.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
 		}
 	}
-	if len(s.Attributes) != 5 {
-		t.Errorf("schema has %d attributes, want 5", len(s.Attributes))
+	if len(s.Attributes) != 6 {
+		t.Errorf("schema has %d attributes, want 6", len(s.Attributes))
 	}
 }
 
@@ -371,7 +407,7 @@ func TestEnvVarCreate_HappyPath(t *testing.T) {
 	}
 	resp := &resource.CreateResponse{
 		State: tfsdk.State{
-			Schema: windowsEnvVarSchemaDefinition(),
+			Schema: windowsEnvVarSchemaDefinition(context.Background()),
 		},
 	}
 	r.Create(context.Background(), req, resp)
@@ -394,7 +430,7 @@ func TestEnvVarCreate_ClientError(t *testing.T) {
 
 	req := resource.CreateRequest{Plan: evPlan(t, nil)}
 	resp := &resource.CreateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Create(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
@@ -410,7 +446,7 @@ func TestEnvVarCreate_BroadcastWarning(t *testing.T) {
 
 	req := resource.CreateRequest{Plan: evPlan(t, nil)}
 	resp := &resource.CreateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Create(context.Background(), req, resp)
 	// Broadcast warning should NOT produce a diagnostic error
@@ -437,7 +473,7 @@ func TestEnvVarCreate_UserScope(t *testing.T) {
 		}),
 	}
 	resp := &resource.CreateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Create(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
@@ -467,7 +503,7 @@ func TestEnvVarCreate_ExpandTrue(t *testing.T) {
 		}),
 	}
 	resp := &resource.CreateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Create(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
@@ -492,7 +528,7 @@ func TestEnvVarRead_HappyPath(t *testing.T) {
 		}),
 	}
 	resp := &resource.ReadResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Read(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
@@ -518,7 +554,7 @@ func TestEnvVarRead_NotFound_RemovesResource(t *testing.T) {
 	// State must be properly initialised to detect RemoveResource
 	resp := &resource.ReadResponse{
 		State: tfsdk.State{
-			Schema: windowsEnvVarSchemaDefinition(),
+			Schema: windowsEnvVarSchemaDefinition(context.Background()),
 			Raw:    evObj(map[string]tftypes.Value{"id": tftypes.NewValue(tftypes.String, "machine:JAVA_HOME")}),
 		},
 	}
@@ -544,7 +580,7 @@ func TestEnvVarRead_ClientError(t *testing.T) {
 		}),
 	}
 	resp := &resource.ReadResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Read(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
@@ -563,7 +599,7 @@ func TestEnvVarRead_MalformedID(t *testing.T) {
 			}),
 		}
 		resp := &resource.ReadResponse{
-			State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+			State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 		}
 		r.Read(context.Background(), req, resp)
 		if !resp.Diagnostics.HasError() {
@@ -582,7 +618,7 @@ func TestEnvVarRead_BadScope(t *testing.T) {
 		}),
 	}
 	resp := &resource.ReadResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Read(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
@@ -618,7 +654,7 @@ func TestEnvVarUpdate_HappyPath(t *testing.T) {
 		}),
 	}
 	resp := &resource.UpdateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Update(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
@@ -640,7 +676,7 @@ func TestEnvVarUpdate_ClientError(t *testing.T) {
 		State: evState(t, map[string]tftypes.Value{"id": tftypes.NewValue(tftypes.String, "machine:JAVA_HOME")}),
 	}
 	resp := &resource.UpdateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Update(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
@@ -659,7 +695,7 @@ func TestEnvVarUpdate_BroadcastWarning(t *testing.T) {
 		State: evState(t, map[string]tftypes.Value{"id": tftypes.NewValue(tftypes.String, "machine:JAVA_HOME")}),
 	}
 	resp := &resource.UpdateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.Update(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
@@ -765,7 +801,7 @@ func TestEnvVarImportState_HappyPath_Machine(t *testing.T) {
 
 	req := resource.ImportStateRequest{ID: "machine:JAVA_HOME"}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.ImportState(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
@@ -785,7 +821,7 @@ func TestEnvVarImportState_HappyPath_User(t *testing.T) {
 
 	req := resource.ImportStateRequest{ID: "user:MY_VAR"}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.ImportState(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
@@ -803,7 +839,7 @@ func TestEnvVarImportState_MalformedID(t *testing.T) {
 	for _, badID := range []string{"nocolon", ":noname", "noscope:", ""} {
 		req := resource.ImportStateRequest{ID: badID}
 		resp := &resource.ImportStateResponse{
-			State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+			State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 		}
 		r.ImportState(context.Background(), req, resp)
 		if !resp.Diagnostics.HasError() {
@@ -821,7 +857,7 @@ func TestEnvVarImportState_UnknownScope(t *testing.T) {
 
 	req := resource.ImportStateRequest{ID: "badscope:JAVA_HOME"}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.ImportState(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
@@ -835,7 +871,7 @@ func TestEnvVarImportState_NameContainsEquals(t *testing.T) {
 
 	req := resource.ImportStateRequest{ID: "machine:FOO=BAR"}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.ImportState(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
@@ -853,7 +889,7 @@ func TestEnvVarImportState_NotFound(t *testing.T) {
 
 	req := resource.ImportStateRequest{ID: "machine:NONEXISTENT"}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.ImportState(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
@@ -872,7 +908,7 @@ func TestEnvVarImportState_ClientError(t *testing.T) {
 
 	req := resource.ImportStateRequest{ID: "machine:JAVA_HOME"}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition()},
+		State: tfsdk.State{Schema: windowsEnvVarSchemaDefinition(context.Background())},
 	}
 	r.ImportState(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
@@ -885,7 +921,7 @@ func TestEnvVarImportState_ClientError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnvVarModel_RoundTrip(t *testing.T) {
-	s := windowsEnvVarSchemaDefinition()
+	s := windowsEnvVarSchemaDefinition(context.Background())
 	cfg := tfsdk.Config{
 		Schema: s,
 		Raw:    evObj(nil),
@@ -911,7 +947,7 @@ func TestEnvVarModel_RoundTrip(t *testing.T) {
 }
 
 func TestEnvVarModel_RoundTrip_ExpandTrue(t *testing.T) {
-	s := windowsEnvVarSchemaDefinition()
+	s := windowsEnvVarSchemaDefinition(context.Background())
 	cfg := tfsdk.Config{
 		Schema: s,
 		Raw: evObj(map[string]tftypes.Value{
@@ -1029,5 +1065,113 @@ func TestEnvVarResource_Configure_Nil(t *testing.T) {
 	r.Configure(context.Background(), req, resp)
 	if resp.Diagnostics.HasError() {
 		t.Errorf("nil ProviderData should not produce error: %v", resp.Diagnostics)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (issue #150): a stalled variable operation must surface a bounded
+// diagnostic instead of blocking Terraform indefinitely.
+// ---------------------------------------------------------------------------
+
+func TestEnvVarSchema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsEnvVarSchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #150: CRUD must be time-bounded)")
+	}
+}
+
+// hangEnvVarClient simulates the stalled transport from issue #150: Delete
+// blocks until the passed context is done, then returns the context error —
+// mirroring a variable operation that never answers.
+type hangEnvVarClient struct {
+	fakeEnvVarClient
+}
+
+func (f *hangEnvVarClient) Delete(ctx context.Context, _ winclient.EnvVarScope, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestEnvVarDelete_StalledTransportIsBounded(t *testing.T) {
+	r := &windowsEnvVarResource{client: &hangEnvVarClient{}}
+
+	prior := evState(t, map[string]tftypes.Value{
+		"id":       tftypes.NewValue(tftypes.String, "machine:JAVA_HOME"),
+		"timeouts": evTimeoutsValue("delete", "200ms"),
+	})
+	resp := &resource.DeleteResponse{State: prior}
+
+	start := time.Now()
+	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the delete timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Delete blocked for %v with a 200ms timeout; the stalled-transport hang from issue #150 is back", elapsed)
+	}
+}
+
+func TestEnvVarCreate_PreservesTimeouts(t *testing.T) {
+	fake := &fakeEnvVarClient{
+		setOut: &winclient.EnvVarState{
+			Scope: winclient.EnvVarScopeMachine,
+			Name:  "JAVA_HOME",
+			Value: "/usr/lib/jvm",
+		},
+	}
+	r := &windowsEnvVarResource{client: fake}
+
+	plan := evPlan(t, map[string]tftypes.Value{
+		"timeouts": evTimeoutsValue("create", "5m"),
+	})
+	resp := &resource.CreateResponse{State: evState(t, nil)}
+
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create() unexpected errors: %v", resp.Diagnostics)
+	}
+	var m windowsEnvVarModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	got, diags := m.Timeouts.Create(context.Background(), envVarDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through Create state projection: create = %v, want 5m", got)
+	}
+}
+
+func TestEnvVarImportState_SetsTypedNullTimeouts(t *testing.T) {
+	// Exercises the real ImportState handler through a fake client. The
+	// handler full-Sets a model with no prior timeouts, so a zero
+	// timeouts.Value would be rejected by the framework — this fails with
+	// error diagnostics unless evNullTimeouts() carries the schema's types.
+	fake := &fakeEnvVarClient{
+		readOut: &winclient.EnvVarState{
+			Scope: winclient.EnvVarScopeMachine,
+			Name:  "JAVA_HOME",
+			Value: "/usr/lib/jvm",
+		},
+	}
+	r := &windowsEnvVarResource{client: fake}
+
+	resp := &resource.ImportStateResponse{State: evState(t, nil)}
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "machine:JAVA_HOME"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: unexpected diags: %v", resp.Diagnostics)
+	}
+	var m windowsEnvVarModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if m.Name.ValueString() != "JAVA_HOME" {
+		t.Errorf("imported name = %q", m.Name.ValueString())
+	}
+	if !m.Timeouts.IsNull() {
+		t.Errorf("imported timeouts should be null, got %v", m.Timeouts)
 	}
 }

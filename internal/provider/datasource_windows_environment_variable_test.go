@@ -285,7 +285,7 @@ func TestEnvVarDataSource_Read_ExpandTrue(t *testing.T) {
 		t.Fatalf("unexpected error: %v", evDiagSummaries(resp.Diagnostics))
 	}
 	// Verify expand is written to state
-	var m windowsEnvVarModel
+	var m windowsEnvVarDataSourceModel
 	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
 		t.Fatalf("Get state failed: %v", diags)
 	}
@@ -403,7 +403,7 @@ func TestEnvVarDataSource_Read_IDFormat(t *testing.T) {
 		t.Fatalf("unexpected error: %v", evDiagSummaries(resp.Diagnostics))
 	}
 
-	var m windowsEnvVarModel
+	var m windowsEnvVarDataSourceModel
 	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
 		t.Fatalf("Get state failed: %v", diags)
 	}

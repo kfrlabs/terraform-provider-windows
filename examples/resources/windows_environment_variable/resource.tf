@@ -3,6 +3,17 @@ resource "windows_environment_variable" "java_home" {
   name  = "JAVA_HOME"
   value = "C:\\Program Files\\Java\\jdk-17"
   scope = "machine"
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled variable operation
+  # (registry write, WM_SETTINGCHANGE broadcast) surfaces a timeout
+  # diagnostic instead of blocking Terraform indefinitely.
+  timeouts = {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # Machine-scope expandable string (REG_EXPAND_SZ).

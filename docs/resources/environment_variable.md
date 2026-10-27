@@ -27,6 +27,17 @@ resource "windows_environment_variable" "java_home" {
   name  = "JAVA_HOME"
   value = "C:\\Program Files\\Java\\jdk-17"
   scope = "machine"
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled variable operation
+  # (registry write, WM_SETTINGCHANGE broadcast) surfaces a timeout
+  # diagnostic instead of blocking Terraform indefinitely.
+  timeouts = {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # Machine-scope expandable string (REG_EXPAND_SZ).
@@ -58,10 +69,21 @@ resource "windows_environment_variable" "my_token" {
 ### Optional
 
 - `expand` (Boolean) Controls the registry value kind. `false` (default): `REG_SZ` — plain string. `true`: `REG_EXPAND_SZ` — Windows expands `%VAR%` tokens for applications. Updatable in-place: changing `expand` rewrites the registry kind without replacement.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
 - `id` (String) Terraform resource ID. Composite string formatted as `"<scope>:<name>"` (e.g. `"machine:JAVA_HOME"`). Identical to the import ID format.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 
