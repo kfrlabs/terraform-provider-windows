@@ -20,16 +20,16 @@ resource "windows_scheduled_task" "backup" {
   description = "Nightly backup script managed by Terraform."
   enabled     = true
 
-  actions {
+  actions = [{
     execute   = "C:\\Scripts\\backup.ps1"
     arguments = "-Destination D:\\Backups"
-  }
+  }]
 
-  triggers {
+  triggers = [{
     type           = "Daily"
     start_boundary = "2026-01-01T02:00:00Z"
     days_interval  = 1
-  }
+  }]
 }
 
 # Advanced example: weekly task in a sub-folder, domain account, multiple actions.
@@ -39,7 +39,7 @@ resource "windows_scheduled_task" "reports" {
   description = "Weekly report generation — Terraform-managed."
   enabled     = true
 
-  principal {
+  principal = {
     user_id             = "CORP\\svc-reports"
     logon_type          = "Password"
     password            = var.svc_reports_password
@@ -47,24 +47,22 @@ resource "windows_scheduled_task" "reports" {
     run_level           = "Highest"
   }
 
-  actions {
+  actions = [{
     execute   = "C:\\Reports\\generate.exe"
     arguments = "--weekly --output C:\\Reports\\out"
-  }
-
-  actions {
+    }, {
     execute   = "C:\\Scripts\\archive.ps1"
     arguments = "-Source C:\\Reports\\out -Dest \\\\\\\\nas\\\\reports"
-  }
+  }]
 
-  triggers {
+  triggers = [{
     type           = "Weekly"
     start_boundary = "2026-01-05T06:00:00Z"
     days_of_week   = ["Monday"]
     weeks_interval = 1
-  }
+  }]
 
-  settings {
+  settings = {
     start_when_available           = true
     execution_time_limit           = "PT4H"
     disallow_start_if_on_batteries = false
@@ -79,12 +77,12 @@ resource "windows_scheduled_task" "disk_alert" {
   path    = "\\Monitoring\\"
   enabled = true
 
-  actions {
+  actions = [{
     execute   = "powershell.exe"
     arguments = "-File C:\\Scripts\\notify.ps1"
-  }
+  }]
 
-  triggers {
+  triggers = [{
     type         = "OnEvent"
     subscription = <<-XML
       <QueryList>
@@ -93,5 +91,5 @@ resource "windows_scheduled_task" "disk_alert" {
         </Query>
       </QueryList>
     XML
-  }
+  }]
 }
