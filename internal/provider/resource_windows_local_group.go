@@ -21,8 +21,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -54,6 +57,14 @@ type windowsLocalGroupResource struct {
 	grp winclient.WindowsLocalGroupClient
 }
 
+// localGroupDefaultTimeout is the fallback per-operation timeout when the
+// user does not provide a `timeouts {}` block. Group operations (SAM
+// resolution, description updates, guarded BUILTIN deletion) issue blocking
+// Win32 calls that can stall on an unhealthy host; every CRUD handler bounds
+// its work with this default so a stall surfaces a timeout diagnostic
+// instead of blocking Terraform indefinitely (issue #148).
+const localGroupDefaultTimeout = 10 * time.Minute
+
 // ---------------------------------------------------------------------------
 // windowsLocalGroupModel — Terraform state / plan model
 // ---------------------------------------------------------------------------
@@ -66,10 +77,11 @@ type windowsLocalGroupResource struct {
 // renames and ensures the resource target is unambiguous even when an
 // operator performs an out-of-band rename.
 type windowsLocalGroupModel struct {
-	ID          types.String `tfsdk:"id"`
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	SID         types.String `tfsdk:"sid"`
+	ID          types.String   `tfsdk:"id"`
+	Name        types.String   `tfsdk:"name"`
+	Description types.String   `tfsdk:"description"`
+	SID         types.String   `tfsdk:"sid"`
+	Timeouts    timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -168,19 +180,19 @@ func (r *windowsLocalGroupResource) Metadata(
 
 // Schema returns the complete TPF schema for the windows_local_group resource.
 func (r *windowsLocalGroupResource) Schema(
-	_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse,
+	ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse,
 ) {
-	resp.Schema = windowsLocalGroupSchemaDefinition()
+	resp.Schema = windowsLocalGroupSchemaDefinition(ctx)
 }
 
 // windowsLocalGroupSchemaDefinition returns the complete TPF schema for the
-// windows_local_group resource (4 attributes, validators, plan modifiers,
-// defaults).
+// windows_local_group resource (4 attributes + the per-operation `timeouts`
+// block, validators, plan modifiers, defaults).
 //
 // Canonical usage:
 //
-//	func (r *windowsLocalGroupResource) Schema(...) { resp.Schema = windowsLocalGroupSchemaDefinition() }
-func windowsLocalGroupSchemaDefinition() schema.Schema {
+//	func (r *windowsLocalGroupResource) Schema(...) { resp.Schema = windowsLocalGroupSchemaDefinition(ctx) }
+func windowsLocalGroupSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a Windows local group (Local Users and Groups) on a remote " +
 			"host via SSH and PowerShell (`Microsoft.PowerShell.LocalAccounts` module, " +
@@ -275,6 +287,13 @@ func windowsLocalGroupSchemaDefinition() schema.Schema {
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to
+			// localGroupDefaultTimeout so a stalled group operation surfaces
+			// a timeout diagnostic instead of blocking Terraform
+			// indefinitely (issue #148).
+			"timeouts": timeouts.Attributes(ctx, lgTimeoutsOpts),
 		},
 	}
 }
@@ -316,6 +335,14 @@ func (r *windowsLocalGroupResource) Create(
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, localGroupDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	input := winclient.GroupInput{
 		Name:        plan.Name.ValueString(),
 		Description: plan.Description.ValueString(),
@@ -330,6 +357,9 @@ func (r *windowsLocalGroupResource) Create(
 	}
 
 	state := stateFromGroup(gs)
+	// Preserve the user-configured per-operation timeouts: stateFromGroup
+	// projects only Win32-observed fields, and Set overwrites the full state.
+	state.Timeouts = plan.Timeouts
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -347,6 +377,14 @@ func (r *windowsLocalGroupResource) Read(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := state.Timeouts.Read(ctx, localGroupDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	sid := state.SID.ValueString()
 	if sid == "" {
@@ -379,6 +417,9 @@ func (r *windowsLocalGroupResource) Read(
 		next.Name = types.StringValue(priorName)
 	}
 
+	// Preserve the user-configured per-operation timeouts across the refresh.
+	next.Timeouts = state.Timeouts
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
 }
 
@@ -397,6 +438,14 @@ func (r *windowsLocalGroupResource) Update(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	updateTimeout, diags := plan.Timeouts.Update(ctx, localGroupDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 
 	sid := prior.SID.ValueString()
 	if sid == "" {
@@ -430,6 +479,9 @@ func (r *windowsLocalGroupResource) Update(
 		next.Name = plan.Name
 	}
 
+	// Preserve the user-configured per-operation timeouts across the refresh.
+	next.Timeouts = plan.Timeouts
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
 }
 
@@ -446,6 +498,14 @@ func (r *windowsLocalGroupResource) Delete(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, localGroupDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	sid := state.SID.ValueString()
 	if sid == "" {
@@ -510,12 +570,47 @@ func (r *windowsLocalGroupResource) ImportState(
 	}
 
 	state := stateFromGroup(gs)
+	// Import starts from no prior state: use a schema-typed null (the
+	// subsequent Read fills in the configured values).
+	state.Timeouts = lgNullTimeouts()
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// lgTimeoutsOpts declares which per-operation timeouts the resource exposes.
+// The schema and lgNullTimeouts both derive from it; keep them together,
+// since a null timeouts value whose attribute types disagree with the schema
+// is rejected by the framework as a provider type error.
+var lgTimeoutsOpts = timeouts.Opts{
+	Create: true,
+	Read:   true,
+	Update: true,
+	Delete: true,
+}
+
+// lgNullTimeouts returns a null timeouts value carrying the schema's attribute
+// types. The zero timeouts.Value wraps an object with NO attribute types,
+// which the framework rejects on State.Set — the failure mode on import,
+// where there is no prior state to copy the value from.
+func lgNullTimeouts() timeouts.Value {
+	attrTypes := map[string]attr.Type{}
+	if lgTimeoutsOpts.Create {
+		attrTypes["create"] = types.StringType
+	}
+	if lgTimeoutsOpts.Read {
+		attrTypes["read"] = types.StringType
+	}
+	if lgTimeoutsOpts.Update {
+		attrTypes["update"] = types.StringType
+	}
+	if lgTimeoutsOpts.Delete {
+		attrTypes["delete"] = types.StringType
+	}
+	return timeouts.Value{Object: types.ObjectNull(attrTypes)}
+}
 
 // stateFromGroup converts a *winclient.GroupState into a windowsLocalGroupModel
 // with both id and sid set to the group SID (ADR-LG-1).

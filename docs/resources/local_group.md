@@ -49,6 +49,17 @@ provider "windows" {
 resource "windows_local_group" "app_admins" {
   name        = "AppAdmins"
   description = "Administrators of the AppSuite application stack."
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled group operation
+  # surfaces a timeout diagnostic instead of blocking Terraform
+  # indefinitely.
+  timeouts = {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # Expose the stable SID for use by windows_local_group_member (future).
@@ -80,11 +91,22 @@ Constraints (enforced by schema validators, EC-6):
 - `description` (String) Optional free-text description of the group.
 
 Windows caps descriptions at **256 characters** (EC-7). An empty string (`""`) is valid and clears any existing description. Defaults to `""` when omitted in HCL.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
 - `id` (String) Terraform resource ID. Equal to `sid` (the group Security Identifier). **Stable across renames**: renaming the group via the `name` attribute does not change the resource ID (ADR-LG-1).
 - `sid` (String) Security Identifier (SID) of the group. Assigned by Windows when `New-LocalGroup` completes and stable across renames (ADR-LG-1). Read-only computed attribute.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 
