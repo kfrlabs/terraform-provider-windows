@@ -138,8 +138,10 @@ jobs:
         # Guards #142: SingleNestedAttribute values such as `timeouts` must
         # use the assignment form (`timeouts = { ... }`); the bare block form
         # (`timeouts { ... }`) is rejected by `terraform validate` with
-        # "Unsupported block type". Each examples/ file is validated in a
-        # scratch dir with stub variables so that schema decoding is reached
+        # "Unsupported block type". Each examples/ directory is validated in
+        # a scratch dir: a minimal provider block is added when the example
+        # omits one, and stub variables are generated for referenced-but-
+        # undeclared variables, so that schema decoding is reached
         # (undeclared-variable errors alone would mask it).
         env:
           TF_CLI_CONFIG_FILE: ${{ runner.temp }}/terraformrc
@@ -147,20 +149,27 @@ jobs:
           shopt -s nullglob
           set +e
           fail=0
-          files=(examples/resources/*/*.tf examples/data-sources/*/*.tf)
-          for f in "${files[@]}"; do
+          for src in examples/resources/* examples/data-sources/*; do
+            [ -d "$src" ] || continue
+            files=("$src"/*.tf)
+            [ "${#files[@]}" -gt 0 ] || continue
             d=$(mktemp -d)
-            cp "$f" "$d/main.tf"
-            grep -o 'var\.[A-Za-z0-9_]*' "$f" | sort -u | sed 's/var\./variable "/;s/$/" {}/' > "$d/variables.tf"
+            cp "$src"/*.tf "$d"/
+            if ! grep -q "required_providers" "$d"/*.tf; then
+              printf 'terraform {\n  required_providers {\n    windows = {\n      source = "kfrlabs/windows"\n    }\n  }\n}\n' > "$d/provider.tf"
+            fi
+            for v in $(grep -ho 'var\.[A-Za-z0-9_]*' "$d"/*.tf | sort -u | sed 's/var\.//'); do
+              grep -q "variable \"$v\"" "$d"/*.tf || echo "variable \"$v\" {}" >> "$d/variables.tf"
+            done
             init_out=$(terraform -chdir="$d" init -input=false -backend=false 2>&1)
             if [ $? -ne 0 ]; then
-              echo "::error file=$f::terraform init failed: $init_out"
+              echo "::error file=$src::terraform init failed: $init_out"
               fail=1
               rm -rf "$d"
               continue
             fi
             if terraform -chdir="$d" validate -json 2>/dev/null | grep -q "Unsupported block type"; then
-              echo "::error file=$f::terraform validate: Unsupported block type (use 'timeouts = { ... }', see #142)"
+              echo "::error file=$src::terraform validate: Unsupported block type (use 'timeouts = { ... }', see #142)"
               fail=1
             fi
             rm -rf "$d"
