@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -480,6 +481,39 @@ func TestResolveFromEnvPort(t *testing.T) {
 			ResolveFromEnv(&cfg)
 			if cfg.Port != 0 {
 				t.Errorf("WINDOWS_PORT=%q should leave Port unset for New to default, got %d", bad, cfg.Port)
+			}
+		})
+	}
+}
+
+// WINDOWS_TIMEOUT fills in only when no timeout was configured, and a value
+// that is not a positive Go duration is ignored in favour of New's default.
+func TestResolveFromEnvTimeout(t *testing.T) {
+	t.Run("fills empty timeout", func(t *testing.T) {
+		t.Setenv(EnvTimeout, "45s")
+		var cfg Config
+		ResolveFromEnv(&cfg)
+		if cfg.Timeout != 45*time.Second {
+			t.Errorf("Timeout = %v, want 45s", cfg.Timeout)
+		}
+	})
+
+	t.Run("explicit timeout wins", func(t *testing.T) {
+		t.Setenv(EnvTimeout, "45s")
+		cfg := Config{Timeout: 15 * time.Second}
+		ResolveFromEnv(&cfg)
+		if cfg.Timeout != 15*time.Second {
+			t.Errorf("Timeout = %v, want the explicit 15s", cfg.Timeout)
+		}
+	})
+
+	for _, bad := range []string{"", "soon", "0", "0s", "-5s"} {
+		t.Run("ignores "+bad, func(t *testing.T) {
+			t.Setenv(EnvTimeout, bad)
+			var cfg Config
+			ResolveFromEnv(&cfg)
+			if cfg.Timeout != 0 {
+				t.Errorf("WINDOWS_TIMEOUT=%q should leave Timeout unset for New to default, got %v", bad, cfg.Timeout)
 			}
 		})
 	}

@@ -115,6 +115,6 @@ a trusted network.
 - `private_key` (String, Sensitive) PEM-encoded SSH private key used for public-key authentication. Mutually exclusive with private_key_path. May also be set via WINDOWS_PRIVATE_KEY.
 - `private_key_passphrase` (String, Sensitive) Passphrase decrypting the private key, when it is protected. May also be set via WINDOWS_PRIVATE_KEY_PASSPHRASE.
 - `private_key_path` (String) Path to a PEM-encoded SSH private key. A leading '~' is expanded to the current user's home directory. Mutually exclusive with private_key. May also be set via WINDOWS_PRIVATE_KEY_PATH.
-- `timeout` (String) Timeout for establishing the SSH connection (TCP dial plus handshake), as a Go duration string (e.g. 30s, 2m). Default: 30s. This does NOT bound how long a PowerShell operation may run: use the per-resource timeouts block for that.
+- `timeout` (String) Timeout for establishing the SSH connection (TCP dial plus handshake), as a Go duration string (e.g. 30s, 2m). Default: 30s. This does NOT bound how long a PowerShell operation may run: use the per-resource timeouts block for that. May also be set via WINDOWS_TIMEOUT.
 - `use_agent` (Boolean) Whether to authenticate through the ssh-agent advertised by SSH_AUTH_SOCK. When unset, the agent is used if SSH_AUTH_SOCK is present. Unavailable when Terraform itself runs on Windows, where the agent is a named pipe rather than a Unix socket: use private_key_path there. May also be set via WINDOWS_USE_AGENT.
 - `username` (String) SSH username. May also be set via WINDOWS_USERNAME.
