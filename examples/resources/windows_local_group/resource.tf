@@ -22,6 +22,17 @@ provider "windows" {
 resource "windows_local_group" "app_admins" {
   name        = "AppAdmins"
   description = "Administrators of the AppSuite application stack."
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled group operation
+  # surfaces a timeout diagnostic instead of blocking Terraform
+  # indefinitely.
+  timeouts = {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # Expose the stable SID for use by windows_local_group_member (future).

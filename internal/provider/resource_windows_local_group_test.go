@@ -22,6 +22,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -88,7 +89,41 @@ func localGroupObjectType() tftypes.Object {
 		"name":        tftypes.String,
 		"description": tftypes.String,
 		"sid":         tftypes.String,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// lgNullTimeoutsValue is the absent value for the `timeouts {}` block.
+func lgNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
+}
+
+// lgTimeoutsValue builds a `timeouts {}` value carrying a duration for one
+// named operation (create/read/update/delete), the rest null.
+func lgTimeoutsValue(op, d string) tftypes.Value {
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	vals[op] = tftypes.NewValue(tftypes.String, d)
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, vals)
 }
 
 // lgObj builds a tftypes.Value for the local group schema with optional overrides.
@@ -98,6 +133,7 @@ func lgObj(overrides map[string]tftypes.Value) tftypes.Value {
 		"name":        tftypes.NewValue(tftypes.String, nil),
 		"description": tftypes.NewValue(tftypes.String, ""),
 		"sid":         tftypes.NewValue(tftypes.String, nil),
+		"timeouts":    lgNullTimeoutsValue(),
 	}
 	for k, v := range overrides {
 		base[k] = v
@@ -149,8 +185,8 @@ func TestLocalGroupMetadata(t *testing.T) {
 }
 
 func TestLocalGroupSchema_HasRequiredAttributes(t *testing.T) {
-	s := windowsLocalGroupSchemaDefinition()
-	want := []string{"id", "name", "description", "sid"}
+	s := windowsLocalGroupSchemaDefinition(context.Background())
+	want := []string{"id", "name", "description", "sid", "timeouts"}
 	for _, k := range want {
 		if _, ok := s.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
@@ -168,7 +204,7 @@ func TestLocalGroupSchema_ResourceLevelCall(t *testing.T) {
 }
 
 func TestLocalGroupSchema_NameIsRequired(t *testing.T) {
-	s := windowsLocalGroupSchemaDefinition()
+	s := windowsLocalGroupSchemaDefinition(context.Background())
 	nameAttr, ok := s.Attributes["name"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("name attribute type %T is not StringAttribute", s.Attributes["name"])
@@ -186,7 +222,7 @@ func TestLocalGroupSchema_NameIsRequired(t *testing.T) {
 }
 
 func TestLocalGroupSchema_SIDIsComputed(t *testing.T) {
-	s := windowsLocalGroupSchemaDefinition()
+	s := windowsLocalGroupSchemaDefinition(context.Background())
 	sidAttr, ok := s.Attributes["sid"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("sid attribute type %T", s.Attributes["sid"])
@@ -200,7 +236,7 @@ func TestLocalGroupSchema_SIDIsComputed(t *testing.T) {
 }
 
 func TestLocalGroupSchema_DescriptionOptionalComputed(t *testing.T) {
-	s := windowsLocalGroupSchemaDefinition()
+	s := windowsLocalGroupSchemaDefinition(context.Background())
 	descAttr, ok := s.Attributes["description"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("description attribute type %T", s.Attributes["description"])
@@ -214,7 +250,7 @@ func TestLocalGroupSchema_DescriptionOptionalComputed(t *testing.T) {
 }
 
 func TestLocalGroupSchema_IDHasUseStateForUnknown(t *testing.T) {
-	s := windowsLocalGroupSchemaDefinition()
+	s := windowsLocalGroupSchemaDefinition(context.Background())
 	idAttr, ok := s.Attributes["id"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("id attribute type %T", s.Attributes["id"])
@@ -509,7 +545,7 @@ func TestLocalGroupCreate_HappyPath_Handler(t *testing.T) {
 		createOut: okGroupState("AppAdmins", "Application admins", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
@@ -549,7 +585,7 @@ func TestLocalGroupCreate_AlreadyExists_EC1(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -579,7 +615,7 @@ func TestLocalGroupCreate_PermissionDenied_EC8(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -604,7 +640,7 @@ func TestLocalGroupRead_HappyPath_Handler(t *testing.T) {
 		readOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -630,7 +666,7 @@ func TestLocalGroupRead_GroupNotFound_EC3(t *testing.T) {
 	// EC-3: (nil, nil) → RemoveResource.
 	fake := &fakeLocalGroupClient{readOut: nil, readErr: nil}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -660,7 +696,7 @@ func TestLocalGroupRead_PermissionDenied_EC8(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -685,7 +721,7 @@ func TestLocalGroupRead_CaseInsensitiveNameNormalisation_EC4(t *testing.T) {
 		readOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -716,7 +752,7 @@ func TestLocalGroupRead_FallbackToIDWhenSIDEmpty(t *testing.T) {
 		readOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -744,7 +780,7 @@ func TestLocalGroupUpdate_HappyPath_Handler(t *testing.T) {
 		updateOut: okGroupState("NewName", "New desc", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
@@ -791,7 +827,7 @@ func TestLocalGroupUpdate_NameConflict_EC5(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -825,7 +861,7 @@ func TestLocalGroupUpdate_CaseInsensitiveKeepsPlanName_EC4(t *testing.T) {
 		updateOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -865,7 +901,7 @@ func TestLocalGroupUpdate_CaseInsensitiveKeepsPlanName_EC4(t *testing.T) {
 func TestLocalGroupDelete_HappyPath_Handler(t *testing.T) {
 	fake := &fakeLocalGroupClient{deleteErr: nil}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	state := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -893,7 +929,7 @@ func TestLocalGroupDelete_BuiltinGroup_EC2(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	state := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -922,7 +958,7 @@ func TestLocalGroupDelete_PermissionDenied_EC8(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	state := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgObj(map[string]tftypes.Value{
@@ -948,7 +984,7 @@ func TestLocalGroupImportState_ByName_EC10(t *testing.T) {
 		importByNameOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: lgObj(nil)},
 	}
@@ -975,7 +1011,7 @@ func TestLocalGroupImportState_BySID_EC10(t *testing.T) {
 		importBySIDOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: lgObj(nil)},
 	}
@@ -1001,7 +1037,7 @@ func TestLocalGroupImportState_ByName_NotFound_EC10(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: lgObj(nil)},
 	}
@@ -1021,7 +1057,7 @@ func TestLocalGroupImportState_BySID_NotFound_EC10(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: lgObj(nil)},
 	}
@@ -1039,7 +1075,7 @@ func TestLocalGroupImportState_NilState_EC10(t *testing.T) {
 		importByNameErr: nil,
 	}
 	r := &windowsLocalGroupResource{grp: fake}
-	schemaDef := windowsLocalGroupSchemaDefinition()
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: lgObj(nil)},
 	}
@@ -1047,5 +1083,121 @@ func TestLocalGroupImportState_NilState_EC10(t *testing.T) {
 		resource.ImportStateRequest{ID: "NoSuchGroup"}, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("EC-10: nil GroupState from import should produce an error diagnostic")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (issue #148): a stalled group operation must surface a bounded
+// diagnostic instead of blocking Terraform indefinitely.
+// ---------------------------------------------------------------------------
+
+func TestLocalGroupSchema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsLocalGroupSchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #148: CRUD must be time-bounded)")
+	}
+}
+
+// hangLocalGroupClient simulates the stalled transport from issue #148:
+// Delete blocks until the passed context is done, then returns the context
+// error — mirroring a group operation that never answers.
+type hangLocalGroupClient struct {
+	fakeLocalGroupClient
+}
+
+func (f *hangLocalGroupClient) Delete(ctx context.Context, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestLocalGroupDelete_StalledTransportIsBounded(t *testing.T) {
+	r := &windowsLocalGroupResource{grp: &hangLocalGroupClient{}}
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
+
+	prior := tfsdk.State{
+		Schema: schemaDef,
+		Raw: lgObj(map[string]tftypes.Value{
+			"id":       tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+			"name":     tftypes.NewValue(tftypes.String, "AppAdmins"),
+			"sid":      tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+			"timeouts": lgTimeoutsValue("delete", "200ms"),
+		}),
+	}
+	resp := &resource.DeleteResponse{State: prior}
+
+	start := time.Now()
+	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the delete timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Delete blocked for %v with a 200ms timeout; the stalled-transport hang from issue #148 is back", elapsed)
+	}
+}
+
+func TestLocalGroupCreate_PreservesTimeouts(t *testing.T) {
+	fake := &fakeLocalGroupClient{
+		createOut: okGroupState("AppAdmins", "Application admins", "S-1-5-21-111-222-333-1001"),
+	}
+	r := &windowsLocalGroupResource{grp: fake}
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
+
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: lgObj(map[string]tftypes.Value{
+			"name":        tftypes.NewValue(tftypes.String, "AppAdmins"),
+			"description": tftypes.NewValue(tftypes.String, "Application admins"),
+			"timeouts":    lgTimeoutsValue("create", "5m"),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: lgObj(nil)},
+	}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diags: %v", lgDiagDetails(resp.Diagnostics))
+	}
+	var m windowsLocalGroupModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	got, diags := m.Timeouts.Create(context.Background(), localGroupDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through Create state projection: create = %v, want 5m", got)
+	}
+}
+
+func TestLocalGroupImportState_SetsTypedNullTimeouts(t *testing.T) {
+	// Exercises the real ImportState handler (SID path) through a fake
+	// client. The handler full-Sets a model with no prior timeouts, so a
+	// zero timeouts.Value would be rejected by the framework — this fails
+	// with error diagnostics unless lgNullTimeouts() carries the schema's
+	// types.
+	fake := &fakeLocalGroupClient{
+		importBySIDOut: okGroupState("AppAdmins", "Application admins", "S-1-5-21-111-222-333-1001"),
+	}
+	r := &windowsLocalGroupResource{grp: fake}
+	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
+
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: schemaDef, Raw: lgObj(nil)}}
+	r.ImportState(context.Background(),
+		resource.ImportStateRequest{ID: "S-1-5-21-111-222-333-1001"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: unexpected diags: %v", lgDiagDetails(resp.Diagnostics))
+	}
+	var m windowsLocalGroupModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if m.SID.ValueString() != "S-1-5-21-111-222-333-1001" {
+		t.Errorf("imported sid = %q", m.SID.ValueString())
+	}
+	if !m.Timeouts.IsNull() {
+		t.Errorf("imported timeouts should be null, got %v", m.Timeouts)
 	}
 }
