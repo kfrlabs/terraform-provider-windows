@@ -115,13 +115,16 @@ function New-Directory([string]$P, [bool]$CreateParents, [string[]]$Wanted) {
     return
   }
   if (-not (Test-Path -LiteralPath $P -PathType Container)) {
-    $parent = Split-Path -Path $P -Parent
+    $parent = Split-Path -LiteralPath $P -Parent
     if (-not $CreateParents -and $parent -and -not (Test-Path -LiteralPath $parent -PathType Container)) {
       Emit-Err 'invalid_input' ("Parent directory '" + $parent + "' does not exist and create_parent_directories is false.") @{ path = $P; parent = $parent }
       return
     }
     try {
-      New-Item -ItemType Directory -Path $P -Force:$CreateParents -ErrorAction Stop | Out-Null
+      # -LiteralPath (not -Path): $P may legitimately contain wildcard
+      # characters such as [ and ] (allowed by the schema regex), which
+      # -Path would glob-expand instead of taking literally.
+      New-Item -ItemType Directory -LiteralPath $P -Force:$CreateParents -ErrorAction Stop | Out-Null
     } catch {
       Emit-Err (Classify-DirectoryError $_) $_.Exception.Message @{ path = $P }
       return
