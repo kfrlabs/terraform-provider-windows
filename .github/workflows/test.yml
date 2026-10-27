@@ -9,7 +9,7 @@
 # Windows host reachable over SSH and a valid set of credentials. They run in
 # testacc-windows.yml, on a Windows runner that acts as its own target.
 #
-# Matrix: track the Go floor declared in go.mod (currently 1.25). Older
+# Matrix: track the Go floor declared in go.mod (currently 1.26). Older
 # minors are not buildable under GOTOOLCHAIN=local once the go directive
 # moves past them, so keep the matrix at or above that floor.
 
@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ["1.25"]
+        go: ["1.26"]
     steps:
       - uses: actions/checkout@v7
 
@@ -95,5 +95,5 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.5.0
+          version: v2.15.0
           # .golangci.yml at the repo root drives the rule set (incl. run.timeout).

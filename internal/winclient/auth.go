@@ -123,7 +123,7 @@ func agentAuthMethod() (ssh.AuthMethod, error) {
 	if sock == "" {
 		return nil, errors.New("winclient: ssh-agent authentication requested but SSH_AUTH_SOCK is not set")
 	}
-	conn, err := net.Dial("unix", sock)
+	conn, err := net.Dial("unix", sock) //nolint:gosec // dialing the operator-configured ssh-agent socket is intended
 	if err != nil {
 		return nil, fmt.Errorf("winclient: connect to ssh-agent at %s: %w", sock, err)
 	}

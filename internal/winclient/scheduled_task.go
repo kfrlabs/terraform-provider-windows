@@ -615,7 +615,7 @@ func buildActionsFragment(actions []ScheduledTaskActionInput) string {
 			line += fmt.Sprintf(" -WorkingDirectory %s", psQuote(a.WorkingDirectory))
 		}
 		sb.WriteString(line + "\n")
-		sb.WriteString(fmt.Sprintf("$_stActions += %s\n", vn))
+		fmt.Fprintf(&sb, "$_stActions += %s\n", vn)
 	}
 	return sb.String()
 }
@@ -663,13 +663,13 @@ func buildTriggersFragment(triggers []ScheduledTaskTriggerInput) string {
 			enabled = *t.Enabled
 		}
 		if !enabled {
-			sb.WriteString(fmt.Sprintf("try { %s.Enabled = $false } catch {}\n", vn))
+			fmt.Fprintf(&sb, "try { %s.Enabled = $false } catch {}\n", vn)
 		}
 		if t.EndBoundary != "" {
-			sb.WriteString(fmt.Sprintf("try { %s.EndBoundary = %s } catch {}\n", vn, psQuote(t.EndBoundary)))
+			fmt.Fprintf(&sb, "try { %s.EndBoundary = %s } catch {}\n", vn, psQuote(t.EndBoundary))
 		}
 		if t.Delay != "" {
-			sb.WriteString(fmt.Sprintf("try { %s.Delay = %s } catch {}\n", vn, psQuote(t.Delay)))
+			fmt.Fprintf(&sb, "try { %s.Delay = %s } catch {}\n", vn, psQuote(t.Delay))
 		}
 		if t.ExecutionTimeLimit != "" {
 			// MSFT_TaskTrigger.ExecutionTimeLimit is a string-typed CIM
@@ -679,9 +679,9 @@ func buildTriggersFragment(triggers []ScheduledTaskTriggerInput) string {
 			// TimeSpan and needs XmlConvert (see buildSettingsFragment).
 			// The silent catch skips CIM trigger types that do not expose
 			// the property; covered by TestBuildTriggersFragment tests.
-			sb.WriteString(fmt.Sprintf("try { %s.ExecutionTimeLimit = %s } catch {}\n", vn, psQuote(t.ExecutionTimeLimit)))
+			fmt.Fprintf(&sb, "try { %s.ExecutionTimeLimit = %s } catch {}\n", vn, psQuote(t.ExecutionTimeLimit))
 		}
-		sb.WriteString(fmt.Sprintf("$_stTriggers += %s\n", vn))
+		fmt.Fprintf(&sb, "$_stTriggers += %s\n", vn)
 	}
 	return sb.String()
 }
@@ -836,18 +836,16 @@ func buildOnEventFragment(taskName, taskPath string, triggers []ScheduledTaskTri
 		if t.Enabled != nil {
 			enabled = *t.Enabled
 		}
-		sb.WriteString(fmt.Sprintf(
-			"  [ordered]@{ enabled=$%s; subscription=%s; start_boundary=%s; end_boundary=%s; delay=%s; execution_time_limit=%s }\n",
+		fmt.Fprintf(&sb, "  [ordered]@{ enabled=$%s; subscription=%s; start_boundary=%s; end_boundary=%s; delay=%s; execution_time_limit=%s }\n",
 			psBool(enabled),
 			psQuote(t.Subscription),
 			psQuote(t.StartBoundary),
 			psQuote(t.EndBoundary),
 			psQuote(t.Delay),
-			psQuote(t.ExecutionTimeLimit),
-		))
+			psQuote(t.ExecutionTimeLimit))
 	}
 	sb.WriteString(")\n")
-	sb.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&sb, `
 $_stXml = $null
 try { $_stXml = Export-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop } catch {
   Emit-Err 'unknown' ('XML export failed: ' + $_.Exception.Message) @{}; return
@@ -896,7 +894,7 @@ $_stNewXml = $_stDoc.OuterXml
 try { Register-ScheduledTask -Xml $_stNewXml -TaskName %s -TaskPath %s -Force -ErrorAction Stop | Out-Null } catch {
   Emit-Err 'unknown' ('XML re-register failed: ' + $_.Exception.Message) @{}; return
 }
-`, psQuote(taskName), psQuote(taskPath), psQuote(taskName), psQuote(taskPath)))
+`, psQuote(taskName), psQuote(taskPath), psQuote(taskName), psQuote(taskPath))
 	return sb.String()
 }
 
@@ -962,7 +960,7 @@ func (c *ScheduledTaskClientImpl) Create(ctx context.Context, input ScheduledTas
 	var sb strings.Builder
 
 	// Pre-flight: existing task check (EC-1)
-	sb.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&sb, `
 $_stExisting = $null
 try { $_stExisting = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop } catch {}
 if ($null -ne $_stExisting) {
@@ -971,10 +969,10 @@ if ($null -ne $_stExisting) {
 }
 `, psQuote(input.Name), psQuote(input.Path),
 		strings.ReplaceAll(id, "'", "''"),
-		psQuote(input.Name), psQuote(input.Path)))
+		psQuote(input.Name), psQuote(input.Path))
 
 	// Folder creation (ADR-ST-1)
-	sb.WriteString(fmt.Sprintf("if (-not (Ensure-TaskFolder %s)) { return }\n", psQuote(input.Path)))
+	fmt.Fprintf(&sb, "if (-not (Ensure-TaskFolder %s)) { return }\n", psQuote(input.Path))
 
 	// Actions
 	sb.WriteString(buildActionsFragment(input.Actions))
@@ -989,7 +987,7 @@ if ($null -ne $_stExisting) {
 	sb.WriteString(buildSettingsFragment(input.Settings, input.Enabled))
 
 	// Register-ScheduledTask
-	sb.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&sb, `
 $_stRegParams = @{
   TaskName    = %s
   TaskPath    = %s
@@ -1000,7 +998,7 @@ $_stRegParams = @{
 }
 if ($null -ne %s -and %s -ne '') { $_stRegParams['Description'] = %s }
 `, psQuote(input.Name), psQuote(input.Path),
-		psQuote(input.Description), psQuote(input.Description), psQuote(input.Description)))
+		psQuote(input.Description), psQuote(input.Description), psQuote(input.Description))
 
 	if input.Principal != nil && input.Principal.Password != nil {
 		// principal.password is read from stdin (never embedded in the script
@@ -1040,7 +1038,7 @@ try {
 	}
 
 	// Read-back
-	sb.WriteString(fmt.Sprintf("Read-TaskState %s %s\n", psQuote(input.Name), psQuote(input.Path)))
+	fmt.Fprintf(&sb, "Read-TaskState %s %s\n", psQuote(input.Name), psQuote(input.Path))
 
 	var resp *stPSResponse
 	var err error
@@ -1092,7 +1090,7 @@ func (c *ScheduledTaskClientImpl) Update(ctx context.Context, id string, input S
 	// -Description parameter, and passing one fails the whole update with
 	// "A parameter cannot be found that matches parameter name 'Description'".
 	// It is applied separately below, on the task object.
-	sb.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&sb, `
 $_stSetParams = @{
   TaskName    = %s
   TaskPath    = %s
@@ -1101,7 +1099,7 @@ $_stSetParams = @{
   Settings    = $_stSettings
   ErrorAction = 'Stop'
 }
-`, psQuote(taskName), psQuote(taskPath)))
+`, psQuote(taskName), psQuote(taskPath))
 
 	if input.Principal != nil && input.Principal.Password != nil {
 		// principal.password is read from stdin (see Create for rationale).
@@ -1149,7 +1147,7 @@ try {
 	}
 
 	// Read-back
-	sb.WriteString(fmt.Sprintf("Read-TaskState %s %s\n", psQuote(taskName), psQuote(taskPath)))
+	fmt.Fprintf(&sb, "Read-TaskState %s %s\n", psQuote(taskName), psQuote(taskPath))
 
 	var resp *stPSResponse
 	var err error

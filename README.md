@@ -6,7 +6,7 @@ the target host's OpenSSH Server and executes PowerShell there.
 ## Requirements
 
 - [Terraform](https://www.terraform.io/downloads) >= 1.5
-- [Go](https://go.dev/dl/) >= 1.25 (for building; tracks the `go` directive in `go.mod`)
+- [Go](https://go.dev/dl/) >= 1.26 (for building; tracks the `go` directive in `go.mod`)
 - A Windows target running **OpenSSH Server**, reachable from the machine
   running Terraform, with PowerShell as the SSH login shell
 
