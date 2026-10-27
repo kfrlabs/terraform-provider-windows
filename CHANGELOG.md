@@ -19,6 +19,18 @@ All notable changes to this project will be documented in this file.
   genuine transport failures trigger the re-establish-and-retry path
   (#124, #125).
 
+### Added
+
+- New `WINDOWS_TIMEOUT` environment fallback for the SSH dial/handshake
+  timeout (Go duration, 30s default): env-only configurations (CI, Terraform
+  Cloud) can now tune connection establishment without a provider-block
+  attribute. An explicit `timeout` attribute still wins; malformed values
+  fall back to the default (#130, #131).
+- New `terraform CLI offline suite` CI job: `init`, `fmt -check`,
+  `validate` and the mocked `terraform test` from `test/terraform-cli` now
+  run on every PR without needing a Windows host or credentials (#134,
+  #136).
+
 ## [0.1.0] - 2026-10-08
 
 ### Added
