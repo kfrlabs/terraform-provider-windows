@@ -1,7 +1,8 @@
 // Package provider — unit tests for the windows_local_group_member resource.
 //
 // Coverage strategy:
-//   - Schema: all 7 attributes verified (required/computed flags, plan modifiers,
+//   - Schema: all 7 attributes + the `timeouts {}` block verified
+//     (required/computed flags, plan modifiers,
 //     validators, ForceNew).
 //   - Helpers: parseCompositeID, addLocalGroupMemberDiag, addLocalGroupMemberCreateDiag.
 //   - CRUD handlers (Read, Delete, Update): driven via fakeLocalGroupMemberClient
@@ -32,6 +33,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -96,7 +98,46 @@ func lgmObjectType() tftypes.Object {
 		"member_sid":              tftypes.String,
 		"member_name":             tftypes.String,
 		"member_principal_source": tftypes.String,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// lgmNullTimeoutsValue is the absent value for the `timeouts {}` block.
+func lgmNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
+}
+
+// lgmTimeoutsWithCreate builds a `timeouts {}` value carrying a create duration.
+func lgmTimeoutsWithCreate(d string) tftypes.Value {
+	return lgmTimeoutsWithOp("create", d)
+}
+
+// lgmTimeoutsWithOp builds a `timeouts {}` value carrying a duration for one
+// named operation (create/read/update/delete), the rest null.
+func lgmTimeoutsWithOp(op, d string) tftypes.Value {
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	vals[op] = tftypes.NewValue(tftypes.String, d)
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, vals)
 }
 
 // lgmObj builds a tftypes.Value for the local_group_member schema with optional overrides.
@@ -109,6 +150,7 @@ func lgmObj(overrides map[string]tftypes.Value) tftypes.Value {
 		"member_sid":              tftypes.NewValue(tftypes.String, nil),
 		"member_name":             tftypes.NewValue(tftypes.String, nil),
 		"member_principal_source": tftypes.NewValue(tftypes.String, nil),
+		"timeouts":                lgmNullTimeoutsValue(),
 	}
 	for k, v := range overrides {
 		base[k] = v
@@ -118,7 +160,7 @@ func lgmObj(overrides map[string]tftypes.Value) tftypes.Value {
 
 // lgmState builds a populated tfsdk.State for the local_group_member schema.
 func lgmState(groupSID, memberSID, group, member string) tfsdk.State {
-	schemaDef := windowsLocalGroupMemberSchemaDefinition()
+	schemaDef := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	return tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgmObj(map[string]tftypes.Value{
@@ -167,20 +209,20 @@ func TestNewWindowsLocalGroupMemberResource_NotNil(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalGroupMemberSchema_HasAllAttributes(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
-	want := []string{"id", "group", "group_sid", "member", "member_sid", "member_name", "member_principal_source"}
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
+	want := []string{"id", "group", "group_sid", "member", "member_sid", "member_name", "member_principal_source", "timeouts"}
 	for _, k := range want {
 		if _, ok := s.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
 		}
 	}
-	if len(s.Attributes) != 7 {
-		t.Errorf("schema has %d attributes, want 7", len(s.Attributes))
+	if len(s.Attributes) != 8 {
+		t.Errorf("schema has %d attributes, want 8", len(s.Attributes))
 	}
 }
 
 func TestLocalGroupMemberSchema_GroupIsRequired_ForceNew(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	attr, ok := s.Attributes["group"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("group attribute type %T", s.Attributes["group"])
@@ -205,7 +247,7 @@ func TestLocalGroupMemberSchema_GroupIsRequired_ForceNew(t *testing.T) {
 }
 
 func TestLocalGroupMemberSchema_MemberIsRequired_ForceNew(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	attr, ok := s.Attributes["member"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("member attribute type %T", s.Attributes["member"])
@@ -229,7 +271,7 @@ func TestLocalGroupMemberSchema_MemberIsRequired_ForceNew(t *testing.T) {
 }
 
 func TestLocalGroupMemberSchema_GroupSIDIsComputedWithUseStateForUnknown(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	attr, ok := s.Attributes["group_sid"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("group_sid attribute type %T", s.Attributes["group_sid"])
@@ -253,7 +295,7 @@ func TestLocalGroupMemberSchema_GroupSIDIsComputedWithUseStateForUnknown(t *test
 }
 
 func TestLocalGroupMemberSchema_MemberSIDIsComputedWithUseStateForUnknown(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	attr, ok := s.Attributes["member_sid"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("member_sid attribute type %T", s.Attributes["member_sid"])
@@ -264,7 +306,7 @@ func TestLocalGroupMemberSchema_MemberSIDIsComputedWithUseStateForUnknown(t *tes
 }
 
 func TestLocalGroupMemberSchema_IDHasUseStateForUnknown(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	idAttr, ok := s.Attributes["id"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("id attribute type %T", s.Attributes["id"])
@@ -285,7 +327,7 @@ func TestLocalGroupMemberSchema_IDHasUseStateForUnknown(t *testing.T) {
 }
 
 func TestLocalGroupMemberSchema_MemberPrincipalSourceHasOneOfValidator(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	attr, ok := s.Attributes["member_principal_source"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("member_principal_source attribute type %T", s.Attributes["member_principal_source"])
@@ -299,7 +341,7 @@ func TestLocalGroupMemberSchema_MemberPrincipalSourceHasOneOfValidator(t *testin
 }
 
 func TestLocalGroupMemberSchema_GroupHasLengthValidator(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	attr, ok := s.Attributes["group"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("group attribute type %T", s.Attributes["group"])
@@ -310,7 +352,7 @@ func TestLocalGroupMemberSchema_GroupHasLengthValidator(t *testing.T) {
 }
 
 func TestLocalGroupMemberSchema_MemberHasLengthValidator(t *testing.T) {
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	attr, ok := s.Attributes["member"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("member attribute type %T", s.Attributes["member"])
@@ -718,7 +760,7 @@ func TestLocalGroupMemberRead_MemberPreservedAsSupplied_ADR_LGM4(t *testing.T) {
 	}
 	r := &windowsLocalGroupMemberResource{member: fake}
 
-	schemaDef := windowsLocalGroupMemberSchemaDefinition()
+	schemaDef := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: lgmObj(map[string]tftypes.Value{
@@ -829,7 +871,7 @@ func TestLocalGroupMemberUpdate_Noop_EC11(t *testing.T) {
 	// The implementation should copy plan → state without calling any client method.
 	fake := &fakeLocalGroupMemberClient{}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	schemaDef := windowsLocalGroupMemberSchemaDefinition()
+	schemaDef := windowsLocalGroupMemberSchemaDefinition(context.Background())
 
 	planState := lgmObj(map[string]tftypes.Value{
 		"id":                      tftypes.NewValue(tftypes.String, "S-1-5-32-544/S-1-5-21-100-200-300-500"),
@@ -868,7 +910,7 @@ func TestLocalGroupMemberUpdate_Noop_EC11(t *testing.T) {
 func TestLocalGroupMemberImportState_InvalidFormat_NoSlash(t *testing.T) {
 	r := &windowsLocalGroupMemberResource{}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsLocalGroupMemberSchemaDefinition(), Raw: lgmObj(nil)},
+		State: tfsdk.State{Schema: windowsLocalGroupMemberSchemaDefinition(context.Background()), Raw: lgmObj(nil)},
 	}
 	r.ImportState(context.Background(),
 		resource.ImportStateRequest{ID: "AdministratorsS-1-5-32-544"},
@@ -885,7 +927,7 @@ func TestLocalGroupMemberImportState_InvalidFormat_NoSlash(t *testing.T) {
 func TestLocalGroupMemberImportState_InvalidFormat_Empty(t *testing.T) {
 	r := &windowsLocalGroupMemberResource{}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsLocalGroupMemberSchemaDefinition(), Raw: lgmObj(nil)},
+		State: tfsdk.State{Schema: windowsLocalGroupMemberSchemaDefinition(context.Background()), Raw: lgmObj(nil)},
 	}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: ""}, resp)
 	if !resp.Diagnostics.HasError() {
@@ -896,7 +938,7 @@ func TestLocalGroupMemberImportState_InvalidFormat_Empty(t *testing.T) {
 func TestLocalGroupMemberImportState_InvalidFormat_SlashAtStart(t *testing.T) {
 	r := &windowsLocalGroupMemberResource{}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsLocalGroupMemberSchemaDefinition(), Raw: lgmObj(nil)},
+		State: tfsdk.State{Schema: windowsLocalGroupMemberSchemaDefinition(context.Background()), Raw: lgmObj(nil)},
 	}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "/S-1-5-21-100"}, resp)
 	if !resp.Diagnostics.HasError() {
@@ -907,7 +949,7 @@ func TestLocalGroupMemberImportState_InvalidFormat_SlashAtStart(t *testing.T) {
 func TestLocalGroupMemberImportState_InvalidFormat_SlashAtEnd(t *testing.T) {
 	r := &windowsLocalGroupMemberResource{}
 	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: windowsLocalGroupMemberSchemaDefinition(), Raw: lgmObj(nil)},
+		State: tfsdk.State{Schema: windowsLocalGroupMemberSchemaDefinition(context.Background()), Raw: lgmObj(nil)},
 	}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "Administrators/"}, resp)
 	if !resp.Diagnostics.HasError() {
@@ -923,7 +965,7 @@ func TestLocalGroupMemberSchema_NoBUILTINBlock(t *testing.T) {
 	// EC-9: The windows_local_group_member resource must NOT block BUILTIN group
 	// SIDs. Verify there is no custom validator on the "group" attribute that
 	// rejects S-1-5-32-* SIDs (unlike windows_local_group delete guard).
-	s := windowsLocalGroupMemberSchemaDefinition()
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	groupAttr, ok := s.Attributes["group"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("group attribute type %T", s.Attributes["group"])
@@ -999,5 +1041,137 @@ func TestMemberNameMatches(t *testing.T) {
 				t.Errorf("memberNameMatches(%q, %q) = %v, want %v", c.actual, c.requested, got, c.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (issue #126): a stalled SID resolution against an unreachable
+// domain controller must surface a bounded diagnostic instead of blocking
+// Terraform indefinitely.
+// ---------------------------------------------------------------------------
+
+func TestLocalGroupMemberSchema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsLocalGroupMemberSchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #126: CRUD must be time-bounded)")
+	}
+}
+
+// hangLocalGroupMemberClient simulates the stalled transport from issue #126:
+// Remove blocks until the passed context is done, then returns the context
+// error — mirroring a DC-dependent call that never answers.
+type hangLocalGroupMemberClient struct {
+	fakeLocalGroupMemberClient
+}
+
+func (f *hangLocalGroupMemberClient) Remove(ctx context.Context, _, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestLocalGroupMemberDelete_StalledTransportIsBounded(t *testing.T) {
+	r := &windowsLocalGroupMemberResource{member: &hangLocalGroupMemberClient{}}
+
+	schemaDef := windowsLocalGroupMemberSchemaDefinition(context.Background())
+	prior := tfsdk.State{
+		Schema: schemaDef,
+		Raw: lgmObj(map[string]tftypes.Value{
+			"id":         tftypes.NewValue(tftypes.String, "S-1-5-32-544/S-1-5-21-100-200-300-500"),
+			"group":      tftypes.NewValue(tftypes.String, "Administrators"),
+			"group_sid":  tftypes.NewValue(tftypes.String, "S-1-5-32-544"),
+			"member":     tftypes.NewValue(tftypes.String, `DOMAIN\alice`),
+			"member_sid": tftypes.NewValue(tftypes.String, "S-1-5-21-100-200-300-500"),
+			"timeouts":   lgmTimeoutsWithOp("delete", "200ms"),
+		}),
+	}
+	resp := &resource.DeleteResponse{State: prior}
+
+	start := time.Now()
+	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the delete timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Delete blocked for %v with a 200ms timeout; the stalled-transport hang from issue #126 is back", elapsed)
+	}
+}
+
+func TestLocalGroupMemberRead_PreservesTimeouts(t *testing.T) {
+	fake := &fakeLocalGroupMemberClient{
+		getOut: &winclient.LocalGroupMemberState{
+			GroupSID:        "S-1-5-32-544",
+			MemberSID:       "S-1-5-21-100-200-300-500",
+			MemberName:      `DOMAIN\alice`,
+			PrincipalSource: "ActiveDirectory",
+		},
+	}
+	r := &windowsLocalGroupMemberResource{member: fake}
+
+	schemaDef := windowsLocalGroupMemberSchemaDefinition(context.Background())
+	prior := tfsdk.State{
+		Schema: schemaDef,
+		Raw: lgmObj(map[string]tftypes.Value{
+			"id":                      tftypes.NewValue(tftypes.String, "S-1-5-32-544/S-1-5-21-100-200-300-500"),
+			"group":                   tftypes.NewValue(tftypes.String, "Administrators"),
+			"group_sid":               tftypes.NewValue(tftypes.String, "S-1-5-32-544"),
+			"member":                  tftypes.NewValue(tftypes.String, `DOMAIN\alice`),
+			"member_sid":              tftypes.NewValue(tftypes.String, "S-1-5-21-100-200-300-500"),
+			"member_name":             tftypes.NewValue(tftypes.String, `DOMAIN\alice`),
+			"member_principal_source": tftypes.NewValue(tftypes.String, "ActiveDirectory"),
+			"timeouts":                lgmTimeoutsWithCreate("5m"),
+		}),
+	}
+	resp := &resource.ReadResponse{State: prior}
+
+	r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diags: %v", lgmDiagDetails(resp.Diagnostics))
+	}
+	var m windowsLocalGroupMemberModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	got, diags := m.Timeouts.Create(context.Background(), localGroupMemberDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through Read state refresh: create = %v, want 5m", got)
+	}
+}
+
+func TestLocalGroupMemberImportState_SetsTypedNullTimeouts(t *testing.T) {
+	// ImportState full-Sets a model built with no prior timeouts, via
+	// lgmNullTimeouts(). The zero timeouts.Value carries no attribute types
+	// and is rejected by the framework on State.Set (the scheduled_task
+	// import failure mode); this test fails with error diagnostics if
+	// lgmNullTimeouts() ever stops carrying the schema's types.
+	// (The handler itself is covered by acceptance tests: its ResolveGroup
+	// step needs a live host and cannot run under unit-test fakes.)
+	schemaDef := windowsLocalGroupMemberSchemaDefinition(context.Background())
+	importModel := windowsLocalGroupMemberModel{
+		ID:                    types.StringValue("S-1-5-32-544/S-1-5-21-100-200-300-500"),
+		Group:                 types.StringValue("S-1-5-32-544"),
+		GroupSID:              types.StringValue("S-1-5-32-544"),
+		Member:                types.StringValue("S-1-5-21-100-200-300-500"),
+		MemberSID:             types.StringValue("S-1-5-21-100-200-300-500"),
+		MemberName:            types.StringValue(`DOMAIN\alice`),
+		MemberPrincipalSource: types.StringValue("ActiveDirectory"),
+		Timeouts:              lgmNullTimeouts(),
+	}
+	state := tfsdk.State{Schema: schemaDef, Raw: lgmObj(nil)}
+	var diags diag.Diagnostics
+	diags.Append(state.Set(context.Background(), &importModel)...)
+	if diags.HasError() {
+		t.Fatalf("import-shape State.Set with lgmNullTimeouts: %v", diags)
+	}
+	var m windowsLocalGroupMemberModel
+	if diags := state.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if !m.Timeouts.IsNull() {
+		t.Errorf("imported timeouts should be null, got %v", m.Timeouts)
 	}
 }
