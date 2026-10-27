@@ -96,6 +96,7 @@ of `.tf` files and out of Terraform state:
 | --- | --- |
 | `WINDOWS_HOST` | Target hostname / IP |
 | `WINDOWS_PORT` | SSH port (default `22`) |
+| `WINDOWS_TIMEOUT` | SSH connection establishment timeout as a Go duration (default `30s`) |
 | `WINDOWS_USERNAME` | SSH username |
 | `WINDOWS_PASSWORD` | SSH password (secret) |
 | `WINDOWS_PRIVATE_KEY` | PEM-encoded private key (secret) |

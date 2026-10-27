@@ -86,7 +86,8 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 			"timeout": schema.StringAttribute{
 				Description: "Timeout for establishing the SSH connection (TCP dial plus handshake), as a " +
 					"Go duration string (e.g. 30s, 2m). Default: 30s. This does NOT bound how long a " +
-					"PowerShell operation may run: use the per-resource timeouts block for that.",
+					"PowerShell operation may run: use the per-resource timeouts block for that. May " +
+					"also be set via WINDOWS_TIMEOUT.",
 				Optional: true,
 			},
 			"private_key": schema.StringAttribute{
@@ -241,16 +242,17 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 	}
 
 	timeoutStr := data.Timeout.ValueString()
-	if timeoutStr == "" {
-		timeoutStr = "30s"
+	if timeoutStr != "" {
+		d, err := time.ParseDuration(timeoutStr)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(pathAttr("timeout"), "Invalid timeout",
+				fmt.Sprintf("Could not parse duration %q: %s", timeoutStr, err))
+			return
+		}
+		cfg.Timeout = d
 	}
-	d, err := time.ParseDuration(timeoutStr)
-	if err != nil {
-		resp.Diagnostics.AddAttributeError(pathAttr("timeout"), "Invalid timeout",
-			fmt.Sprintf("Could not parse duration %q: %s", timeoutStr, err))
-		return
-	}
-	cfg.Timeout = d
+	// When the attribute is unset, cfg.Timeout stays 0 so ResolveFromEnv can
+	// apply WINDOWS_TIMEOUT; New defaults to 30s when neither is set.
 
 	client, err := winclient.New(cfg)
 	if err != nil {

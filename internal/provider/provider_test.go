@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -144,7 +145,7 @@ func clearProviderEnv(t *testing.T) {
 		winclient.EnvHost, winclient.EnvUsername, winclient.EnvPassword,
 		winclient.EnvPrivateKey, winclient.EnvPrivateKeyPath, winclient.EnvPrivateKeyPassphrase,
 		winclient.EnvUseAgent, winclient.EnvKnownHosts, winclient.EnvHostKey,
-		winclient.EnvInsecureIgnoreHostKey,
+		winclient.EnvInsecureIgnoreHostKey, winclient.EnvTimeout,
 	} {
 		t.Setenv(k, "")
 	}
@@ -322,5 +323,77 @@ func TestProvider_Configure_InvalidTimeout(t *testing.T) {
 	})
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error diag for invalid timeout")
+	}
+}
+
+// WINDOWS_TIMEOUT must bound the dial when the timeout attribute is unset,
+// since env-only configuration is the norm on CI / Terraform Cloud.
+func TestProvider_Configure_TimeoutFromEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvTimeout, "45s")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:     strPtr("10.0.0.1"),
+		username: strPtr("admin"),
+		password: strPtr("secret"),
+		hostKey:  strPtr(testHostKey(t)),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
+	}
+	c, ok := resp.ResourceData.(*winclient.Client)
+	if !ok {
+		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+	}
+	if got := c.Config().Timeout; got != 45*time.Second {
+		t.Errorf("dial timeout = %v, want 45s from WINDOWS_TIMEOUT", got)
+	}
+}
+
+// An explicit timeout attribute wins over WINDOWS_TIMEOUT.
+func TestProvider_Configure_TimeoutAttributeWinsOverEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvTimeout, "45s")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:     strPtr("10.0.0.1"),
+		username: strPtr("admin"),
+		password: strPtr("secret"),
+		timeout:  strPtr("15s"),
+		hostKey:  strPtr(testHostKey(t)),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
+	}
+	c, ok := resp.ResourceData.(*winclient.Client)
+	if !ok {
+		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+	}
+	if got := c.Config().Timeout; got != 15*time.Second {
+		t.Errorf("dial timeout = %v, want explicit 15s", got)
+	}
+}
+
+// A malformed WINDOWS_TIMEOUT must not fail Configure: it falls back to the
+// 30s default, mirroring WINDOWS_PORT.
+func TestProvider_Configure_MalformedTimeoutEnvFallsBackToDefault(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvTimeout, "soon")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:     strPtr("10.0.0.1"),
+		username: strPtr("admin"),
+		password: strPtr("secret"),
+		hostKey:  strPtr(testHostKey(t)),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("malformed WINDOWS_TIMEOUT should fall back to default, got: %v", resp.Diagnostics)
+	}
+	c, ok := resp.ResourceData.(*winclient.Client)
+	if !ok {
+		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+	}
+	if got := c.Config().Timeout; got != 30*time.Second {
+		t.Errorf("dial timeout = %v, want default 30s", got)
 	}
 }

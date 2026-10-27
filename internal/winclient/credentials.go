@@ -68,6 +68,9 @@ const (
 	EnvKnownHosts            = "WINDOWS_KNOWN_HOSTS"
 	EnvHostKey               = "WINDOWS_HOST_KEY"
 	EnvInsecureIgnoreHostKey = "WINDOWS_INSECURE_IGNORE_HOST_KEY"
+	// EnvTimeout bounds the SSH connection establishment (TCP dial plus
+	// handshake) as a Go duration string (e.g. "45s", "2m").
+	EnvTimeout = "WINDOWS_TIMEOUT"
 )
 
 // ResolveFromEnv fills any empty field in cfg with the corresponding
@@ -112,6 +115,14 @@ func ResolveFromEnv(cfg *Config) {
 	if !cfg.InsecureIgnoreHostKey {
 		if v, err := strconv.ParseBool(os.Getenv(EnvInsecureIgnoreHostKey)); err == nil {
 			cfg.InsecureIgnoreHostKey = v
+		}
+	}
+	// A malformed or non-positive WINDOWS_TIMEOUT is left for New to default
+	// to 30s rather than dialing with a surprising timeout — the same stance
+	// as WINDOWS_PORT above.
+	if cfg.Timeout == 0 {
+		if v, err := time.ParseDuration(os.Getenv(EnvTimeout)); err == nil && v > 0 {
+			cfg.Timeout = v
 		}
 	}
 }
