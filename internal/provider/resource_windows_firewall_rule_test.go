@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -55,7 +56,7 @@ func TestFirewallRuleResource_Metadata(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFirewallRuleResource_Schema_AllAttributes(t *testing.T) {
-	s := windowsFirewallRuleSchemaDefinition()
+	s := windowsFirewallRuleSchemaDefinition(context.Background())
 	wantAttrs := []string{
 		"id", "name", "display_name", "description",
 		"enabled", "direction", "action",
@@ -63,14 +64,15 @@ func TestFirewallRuleResource_Schema_AllAttributes(t *testing.T) {
 		"protocol", "local_port", "remote_port",
 		"local_address", "remote_address",
 		"program", "service", "interface_type",
+		"timeouts",
 	}
 	for _, k := range wantAttrs {
 		if _, ok := s.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
 		}
 	}
-	if len(s.Attributes) != 19 {
-		t.Errorf("expected 19 attributes (id + 18 user-facing), got %d", len(s.Attributes))
+	if len(s.Attributes) != 20 {
+		t.Errorf("expected 20 attributes (id + 18 user-facing + timeouts), got %d", len(s.Attributes))
 	}
 }
 
@@ -84,7 +86,7 @@ func TestFirewallRuleResource_Schema_ResourceLevelCall(t *testing.T) {
 }
 
 func TestFirewallRuleResource_GroupUsesPriorStateBeforeRequiresReplace(t *testing.T) {
-	group, ok := windowsFirewallRuleSchemaDefinition().Attributes["group"].(schema.StringAttribute)
+	group, ok := windowsFirewallRuleSchemaDefinition(context.Background()).Attributes["group"].(schema.StringAttribute)
 	if !ok {
 		t.Fatal("group schema attribute is not a string attribute")
 	}
@@ -200,7 +202,7 @@ func fwSchemaObjectType() tftypes.Object {
 // Only the provided map values override defaults; everything else is null.
 func buildFWConfig(t *testing.T, overrides map[string]tftypes.Value) tfsdk.Config {
 	t.Helper()
-	s := windowsFirewallRuleSchemaDefinition()
+	s := windowsFirewallRuleSchemaDefinition(context.Background())
 	listStr := tftypes.List{ElementType: tftypes.String}
 	nullList := tftypes.NewValue(listStr, nil)
 
@@ -839,5 +841,249 @@ func TestFirewallRuleResource_ConfigValidators(t *testing.T) {
 	validators := r.ConfigValidators(context.Background())
 	if len(validators) != 2 {
 		t.Errorf("expected 2 ConfigValidators (CV-1 + CV-2), got %d", len(validators))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (issue #122): a stalled or severed remote command must surface a
+// bounded diagnostic instead of blocking Terraform indefinitely. A firewall
+// change can sever the very SSH connection Terraform uses, so the bound is
+// load-bearing for this resource in particular.
+// ---------------------------------------------------------------------------
+
+func TestFirewallRuleResource_Schema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsFirewallRuleSchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #122: CRUD must be time-bounded)")
+	}
+}
+
+// fwTimeoutsObjectType is the tftypes shape of the `timeouts {}` block.
+func fwTimeoutsObjectType() tftypes.Object {
+	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}
+}
+
+// fwNullTimeoutsValue is the absent value for the `timeouts {}` block.
+func fwNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(fwTimeoutsObjectType(), nil)
+}
+
+// fwTimeoutsWithCreate builds a `timeouts {}` value carrying a create duration.
+func fwTimeoutsWithCreate(d string) tftypes.Value {
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, d),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	return tftypes.NewValue(fwTimeoutsObjectType(), vals)
+}
+
+// fwObj builds a tftypes.Value for the firewall rule model, with nil entries
+// represented as null.
+func fwObj(overrides map[string]tftypes.Value) tftypes.Value {
+	strList := func(ss []string) tftypes.Value {
+		if ss == nil {
+			return tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil)
+		}
+		vals := make([]tftypes.Value, 0, len(ss))
+		for _, s := range ss {
+			vals = append(vals, tftypes.NewValue(tftypes.String, s))
+		}
+		return tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, vals)
+	}
+	base := map[string]tftypes.Value{
+		"id":                    tftypes.NewValue(tftypes.String, nil),
+		"name":                  tftypes.NewValue(tftypes.String, nil),
+		"display_name":          tftypes.NewValue(tftypes.String, nil),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"enabled":               tftypes.NewValue(tftypes.Bool, nil),
+		"direction":             tftypes.NewValue(tftypes.String, nil),
+		"action":                tftypes.NewValue(tftypes.String, nil),
+		"profile":               strList(nil),
+		"edge_traversal_policy": tftypes.NewValue(tftypes.String, nil),
+		"group":                 tftypes.NewValue(tftypes.String, nil),
+		"policy_store":          tftypes.NewValue(tftypes.String, nil),
+		"protocol":              tftypes.NewValue(tftypes.String, nil),
+		"local_port":            strList(nil),
+		"remote_port":           strList(nil),
+		"local_address":         strList(nil),
+		"remote_address":        strList(nil),
+		"program":               tftypes.NewValue(tftypes.String, nil),
+		"service":               tftypes.NewValue(tftypes.String, nil),
+		"interface_type":        tftypes.NewValue(tftypes.String, nil),
+		"timeouts":              fwNullTimeoutsValue(),
+	}
+	for k, v := range overrides {
+		base[k] = v
+	}
+	return tftypes.NewValue(fwObjectType(), base)
+}
+
+// fwObjectType is the full tftypes shape of the firewall rule model.
+func fwObjectType() tftypes.Object {
+	strList := func() tftypes.Type { return tftypes.List{ElementType: tftypes.String} }
+	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id":                    tftypes.String,
+		"name":                  tftypes.String,
+		"display_name":          tftypes.String,
+		"description":           tftypes.String,
+		"enabled":               tftypes.Bool,
+		"direction":             tftypes.String,
+		"action":                tftypes.String,
+		"profile":               strList(),
+		"edge_traversal_policy": tftypes.String,
+		"group":                 tftypes.String,
+		"policy_store":          tftypes.String,
+		"protocol":              tftypes.String,
+		"local_port":            strList(),
+		"remote_port":           strList(),
+		"local_address":         strList(),
+		"remote_address":        strList(),
+		"program":               tftypes.String,
+		"service":               tftypes.String,
+		"interface_type":        tftypes.String,
+		"timeouts":              fwTimeoutsObjectType(),
+	}}
+}
+
+// fakeFwClient is a stub WindowsFirewallRuleClient for handler tests.
+type fakeFwClient struct {
+	createOut *winclient.FirewallRuleState
+	createErr error
+	readOut   *winclient.FirewallRuleState
+	readErr   error
+}
+
+func (f *fakeFwClient) Create(_ context.Context, _ winclient.FirewallRuleInput) (*winclient.FirewallRuleState, error) {
+	return f.createOut, f.createErr
+}
+
+func (f *fakeFwClient) Read(_ context.Context, _, _ string) (*winclient.FirewallRuleState, error) {
+	return f.readOut, f.readErr
+}
+
+func (f *fakeFwClient) Update(_ context.Context, _, _ string, _ winclient.FirewallRuleInput) (*winclient.FirewallRuleState, error) {
+	return nil, nil
+}
+
+func (f *fakeFwClient) Delete(_ context.Context, _, _ string) error { return nil }
+
+// hangFwClient simulates the stalled/severed transport from issue #122:
+// Create blocks until the passed context is done, then returns the context
+// error — mirroring a firewall change that killed the SSH session.
+type hangFwClient struct {
+	fakeFwClient
+}
+
+func (f *hangFwClient) Create(ctx context.Context, _ winclient.FirewallRuleInput) (*winclient.FirewallRuleState, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestFirewallRuleCreate_PreservesTimeouts(t *testing.T) {
+	fake := &fakeFwClient{createOut: &winclient.FirewallRuleState{
+		Name: "fw-acc", DisplayName: "FW Acc", Enabled: true,
+		Direction: "Inbound", Action: "Allow", PolicyStore: "PersistentStore",
+	}}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: fwObj(map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "fw-acc"),
+			"display_name": tftypes.NewValue(tftypes.String, "FW Acc"),
+			"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+			"action":       tftypes.NewValue(tftypes.String, "Allow"),
+			"timeouts":     fwTimeoutsWithCreate("5m"),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: fwObj(nil)},
+	}
+
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: unexpected diags: %v", resp.Diagnostics)
+	}
+	var m windowsFirewallRuleModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	got, diags := m.Timeouts.Create(context.Background(), firewallRuleDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through Create state projection: create = %v, want 5m", got)
+	}
+}
+
+func TestFirewallRuleCreate_StalledTransportIsBounded(t *testing.T) {
+	r := &windowsFirewallRuleResource{fw: &hangFwClient{}}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: fwObj(map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "fw-acc"),
+			"display_name": tftypes.NewValue(tftypes.String, "FW Acc"),
+			"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+			"action":       tftypes.NewValue(tftypes.String, "Allow"),
+			"timeouts":     fwTimeoutsWithCreate("200ms"),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: fwObj(nil)},
+	}
+
+	start := time.Now()
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the create timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Create blocked for %v with a 200ms timeout; the stalled-transport hang from issue #122 is back", elapsed)
+	}
+}
+
+func TestFirewallRuleImportState_SetsTypedNullTimeouts(t *testing.T) {
+	// ImportState full-Sets a model with no prior timeouts. The zero
+	// timeouts.Value carries no attribute types and is rejected by the
+	// framework on Set (the scheduled_task import failure mode); this
+	// exercises the real handler so fwNullTimeouts() must carry the
+	// schema's types or the test fails with error diagnostics.
+	fake := &fakeFwClient{readOut: &winclient.FirewallRuleState{
+		Name: "fw-acc", DisplayName: "FW Acc", Enabled: true,
+		Direction: "Inbound", Action: "Allow", PolicyStore: "PersistentStore",
+	}}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: fwObj(nil)},
+	}
+
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "fw-acc"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: unexpected diags: %v", resp.Diagnostics)
+	}
+	var m windowsFirewallRuleModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if m.ID.ValueString() != "fw-acc" || m.Name.ValueString() != "fw-acc" {
+		t.Errorf("import state = id=%q name=%q", m.ID.ValueString(), m.Name.ValueString())
+	}
+	if !m.Timeouts.IsNull() {
+		t.Errorf("imported timeouts should be null, got %v", m.Timeouts.Object)
 	}
 }

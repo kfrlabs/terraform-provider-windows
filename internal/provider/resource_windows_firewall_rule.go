@@ -16,7 +16,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -56,6 +58,15 @@ type windowsFirewallRuleResource struct {
 	fw winclient.WindowsFirewallRuleClient
 }
 
+// firewallRuleDefaultTimeout is the fallback per-operation timeout when the
+// user does not provide a `timeouts {}` block. Firewall rule operations
+// (New/Set/Remove-NetFirewallRule) are normally fast, but a stalled or
+// severed PowerShell/SSH session must never block Terraform forever
+// (issue #122): every CRUD handler bounds its work with this default. A
+// misconfigured rule can sever the very SSH connection Terraform uses,
+// so the bound is load-bearing for this resource in particular.
+const firewallRuleDefaultTimeout = 10 * time.Minute
+
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
@@ -64,25 +75,26 @@ type windowsFirewallRuleResource struct {
 // windows_firewall_rule. Every tfsdk tag matches an attribute key in
 // windowsFirewallRuleSchemaDefinition.
 type windowsFirewallRuleModel struct {
-	ID                  types.String `tfsdk:"id"`
-	Name                types.String `tfsdk:"name"`
-	DisplayName         types.String `tfsdk:"display_name"`
-	Description         types.String `tfsdk:"description"`
-	Enabled             types.Bool   `tfsdk:"enabled"`
-	Direction           types.String `tfsdk:"direction"`
-	Action              types.String `tfsdk:"action"`
-	Profile             types.List   `tfsdk:"profile"`
-	EdgeTraversalPolicy types.String `tfsdk:"edge_traversal_policy"`
-	Group               types.String `tfsdk:"group"`
-	PolicyStore         types.String `tfsdk:"policy_store"`
-	Protocol            types.String `tfsdk:"protocol"`
-	LocalPort           types.List   `tfsdk:"local_port"`
-	RemotePort          types.List   `tfsdk:"remote_port"`
-	LocalAddress        types.List   `tfsdk:"local_address"`
-	RemoteAddress       types.List   `tfsdk:"remote_address"`
-	Program             types.String `tfsdk:"program"`
-	Service             types.String `tfsdk:"service"`
-	InterfaceType       types.String `tfsdk:"interface_type"`
+	ID                  types.String   `tfsdk:"id"`
+	Name                types.String   `tfsdk:"name"`
+	DisplayName         types.String   `tfsdk:"display_name"`
+	Description         types.String   `tfsdk:"description"`
+	Enabled             types.Bool     `tfsdk:"enabled"`
+	Direction           types.String   `tfsdk:"direction"`
+	Action              types.String   `tfsdk:"action"`
+	Profile             types.List     `tfsdk:"profile"`
+	EdgeTraversalPolicy types.String   `tfsdk:"edge_traversal_policy"`
+	Group               types.String   `tfsdk:"group"`
+	PolicyStore         types.String   `tfsdk:"policy_store"`
+	Protocol            types.String   `tfsdk:"protocol"`
+	LocalPort           types.List     `tfsdk:"local_port"`
+	RemotePort          types.List     `tfsdk:"remote_port"`
+	LocalAddress        types.List     `tfsdk:"local_address"`
+	RemoteAddress       types.List     `tfsdk:"remote_address"`
+	Program             types.String   `tfsdk:"program"`
+	Service             types.String   `tfsdk:"service"`
+	InterfaceType       types.String   `tfsdk:"interface_type"`
+	Timeouts            timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -99,13 +111,14 @@ func (r *windowsFirewallRuleResource) Metadata(_ context.Context, req resource.M
 // ---------------------------------------------------------------------------
 
 // Schema returns the complete TPF schema for the windows_firewall_rule resource.
-func (r *windowsFirewallRuleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = windowsFirewallRuleSchemaDefinition()
+func (r *windowsFirewallRuleResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = windowsFirewallRuleSchemaDefinition(ctx)
 }
 
 // windowsFirewallRuleSchemaDefinition returns the complete TPF schema for
-// windows_firewall_rule (19 user-facing attributes + id).
-func windowsFirewallRuleSchemaDefinition() schema.Schema {
+// windows_firewall_rule (19 user-facing attributes + id + the
+// per-operation `timeouts` block).
+func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a Windows Defender Firewall with Advanced Security rule " +
 			"on a remote Windows host via SSH and PowerShell (`NetSecurity` module). " +
@@ -291,6 +304,13 @@ func windowsFirewallRuleSchemaDefinition() schema.Schema {
 					stringvalidator.OneOf("Any", "Wireless", "Wired", "RemoteAccess"),
 				},
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to
+			// firewallRuleDefaultTimeout so a stalled or severed remote
+			// command surfaces a timeout diagnostic instead of blocking
+			// Terraform indefinitely (issue #122).
+			"timeouts": timeouts.Attributes(ctx, fwTimeoutsOpts),
 		},
 	}
 }
@@ -342,6 +362,14 @@ func (r *windowsFirewallRuleResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, firewallRuleDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	input, diags := modelToFirewallInput(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -364,6 +392,9 @@ func (r *windowsFirewallRuleResource) Create(ctx context.Context, req resource.C
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Preserve the user-configured per-operation timeouts: the projection
+	// covers only Win32-observed fields, and Set overwrites the full state.
+	m.Timeouts = plan.Timeouts
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 
@@ -378,6 +409,14 @@ func (r *windowsFirewallRuleResource) Read(ctx context.Context, req resource.Rea
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := state.Timeouts.Read(ctx, firewallRuleDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	name := state.Name.ValueString()
 	policyStore := state.PolicyStore.ValueString()
@@ -408,6 +447,7 @@ func (r *windowsFirewallRuleResource) Read(ctx context.Context, req resource.Rea
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	m.Timeouts = state.Timeouts
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 
@@ -422,6 +462,14 @@ func (r *windowsFirewallRuleResource) Update(ctx context.Context, req resource.U
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	updateTimeout, diags := plan.Timeouts.Update(ctx, firewallRuleDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 
 	// name, group, and policy_store are ForceNew so they never change here.
 	name := plan.Name.ValueString()
@@ -449,6 +497,7 @@ func (r *windowsFirewallRuleResource) Update(ctx context.Context, req resource.U
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	m.Timeouts = plan.Timeouts
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 
@@ -463,6 +512,14 @@ func (r *windowsFirewallRuleResource) Delete(ctx context.Context, req resource.D
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, firewallRuleDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	name := state.Name.ValueString()
 	policyStore := state.PolicyStore.ValueString()
@@ -527,6 +584,11 @@ func (r *windowsFirewallRuleResource) ImportState(ctx context.Context, req resou
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Import starts from no prior state, so there are no user-configured
+	// timeouts to preserve. The zero timeouts.Value carries no attribute
+	// types and is rejected by State.Set — use a typed null instead (the
+	// subsequent Read fills in the configured values).
+	m.Timeouts = fwNullTimeouts()
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 
@@ -583,6 +645,38 @@ func modelToFirewallInput(ctx context.Context, m windowsFirewallRuleModel) (winc
 // ---------------------------------------------------------------------------
 // Helper: firewallStateToModel
 // ---------------------------------------------------------------------------
+
+// fwTimeoutsOpts declares which per-operation timeouts the resource exposes.
+// The schema and fwNullTimeouts both derive from it; keep them together,
+// since a null timeouts value whose attribute types disagree with the schema
+// is rejected by the framework as a provider type error.
+var fwTimeoutsOpts = timeouts.Opts{
+	Create: true,
+	Read:   true,
+	Update: true,
+	Delete: true,
+}
+
+// fwNullTimeouts returns a null timeouts value carrying the schema's attribute
+// types. The zero timeouts.Value wraps an object with NO attribute types,
+// which the framework rejects on State.Set — the failure mode on import,
+// where there is no prior state to copy the value from.
+func fwNullTimeouts() timeouts.Value {
+	attrTypes := map[string]attr.Type{}
+	if fwTimeoutsOpts.Create {
+		attrTypes["create"] = types.StringType
+	}
+	if fwTimeoutsOpts.Read {
+		attrTypes["read"] = types.StringType
+	}
+	if fwTimeoutsOpts.Update {
+		attrTypes["update"] = types.StringType
+	}
+	if fwTimeoutsOpts.Delete {
+		attrTypes["delete"] = types.StringType
+	}
+	return timeouts.Value{Object: types.ObjectNull(attrTypes)}
+}
 
 // firewallStateToModel converts a FirewallRuleState to a Terraform model.
 func firewallStateToModel(ctx context.Context, s *winclient.FirewallRuleState) (windowsFirewallRuleModel, diag.Diagnostics) {
