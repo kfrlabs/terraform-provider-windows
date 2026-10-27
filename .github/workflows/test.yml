@@ -97,3 +97,39 @@ jobs:
         with:
           version: v2.15.0
           # .golangci.yml at the repo root drives the rule set (incl. run.timeout).
+
+  terraform-cli-offline:
+    # Hermetic Terraform-CLI tier for test/terraform-cli: init, fmt -check,
+    # validate and the mocked `terraform test` run — none of which needs a
+    # Windows host or credentials. This exercises the provider through the
+    # real CLI (schema serving, example HCL, mock wiring) in a way Go unit
+    # tests cannot. Online --apply stages stay out: they need the lab host.
+    name: terraform CLI offline suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build provider (linux_amd64 dev build)
+        run: go build -trimpath -o ${{ runner.temp }}/plugins/terraform-provider-windows .
+
+      # Pinned to the version the suite is verified against (see #134).
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      - name: offline stages (init, fmt, validate, mocked test)
+        working-directory: test/terraform-cli
+        env:
+          TF_CLI_CONFIG_FILE: ${{ runner.temp }}/terraformrc
+        run: |
+          printf 'provider_installation {\n  dev_overrides {\n    "kfrlabs/windows" = "%s/plugins"\n  }\n  direct {}\n}\n' '${{ runner.temp }}' > "$TF_CLI_CONFIG_FILE"
+          terraform init -input=false
+          terraform fmt -check -diff .
+          terraform validate
+          terraform test -test-directory=.
