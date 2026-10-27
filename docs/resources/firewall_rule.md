@@ -43,6 +43,27 @@ resource "windows_firewall_rule" "allow_https" {
   profile      = ["Domain", "Private"]
 }
 
+# Slow or heavily loaded host: bound every remote operation explicitly.
+# Without this block each operation defaults to 10 minutes; a stalled or
+# severed PowerShell/SSH session then surfaces a timeout diagnostic instead
+# of blocking Terraform indefinitely. This matters most for block rules,
+# which can sever the very SSH connection Terraform is using.
+resource "windows_firewall_rule" "slow_host" {
+  name         = "Allow-Inbound-HTTPS-Slow"
+  display_name = "Allow Inbound HTTPS (slow host)"
+  direction    = "Inbound"
+  action       = "Allow"
+  protocol     = "TCP"
+  local_port   = ["443"]
+
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
+}
+
 # Block outbound access to a specific remote subnet.
 resource "windows_firewall_rule" "block_outbound" {
   name           = "Block-Outbound-Rogue-IP"
@@ -120,10 +141,21 @@ resource "windows_firewall_rule" "web_https" {
 - `remote_address` (List of String) Remote addresses. Same constraints as local_address. Populated from Get-NetFirewallAddressFilter.
 - `remote_port` (List of String) Remote TCP/UDP port(s). Same constraints as local_port. Populated from Get-NetFirewallPortFilter.
 - `service` (String) Short name of the matched Windows service, or `"Any"`. Populated from Get-NetFirewallServiceFilter.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
 - `id` (String) Resource identifier. Set to the technical firewall rule Name (InstanceID).
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 

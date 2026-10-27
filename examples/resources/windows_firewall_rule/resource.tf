@@ -25,6 +25,27 @@ resource "windows_firewall_rule" "allow_https" {
   profile      = ["Domain", "Private"]
 }
 
+# Slow or heavily loaded host: bound every remote operation explicitly.
+# Without this block each operation defaults to 10 minutes; a stalled or
+# severed PowerShell/SSH session then surfaces a timeout diagnostic instead
+# of blocking Terraform indefinitely. This matters most for block rules,
+# which can sever the very SSH connection Terraform is using.
+resource "windows_firewall_rule" "slow_host" {
+  name         = "Allow-Inbound-HTTPS-Slow"
+  display_name = "Allow Inbound HTTPS (slow host)"
+  direction    = "Inbound"
+  action       = "Allow"
+  protocol     = "TCP"
+  local_port   = ["443"]
+
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
+}
+
 # Block outbound access to a specific remote subnet.
 resource "windows_firewall_rule" "block_outbound" {
   name           = "Block-Outbound-Rogue-IP"
