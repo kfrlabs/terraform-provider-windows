@@ -322,9 +322,10 @@ func TestDirectoryCreate_InvalidAttribute(t *testing.T) {
 }
 
 // Bracket characters are legal in Windows paths (the schema regex only
-// excludes <>:"|?*), so the create call must pass the path with
-// -LiteralPath: -Path would glob-expand [ and ] instead of taking the
-// name literally (issue #146).
+// excludes <>:"|?*), so the filesystem-touching call must take the path
+// literally: -Path would glob-expand [ and ]. Parent resolution stays on
+// -Path (pure string surgery without -Resolve; -Parent does not exist in
+// Split-Path's -LiteralPath parameter set). See issue #146.
 func TestDirectoryCreate_BracketPathUsesLiteralPath(t *testing.T) {
 	var got string
 	restore := stubDirRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
@@ -340,8 +341,8 @@ func TestDirectoryCreate_BracketPathUsesLiteralPath(t *testing.T) {
 	if !strings.Contains(got, "New-Item -ItemType Directory -LiteralPath ") {
 		t.Errorf("create script must use New-Item -LiteralPath for bracket paths, got:\n%s", got)
 	}
-	if strings.Contains(got, "-Path 'C:") || strings.Contains(got, "Split-Path -Path ") {
-		t.Errorf("create script must not use wildcard-expanding -Path for the user path, got:\n%s", got)
+	if strings.Contains(got, "New-Item -ItemType Directory -Path ") {
+		t.Errorf("create script must not use wildcard-expanding -Path in New-Item, got:\n%s", got)
 	}
 }
 

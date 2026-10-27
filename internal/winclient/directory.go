@@ -115,7 +115,13 @@ function New-Directory([string]$P, [bool]$CreateParents, [string[]]$Wanted) {
     return
   }
   if (-not (Test-Path -LiteralPath $P -PathType Container)) {
-    $parent = Split-Path -LiteralPath $P -Parent
+    # Split-Path without -Resolve is pure string surgery (no filesystem
+    # access, no glob resolution), so -Path is safe here; keep the
+    # wildcard-expanding -Path away from cmdlets that touch the disk
+    # (New-Item below intentionally uses -LiteralPath). Note: -Parent lives
+    # in Split-Path's -Path parameter set, so -LiteralPath cannot be used
+    # here — it throws an uncaught parameter-binding error.
+    $parent = Split-Path -Path $P -Parent
     if (-not $CreateParents -and $parent -and -not (Test-Path -LiteralPath $parent -PathType Container)) {
       Emit-Err 'invalid_input' ("Parent directory '" + $parent + "' does not exist and create_parent_directories is false.") @{ path = $P; parent = $parent }
       return
