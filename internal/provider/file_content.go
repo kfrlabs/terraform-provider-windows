@@ -87,7 +87,7 @@ func encodeFileContent(content, encoding string) ([]byte, error) {
 			if r > 0xFF {
 				return nil, fmt.Errorf("content contains character %q at byte offset %d which has no latin1 representation", r, i)
 			}
-			out = append(out, byte(r))
+			out = append(out, byte(r)) //nolint:gosec // r <= 0xFF is checked above
 		}
 		return out, nil
 

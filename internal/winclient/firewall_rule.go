@@ -306,8 +306,8 @@ func buildFirewallParams(op, name, policyStore string, input FirewallRuleInput) 
 	sb.WriteString("$params = @{\n")
 
 	// Identity (always present)
-	sb.WriteString(fmt.Sprintf("  Name        = %s\n", psQuote(name)))
-	sb.WriteString(fmt.Sprintf("  PolicyStore = %s\n", psQuote(policyStore)))
+	fmt.Fprintf(&sb, "  Name        = %s\n", psQuote(name))
+	fmt.Fprintf(&sb, "  PolicyStore = %s\n", psQuote(policyStore))
 
 	// Set-NetFirewallRule uses -NewDisplayName when selecting a rule by Name;
 	// -DisplayName selects a different parameter set and cannot be combined
@@ -316,13 +316,13 @@ func buildFirewallParams(op, name, policyStore string, input FirewallRuleInput) 
 	if op == "update" {
 		displayNameParam = "NewDisplayName"
 	}
-	sb.WriteString(fmt.Sprintf("  %s = %s\n", displayNameParam, psQuote(input.DisplayName)))
-	sb.WriteString(fmt.Sprintf("  Direction   = %s\n", psQuote(input.Direction)))
-	sb.WriteString(fmt.Sprintf("  Action      = %s\n", psQuote(input.Action)))
+	fmt.Fprintf(&sb, "  %s = %s\n", displayNameParam, psQuote(input.DisplayName))
+	fmt.Fprintf(&sb, "  Direction   = %s\n", psQuote(input.Direction))
+	fmt.Fprintf(&sb, "  Action      = %s\n", psQuote(input.Action))
 
 	// Optional root attributes
 	if input.Description != "" {
-		sb.WriteString(fmt.Sprintf("  Description = %s\n", psQuote(input.Description)))
+		fmt.Fprintf(&sb, "  Description = %s\n", psQuote(input.Description))
 	}
 	if input.Enabled != nil {
 		// -Enabled is the NetSecurity.Enabled enum, not a [bool]: PowerShell
@@ -334,40 +334,40 @@ func buildFirewallParams(op, name, policyStore string, input FirewallRuleInput) 
 		}
 	}
 	if len(input.Profile) > 0 {
-		sb.WriteString(fmt.Sprintf("  Profile = %s\n", psQuoteList(input.Profile)))
+		fmt.Fprintf(&sb, "  Profile = %s\n", psQuoteList(input.Profile))
 	}
 	if input.EdgeTraversalPolicy != "" {
-		sb.WriteString(fmt.Sprintf("  EdgeTraversalPolicy = %s\n", psQuote(input.EdgeTraversalPolicy)))
+		fmt.Fprintf(&sb, "  EdgeTraversalPolicy = %s\n", psQuote(input.EdgeTraversalPolicy))
 	}
 	// Group is ForceNew; only written on Create (Set-NetFirewallRule ignores it).
 	if op == "create" && input.Group != "" {
-		sb.WriteString(fmt.Sprintf("  Group = %s\n", psQuote(input.Group)))
+		fmt.Fprintf(&sb, "  Group = %s\n", psQuote(input.Group))
 	}
 
 	// Filter attributes
 	if input.Protocol != "" {
-		sb.WriteString(fmt.Sprintf("  Protocol = %s\n", psQuote(input.Protocol)))
+		fmt.Fprintf(&sb, "  Protocol = %s\n", psQuote(input.Protocol))
 	}
 	if len(input.LocalPort) > 0 {
-		sb.WriteString(fmt.Sprintf("  LocalPort = %s\n", psQuoteList(input.LocalPort)))
+		fmt.Fprintf(&sb, "  LocalPort = %s\n", psQuoteList(input.LocalPort))
 	}
 	if len(input.RemotePort) > 0 {
-		sb.WriteString(fmt.Sprintf("  RemotePort = %s\n", psQuoteList(input.RemotePort)))
+		fmt.Fprintf(&sb, "  RemotePort = %s\n", psQuoteList(input.RemotePort))
 	}
 	if len(input.LocalAddress) > 0 {
-		sb.WriteString(fmt.Sprintf("  LocalAddress = %s\n", psQuoteList(input.LocalAddress)))
+		fmt.Fprintf(&sb, "  LocalAddress = %s\n", psQuoteList(input.LocalAddress))
 	}
 	if len(input.RemoteAddress) > 0 {
-		sb.WriteString(fmt.Sprintf("  RemoteAddress = %s\n", psQuoteList(input.RemoteAddress)))
+		fmt.Fprintf(&sb, "  RemoteAddress = %s\n", psQuoteList(input.RemoteAddress))
 	}
 	if input.Program != "" {
-		sb.WriteString(fmt.Sprintf("  Program = %s\n", psQuote(input.Program)))
+		fmt.Fprintf(&sb, "  Program = %s\n", psQuote(input.Program))
 	}
 	if input.Service != "" {
-		sb.WriteString(fmt.Sprintf("  Service = %s\n", psQuote(input.Service)))
+		fmt.Fprintf(&sb, "  Service = %s\n", psQuote(input.Service))
 	}
 	if input.InterfaceType != "" {
-		sb.WriteString(fmt.Sprintf("  InterfaceType = %s\n", psQuote(input.InterfaceType)))
+		fmt.Fprintf(&sb, "  InterfaceType = %s\n", psQuote(input.InterfaceType))
 	}
 
 	sb.WriteString("}")
