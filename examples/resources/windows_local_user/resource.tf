@@ -23,6 +23,17 @@ provider "windows" {
 resource "windows_local_user" "svc_backup" {
   name     = "svc-backup"
   password = var.svc_backup_password
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled account operation
+  # (password set, profile handling) surfaces a timeout diagnostic instead
+  # of blocking Terraform indefinitely.
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 output "svc_backup_sid" {

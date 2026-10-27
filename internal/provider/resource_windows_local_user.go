@@ -23,9 +23,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -60,6 +62,14 @@ type windowsLocalUserResource struct {
 	user winclient.LocalUserClient
 }
 
+// localUserDefaultTimeout is the fallback per-operation timeout when the
+// user does not provide a `timeouts {}` block. Account operations (password
+// set, profile handling, forced removal) issue blocking Win32 calls that
+// can stall on an unhealthy host; every CRUD handler bounds its work with
+// this default so a stalled session surfaces a timeout diagnostic instead
+// of blocking Terraform forever (issue #133).
+const localUserDefaultTimeout = 10 * time.Minute
+
 // ---------------------------------------------------------------------------
 // windowsLocalUserModel — Terraform state / plan model
 // ---------------------------------------------------------------------------
@@ -83,22 +93,23 @@ type windowsLocalUserResource struct {
 // the resource. Both share the same `password_wo_version` mechanism for
 // rotation detection during Update.
 type windowsLocalUserModel struct {
-	ID                       types.String `tfsdk:"id"`
-	SID                      types.String `tfsdk:"sid"`
-	Name                     types.String `tfsdk:"name"`
-	FullName                 types.String `tfsdk:"full_name"`
-	Description              types.String `tfsdk:"description"`
-	Password                 types.String `tfsdk:"password"`
-	PasswordWO               types.String `tfsdk:"password_wo"`
-	PasswordWoVersion        types.Int64  `tfsdk:"password_wo_version"`
-	Enabled                  types.Bool   `tfsdk:"enabled"`
-	PasswordNeverExpires     types.Bool   `tfsdk:"password_never_expires"`
-	UserMayNotChangePassword types.Bool   `tfsdk:"user_may_not_change_password"`
-	AccountNeverExpires      types.Bool   `tfsdk:"account_never_expires"`
-	AccountExpires           types.String `tfsdk:"account_expires"`
-	LastLogon                types.String `tfsdk:"last_logon"`
-	PasswordLastSet          types.String `tfsdk:"password_last_set"`
-	PrincipalSource          types.String `tfsdk:"principal_source"`
+	ID                       types.String   `tfsdk:"id"`
+	SID                      types.String   `tfsdk:"sid"`
+	Name                     types.String   `tfsdk:"name"`
+	FullName                 types.String   `tfsdk:"full_name"`
+	Description              types.String   `tfsdk:"description"`
+	Password                 types.String   `tfsdk:"password"`
+	PasswordWO               types.String   `tfsdk:"password_wo"`
+	PasswordWoVersion        types.Int64    `tfsdk:"password_wo_version"`
+	Enabled                  types.Bool     `tfsdk:"enabled"`
+	PasswordNeverExpires     types.Bool     `tfsdk:"password_never_expires"`
+	UserMayNotChangePassword types.Bool     `tfsdk:"user_may_not_change_password"`
+	AccountNeverExpires      types.Bool     `tfsdk:"account_never_expires"`
+	AccountExpires           types.String   `tfsdk:"account_expires"`
+	LastLogon                types.String   `tfsdk:"last_logon"`
+	PasswordLastSet          types.String   `tfsdk:"password_last_set"`
+	PrincipalSource          types.String   `tfsdk:"principal_source"`
+	Timeouts                 timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -255,13 +266,13 @@ func (r *windowsLocalUserResource) Metadata(
 
 // Schema returns the complete TPF schema for the windows_local_user resource.
 func (r *windowsLocalUserResource) Schema(
-	_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse,
+	ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse,
 ) {
-	resp.Schema = windowsLocalUserSchemaDefinition()
+	resp.Schema = windowsLocalUserSchemaDefinition(ctx)
 }
 
 // windowsLocalUserSchemaDefinition returns the complete TPF schema.
-func windowsLocalUserSchemaDefinition() schema.Schema {
+func windowsLocalUserSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a Windows local user account (SAM database) on a remote host " +
 			"via SSH and PowerShell (`Microsoft.PowerShell.LocalAccounts` module, available " +
@@ -454,6 +465,13 @@ func windowsLocalUserSchemaDefinition() schema.Schema {
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to
+			// localUserDefaultTimeout so a stalled account operation
+			// surfaces a timeout diagnostic instead of blocking Terraform
+			// indefinitely (issue #133).
+			"timeouts": timeouts.Attributes(ctx, luTimeoutsOpts),
 		},
 	}
 }
@@ -556,6 +574,14 @@ func (r *windowsLocalUserResource) Create(
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, localUserDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	tflog.Debug(ctx, "windows_local_user Create", map[string]interface{}{
 		"name":                plan.Name.ValueString(),
 		"enabled":             plan.Enabled.ValueBool(),
@@ -614,6 +640,9 @@ func (r *windowsLocalUserResource) Create(
 	// dropped from state by the framework. Setting it on `next` would be a
 	// no-op but is omitted for clarity.
 	next.PasswordWoVersion = plan.PasswordWoVersion
+	// Preserve the user-configured per-operation timeouts: stateFromUser
+	// projects only Win32-observed fields, and Set overwrites the full state.
+	next.Timeouts = plan.Timeouts
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
 }
@@ -686,6 +715,14 @@ func (r *windowsLocalUserResource) Read(
 		return
 	}
 
+	readTimeout, diags := state.Timeouts.Read(ctx, localUserDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	sid := state.SID.ValueString()
 	if sid == "" {
 		sid = state.ID.ValueString()
@@ -712,6 +749,8 @@ func (r *windowsLocalUserResource) Read(
 	// Preserve sensitive/write-only fields (ADR-LU-3): Windows cannot return them.
 	next.Password = state.Password
 	next.PasswordWoVersion = state.PasswordWoVersion
+	// Preserve the user-configured per-operation timeouts across the refresh.
+	next.Timeouts = state.Timeouts
 
 	// EC-4 / ADR-LU: case-insensitive name normalisation.
 	// Keep prior state name when Windows casing differs only in case.
@@ -746,6 +785,14 @@ func (r *windowsLocalUserResource) Update(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	updateTimeout, diags := plan.Timeouts.Update(ctx, localUserDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 
 	sid := prior.SID.ValueString()
 	if sid == "" {
@@ -844,6 +891,8 @@ func (r *windowsLocalUserResource) Update(
 	next := stateFromUser(us)
 	next.Password = plan.Password
 	next.PasswordWoVersion = plan.PasswordWoVersion
+	// Preserve the user-configured per-operation timeouts across the refresh.
+	next.Timeouts = plan.Timeouts
 
 	// EC-4: if name was equal (case-fold), keep plan name to avoid diff.
 	if strings.EqualFold(us.Name, plan.Name.ValueString()) {
@@ -870,6 +919,14 @@ func (r *windowsLocalUserResource) Delete(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, localUserDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	sid := state.SID.ValueString()
 	if sid == "" {
@@ -934,6 +991,9 @@ func (r *windowsLocalUserResource) ImportState(
 	// Password and PasswordWoVersion are null after import (EC-11, ADR-LU-3).
 	next.Password = types.StringNull()
 	next.PasswordWoVersion = types.Int64Null()
+	// Import starts from no prior state: use a schema-typed null (the
+	// subsequent Read fills in the configured values).
+	next.Timeouts = luNullTimeouts()
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
 }
@@ -941,6 +1001,38 @@ func (r *windowsLocalUserResource) ImportState(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// luTimeoutsOpts declares which per-operation timeouts the resource exposes.
+// The schema and luNullTimeouts both derive from it; keep them together,
+// since a null timeouts value whose attribute types disagree with the schema
+// is rejected by the framework as a provider type error.
+var luTimeoutsOpts = timeouts.Opts{
+	Create: true,
+	Read:   true,
+	Update: true,
+	Delete: true,
+}
+
+// luNullTimeouts returns a null timeouts value carrying the schema's attribute
+// types. The zero timeouts.Value wraps an object with NO attribute types,
+// which the framework rejects on State.Set — the failure mode on import,
+// where there is no prior state to copy the value from.
+func luNullTimeouts() timeouts.Value {
+	attrTypes := map[string]attr.Type{}
+	if luTimeoutsOpts.Create {
+		attrTypes["create"] = types.StringType
+	}
+	if luTimeoutsOpts.Read {
+		attrTypes["read"] = types.StringType
+	}
+	if luTimeoutsOpts.Update {
+		attrTypes["update"] = types.StringType
+	}
+	if luTimeoutsOpts.Delete {
+		attrTypes["delete"] = types.StringType
+	}
+	return timeouts.Value{Object: types.ObjectNull(attrTypes)}
+}
 
 // stateFromUser converts a *winclient.UserState into a windowsLocalUserModel.
 // Password and PasswordWoVersion are intentionally NOT set — the caller is
