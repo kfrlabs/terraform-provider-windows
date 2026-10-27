@@ -51,6 +51,17 @@ provider "windows" {
 resource "windows_local_group_member" "admin_jdoe" {
   group  = "Administrators"
   member = "DOMAIN\\jdoe"
+
+  # Domain SID resolution depends on a reachable domain controller. Bound
+  # every remote operation explicitly: without this block each operation
+  # defaults to 10 minutes, and a stalled DC lookup surfaces a timeout
+  # diagnostic instead of blocking Terraform indefinitely.
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # Add a local account to a custom group created by windows_local_group.
@@ -101,6 +112,10 @@ Accepted formats:
 
 ~> **ForceNew:** any change destroys and recreates the resource.
 
+### Optional
+
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
+
 ### Read-Only
 
 - `group_sid` (String) Security Identifier of the group, resolved at Create time from the group attribute. Stable across group renames (ADR-LGM-1).
@@ -108,6 +123,16 @@ Accepted formats:
 - `member_name` (String) Canonical display name of the member as returned by Windows (Get-LocalGroupMember .Name). Set to member_sid for orphaned AD SIDs (EC-6).
 - `member_principal_source` (String) Origin of the member account as reported by Windows. Possible values: "Local", "ActiveDirectory", "AzureAD", "MicrosoftAccount", "Unknown". Set to "Unknown" for orphaned AD SIDs (EC-6).
 - `member_sid` (String) Security Identifier of the member, resolved by Windows after Add-LocalGroupMember completes. Source of truth for drift detection and the Delete operation (ADR-LGM-2).
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 

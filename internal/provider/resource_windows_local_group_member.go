@@ -25,8 +25,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -59,6 +62,14 @@ type windowsLocalGroupMemberResource struct {
 	member winclient.ClientLocalGroupMember
 }
 
+// localGroupMemberDefaultTimeout is the fallback per-operation timeout when
+// the user does not provide a `timeouts {}` block. Membership operations
+// resolve SIDs against a domain controller for domain principals
+// (DOMAIN\user, UPN), and an unreachable or slow DC must never block
+// Terraform forever (issue #126): every CRUD handler bounds its work with
+// this default.
+const localGroupMemberDefaultTimeout = 10 * time.Minute
+
 // ---------------------------------------------------------------------------
 // windowsLocalGroupMemberModel — Terraform state / plan model
 // ---------------------------------------------------------------------------
@@ -70,13 +81,14 @@ type windowsLocalGroupMemberResource struct {
 // Composite resource ID = "<group_sid>/<member_sid>" (ADR-LGM-1).
 // member is stored as-supplied (ADR-LGM-4); member_sid is the source of truth.
 type windowsLocalGroupMemberModel struct {
-	ID                    types.String `tfsdk:"id"`
-	Group                 types.String `tfsdk:"group"`
-	GroupSID              types.String `tfsdk:"group_sid"`
-	Member                types.String `tfsdk:"member"`
-	MemberSID             types.String `tfsdk:"member_sid"`
-	MemberName            types.String `tfsdk:"member_name"`
-	MemberPrincipalSource types.String `tfsdk:"member_principal_source"`
+	ID                    types.String   `tfsdk:"id"`
+	Group                 types.String   `tfsdk:"group"`
+	GroupSID              types.String   `tfsdk:"group_sid"`
+	Member                types.String   `tfsdk:"member"`
+	MemberSID             types.String   `tfsdk:"member_sid"`
+	MemberName            types.String   `tfsdk:"member_name"`
+	MemberPrincipalSource types.String   `tfsdk:"member_principal_source"`
+	Timeouts              timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -93,14 +105,15 @@ func (r *windowsLocalGroupMemberResource) Metadata(
 // Schema returns the complete TPF schema for the windows_local_group_member
 // resource (7 attributes, validators, plan modifiers — inlined from schema.go).
 func (r *windowsLocalGroupMemberResource) Schema(
-	_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse,
+	ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse,
 ) {
-	resp.Schema = windowsLocalGroupMemberSchemaDefinition()
+	resp.Schema = windowsLocalGroupMemberSchemaDefinition(ctx)
 }
 
 // windowsLocalGroupMemberSchemaDefinition returns the complete TPF schema for
-// the windows_local_group_member resource (7 attributes).
-func windowsLocalGroupMemberSchemaDefinition() schema.Schema {
+// the windows_local_group_member resource (7 attributes + the per-operation
+// `timeouts` block).
+func windowsLocalGroupMemberSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages the membership of **exactly one** member in a Windows local " +
 			"group on a remote host via SSH and PowerShell " +
@@ -230,6 +243,14 @@ func windowsLocalGroupMemberSchemaDefinition() schema.Schema {
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to
+			// localGroupMemberDefaultTimeout so a stalled SID resolution
+			// against an unreachable domain controller surfaces a timeout
+			// diagnostic instead of blocking Terraform indefinitely
+			// (issue #126).
+			"timeouts": timeouts.Attributes(ctx, lgmTimeoutsOpts),
 		},
 	}
 }
@@ -279,6 +300,14 @@ func (r *windowsLocalGroupMemberResource) Create(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	createTimeout, diags := plan.Timeouts.Create(ctx, localGroupMemberDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	// Step 0: Resolve group name/SID → group_sid (ADR-LGM-6).
 	grpState, resolveErr := winclient.ResolveGroup(ctx, r.client, plan.Group.ValueString())
@@ -336,6 +365,10 @@ func (r *windowsLocalGroupMemberResource) Create(
 		MemberSID:             types.StringValue(memberState.MemberSID),
 		MemberName:            types.StringValue(memberState.MemberName),
 		MemberPrincipalSource: types.StringValue(memberState.PrincipalSource),
+		// Preserve the user-configured per-operation timeouts: the remote
+		// projection carries only Win32-observed fields, and Set overwrites
+		// the full state object.
+		Timeouts: plan.Timeouts,
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -361,6 +394,14 @@ func (r *windowsLocalGroupMemberResource) Read(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := state.Timeouts.Read(ctx, localGroupMemberDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	// Parse composite ID → groupSID / memberSID.
 	groupSID, memberSID, ok := parseCompositeID(state.ID.ValueString())
@@ -423,6 +464,15 @@ func (r *windowsLocalGroupMemberResource) Update(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// No remote I/O here; still resolve the timeout so an invalid `timeouts {}`
+	// block surfaces a diagnostic rather than passing silently.
+	updateTimeout, diags := plan.Timeouts.Update(ctx, localGroupMemberDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -443,6 +493,14 @@ func (r *windowsLocalGroupMemberResource) Delete(
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, localGroupMemberDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	groupSID, memberSID, ok := parseCompositeID(state.ID.ValueString())
 	if !ok {
@@ -558,6 +616,9 @@ func (r *windowsLocalGroupMemberResource) ImportState(
 		MemberSID:             types.StringValue(found.MemberSID),
 		MemberName:            types.StringValue(found.MemberName),
 		MemberPrincipalSource: types.StringValue(found.PrincipalSource),
+		// Import starts from no prior state: use a schema-typed null (the
+		// subsequent Read fills in the configured values).
+		Timeouts: lgmNullTimeouts(),
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -565,6 +626,38 @@ func (r *windowsLocalGroupMemberResource) ImportState(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// lgmTimeoutsOpts declares which per-operation timeouts the resource exposes.
+// The schema and lgmNullTimeouts both derive from it; keep them together,
+// since a null timeouts value whose attribute types disagree with the schema
+// is rejected by the framework as a provider type error.
+var lgmTimeoutsOpts = timeouts.Opts{
+	Create: true,
+	Read:   true,
+	Update: true,
+	Delete: true,
+}
+
+// lgmNullTimeouts returns a null timeouts value carrying the schema's attribute
+// types. The zero timeouts.Value wraps an object with NO attribute types, which
+// the framework rejects on State.Set — the failure mode on import, where there
+// is no prior state to copy the value from.
+func lgmNullTimeouts() timeouts.Value {
+	attrTypes := map[string]attr.Type{}
+	if lgmTimeoutsOpts.Create {
+		attrTypes["create"] = types.StringType
+	}
+	if lgmTimeoutsOpts.Read {
+		attrTypes["read"] = types.StringType
+	}
+	if lgmTimeoutsOpts.Update {
+		attrTypes["update"] = types.StringType
+	}
+	if lgmTimeoutsOpts.Delete {
+		attrTypes["delete"] = types.StringType
+	}
+	return timeouts.Value{Object: types.ObjectNull(attrTypes)}
+}
 
 // bareAccountName returns the account portion of a possibly qualified Windows
 // identity, e.g. "MACHINE\user" or "DOMAIN\user" -> "user". Identity strings

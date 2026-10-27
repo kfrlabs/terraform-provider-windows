@@ -24,6 +24,17 @@ provider "windows" {
 resource "windows_local_group_member" "admin_jdoe" {
   group  = "Administrators"
   member = "DOMAIN\\jdoe"
+
+  # Domain SID resolution depends on a reachable domain controller. Bound
+  # every remote operation explicitly: without this block each operation
+  # defaults to 10 minutes, and a stalled DC lookup surfaces a timeout
+  # diagnostic instead of blocking Terraform indefinitely.
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # Add a local account to a custom group created by windows_local_group.
