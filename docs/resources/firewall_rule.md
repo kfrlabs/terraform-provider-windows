@@ -56,7 +56,7 @@ resource "windows_firewall_rule" "slow_host" {
   protocol     = "TCP"
   local_port   = ["443"]
 
-  timeouts {
+  timeouts = {
     create = "20m"
     read   = "5m"
     update = "20m"

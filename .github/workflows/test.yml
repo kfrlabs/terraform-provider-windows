@@ -133,3 +133,27 @@ jobs:
           terraform fmt -check -diff .
           terraform validate
           terraform test -test-directory=.
+
+      - name: examples schema-decode check (no Unsupported block type)
+        # Guards #142: SingleNestedAttribute values such as `timeouts` must
+        # use the assignment form (`timeouts = { ... }`); the bare block form
+        # (`timeouts { ... }`) is rejected by `terraform validate` with
+        # "Unsupported block type". Each examples/ file is validated in a
+        # scratch dir with stub variables so that schema decoding is reached
+        # (undeclared-variable errors alone would mask it).
+        env:
+          TF_CLI_CONFIG_FILE: ${{ runner.temp }}/terraformrc
+        run: |
+          fail=0
+          for f in examples/resources/*/*.tf examples/data-sources/*/*.tf; do
+            d=$(mktemp -d)
+            cp "$f" "$d/main.tf"
+            grep -o 'var\.[A-Za-z0-9_]*' "$f" | sort -u | sed 's/var\./variable "/;s/$/" {}/' > "$d/variables.tf"
+            terraform -chdir="$d" init -input=false -backend=false >/dev/null 2>&1
+            if terraform -chdir="$d" validate -json 2>/dev/null | grep -q "Unsupported block type"; then
+              echo "::error file=$f::terraform validate: Unsupported block type (use 'timeouts = { ... }', see #142)"
+              fail=1
+            fi
+            rm -rf "$d"
+          done
+          exit $fail

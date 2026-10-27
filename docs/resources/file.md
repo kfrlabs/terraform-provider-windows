@@ -83,7 +83,7 @@ resource "windows_file" "big_artifact" {
   source_url_sha256 = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809"
   download_on       = "target"
 
-  timeouts {
+  timeouts = {
     create = "30m"
   }
 }
