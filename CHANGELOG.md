@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `windows_service` CRUD is now bounded by a per-operation `timeouts` block
+  (`create`/`read`/`update`/`delete`, 10m defaults): a stalled PowerShell/SSH
+  session surfaces a timeout diagnostic instead of blocking Terraform
+  indefinitely (#109, #121).
+- `windows_firewall_rule` CRUD is now bounded by a per-operation `timeouts`
+  block (10m defaults), for the same stalled-transport reason: a firewall
+  rule change can sever its own SSH transport (#122, #123).
+- The persistent PowerShell session no longer tears down, redials and
+  re-executes a deterministically failing script: uncaught script errors on
+  a healthy session are reported once, on the existing session, and only
+  genuine transport failures trigger the re-establish-and-retry path
+  (#124, #125).
+
 ## [0.1.0] - 2026-10-08
 
 ### Added
