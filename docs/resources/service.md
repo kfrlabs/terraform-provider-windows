@@ -49,7 +49,7 @@ resource "windows_service" "slow_host" {
   start_type   = "Automatic"
   status       = "Running"
 
-  timeouts {
+  timeouts = {
     create = "20m"
     read   = "5m"
     update = "20m"

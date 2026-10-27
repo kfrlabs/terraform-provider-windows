@@ -42,7 +42,7 @@ resource "windows_registry_value" "reg_sz" {
   # operation defaults to 10 minutes, and a stalled registry operation
   # surfaces a timeout diagnostic instead of blocking Terraform
   # indefinitely.
-  timeouts {
+  timeouts = {
     create = "20m"
     read   = "5m"
     update = "20m"
