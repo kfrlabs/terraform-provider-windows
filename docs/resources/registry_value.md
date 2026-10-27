@@ -37,6 +37,17 @@ resource "windows_registry_value" "reg_sz" {
   name         = "Version"
   type         = "REG_SZ"
   value_string = "2.5.1"
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled registry operation
+  # surfaces a timeout diagnostic instead of blocking Terraform
+  # indefinitely.
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -139,6 +150,7 @@ resource "windows_registry_value" "default_value" {
 
 - `expand_environment_variables` (Boolean) When true, Read returns expanded REG_EXPAND_SZ values. Only valid with type=REG_EXPAND_SZ (CV-7).
 - `name` (String) Value name ("" = Default value). ForceNew.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `value_binary` (String) Binary value for REG_BINARY/REG_NONE as a lowercase hex string (e.g. "deadbeef", "" for zero bytes).
 - `value_string` (String) String value for REG_SZ, REG_EXPAND_SZ, REG_DWORD (decimal uint32), REG_QWORD (decimal uint64).
 - `value_strings` (List of String) Multi-string value for REG_MULTI_SZ. Empty list [] is valid (EC-10).
@@ -146,6 +158,16 @@ resource "windows_registry_value" "default_value" {
 ### Read-Only
 
 - `id` (String) Composite ID: "<HIVE>\<PATH>\<NAME>". Trailing backslash when name="" (Default value).
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 

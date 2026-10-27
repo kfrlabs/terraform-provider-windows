@@ -31,6 +31,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -93,6 +94,12 @@ func registryValueObjectType() tftypes.Object {
 		"value_strings":                tftypes.List{ElementType: tftypes.String},
 		"value_binary":                 tftypes.String,
 		"expand_environment_variables": tftypes.Bool,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
 }
 
@@ -108,6 +115,12 @@ func rvObjBase() map[string]tftypes.Value {
 		"value_strings":                tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"value_binary":                 tftypes.NewValue(tftypes.String, nil),
 		"expand_environment_variables": tftypes.NewValue(tftypes.Bool, false),
+		"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}}, nil),
 	}
 }
 
@@ -123,7 +136,7 @@ func rvObj(overrides map[string]tftypes.Value) tftypes.Value {
 // rvConfig builds a tfsdk.Config for the registry value schema.
 func rvConfig(t *testing.T, overrides map[string]tftypes.Value) tfsdk.Config {
 	t.Helper()
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	return tfsdk.Config{Raw: rvObj(overrides), Schema: s}
 }
 
@@ -172,11 +185,11 @@ func TestRegistryValueMetadata(t *testing.T) {
 }
 
 func TestRegistryValueSchema_HasRequiredAttributes(t *testing.T) {
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	for _, k := range []string{
 		"id", "hive", "path", "name", "type",
 		"value_string", "value_strings", "value_binary",
-		"expand_environment_variables",
+		"expand_environment_variables", "timeouts",
 	} {
 		if _, ok := s.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
@@ -1203,7 +1216,7 @@ func TestAddRVDiag_PlainError(t *testing.T) {
 
 func TestImportState_ValidNamedValue(t *testing.T) {
 	r := &windowsRegistryValueResource{}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	req := resource.ImportStateRequest{ID: `HKLM\SOFTWARE\MyApp\Version`}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(registryValueObjectType(), nil)}}
 	r.ImportState(context.Background(), req, resp)
@@ -1226,7 +1239,7 @@ func TestImportState_ValidNamedValue(t *testing.T) {
 func TestImportState_ValidDefaultValue(t *testing.T) {
 	// Trailing backslash → name="" (Default value)
 	r := &windowsRegistryValueResource{}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	req := resource.ImportStateRequest{ID: `HKCU\Software\Test\`}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(registryValueObjectType(), nil)}}
 	r.ImportState(context.Background(), req, resp)
@@ -1242,7 +1255,7 @@ func TestImportState_ValidDefaultValue(t *testing.T) {
 
 func TestImportState_LowercaseHiveNormalized(t *testing.T) {
 	r := &windowsRegistryValueResource{}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	req := resource.ImportStateRequest{ID: `hklm\SOFTWARE\Test\Val`}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(registryValueObjectType(), nil)}}
 	r.ImportState(context.Background(), req, resp)
@@ -1259,7 +1272,7 @@ func TestImportState_LowercaseHiveNormalized(t *testing.T) {
 func TestImportState_EC13_NoBackslash(t *testing.T) {
 	// No backslash at all → error
 	r := &windowsRegistryValueResource{}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	req := resource.ImportStateRequest{ID: "HKLM"}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s}}
 	r.ImportState(context.Background(), req, resp)
@@ -1270,7 +1283,7 @@ func TestImportState_EC13_NoBackslash(t *testing.T) {
 
 func TestImportState_EC13_UnknownHive(t *testing.T) {
 	r := &windowsRegistryValueResource{}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	req := resource.ImportStateRequest{ID: `BADH\SOFTWARE\Test\Val`}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s}}
 	r.ImportState(context.Background(), req, resp)
@@ -1282,7 +1295,7 @@ func TestImportState_EC13_UnknownHive(t *testing.T) {
 func TestImportState_EC13_NoPathSeparator(t *testing.T) {
 	// Only hive and one component: HKLM\SOFTWARE (no second backslash)
 	r := &windowsRegistryValueResource{}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	req := resource.ImportStateRequest{ID: `HKLM\SOFTWARE`}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s}}
 	r.ImportState(context.Background(), req, resp)
@@ -1294,7 +1307,7 @@ func TestImportState_EC13_NoPathSeparator(t *testing.T) {
 func TestImportState_EC13_EmptyPath(t *testing.T) {
 	// HKLM\\Value → empty path after hive
 	r := &windowsRegistryValueResource{}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 	req := resource.ImportStateRequest{ID: `HKLM\\Version`}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s}}
 	r.ImportState(context.Background(), req, resp)
@@ -1310,7 +1323,7 @@ func TestImportState_EC13_EmptyPath(t *testing.T) {
 func TestRegistryValueCreate_HappyPath_REG_SZ(t *testing.T) {
 	fake := &fakeRegistryValueClient{setOut: okRVState(winclient.RegistryValueKindString)}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawPlan := rvObj(nil) // defaults: HKLM, SOFTWARE\MyApp, Version, REG_SZ, "1.0.0"
 	req := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: rawPlan}}
@@ -1328,7 +1341,7 @@ func TestRegistryValueCreate_EC3_TypeConflict(t *testing.T) {
 			"type_conflict: existing=REG_SZ declared=REG_DWORD", nil, nil),
 	}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawPlan := rvObj(map[string]tftypes.Value{
 		"type":         tftypes.NewValue(tftypes.String, "REG_DWORD"),
@@ -1349,7 +1362,7 @@ func TestRegistryValueCreate_PermissionDenied(t *testing.T) {
 			"access denied", nil, nil),
 	}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawPlan := rvObj(nil)
 	req := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: rawPlan}}
@@ -1365,7 +1378,7 @@ func TestRegistryValueCreate_NilStateReturned(t *testing.T) {
 	// Set returns (nil, nil) — should produce diagnostic
 	fake := &fakeRegistryValueClient{setOut: nil, setErr: nil}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawPlan := rvObj(nil)
 	req := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: rawPlan}}
@@ -1384,7 +1397,7 @@ func TestRegistryValueCreate_NilStateReturned(t *testing.T) {
 func TestRegistryValueRead_HappyPath(t *testing.T) {
 	fake := &fakeRegistryValueClient{readOut: okRVState(winclient.RegistryValueKindString)}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawState := rvObj(map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, `HKLM\SOFTWARE\MyApp\Version`),
@@ -1403,7 +1416,7 @@ func TestRegistryValueRead_EC4_NotFound(t *testing.T) {
 	// Read returns nil → RemoveResource
 	fake := &fakeRegistryValueClient{readOut: nil, readErr: nil}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawState := rvObj(map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, `HKLM\SOFTWARE\MyApp\Version`),
@@ -1427,7 +1440,7 @@ func TestRegistryValueRead_Error(t *testing.T) {
 			"access denied", nil, nil),
 	}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawState := rvObj(map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, `HKLM\SOFTWARE\MyApp\Version`),
@@ -1449,7 +1462,7 @@ func TestRegistryValueRead_Error(t *testing.T) {
 func TestRegistryValueUpdate_HappyPath(t *testing.T) {
 	fake := &fakeRegistryValueClient{setOut: okRVState(winclient.RegistryValueKindString)}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawPlan := rvObj(map[string]tftypes.Value{
 		"id":           tftypes.NewValue(tftypes.String, `HKLM\SOFTWARE\MyApp\Version`),
@@ -1481,7 +1494,7 @@ func TestRegistryValueUpdate_Error(t *testing.T) {
 			"server error", nil, nil),
 	}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawPlan := rvObj(map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, `HKLM\SOFTWARE\MyApp\Version`),
@@ -1509,7 +1522,7 @@ func TestRegistryValueUpdate_Error(t *testing.T) {
 func TestRegistryValueDelete_HappyPath(t *testing.T) {
 	fake := &fakeRegistryValueClient{deleteErr: nil}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawState := rvObj(map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, `HKLM\SOFTWARE\MyApp\Version`),
@@ -1532,7 +1545,7 @@ func TestRegistryValueDelete_Error(t *testing.T) {
 			"cannot delete", nil, nil),
 	}
 	r := &windowsRegistryValueResource{client: fake}
-	s := windowsRegistryValueSchemaDefinition()
+	s := windowsRegistryValueSchemaDefinition(context.Background())
 
 	rawState := rvObj(map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, `HKLM\SOFTWARE\MyApp\Version`),
@@ -1543,5 +1556,120 @@ func TestRegistryValueDelete_Error(t *testing.T) {
 	r.Delete(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error diagnostic for delete failure")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (issue #139): a stalled registry operation must surface a bounded
+// diagnostic instead of blocking Terraform indefinitely.
+// ---------------------------------------------------------------------------
+
+func TestRegistryValueSchema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsRegistryValueSchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #139: CRUD must be time-bounded)")
+	}
+}
+
+// rvTimeoutsValue builds a `timeouts {}` value carrying a duration for one
+// named operation (create/read/update/delete), the rest null.
+func rvTimeoutsValue(op, d string) tftypes.Value {
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	vals[op] = tftypes.NewValue(tftypes.String, d)
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, vals)
+}
+
+// hangRegistryValueClient simulates the stalled transport from issue #139:
+// Delete blocks until the passed context is done, then returns the context
+// error — mirroring a registry operation that never answers.
+type hangRegistryValueClient struct {
+	fakeRegistryValueClient
+}
+
+func (f *hangRegistryValueClient) Delete(ctx context.Context, _, _, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestRegistryValueDelete_StalledTransportIsBounded(t *testing.T) {
+	r := &windowsRegistryValueResource{client: &hangRegistryValueClient{}}
+	s := windowsRegistryValueSchemaDefinition(context.Background())
+
+	prior := tfsdk.State{
+		Schema: s,
+		Raw: rvObj(map[string]tftypes.Value{
+			"timeouts": rvTimeoutsValue("delete", "200ms"),
+		}),
+	}
+	resp := &resource.DeleteResponse{State: prior}
+
+	start := time.Now()
+	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the delete timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Delete blocked for %v with a 200ms timeout; the stalled-transport hang from issue #139 is back", elapsed)
+	}
+}
+
+func TestRegistryValueCreate_PreservesTimeouts(t *testing.T) {
+	fake := &fakeRegistryValueClient{setOut: okRVState(winclient.RegistryValueKindString)}
+	r := &windowsRegistryValueResource{client: fake}
+	s := windowsRegistryValueSchemaDefinition(context.Background())
+
+	rawPlan := rvObj(map[string]tftypes.Value{
+		"timeouts": rvTimeoutsValue("create", "5m"),
+	})
+	req := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: rawPlan}}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+
+	r.Create(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create REG_SZ: %v", rvDiagSummaries(resp.Diagnostics))
+	}
+	var m windowsRegistryValueModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	got, diags := m.Timeouts.Create(context.Background(), registryValueDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through Create state projection: create = %v, want 5m", got)
+	}
+}
+
+func TestRegistryValueImportState_LeavesTimeoutsNull(t *testing.T) {
+	// ImportState uses SetAttribute (no full Set), so the timeouts value
+	// stays null with the schema's types. Guards against regressions that
+	// would break the subsequent Read.
+	r := &windowsRegistryValueResource{}
+	s := windowsRegistryValueSchemaDefinition(context.Background())
+	req := resource.ImportStateRequest{ID: `HKLM\SOFTWARE\MyApp\Version`}
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(registryValueObjectType(), nil)}}
+	r.ImportState(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState valid named: %v", rvDiagSummaries(resp.Diagnostics))
+	}
+	var m windowsRegistryValueModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if !m.Timeouts.IsNull() {
+		t.Errorf("imported timeouts should be null, got %v", m.Timeouts)
 	}
 }
