@@ -441,6 +441,41 @@ func TestTransportScriptErrorIsReported(t *testing.T) {
 	}
 }
 
+// An uncaught script error on a healthy session is deterministic: the client
+// must report it once, on the existing session, rather than tearing the
+// session down, redialling and executing the same failing script a second
+// time (issue #124).
+func TestTransportScriptErrorIsNotRetried(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey: pub,
+		stderr:        "boom",
+		status:        1,
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	_, stderr, err := c.RunPowerShell(ctx, "Get-Thing")
+	if err == nil {
+		t.Fatal("an uncaught script error must surface as an error")
+	}
+	if strings.TrimSuffix(stderr, "\n") != "boom" {
+		t.Errorf("stderr = %q, want %q", stderr, "boom")
+	}
+	if got := len(srv.Requests()); got != 1 {
+		t.Errorf("requests = %d, want 1 (a failing script must run exactly once)", got)
+	}
+	if got := srv.Connections(); got != 1 {
+		t.Errorf("connections = %d, want 1 (a script error must not trigger a redial)", got)
+	}
+}
+
 // Session reuse (#81): two calls in a row must not open a second SSH
 // connection, and must both be served by the same REPL loop.
 func TestTransportReusesSessionAcrossCalls(t *testing.T) {
