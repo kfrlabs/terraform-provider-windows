@@ -21,7 +21,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -47,11 +49,12 @@ func TestMetadata(t *testing.T) {
 }
 
 func TestSchema_HasRequiredAttributes(t *testing.T) {
-	s := windowsServiceSchemaDefinition()
+	s := windowsServiceSchemaDefinition(context.Background())
 	wantAttrs := []string{
 		"id", "name", "display_name", "description", "binary_path",
 		"start_type", "status", "current_status", "service_account",
 		"service_password", "service_password_wo", "dependencies",
+		"timeouts",
 	}
 	for _, k := range wantAttrs {
 		if _, ok := s.Attributes[k]; !ok {
@@ -130,7 +133,7 @@ func TestBuiltinAccountRe(t *testing.T) {
 // the rest are null to stay valid for the resource schema shape.
 func buildValidatorConfig(t *testing.T, account, password *string) tfsdk.Config {
 	t.Helper()
-	s := windowsServiceSchemaDefinition()
+	s := windowsServiceSchemaDefinition(context.Background())
 
 	val := func(p *string) tftypes.Value {
 		if p == nil {
@@ -152,6 +155,12 @@ func buildValidatorConfig(t *testing.T, account, password *string) tfsdk.Config 
 		"service_password":    tftypes.String,
 		"service_password_wo": tftypes.String,
 		"dependencies":        tftypes.List{ElementType: tftypes.String},
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}, map[string]tftypes.Value{
 		"id":                  tftypes.NewValue(tftypes.String, nil),
 		"name":                tftypes.NewValue(tftypes.String, "svc"),
@@ -165,6 +174,7 @@ func buildValidatorConfig(t *testing.T, account, password *string) tfsdk.Config 
 		"service_password":    val(password),
 		"service_password_wo": tftypes.NewValue(tftypes.String, nil),
 		"dependencies":        tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"timeouts":            svcNullTimeoutsValue(),
 	})
 
 	return tfsdk.Config{
@@ -503,7 +513,24 @@ func serviceObjectType() tftypes.Object {
 		"service_password":    tftypes.String,
 		"service_password_wo": tftypes.String,
 		"dependencies":        tftypes.List{ElementType: tftypes.String},
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// svcNullTimeoutsValue is the zero (absent) value for the `timeouts {}`
+// nested attribute, matching the shape declared in serviceObjectType.
+func svcNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
 }
 
 // svcObj builds a tftypes.Value for the service model, with nil entries
@@ -522,6 +549,7 @@ func svcObj(overrides map[string]tftypes.Value) tftypes.Value {
 		"service_password":    tftypes.NewValue(tftypes.String, nil),
 		"service_password_wo": tftypes.NewValue(tftypes.String, nil),
 		"dependencies":        tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"timeouts":            svcNullTimeoutsValue(),
 	}
 	for k, v := range overrides {
 		base[k] = v
@@ -545,7 +573,7 @@ func TestCreate_Handler_HappyPath(t *testing.T) {
 	fake := &fakeSvcClient{createOut: stateOK()}
 	r := &windowsServiceResource{svc: fake}
 
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: svcObj(map[string]tftypes.Value{
@@ -571,7 +599,7 @@ func TestCreate_Handler_ClientError(t *testing.T) {
 	fake := &fakeSvcClient{createErr: winclient.NewServiceError(
 		winclient.ServiceErrorAlreadyExists, "service 'svc' exists", nil, nil)}
 	r := &windowsServiceResource{svc: fake}
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: svcObj(map[string]tftypes.Value{
@@ -593,7 +621,7 @@ func TestRead_Handler_HappyPath(t *testing.T) {
 	fake := &fakeSvcClient{readOut: stateOK()}
 	r := &windowsServiceResource{svc: fake}
 
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	priorState := tfsdk.State{
 		Schema: schemaDef,
 		Raw: svcObj(map[string]tftypes.Value{
@@ -617,7 +645,7 @@ func TestRead_Handler_NotFound_RemovesResource(t *testing.T) {
 	fake := &fakeSvcClient{readOut: nil, readErr: nil}
 	r := &windowsServiceResource{svc: fake}
 
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	priorState := tfsdk.State{
 		Schema: schemaDef,
 		Raw: svcObj(map[string]tftypes.Value{
@@ -642,7 +670,7 @@ func TestRead_Handler_ClientError(t *testing.T) {
 	fake := &fakeSvcClient{readErr: winclient.NewServiceError(
 		winclient.ServiceErrorPermission, "denied", nil, nil)}
 	r := &windowsServiceResource{svc: fake}
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	priorState := tfsdk.State{
 		Schema: schemaDef,
 		Raw: svcObj(map[string]tftypes.Value{
@@ -663,7 +691,7 @@ func TestUpdate_Handler_HappyPath(t *testing.T) {
 	fake := &fakeSvcClient{updateOut: stateOK()}
 	r := &windowsServiceResource{svc: fake}
 
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: svcObj(map[string]tftypes.Value{
@@ -700,7 +728,7 @@ func TestDelete_Handler_HappyPath(t *testing.T) {
 	fake := &fakeSvcClient{}
 	r := &windowsServiceResource{svc: fake}
 
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	priorState := tfsdk.State{
 		Schema: schemaDef,
 		Raw: svcObj(map[string]tftypes.Value{
@@ -725,7 +753,7 @@ func TestDelete_Handler_ClientError(t *testing.T) {
 		winclient.ServiceErrorTimeout, "did not stop in time", nil, nil)}
 	r := &windowsServiceResource{svc: fake}
 
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	priorState := tfsdk.State{
 		Schema: schemaDef,
 		Raw: svcObj(map[string]tftypes.Value{
@@ -745,7 +773,7 @@ func TestDelete_Handler_ClientError(t *testing.T) {
 // TestImportState covers the ImportState handler: id + name must be set.
 func TestImportState_Handler(t *testing.T) {
 	r := &windowsServiceResource{}
-	schemaDef := windowsServiceSchemaDefinition()
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: svcObj(nil)},
 	}
@@ -762,5 +790,121 @@ func TestImportState_Handler(t *testing.T) {
 	}
 	if m.ID.ValueString() != "svc" || m.Name.ValueString() != "svc" {
 		t.Errorf("import state = id=%q name=%q", m.ID.ValueString(), m.Name.ValueString())
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Timeouts (issue #109): a stalled remote command must surface a bounded
+// diagnostic instead of blocking Terraform indefinitely.
+// -----------------------------------------------------------------------------
+
+func TestSchema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsServiceSchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #109: CRUD must be time-bounded)")
+	}
+}
+
+func TestModelFromState_PreservesTimeouts(t *testing.T) {
+	s := &winclient.ServiceState{Name: "svc", Dependencies: []string{}}
+	prior := windowsServiceModel{
+		Timeouts: mustTimeoutsValue(t, map[string]string{"create": "5m"}),
+	}
+	got := modelFromState(s, prior)
+	createTimeout, diags := got.Timeouts.Create(context.Background(), serviceDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if createTimeout != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through modelFromState: create = %v, want 5m", createTimeout)
+	}
+}
+
+// hangSvcClient simulates the stalled transport from issue #109: Create blocks
+// until the passed context is done, then returns the context error — mirroring
+// a PowerShell/SSH session that never answers.
+type hangSvcClient struct {
+	fakeSvcClient
+}
+
+func (f *hangSvcClient) Create(ctx context.Context, in winclient.ServiceInput) (*winclient.ServiceState, error) {
+	f.createIn = in
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// mustTimeoutsValue builds a timeouts.Value carrying the given per-operation
+// durations by decoding through the resource schema, the same path the
+// framework takes for real plans.
+func mustTimeoutsValue(t *testing.T, durations map[string]string) timeouts.Value {
+	t.Helper()
+	ctx := context.Background()
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	for op, d := range durations {
+		vals[op] = tftypes.NewValue(tftypes.String, d)
+	}
+	raw := tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, vals)
+	schemaDef := windowsServiceSchemaDefinition(ctx)
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path": tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"timeouts":    raw,
+		}),
+	}
+	var m windowsServiceModel
+	if diags := plan.Get(ctx, &m); diags.HasError() {
+		t.Fatalf("plan.Get timeouts: %v", diags)
+	}
+	return m.Timeouts
+}
+
+func TestCreate_Handler_StalledTransportIsBounded(t *testing.T) {
+	fake := &hangSvcClient{}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path": tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+				"create": tftypes.String,
+				"read":   tftypes.String,
+				"update": tftypes.String,
+				"delete": tftypes.String,
+			}}, map[string]tftypes.Value{
+				"create": tftypes.NewValue(tftypes.String, "200ms"),
+				"read":   tftypes.NewValue(tftypes.String, nil),
+				"update": tftypes.NewValue(tftypes.String, nil),
+				"delete": tftypes.NewValue(tftypes.String, nil),
+			}),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: svcObj(nil)},
+	}
+
+	start := time.Now()
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the create timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Create blocked for %v with a 200ms timeout; the stalled-transport hang from issue #109 is back", elapsed)
 	}
 }

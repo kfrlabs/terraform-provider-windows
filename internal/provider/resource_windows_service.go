@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -52,6 +54,13 @@ type windowsServiceResource struct {
 // receive a service_password (EC-11). Case-insensitive.
 var builtinAccountRe = regexp.MustCompile(`(?i)^(LocalSystem$|NT AUTHORITY\\)`)
 
+// serviceDefaultTimeout is the fallback per-operation timeout when the user
+// does not provide a `timeouts {}` block. Service operations (New-Service,
+// sc.exe config, Start/Stop-Service with WaitForStatus) are normally fast,
+// but a stalled PowerShell/SSH session must never block Terraform forever
+// (issue #109): every CRUD handler bounds its work with this default.
+const serviceDefaultTimeout = 10 * time.Minute
+
 // windowsServiceModel is the Terraform state/plan model for windows_service.
 //
 // service_password is included (Sensitive: true) but is never populated from a
@@ -74,8 +83,9 @@ type windowsServiceModel struct {
 	// req.Config during Create/Update (the plan value is null at apply);
 	// the framework drops it on resp.State.Set(). Mutually exclusive
 	// with ServicePassword.
-	ServicePasswordWO types.String `tfsdk:"service_password_wo"`
-	Dependencies      types.List   `tfsdk:"dependencies"`
+	ServicePasswordWO types.String   `tfsdk:"service_password_wo"`
+	Dependencies      types.List     `tfsdk:"dependencies"`
+	Timeouts          timeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the resource type name.
@@ -84,13 +94,14 @@ func (r *windowsServiceResource) Metadata(_ context.Context, req resource.Metada
 }
 
 // Schema returns the complete TPF schema for the windows_service resource.
-func (r *windowsServiceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = windowsServiceSchemaDefinition()
+func (r *windowsServiceResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = windowsServiceSchemaDefinition(ctx)
 }
 
 // windowsServiceSchemaDefinition returns the complete TPF schema for the
-// windows_service resource (10 attributes, validators, plan modifiers, defaults).
-func windowsServiceSchemaDefinition() schema.Schema {
+// windows_service resource (resource attributes, validators, plan modifiers,
+// defaults and the per-operation `timeouts` block).
+func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages the full lifecycle of a Windows service on a remote host " +
 			"via SSH and PowerShell. Supports create, update, in-place reconfiguration, " +
@@ -187,6 +198,16 @@ func windowsServiceSchemaDefinition() schema.Schema {
 				Computed:    true,
 				Description: "Ordered list of short service names this service depends on.",
 			},
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to serviceDefaultTimeout
+			// so a stalled remote command surfaces a timeout diagnostic
+			// instead of blocking Terraform indefinitely (issue #109).
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create: true,
+				Read:   true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -254,6 +275,14 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, serviceDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	tflog.Debug(ctx, "windows_service Create", map[string]interface{}{
 		"name":            plan.Name.ValueString(),
 		"start_type":      plan.StartType.ValueString(),
@@ -298,6 +327,14 @@ func (r *windowsServiceResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
+	readTimeout, diags := state.Timeouts.Read(ctx, serviceDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	name := state.Name.ValueString()
 	if name == "" {
 		name = state.ID.ValueString()
@@ -333,6 +370,14 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	updateTimeout, diags := plan.Timeouts.Update(ctx, serviceDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 
 	var deps []string
 	if !plan.Dependencies.IsNull() && !plan.Dependencies.IsUnknown() {
@@ -388,6 +433,14 @@ func (r *windowsServiceResource) Delete(ctx context.Context, req resource.Delete
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, serviceDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	name := state.Name.ValueString()
 	if name == "" {
 		name = state.ID.ValueString()
@@ -459,6 +512,9 @@ func modelFromState(s *winclient.ServiceState, prior windowsServiceModel) window
 	}
 	depList, _ := types.ListValue(types.StringType, depVals)
 	out.Dependencies = depList
+	// Preserve the user-configured per-operation timeouts across the
+	// projection (Set overwrites the full state object).
+	out.Timeouts = prior.Timeouts
 	return out
 }
 
