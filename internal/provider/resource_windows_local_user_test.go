@@ -126,7 +126,41 @@ func localUserObjectType() tftypes.Object {
 		"last_logon":                   tftypes.String,
 		"password_last_set":            tftypes.String,
 		"principal_source":             tftypes.String,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// luTimeoutsValue builds a `timeouts {}` value carrying a duration for one
+// named operation (create/read/update/delete), the rest null.
+func luTimeoutsValue(op, d string) tftypes.Value {
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	vals[op] = tftypes.NewValue(tftypes.String, d)
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, vals)
+}
+
+// luNullTimeoutsValue is the absent value for the `timeouts {}` block.
+func luNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
 }
 
 // luObj builds a complete tftypes.Value with sensible defaults and optional overrides.
@@ -148,6 +182,7 @@ func luObj(overrides map[string]tftypes.Value) tftypes.Value {
 		"last_logon":                   tftypes.NewValue(tftypes.String, nil),
 		"password_last_set":            tftypes.NewValue(tftypes.String, nil),
 		"principal_source":             tftypes.NewValue(tftypes.String, nil),
+		"timeouts":                     luNullTimeoutsValue(),
 	}
 	for k, v := range overrides {
 		base[k] = v
@@ -209,12 +244,13 @@ func TestLocalUserMetadata(t *testing.T) {
 }
 
 func TestLocalUserSchema_HasRequiredAttributes(t *testing.T) {
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	want := []string{
 		"id", "sid", "name", "full_name", "description", "password",
 		"password_wo", "password_wo_version", "enabled", "password_never_expires",
 		"user_may_not_change_password", "account_never_expires",
 		"account_expires", "last_logon", "password_last_set", "principal_source",
+		"timeouts",
 	}
 	for _, k := range want {
 		if _, ok := s.Attributes[k]; !ok {
@@ -224,7 +260,7 @@ func TestLocalUserSchema_HasRequiredAttributes(t *testing.T) {
 }
 
 func TestLocalUserSchema_PasswordIsSensitive(t *testing.T) {
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	pwAttr, ok := s.Attributes["password"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("password attr is not StringAttribute")
@@ -239,7 +275,7 @@ func TestLocalUserSchema_PasswordIsSensitive(t *testing.T) {
 // the recommended successor; the deprecation message is the only surface
 // where Terraform CLI tells operators to migrate.
 func TestLocalUserSchema_PasswordIsDeprecated(t *testing.T) {
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	pwAttr, ok := s.Attributes["password"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("password attr is not StringAttribute")
@@ -257,7 +293,7 @@ func TestLocalUserSchema_PasswordIsDeprecated(t *testing.T) {
 // Sensitive attribute is dropped from state by resp.State.Set; if either
 // flag regresses, we silently leak the plaintext into terraform.tfstate.
 func TestLocalUserSchema_PasswordWoIsWriteOnly(t *testing.T) {
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	pwAttr, ok := s.Attributes["password_wo"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("password_wo attr is not StringAttribute")
@@ -304,7 +340,7 @@ func TestLocalUserConfigValidators_ConflictsPasswordAndPasswordWo(t *testing.T) 
 }
 
 func TestLocalUserSchema_NameIsRequired(t *testing.T) {
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	nameAttr, ok := s.Attributes["name"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("name attr is not StringAttribute")
@@ -322,7 +358,7 @@ func TestLocalUserSchema_NameIsRequired(t *testing.T) {
 }
 
 func TestLocalUserSchema_SIDIsComputed(t *testing.T) {
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	sidAttr, ok := s.Attributes["sid"].(rschema.StringAttribute)
 	if !ok {
 		t.Fatalf("sid attr is not StringAttribute")
@@ -499,7 +535,7 @@ func TestAccountExpiresConflictValidator_Description(t *testing.T) {
 
 func TestAccountExpiresConflictValidator_NullValue_Skipped(t *testing.T) {
 	v := accountExpiresConflictValidator{}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	rawCfg := luObj(nil)
 	cfg := tfsdk.Config{Schema: s, Raw: rawCfg}
 	req := validator.StringRequest{
@@ -516,7 +552,7 @@ func TestAccountExpiresConflictValidator_NullValue_Skipped(t *testing.T) {
 
 func TestAccountExpiresConflictValidator_NeverExpiresTrue_WithExpires_Fails(t *testing.T) {
 	v := accountExpiresConflictValidator{}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	rawCfg := luObj(map[string]tftypes.Value{
 		"account_never_expires": tftypes.NewValue(tftypes.Bool, true),
 		"account_expires":       tftypes.NewValue(tftypes.String, "2027-12-31T23:59:59Z"),
@@ -536,7 +572,7 @@ func TestAccountExpiresConflictValidator_NeverExpiresTrue_WithExpires_Fails(t *t
 
 func TestAccountExpiresConflictValidator_NeverExpiresFalse_WithExpires_OK(t *testing.T) {
 	v := accountExpiresConflictValidator{}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 	rawCfg := luObj(map[string]tftypes.Value{
 		"account_never_expires": tftypes.NewValue(tftypes.Bool, false),
 		"account_expires":       tftypes.NewValue(tftypes.String, "2027-12-31T23:59:59Z"),
@@ -776,7 +812,7 @@ func TestLocalUserCreate_HappyPath(t *testing.T) {
 		readOut:   okUserState("alice", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawPlan := luObj(nil)
 	plan := tfsdk.Plan{Schema: s, Raw: rawPlan}
@@ -795,7 +831,7 @@ func TestLocalUserCreate_EC1_AlreadyExists(t *testing.T) {
 			"user already exists", nil, nil),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawPlan := luObj(nil)
 	plan := tfsdk.Plan{Schema: s, Raw: rawPlan}
@@ -811,7 +847,7 @@ func TestLocalUserCreate_EC1_AlreadyExists(t *testing.T) {
 func TestLocalUserCreate_EC13_PastAccountExpires(t *testing.T) {
 	fake := &fakeLocalUserClient{}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	past := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
 	rawPlan := luObj(map[string]tftypes.Value{
@@ -831,7 +867,7 @@ func TestLocalUserCreate_EC13_PastAccountExpires(t *testing.T) {
 func TestLocalUserCreate_NoPassword_Error(t *testing.T) {
 	fake := &fakeLocalUserClient{}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawPlan := luObj(map[string]tftypes.Value{
 		"password": tftypes.NewValue(tftypes.String, nil), // null password
@@ -853,7 +889,7 @@ func TestLocalUserCreate_NoPassword_Error(t *testing.T) {
 func TestLocalUserRead_EC3_UserDisappeared(t *testing.T) {
 	fake := &fakeLocalUserClient{readOut: nil, readErr: nil}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawState := luObj(map[string]tftypes.Value{
 		"sid": tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -878,7 +914,7 @@ func TestLocalUserRead_EC4_CaseFoldName(t *testing.T) {
 		readOut: okUserState("ALICE", "S-1-5-21-111-222-333-1001"), // Windows uppercase
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawState := luObj(map[string]tftypes.Value{
 		"sid":  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -908,7 +944,7 @@ func TestLocalUserRead_Error(t *testing.T) {
 		readErr: winclient.NewLocalUserError(winclient.LocalUserErrorPermission, "access denied", nil, nil),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawState := luObj(map[string]tftypes.Value{
 		"sid": tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -934,7 +970,7 @@ func TestLocalUserUpdate_Rename(t *testing.T) {
 		readOut:   okUserState("alice-new", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawPlan := luObj(map[string]tftypes.Value{
 		"sid":  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -967,7 +1003,7 @@ func TestLocalUserUpdate_PasswordRotation(t *testing.T) {
 		readOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	// wo_version changed from 1 to 2
 	rawPlan := luObj(map[string]tftypes.Value{
@@ -1002,7 +1038,7 @@ func TestLocalUserUpdate_Enable(t *testing.T) {
 		readOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawPlan := luObj(map[string]tftypes.Value{
 		"sid":     tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -1036,7 +1072,7 @@ func TestLocalUserUpdate_Disable(t *testing.T) {
 		readOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawPlan := luObj(map[string]tftypes.Value{
 		"sid":     tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -1071,7 +1107,7 @@ func TestLocalUserUpdate_Disable(t *testing.T) {
 
 func TestLocalUserModifyPlan_RotationMarksPasswordLastSetUnknown(t *testing.T) {
 	r := &windowsLocalUserResource{}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawState := luObj(map[string]tftypes.Value{
 		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -1109,7 +1145,7 @@ func TestLocalUserModifyPlan_RotationMarksPasswordLastSetUnknown(t *testing.T) {
 
 func TestLocalUserModifyPlan_NoRotationPreservesPasswordLastSet(t *testing.T) {
 	r := &windowsLocalUserResource{}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawState := luObj(map[string]tftypes.Value{
 		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -1148,7 +1184,7 @@ func TestLocalUserModifyPlan_NoRotationPreservesPasswordLastSet(t *testing.T) {
 
 func TestLocalUserModifyPlan_LegacyPasswordChangeMarksPasswordLastSetUnknown(t *testing.T) {
 	r := &windowsLocalUserResource{}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawState := luObj(map[string]tftypes.Value{
 		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -1191,7 +1227,7 @@ func TestLocalUserModifyPlan_LegacyPasswordChangeMarksPasswordLastSetUnknown(t *
 func TestLocalUserDelete_HappyPath(t *testing.T) {
 	fake := &fakeLocalUserClient{deleteErr: nil}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawState := luObj(map[string]tftypes.Value{
 		"sid": tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
@@ -1213,7 +1249,7 @@ func TestLocalUserDelete_EC2_BuiltinAccount(t *testing.T) {
 			"cannot destroy built-in account", nil, map[string]string{"rid": "500"}),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	rawState := luObj(map[string]tftypes.Value{
 		"sid": tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-500"),
@@ -1238,7 +1274,7 @@ func TestLocalUserImportState_BySID(t *testing.T) {
 		importBySIDOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	req := resource.ImportStateRequest{ID: "S-1-5-21-111-222-333-1001"}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s}}
@@ -1264,7 +1300,7 @@ func TestLocalUserImportState_ByName(t *testing.T) {
 		importByNameOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	// "alice" does not start with "S-" → ImportByName
 	req := resource.ImportStateRequest{ID: "alice"}
@@ -1288,7 +1324,7 @@ func TestLocalUserImportState_BySID_NotFound(t *testing.T) {
 			"SID not found", nil, nil),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	req := resource.ImportStateRequest{ID: "S-1-5-21-999-999-999-9999"}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s}}
@@ -1305,7 +1341,7 @@ func TestLocalUserImportState_ByName_NotFound(t *testing.T) {
 			"user not found", nil, nil),
 	}
 	r := &windowsLocalUserResource{user: fake}
-	s := windowsLocalUserSchemaDefinition()
+	s := windowsLocalUserSchemaDefinition(context.Background())
 
 	req := resource.ImportStateRequest{ID: "ghost-user"}
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s}}
@@ -1313,5 +1349,117 @@ func TestLocalUserImportState_ByName_NotFound(t *testing.T) {
 	r.ImportState(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error for name not found")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (issue #133): a stalled account operation must surface a bounded
+// diagnostic instead of blocking Terraform indefinitely.
+// ---------------------------------------------------------------------------
+
+func TestLocalUserSchema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsLocalUserSchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #133: CRUD must be time-bounded)")
+	}
+}
+
+// hangLocalUserClient simulates the stalled transport from issue #133:
+// Delete blocks until the passed context is done, then returns the context
+// error — mirroring an account operation that never answers.
+type hangLocalUserClient struct {
+	fakeLocalUserClient
+}
+
+func (f *hangLocalUserClient) Delete(ctx context.Context, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestLocalUserDelete_StalledTransportIsBounded(t *testing.T) {
+	r := &windowsLocalUserResource{user: &hangLocalUserClient{}}
+
+	schemaDef := windowsLocalUserSchemaDefinition(context.Background())
+	prior := tfsdk.State{
+		Schema: schemaDef,
+		Raw: luObj(map[string]tftypes.Value{
+			"id":       tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+			"sid":      tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+			"name":     tftypes.NewValue(tftypes.String, "alice"),
+			"password": tftypes.NewValue(tftypes.String, "P@ssw0rd!"),
+			"timeouts": luTimeoutsValue("delete", "200ms"),
+		}),
+	}
+	resp := &resource.DeleteResponse{State: prior}
+
+	start := time.Now()
+	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the delete timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Delete blocked for %v with a 200ms timeout; the stalled-transport hang from issue #133 is back", elapsed)
+	}
+}
+
+func TestLocalUserCreate_PreservesTimeouts(t *testing.T) {
+	fake := &fakeLocalUserClient{
+		createOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+	}
+	r := &windowsLocalUserResource{user: fake}
+	schemaDef := windowsLocalUserSchemaDefinition(context.Background())
+
+	rawPlan := luObj(map[string]tftypes.Value{
+		"timeouts": luTimeoutsValue("create", "5m"),
+	})
+	plan := tfsdk.Plan{Schema: schemaDef, Raw: rawPlan}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaDef}}
+
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create() unexpected errors: %v", luDiagDetails(resp.Diagnostics))
+	}
+	var m windowsLocalUserModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	got, diags := m.Timeouts.Create(context.Background(), localUserDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through Create state projection: create = %v, want 5m", got)
+	}
+}
+
+func TestLocalUserImportState_SetsTypedNullTimeouts(t *testing.T) {
+	// Exercises the real ImportState handler (SID path) through a fake
+	// client. The handler full-Sets a model with no prior timeouts, so a
+	// zero timeouts.Value would be rejected by the framework — this fails
+	// with error diagnostics unless luNullTimeouts() carries the schema's
+	// types.
+	fake := &fakeLocalUserClient{
+		importBySIDOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+	}
+	r := &windowsLocalUserResource{user: fake}
+	schemaDef := windowsLocalUserSchemaDefinition(context.Background())
+
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: schemaDef, Raw: luObj(nil)}}
+	r.ImportState(context.Background(),
+		resource.ImportStateRequest{ID: "S-1-5-21-111-222-333-1001"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: unexpected diags: %v", luDiagDetails(resp.Diagnostics))
+	}
+	var m windowsLocalUserModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if m.SID.ValueString() != "S-1-5-21-111-222-333-1001" {
+		t.Errorf("imported sid = %q", m.SID.ValueString())
+	}
+	if !m.Timeouts.IsNull() {
+		t.Errorf("imported timeouts should be null, got %v", m.Timeouts)
 	}
 }

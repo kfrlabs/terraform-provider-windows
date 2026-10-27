@@ -47,6 +47,17 @@ provider "windows" {
 resource "windows_local_user" "svc_backup" {
   name     = "svc-backup"
   password = var.svc_backup_password
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled account operation
+  # (password set, profile handling) surfaces a timeout diagnostic instead
+  # of blocking Terraform indefinitely.
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 output "svc_backup_sid" {
@@ -145,6 +156,7 @@ Because the value is not in state, Terraform cannot detect changes to the passwo
 
 Mutually exclusive with `password`. After `terraform import`, this attribute is `null`; set it together with a fresh `password_wo_version` before the next apply (EC-11).
 - `password_wo_version` (Number) Monotonically increasing version counter for password rotation (EC-6). When this value changes between plan and apply, the provider re-applies the password via Set-LocalUser -Password regardless of whether the password value changed. Conventionally starts at 1. Must be a positive integer if set.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `user_may_not_change_password` (Boolean) When true, the user is prevented from changing their own password. Maps to -UserMayNotChangePassword (double-negative Windows semantics: true = cannot change, false = can change).
 
 ### Read-Only
@@ -154,6 +166,16 @@ Mutually exclusive with `password`. After `terraform import`, this attribute is 
 - `password_last_set` (String) RFC3339 timestamp of the last password change, or empty string if not set. Refreshed after a provider-initiated password rotation. Does NOT drive autonomous Update cycles (ADR-LU-4).
 - `principal_source` (String) Origin of the account as reported by Windows ("Local" for local accounts). Exposed for consistency with windows_local_group_member.
 - `sid` (String) Security Identifier of the user account (e.g. "S-1-5-21-...-1001"). Assigned by Windows at creation time and stable across renames. Used as the Terraform resource ID (ADR-LU-1). Read-only.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 
