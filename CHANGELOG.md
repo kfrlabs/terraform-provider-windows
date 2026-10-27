@@ -18,10 +18,6 @@ All notable changes to this project will be documented in this file.
   a healthy session are reported once, on the existing session, and only
   genuine transport failures trigger the re-establish-and-retry path
   (#124, #125).
-- `windows_directory` Create now passes user paths with `-LiteralPath`
-  instead of wildcard-expanding `-Path`: directory names containing `[` or
-  `]` (legal in Windows paths and accepted by the schema regex) are created
-  literally instead of failing or matching unintended paths (#146).
 
 ### Added
 

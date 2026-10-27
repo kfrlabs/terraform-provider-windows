@@ -115,22 +115,17 @@ function New-Directory([string]$P, [bool]$CreateParents, [string[]]$Wanted) {
     return
   }
   if (-not (Test-Path -LiteralPath $P -PathType Container)) {
-    # Split-Path without -Resolve is pure string surgery (no filesystem
-    # access, no glob resolution), so -Path is safe here; keep the
-    # wildcard-expanding -Path away from cmdlets that touch the disk
-    # (New-Item below intentionally uses -LiteralPath). Note: -Parent lives
-    # in Split-Path's -Path parameter set, so -LiteralPath cannot be used
-    # here — it throws an uncaught parameter-binding error.
     $parent = Split-Path -Path $P -Parent
     if (-not $CreateParents -and $parent -and -not (Test-Path -LiteralPath $parent -PathType Container)) {
       Emit-Err 'invalid_input' ("Parent directory '" + $parent + "' does not exist and create_parent_directories is false.") @{ path = $P; parent = $parent }
       return
     }
     try {
-      # -LiteralPath (not -Path): $P may legitimately contain wildcard
-      # characters such as [ and ] (allowed by the schema regex), which
-      # -Path would glob-expand instead of taking literally.
-      New-Item -ItemType Directory -LiteralPath $P -Force:$CreateParents -ErrorAction Stop | Out-Null
+      # New-Item -Path already behaves literally: per the official cmdlet
+      # documentation it "works like the LiteralPath parameter of other
+      # cmdlets" and "wildcard characters are not interpreted" (New-Item
+      # has no -LiteralPath parameter at all). Brackets in $P are safe.
+      New-Item -ItemType Directory -Path $P -Force:$CreateParents -ErrorAction Stop | Out-Null
     } catch {
       Emit-Err (Classify-DirectoryError $_) $_.Exception.Message @{ path = $P }
       return
