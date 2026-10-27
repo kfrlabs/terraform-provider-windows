@@ -56,7 +56,7 @@ resource "windows_local_group_member" "admin_jdoe" {
   # every remote operation explicitly: without this block each operation
   # defaults to 10 minutes, and a stalled DC lookup surfaces a timeout
   # diagnostic instead of blocking Terraform indefinitely.
-  timeouts {
+  timeouts = {
     create = "20m"
     read   = "5m"
     update = "20m"
