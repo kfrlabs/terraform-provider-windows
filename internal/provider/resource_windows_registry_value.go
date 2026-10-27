@@ -14,7 +14,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -50,17 +52,26 @@ type windowsRegistryValueResource struct {
 	client winclient.RegistryValueClient
 }
 
+// registryValueDefaultTimeout is the fallback per-operation timeout when the
+// user does not provide a `timeouts {}` block. Registry operations (key
+// creation, binary/multi-string coercion, forced removal) issue blocking
+// Win32 calls that can stall on an unhealthy host; every CRUD handler bounds
+// its work with this default so a stall surfaces a timeout diagnostic
+// instead of blocking Terraform indefinitely (issue #139).
+const registryValueDefaultTimeout = 10 * time.Minute
+
 // windowsRegistryValueModel is the Terraform state/plan model for windows_registry_value.
 type windowsRegistryValueModel struct {
-	ID                         types.String `tfsdk:"id"`
-	Hive                       types.String `tfsdk:"hive"`
-	Path                       types.String `tfsdk:"path"`
-	Name                       types.String `tfsdk:"name"`
-	Type                       types.String `tfsdk:"type"`
-	ValueString                types.String `tfsdk:"value_string"`
-	ValueStrings               types.List   `tfsdk:"value_strings"`
-	ValueBinary                types.String `tfsdk:"value_binary"`
-	ExpandEnvironmentVariables types.Bool   `tfsdk:"expand_environment_variables"`
+	ID                         types.String   `tfsdk:"id"`
+	Hive                       types.String   `tfsdk:"hive"`
+	Path                       types.String   `tfsdk:"path"`
+	Name                       types.String   `tfsdk:"name"`
+	Type                       types.String   `tfsdk:"type"`
+	ValueString                types.String   `tfsdk:"value_string"`
+	ValueStrings               types.List     `tfsdk:"value_strings"`
+	ValueBinary                types.String   `tfsdk:"value_binary"`
+	ExpandEnvironmentVariables types.Bool     `tfsdk:"expand_environment_variables"`
+	Timeouts                   timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -73,8 +84,8 @@ func (r *windowsRegistryValueResource) Metadata(_ context.Context, req resource.
 }
 
 // Schema returns the full TPF schema for windows_registry_value.
-func (r *windowsRegistryValueResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = windowsRegistryValueSchemaDefinition()
+func (r *windowsRegistryValueResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = windowsRegistryValueSchemaDefinition(ctx)
 }
 
 // ConfigValidators returns resource-level cross-attribute validators (CV-1..CV-7).
@@ -98,7 +109,7 @@ var knownHiveAbbreviations = []string{
 }
 
 // windowsRegistryValueSchemaDefinition returns the schema.Schema for windows_registry_value.
-func windowsRegistryValueSchemaDefinition() schema.Schema {
+func windowsRegistryValueSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a single named value (or the unnamed Default value) inside a Windows " +
 			"registry key on a remote host via SSH + PowerShell.",
@@ -191,6 +202,13 @@ func windowsRegistryValueSchemaDefinition() schema.Schema {
 				Default:     booldefault.StaticBool(false),
 				Description: "When true, Read returns expanded REG_EXPAND_SZ values. Only valid with type=REG_EXPAND_SZ (CV-7).",
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to
+			// registryValueDefaultTimeout so a stalled registry operation
+			// surfaces a timeout diagnostic instead of blocking Terraform
+			// indefinitely (issue #139).
+			"timeouts": timeouts.Attributes(ctx, rvTimeoutsOpts),
 		},
 	}
 }
@@ -461,6 +479,14 @@ func (r *windowsRegistryValueResource) Create(ctx context.Context, req resource.
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, registryValueDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	tflog.Debug(ctx, "windows_registry_value Create", map[string]interface{}{
 		"hive": plan.Hive.ValueString(),
 		"path": plan.Path.ValueString(),
@@ -500,6 +526,14 @@ func (r *windowsRegistryValueResource) Read(ctx context.Context, req resource.Re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := state.Timeouts.Read(ctx, registryValueDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	tflog.Debug(ctx, "windows_registry_value Read", map[string]interface{}{
 		"hive": state.Hive.ValueString(),
@@ -549,6 +583,14 @@ func (r *windowsRegistryValueResource) Update(ctx context.Context, req resource.
 	}
 	plan.ID = state.ID
 
+	updateTimeout, diags := plan.Timeouts.Update(ctx, registryValueDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	tflog.Debug(ctx, "windows_registry_value Update", map[string]interface{}{
 		"hive": plan.Hive.ValueString(),
 		"path": plan.Path.ValueString(),
@@ -588,6 +630,14 @@ func (r *windowsRegistryValueResource) Delete(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, registryValueDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	tflog.Debug(ctx, "windows_registry_value Delete", map[string]interface{}{
 		"hive": state.Hive.ValueString(),
@@ -656,6 +706,16 @@ func (r *windowsRegistryValueResource) ImportState(ctx context.Context, req reso
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// rvTimeoutsOpts declares which per-operation timeouts the resource exposes.
+// Create and Read/Update/Delete handlers resolve their operation timeout
+// from the plan/state value and run under context.WithTimeout.
+var rvTimeoutsOpts = timeouts.Opts{
+	Create: true,
+	Read:   true,
+	Update: true,
+	Delete: true,
+}
 
 // rvID builds the resource ID: HIVE\PATH\NAME (trailing \ when name="").
 func rvID(hive, regPath, name string) string {

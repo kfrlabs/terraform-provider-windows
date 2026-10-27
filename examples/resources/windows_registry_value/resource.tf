@@ -22,6 +22,17 @@ resource "windows_registry_value" "reg_sz" {
   name         = "Version"
   type         = "REG_SZ"
   value_string = "2.5.1"
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled registry operation
+  # surfaces a timeout diagnostic instead of blocking Terraform
+  # indefinitely.
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # ---------------------------------------------------------------------------
