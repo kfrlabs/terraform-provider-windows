@@ -15,6 +15,15 @@ resource "windows_firewall_rule" "allow_inbound" {
   protocol     = "TCP"
   local_port   = ["8443"]
   profile      = ["Any"]
+
+  # CLI-level coverage for the timeouts block: parsed by validate and the
+  # mocked suite on every PR (offline CI job), honoured on --apply runs.
+  # Written with `=` (not a block): like every other SingleNestedAttribute
+  # in this provider, `timeouts` only accepts the assignment form.
+  timeouts = {
+    create = "5m"
+    delete = "5m"
+  }
 }
 
 resource "windows_firewall_rule" "block_egress" {

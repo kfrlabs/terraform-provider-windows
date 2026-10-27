@@ -60,4 +60,14 @@ resource "windows_service" "fixture" {
   binary_path  = "C:\\Windows\\System32\\cmd.exe"
   start_type   = "Manual"
   status       = "Stopped"
+
+  # CLI-level coverage for the timeouts block: parsed by validate and the
+  # mocked suite on every PR (offline CI job), honoured on --apply runs. A
+  # stalled create here surfaces a bounded diagnostic instead of hanging the
+  # run (see #109). Written with `=` (not a block): like every other
+  # SingleNestedAttribute in this provider, `timeouts` only accepts the
+  # assignment form.
+  timeouts = {
+    create = "20m"
+  }
 }
