@@ -23,6 +23,25 @@ resource "windows_service" "example" {
   status       = "Running"
 }
 
+# Slow or heavily loaded host: bound every remote operation explicitly.
+# Without this block each operation defaults to 10 minutes; a stalled
+# PowerShell/SSH session then surfaces a timeout diagnostic instead of
+# blocking Terraform indefinitely.
+resource "windows_service" "slow_host" {
+  name         = "slow-svc"
+  display_name = "Slow Host Service"
+  binary_path  = "C:\\Program Files\\Example\\example.exe --run"
+  start_type   = "Automatic"
+  status       = "Running"
+
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
+}
+
 # Advanced example: service running under a domain account with dependencies.
 resource "windows_service" "app" {
   name             = "myapp"

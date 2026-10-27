@@ -38,6 +38,25 @@ resource "windows_service" "example" {
   status       = "Running"
 }
 
+# Slow or heavily loaded host: bound every remote operation explicitly.
+# Without this block each operation defaults to 10 minutes; a stalled
+# PowerShell/SSH session then surfaces a timeout diagnostic instead of
+# blocking Terraform indefinitely.
+resource "windows_service" "slow_host" {
+  name         = "slow-svc"
+  display_name = "Slow Host Service"
+  binary_path  = "C:\\Program Files\\Example\\example.exe --run"
+  start_type   = "Automatic"
+  status       = "Running"
+
+  timeouts {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
+}
+
 # Advanced example: service running under a domain account with dependencies.
 resource "windows_service" "app" {
   name             = "myapp"
@@ -72,11 +91,22 @@ resource "windows_service" "app" {
 Mutually exclusive with `service_password`. Because the WriteOnly value is re-read from configuration on every plan, no separate version counter is required for rotation: change the value and re-apply.
 - `start_type` (String) Service start mode. One of: Automatic, AutomaticDelayedStart, Manual, Disabled.
 - `status` (String) Desired runtime state: Running, Stopped, or Paused. Null = observe-only.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
 - `current_status` (String) Observed runtime state from the last Read (Running, Stopped, Paused).
 - `id` (String) Resource identifier, equal to the Windows short service name.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 
