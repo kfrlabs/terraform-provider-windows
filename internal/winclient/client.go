@@ -287,11 +287,16 @@ func (c *Client) runOneShot(ctx context.Context, script, secret string) (string,
 
 // isSessionBroken reports whether err indicates the persistent session
 // itself is unusable (closed pipe, dropped connection, protocol framing
-// lost) as opposed to the script it just ran having failed on the remote
-// side, which readReplResponse already turns into a normal (nil-error)
-// result carrying status information in stdout/stderr.
+// lost) as opposed to the script it just ran having failed on a healthy
+// session, which surfaces as a *replScriptError and must be reported
+// without tearing the session down: the failure is deterministic, so a
+// retry would only repeat its side effects.
 func isSessionBroken(err error) bool {
-	return err != nil
+	if err == nil {
+		return false
+	}
+	var scriptErr *replScriptError
+	return !errors.As(err, &scriptErr)
 }
 
 // dial opens a new SSH connection to the configured host, honouring ctx for
@@ -308,6 +313,19 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 		return nil, fmt.Errorf("winclient: ssh handshake: %w", err)
 	}
 	return ssh.NewClient(sshConn, chans, reqs), nil
+}
+
+// replScriptError reports an uncaught PowerShell error from a healthy
+// persistent session (REPL status != 0, see readReplResponse). It is a
+// distinct type so Client.run can tell "the script failed" apart from "the
+// session is dead": only the latter justifies tearing the session down and
+// retrying on a fresh one. Retrying a deterministically failing script
+// would repeat its partial side effects and misreport the cause if the
+// redial itself failed.
+type replScriptError struct{}
+
+func (e *replScriptError) Error() string {
+	return "winclient: powershell script raised an uncaught error"
 }
 
 // persistentSession wraps one SSH connection running the REPL bootstrap. It
@@ -394,12 +412,11 @@ func newPersistentSession(ctx context.Context, c *Client) (*persistentSession, e
 }
 
 // run sends one request and waits for its framed response, honouring ctx
-// for cancellation. It returns a non-nil error only for transport/protocol
-// failures; a script that raised an uncaught PowerShell error is reported
-// through the returned stderr text plus a wrapped error identifying it as
-// such, mirroring the old one-process-per-call non-zero exit behaviour
-// closely enough that callers built around extractLastJSONLine keep working
-// unmodified.
+// for cancellation. Transport/protocol failures (and ctx cancellation) are
+// returned as non-nil errors and let Client.run tear the session down and
+// retry once on a fresh one; an uncaught script error on a healthy session
+// is returned as a *replScriptError so the caller reports it immediately
+// without a pointless retry (the failure is deterministic).
 func (ps *persistentSession) run(ctx context.Context, script, secret string) (string, string, error) {
 	type result struct {
 		stdout, stderr string
@@ -425,7 +442,7 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 			return r.stdout, r.stderr, r.err
 		}
 		if r.status != 0 {
-			return r.stdout, r.stderr, fmt.Errorf("winclient: powershell script raised an uncaught error")
+			return r.stdout, r.stderr, &replScriptError{}
 		}
 		return r.stdout, r.stderr, nil
 	}
