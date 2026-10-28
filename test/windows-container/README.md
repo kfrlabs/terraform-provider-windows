@@ -7,7 +7,12 @@ with it.
 
 This is a **local test fixture**, not something to expose: the account is a
 throwaway local admin and `StrictModes` is off. Supply a unique temporary
-password at build time, run it on a trusted network, and delete it afterwards.
+password when starting the container, run it on a trusted network, and delete
+it afterwards.
+
+The image itself holds no credential: the `tfacc` account is created at
+container start from `TFACC_PASSWORD` (see `set-tfacc-user.ps1`). One image
+serves any password, so rotating it needs no rebuild.
 
 ## Requirements
 
@@ -27,19 +32,30 @@ On the Windows host:
 # Build context: this directory + the host's OpenSSH binaries.
 mkdir C:\tfacc
 Copy-Item -Recurse C:\Windows\System32\OpenSSH C:\tfacc\OpenSSH
-# copy Dockerfile and entrypoint.cmd from this directory into C:\tfacc
+# copy Dockerfile, entrypoint.cmd and set-tfacc-user.ps1 into C:\tfacc
 
 cd C:\tfacc
+docker build -t tfacc-win:latest .
+
 $env:TFACC_PASSWORD = Read-Host 'Enter a unique temporary test password'
-docker build --build-arg TFACC_PASSWORD=$env:TFACC_PASSWORD -t tfacc-win:latest .
-docker run -d --name tfacc-win -p 2222:22 tfacc-win:latest
+# `-e TFACC_PASSWORD` without a value copies it from this shell, so the
+# password does not appear on the command line.
+docker run -d --name tfacc-win -e TFACC_PASSWORD -p 2222:22 tfacc-win:latest
+
+# Rotate the password of a running container. A restart re-applies the
+# value given to `docker run`, so recreate the container to make it permanent
+# (testacc-lab-container.yml re-syncs it before every run).
+docker exec -e TFACC_PASSWORD tfacc-win powershell -NoProfile -File C:\set-tfacc-user.ps1
 
 # Only if the host firewall blocks the published port.
 New-NetFirewallRule -DisplayName tfacc-ssh -Direction Inbound `
   -Protocol TCP -LocalPort 2222 -Action Allow
 ```
 
-`TFACC_PASSWORD` is required. Keep it out of source control and do not reuse a
+`TFACC_PASSWORD` is required: the container exits at start without it. It
+stays visible to anyone who can run `docker inspect` on the host, which is
+acceptable for this fixture, unlike a build argument, which is kept in the
+image history of every copy of the image. Keep it out of source control and do not reuse a
 real credential. It must not contain the account name `tfacc` and must stay
 under 15 characters, see below.
 
@@ -66,6 +82,19 @@ export WINDOWS_INSECURE_IGNORE_HOST_KEY=true
 go test -tags acceptance ./internal/provider/ -run TestAccWindowsFile -v -timeout 35m
 ```
 
+The CI workflows run the suite through a script that splits it into the
+groups of `.github/testacc-groups.json` (`+` runs groups one after the other,
+spaces start concurrent processes). It works locally from PowerShell 7:
+
+```powershell
+go test -c -tags acceptance -o $env:TEMP\provider-acc.test.exe ./internal/provider/
+./.github/scripts/Invoke-AccTests.ps1 -Binary $env:TEMP\provider-acc.test.exe `
+  -WorkingDirectory internal/provider `
+  -Lanes 'feature-basic+feature-import+feature-datasource storage+identity-net+scheduling+packages+rest'
+```
+
+Groups are defined in `.github/testacc-groups.json`.
+
 `terraform` must be on `PATH`, or point `TF_ACC_TERRAFORM_PATH` at a binary.
 
 ## Teardown
@@ -82,8 +111,8 @@ Each one costs a build-and-debug cycle to rediscover, and none produces an
 obvious error message.
 
 1. **`net user` blocks on a password of 15+ characters**, and rejects any
-   password containing the account name. It prompts interactively, so the build
-   hangs instead of failing. `New-LocalUser` is used here, and the password
+   password containing the account name. It prompts interactively, so the
+   container start hangs instead of failing. `New-LocalUser` is used here, and the password
    constraint still applies.
 
 2. **sshd must run as SYSTEM.** Started as `ContainerAdministrator` it

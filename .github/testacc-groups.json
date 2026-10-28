@@ -1,0 +1,38 @@
+{
+  "$comment": "Acceptance test groups shared by testacc-windows.yml and testacc-lab-container.yml, consumed by .github/scripts/Invoke-AccTests.ps1. Each `run` is a `go test -run` regexp (RE2: no lookahead). Families are prefix-matched so new tests of an existing resource land in the right group automatically. The catch-all group runs every ^TestAcc test that no other group claims; its skip pattern is derived from the other groups, so it never needs manual upkeep. If it starts finding tests, give the new resource family its own group.",
+  "groups": [
+    {
+      "name": "feature-basic",
+      "run": "^TestAccWindowsFeature_Basic$"
+    },
+    {
+      "name": "feature-import",
+      "run": "^TestAccWindowsFeature_Import$"
+    },
+    {
+      "name": "feature-datasource",
+      "run": "^TestAccWindowsFeatureDataSource_"
+    },
+    {
+      "name": "storage",
+      "run": "^TestAcc(WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname)(DataSource)?_"
+    },
+    {
+      "name": "identity-net",
+      "run": "^TestAcc(WindowsFirewallRule|WindowsFile|WindowsLocalGroupMember|WindowsLocalUser|WindowsService)(DataSource)?_"
+    },
+    {
+      "name": "scheduling",
+      "run": "^(TestAcc(WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)(DataSource)?_|TestAccountExpiresConflictValidator_)"
+    },
+    {
+      "name": "packages",
+      "run": "^TestAcc(WindowsWingetPackage|WindowsLegacyPackage)(DataSource)?_"
+    },
+    {
+      "name": "rest",
+      "run": "^TestAcc",
+      "catchAll": true
+    }
+  ]
+}

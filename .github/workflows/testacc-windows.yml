@@ -4,43 +4,33 @@
 # acceptance suite (TF_ACC=1, build tag `acceptance`) that drives the provider
 # over SSH. It needs a live Windows target, so it runs on `windows-latest`
 # and turns the runner INTO its own target: it provisions a dedicated local
-# admin, installs and enables the OpenSSH Server capability, and points
+# admin, enables the OpenSSH Server that the image already ships, and points
 # WINDOWS_HOST at the runner itself. Fully ephemeral, no external host, no
-# repository secrets.
+# repository secrets. It stays on GitHub-hosted runners on purpose: it runs on
+# pull requests, and this repository is public (see testacc-lab-container.yml
+# for the self-hosted counterpart).
 #
-# Triggered manually (workflow_dispatch) and on pull requests touching the
-# transport or the provider layer. Coverage today: the data-source suites and
-# the windows_scheduled_task resource actually run; the remaining resource
-# acceptance tests are still skeletons and self-skip.
+# Layout (timings from runs 40750546504 and 40766054855):
 #
-# The suite is sharded across runners rather than parallelised in-process,
-# because none of these tests use t.Parallel() (see below), so within a
-# single `go test` run they execute strictly back to back.
+#   * windows_feature write tests are the floor: Install-WindowsFeature and
+#     Get-WindowsFeature cost ~6.5min per test, and DISM is machine-global, so
+#     TestAccWindowsFeature_Basic and _Import each keep a dedicated runner.
+#     Wall time for the whole workflow is bounded by these two jobs (~8min).
+#   * Every other family takes 4-6min run sequentially, so each gets its own
+#     runner; the smallest ones (scheduling, feature data source, packages and
+#     the catch-all) share one, still under the floor. Groups are defined in
+#     .github/testacc-groups.json.
+#   * Do NOT run several families concurrently on one runner: tried in
+#     40766054855, the tests are CPU/memory bound on a 4-vCPU windows-latest
+#     (terraform, provider and remote PowerShell all run on the same box).
+#     Each family took 2-3x longer, nothing was gained in wall time, and the
+#     runner ran out of memory ("The paging file is too small").
+#   * Public-key auth only changes the SSH handshake, not what the provider
+#     does once connected, so it skips the two windows_feature floor jobs.
 #
-# windows_feature is the one genuinely unavoidable cost: Get-WindowsFeature
-# imports the ServerManager module on every call (~18s), and a fresh SSH
-# connection and powershell.exe per call means that cost is paid for each of
-# the 5-6 reads Terraform performs per test. t.Parallel() is not an option
-# there -- DISM and Install-WindowsFeature are machine-global and serialised
-# by Windows, so concurrent feature tests would flake. TestAccWindowsFeature_
-# Basic and _Import each get their own runner for exactly that reason, and
-# each is a floor on its own: ~4-6.5min per test, measured. Going below that
-# needs a persistent PowerShell session in winclient, not more shards.
-#
-# Every other resource type does NOT share that constraint (distinct
-# resource names/paths per test, a fresh SSH dial per call), but as the
-# provider grew past file/registry/service/scheduled-task/etc. resources, all
-# of it kept landing in one `rest` shard that was sized and documented for a
-# much smaller suite (~20 tests). By the time it held 85 tests it was the
-# slowest shard in the matrix at ~16min, eclipsing windows_feature -- not
-# because any single test got slower, but because nothing was re-balancing
-# the split as tests accumulated. The shards below group tests by resource
-# family (prefix-matched, so new tests of an existing resource land in the
-# right shard automatically) and are rebalanced to ~6min each based on
-# measured per-test timings. `rest` stays as a catch-all safety net: it only
-# ever runs tests from a genuinely new resource family nobody has sorted into
-# a shard yet, so coverage can never silently go unscheduled -- but if it
-# stops being empty, that is the signal to rebalance again.
+# That is 8 runners per run instead of 12 (2 auth x 6 shards), for the same
+# wall time: less pressure on the account's concurrent-job limit, which test.yml
+# and other PRs share.
 
 name: testacc-windows
 
@@ -48,7 +38,7 @@ on:
   workflow_dispatch:
     inputs:
       run_filter:
-        description: "Value passed to `go test -run` (regexp). Overrides the shard split, so every shard runs it. Default: each shard runs its own slice."
+        description: "Value passed to `go test -run` (regexp). Replaces the group split: one job per auth mode (`misc`) runs it; the other jobs skip their tests."
         required: false
         default: ""
   # A transport change that only breaks against a real Windows sshd would
@@ -59,6 +49,8 @@ on:
       - "internal/winclient/**"
       - "internal/provider/**"
       - ".github/workflows/testacc-windows.yml"
+      - ".github/scripts/Invoke-AccTests.ps1"
+      - ".github/testacc-groups.json"
 
 permissions:
   contents: read
@@ -69,55 +61,23 @@ concurrency:
 
 jobs:
   acceptance:
-    name: acceptance (${{ matrix.auth }}, ${{ matrix.shard.name }})
+    name: acceptance (${{ matrix.auth }}, ${{ matrix.name }})
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        # Both authentication paths get exercised against the real sshd:
-        # password auth, and the public-key auth the provider now recommends.
-        auth: [password, publickey]
-        # Shards are balanced on measured durations, not on file count (see
-        # the header comment above for how and why).
-        # `skip` and not a negative lookahead: go test -run compiles with RE2,
-        # which has no (?!...). Anchoring every filter on ^TestAcc also keeps
-        # the ~200 unit tests in this package out of the acceptance job, where
-        # test.yml already covers them on ubuntu.
-        shard:
-          # windows_feature write tests: each is its own floor (DISM is
-          # machine-global, see above), so each gets a dedicated runner
-          # instead of sharing one and summing its two tests' time.
-          - name: feature-basic
-            filter: "^TestAccWindowsFeature_Basic$"
-            skip: ""
-          - name: feature-import
-            filter: "^TestAccWindowsFeature_Import$"
-            skip: ""
-          # Everything below is read/write against its own distinct
-          # resource (unique names/paths per test), so grouping by resource
-          # family for shard balance carries no correctness risk. Sums are
-          # measured from a full `rest`-shard run; rebalance by moving a
-          # family between shards if one drifts far from the others.
-          - name: storage
-            # FileACL(244s) + RegistryValue(58s) + Directory(45s) + Hostname(20s) ~= 367s
-            filter: "^TestAcc(WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname)(DataSource)?_"
-            skip: ""
-          - name: identity-net
-            # FirewallRule(143s) + File(87s) + LocalGroupMember(60s) + LocalUser(49s) + Service(34s) ~= 373s
-            filter: "^TestAcc(WindowsFirewallRule|WindowsFile|WindowsLocalGroupMember|WindowsLocalUser|WindowsService)(DataSource)?_"
-            skip: ""
-          - name: scheduling
-            # FeatureDataSource(137s, read-only Get-WindowsFeature, safe here) + ScheduledTask(122s) + LocalGroup(55s) + EnvironmentVariable(37s) ~= 351s
-            filter: "^(TestAccWindowsFeatureDataSource_|TestAcc(WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)(DataSource)?_|TestAccountExpiresConflictValidator_)"
-            skip: ""
-          # Safety net: catches any TestAcc* that doesn't belong to a family
-          # above yet (e.g. a brand-new resource's acceptance tests). Empty
-          # today -- if it starts taking real time, split its tests into
-          # their own family and rebalance the shards above.
-          - name: rest
-            filter: "^TestAcc"
-            skip: "^TestAcc(WindowsFeature_|WindowsFeatureDataSource_|WindowsFileACL|WindowsRegistryValue|WindowsDirectory|WindowsHostname|WindowsFirewallRule|WindowsFile|WindowsLocalGroupMember|WindowsLocalUser|WindowsService|WindowsScheduledTask|WindowsLocalGroup|WindowsEnvironmentVariable)|^TestAccountExpiresConflictValidator_"
+        include:
+          # `lanes` holds group names from .github/testacc-groups.json; '+'
+          # runs them one after the other in a single test process.
+          - { auth: password, name: feature-basic, lanes: feature-basic }
+          - { auth: password, name: feature-import, lanes: feature-import }
+          - { auth: password, name: storage, lanes: storage }
+          - { auth: password, name: identity-net, lanes: identity-net }
+          - { auth: password, name: misc, lanes: scheduling+feature-datasource+packages+rest, filter: true }
+          - { auth: publickey, name: storage, lanes: storage }
+          - { auth: publickey, name: identity-net, lanes: identity-net }
+          - { auth: publickey, name: misc, lanes: scheduling+feature-datasource+packages+rest, filter: true }
     defaults:
       run:
         shell: pwsh
@@ -132,9 +92,9 @@ jobs:
 
       # Provision the runner as its own SSH target. A dedicated local admin
       # with a random password is used instead of the runner account so no
-      # ambient credential is exposed. OpenSSH Server is installed as a
-      # Windows capability and configured to invoke PowerShell as the login
-      # shell, matching the exec command winclient.Client sends over SSH.
+      # ambient credential is exposed. The windows-latest image already ships
+      # the OpenSSH Server capability (this step takes ~10s), so the install
+      # branch below is only a fallback for an image that drops it.
       - name: Configure local SSH target
         run: |
           $ErrorActionPreference = 'Stop'
@@ -155,8 +115,7 @@ jobs:
           }
           Add-LocalGroupMember -Group 'Administrators' -Member $user -ErrorAction SilentlyContinue
 
-          $capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
-          if ($capability.State -ne 'Installed') {
+          if (-not (Get-Service -Name sshd -ErrorAction SilentlyContinue)) {
             Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
           }
 
@@ -174,20 +133,50 @@ jobs:
               -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
           }
 
+          # Public-key auth needs the key registered before sshd starts, so it
+          # is provisioned here and sshd is (re)started only once. Because
+          # tfacc is an administrator, Windows OpenSSH reads
+          # administrators_authorized_keys rather than the per-user file, and
+          # refuses it unless its ACL is restricted to SYSTEM and Administrators.
+          if ('${{ matrix.auth }}' -eq 'publickey') {
+            $keyPath = Join-Path $env:RUNNER_TEMP 'id_ed25519'
+            Remove-Item "$keyPath", "$keyPath.pub" -Force -ErrorAction SilentlyContinue
+            # -N '' and not -N '""': the doubled-quote form is a PowerShell 5.1
+            # workaround, and under pwsh 7 it passes two literal quote
+            # characters as the passphrase. The key would then be encrypted,
+            # unusable under BatchMode, and the failure would surface as a bare
+            # "Permission denied (publickey)" with nothing pointing back here.
+            & ssh-keygen -t ed25519 -f $keyPath -N '' -C 'tfacc-acceptance' -q
+            if (-not (Test-Path "$keyPath.pub")) { throw "ssh-keygen did not produce a key pair" }
+
+            # Prove the key really has no passphrase rather than trusting the
+            # quoting above: -y with an empty -P fails on an encrypted key.
+            & ssh-keygen -y -P '' -f $keyPath | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "the generated key is passphrase-protected; check the -N quoting for this shell"
+            }
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $env:ProgramData 'ssh') | Out-Null
+            $akFile = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+            Get-Content "$keyPath.pub" | Set-Content -Path $akFile -Encoding ascii
+            & icacls $akFile /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F' | Out-Null
+            "WINDOWS_PRIVATE_KEY_PATH=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
           Restart-Service sshd
+
+          # Restart-Service returns before sshd is necessarily accepting again;
+          # without this wait an auth failure and a not-yet-listening socket
+          # are indistinguishable.
+          $deadline = (Get-Date).AddSeconds(30)
+          while (-not (Test-NetConnection -ComputerName 127.0.0.1 -Port 22 -WarningAction SilentlyContinue).TcpTestSucceeded) {
+            if ((Get-Date) -gt $deadline) { throw "sshd is not accepting connections on port 22" }
+            Start-Sleep -Milliseconds 500
+          }
 
           "WINDOWS_HOST=127.0.0.1" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_USERNAME=$user" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_PASSWORD=$pass" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: SSH smoke test
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $result = Test-NetConnection -ComputerName $env:WINDOWS_HOST -Port 22
-          if (-not $result.TcpTestSucceeded) {
-            throw "sshd is not accepting connections on port 22"
-          }
-          Write-Host "SSH reachable on $($env:WINDOWS_HOST):22"
 
       # The provider verifies host keys by default, so the suite needs a
       # known_hosts baseline. Scanning the key we just generated locally is
@@ -206,48 +195,6 @@ jobs:
           $keys | Set-Content -Path $path -Encoding ascii
           Write-Host "Recorded $(($keys | Measure-Object).Count) host key(s) in $path"
           "WINDOWS_KNOWN_HOSTS=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      # Public-key auth needs the key registered before sshd is consulted.
-      # Because tfacc is an administrator, Windows OpenSSH reads
-      # administrators_authorized_keys rather than the per-user file, and
-      # refuses it unless its ACL is restricted to SYSTEM and Administrators.
-      - name: Provision SSH key pair
-        if: matrix.auth == 'publickey'
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $keyPath = Join-Path $env:RUNNER_TEMP 'id_ed25519'
-          Remove-Item "$keyPath", "$keyPath.pub" -Force -ErrorAction SilentlyContinue
-          # -N '' and not -N '""': the doubled-quote form is a PowerShell 5.1
-          # workaround, and under pwsh 7 it passes two literal quote characters
-          # as the passphrase. The key would then be encrypted, unusable under
-          # BatchMode, and the failure would surface as a bare "Permission
-          # denied (publickey)" with nothing pointing back to here.
-          & ssh-keygen -t ed25519 -f $keyPath -N '' -C 'tfacc-acceptance' -q
-          if (-not (Test-Path "$keyPath.pub")) { throw "ssh-keygen did not produce a key pair" }
-
-          # Prove the key really has no passphrase rather than trusting the
-          # quoting above: -y with an empty -P fails on an encrypted key.
-          & ssh-keygen -y -P '' -f $keyPath | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            throw "the generated key is passphrase-protected; check the -N quoting for this shell"
-          }
-
-          $akFile = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
-          Get-Content "$keyPath.pub" | Set-Content -Path $akFile -Encoding ascii
-          & icacls $akFile /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F' | Out-Null
-
-          Restart-Service sshd
-          # Restart-Service returns before sshd is necessarily accepting again;
-          # without this wait an auth failure and a not-yet-listening socket are
-          # indistinguishable.
-          $deadline = (Get-Date).AddSeconds(30)
-          while ((Get-Date) -lt $deadline) {
-            if ((Test-NetConnection -ComputerName $env:WINDOWS_HOST -Port 22 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }
-            Start-Sleep -Milliseconds 500
-          }
-
-          "WINDOWS_PRIVATE_KEY_PATH=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       # Fail fast with an unambiguous signal: BatchMode forbids any password
       # fallback, so this only succeeds if the key itself authenticated.
@@ -279,35 +226,28 @@ jobs:
           }
           Write-Host "Public-key authentication confirmed"
 
-      # Attributed as its own step so the ~70s of module downloads stops being
-      # counted as test time.
-      - name: Download modules
-        run: go mod download
+      # Built as a separate step so the compile time shows apart from the
+      # test time.
+      - name: Build acceptance test binary
+        run: go test -c -tags acceptance -o "$env:RUNNER_TEMP\provider-acc.test.exe" ./internal/provider/
 
-      - name: go test (acceptance, password auth)
-        if: matrix.auth == 'password'
+      - name: Run acceptance tests
+        if: inputs.run_filter == '' || matrix.filter
         env:
           TF_ACC: "1"
-          # Leave the key out of the picture so this really is the password path.
-          WINDOWS_PRIVATE_KEY_PATH: ""
+          RUN_FILTER: ${{ inputs.run_filter }}
         run: |
-          $skip = "${{ matrix.shard.skip }}"
-          $args = @('-run', "${{ inputs.run_filter || matrix.shard.filter }}")
-          if ($skip) { $args += @('-skip', $skip) }
-          # 30m (not 120m) so a hung test panics with a goroutine dump before
-          # the 60m job timeout cancels the runner, revealing where it blocks.
-          go test -tags acceptance ./internal/provider/ -v -timeout 30m @args
-
-      - name: go test (acceptance, public-key auth)
-        if: matrix.auth == 'publickey'
-        env:
-          TF_ACC: "1"
-          # Clearing the password proves the suite passes on the key alone.
-          WINDOWS_PASSWORD: ""
-        run: |
-          $skip = "${{ matrix.shard.skip }}"
-          $args = @('-run', "${{ inputs.run_filter || matrix.shard.filter }}")
-          if ($skip) { $args += @('-skip', $skip) }
-          # 30m (not 120m) so a hung test panics with a goroutine dump before
-          # the 60m job timeout cancels the runner, revealing where it blocks.
-          go test -tags acceptance ./internal/provider/ -v -timeout 30m @args
+          # Each auth job proves its own path: the key job runs without a
+          # password, the password job without a key.
+          if ('${{ matrix.auth }}' -eq 'publickey') { $env:WINDOWS_PASSWORD = $null } else { $env:WINDOWS_PRIVATE_KEY_PATH = $null }
+          # -Timeout 30m (job timeout 45m) so a hung test panics with a
+          # goroutine dump before the runner is cancelled.
+          & ./.github/scripts/Invoke-AccTests.ps1 `
+            -Binary "$env:RUNNER_TEMP\provider-acc.test.exe" `
+            -WorkingDirectory (Join-Path $env:GITHUB_WORKSPACE 'internal\provider') `
+            -Lanes '${{ matrix.lanes }}' `
+            -RunFilter "$env:RUN_FILTER" `
+            -LogDirectory (Join-Path $env:RUNNER_TEMP 'testacc-logs') `
+            -Timeout 30m `
+            -Title 'acceptance (${{ matrix.auth }}, ${{ matrix.name }})'
+          exit $LASTEXITCODE
