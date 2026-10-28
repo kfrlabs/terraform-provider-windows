@@ -204,13 +204,8 @@ function Remove-Directory([string]$P, [bool]$Recursive) {
 `
 
 // directoryPSResponse is the parsed JSON envelope for directory operations.
-type directoryPSResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// The envelope shape is shared by every winclient resource (#178).
+type directoryPSResponse = Envelope
 
 // directoryDataPayload mirrors the JSON object returned by Build-DirectoryData.
 type directoryDataPayload struct {
@@ -242,59 +237,38 @@ func mapDirectoryKind(k string) DirectoryErrorKind {
 }
 
 // runDirectoryEnvelope executes script (prepended with psDirectoryHeader) and
-// parses the JSON envelope.
+// parses the JSON envelope through the shared runEnvelope helper (#178).
 func (d *DirectoryClientImpl) runDirectoryEnvelope(ctx context.Context, op, path, script string) (*directoryPSResponse, error) {
-	full := psDirectoryHeader + "\n" + script
-	stdout, stderr, err := runDirectoryPowerShell(ctx, d.c, full)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, NewDirectoryError(DirectoryErrorUnknown,
-				fmt.Sprintf("operation %q on directory %q timed out or was cancelled", op, path),
-				ctxErr,
-				map[string]string{"operation": op, "path": path, "host": d.c.cfg.Host})
-		}
-		return nil, NewDirectoryError(DirectoryErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err,
-			map[string]string{
-				"operation": op, "path": path, "host": d.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{
+		"path": path,
+		"host": d.c.cfg.Host,
+	}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runDirectoryPowerShell(ctx, d.c, full)
+		},
+		op, psDirectoryHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
 
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewDirectoryError(DirectoryErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op), nil,
-			map[string]string{
-				"operation": op, "path": path, "host": d.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	// The directory client has no dedicated timeout kind: every pipeline
+	// failure that bypasses Emit-Err stays "unknown", with the shared helper
+	// supplying the message and diagnostic context. Keep the historical
+	// timeout message, which names the directory as well as the operation.
+	if eerr.Stage == EnvelopeStageTimeout {
+		eerr.Message = fmt.Sprintf("operation %q on directory %q timed out or was cancelled", op, path)
 	}
-	var resp directoryPSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewDirectoryError(DirectoryErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op), jerr,
-			map[string]string{"operation": op, "path": path, "host": d.c.cfg.Host, "stdout": truncate(stdout, 2048)})
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewDirectoryError(DirectoryErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	if !resp.OK {
-		kind := mapDirectoryKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["path"] = path
-		ctxMap["host"] = d.c.cfg.Host
-		msg := resp.Message
-		if kind == DirectoryErrorPermission {
-			msg += " (sufficient NTFS permissions on the target directory are required.)"
-		}
-		return &resp, NewDirectoryError(kind, msg, nil, ctxMap)
+
+	kind := mapDirectoryKind(eerr.RemoteKind)
+	msg := eerr.Message
+	if kind == DirectoryErrorPermission {
+		msg += " (sufficient NTFS permissions on the target directory are required.)"
 	}
-	return &resp, nil
+	return resp, NewDirectoryError(kind, msg, nil, eerr.Context)
 }
 
 func toDirectoryState(path string, d *directoryDataPayload) *DirectoryState {
