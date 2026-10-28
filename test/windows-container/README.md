@@ -82,14 +82,15 @@ export WINDOWS_INSECURE_IGNORE_HOST_KEY=true
 go test -tags acceptance ./internal/provider/ -run TestAccWindowsFile -v -timeout 35m
 ```
 
-The CI workflows run the suite as concurrent lanes instead of one `go test`,
-which is much faster; the same script works locally from PowerShell 7:
+The CI workflows run the suite through a script that splits it into the
+groups of `.github/testacc-groups.json` (`+` runs groups one after the other,
+spaces start concurrent processes). It works locally from PowerShell 7:
 
 ```powershell
 go test -c -tags acceptance -o $env:TEMP\provider-acc.test.exe ./internal/provider/
 ./.github/scripts/Invoke-AccTests.ps1 -Binary $env:TEMP\provider-acc.test.exe `
   -WorkingDirectory internal/provider `
-  -Lanes 'feature-basic+feature-import+feature-datasource storage identity-net scheduling packages rest'
+  -Lanes 'feature-basic+feature-import+feature-datasource storage+identity-net+scheduling+packages+rest'
 ```
 
 Groups are defined in `.github/testacc-groups.json`.

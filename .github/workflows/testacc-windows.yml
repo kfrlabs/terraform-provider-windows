@@ -10,22 +10,25 @@
 # pull requests, and this repository is public (see testacc-lab-container.yml
 # for the self-hosted counterpart).
 #
-# Layout (measured on run 40750546504, before this layout):
+# Layout (timings from runs 40750546504 and 40766054855):
 #
 #   * windows_feature write tests are the floor: Install-WindowsFeature and
 #     Get-WindowsFeature cost ~6.5min per test, and DISM is machine-global, so
 #     TestAccWindowsFeature_Basic and _Import each keep a dedicated runner.
 #     Wall time for the whole workflow is bounded by these two jobs (~8min).
-#   * Every other test is short (4-35s) and latency-bound, and touches its own
-#     uniquely named resource. Instead of one runner per resource family,
-#     the families run as concurrent lanes on ONE runner (see
-#     .github/scripts/Invoke-AccTests.ps1 and .github/testacc-groups.json),
-#     which fits under the windows_feature floor.
+#   * Every other family takes 4-6min run sequentially, so each gets its own
+#     runner; the smallest ones (scheduling, feature data source, packages and
+#     the catch-all) share one, still under the floor. Groups are defined in
+#     .github/testacc-groups.json.
+#   * Do NOT run several families concurrently on one runner: tried in
+#     40766054855, the tests are CPU/memory bound on a 4-vCPU windows-latest
+#     (terraform, provider and remote PowerShell all run on the same box).
+#     Each family took 2-3x longer, nothing was gained in wall time, and the
+#     runner ran out of memory ("The paging file is too small").
 #   * Public-key auth only changes the SSH handshake, not what the provider
-#     does once connected. It gets its own runner running every non-feature
-#     lane, rather than duplicating the windows_feature floor jobs.
+#     does once connected, so it skips the two windows_feature floor jobs.
 #
-# That is 4 runners per run instead of 12 (2 auth x 6 shards), for the same
+# That is 8 runners per run instead of 12 (2 auth x 6 shards), for the same
 # wall time: less pressure on the account's concurrent-job limit, which test.yml
 # and other PRs share.
 
@@ -35,7 +38,7 @@ on:
   workflow_dispatch:
     inputs:
       run_filter:
-        description: "Value passed to `go test -run` (regexp). Replaces the lane split: the two `suite` jobs (password and publickey) each run it once; the windows_feature jobs skip their tests."
+        description: "Value passed to `go test -run` (regexp). Replaces the group split: one job per auth mode (`misc`) runs it; the other jobs skip their tests."
         required: false
         default: ""
   # A transport change that only breaks against a real Windows sshd would
@@ -65,22 +68,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Lanes are group names from .github/testacc-groups.json, separated
-          # by spaces; each lane is its own concurrent test process.
-          - name: feature-basic
-            auth: password
-            lanes: feature-basic
-          - name: feature-import
-            auth: password
-            lanes: feature-import
-          # feature-datasource only reads (Get-WindowsFeature), so it is safe
-          # alongside the other families on a runner with no DISM writes.
-          - name: suite
-            auth: password
-            lanes: feature-datasource storage identity-net scheduling packages rest
-          - name: suite
-            auth: publickey
-            lanes: feature-datasource storage identity-net scheduling packages rest
+          # `lanes` holds group names from .github/testacc-groups.json; '+'
+          # runs them one after the other in a single test process.
+          - { auth: password, name: feature-basic, lanes: feature-basic }
+          - { auth: password, name: feature-import, lanes: feature-import }
+          - { auth: password, name: storage, lanes: storage }
+          - { auth: password, name: identity-net, lanes: identity-net }
+          - { auth: password, name: misc, lanes: scheduling+feature-datasource+packages+rest, filter: true }
+          - { auth: publickey, name: storage, lanes: storage }
+          - { auth: publickey, name: identity-net, lanes: identity-net }
+          - { auth: publickey, name: misc, lanes: scheduling+feature-datasource+packages+rest, filter: true }
     defaults:
       run:
         shell: pwsh
@@ -229,13 +226,13 @@ jobs:
           }
           Write-Host "Public-key authentication confirmed"
 
-      # Compiled once, then started once per lane: concurrent `go test`
-      # invocations would each link their own copy of the test binary.
+      # Built as a separate step so the compile time shows apart from the
+      # test time.
       - name: Build acceptance test binary
         run: go test -c -tags acceptance -o "$env:RUNNER_TEMP\provider-acc.test.exe" ./internal/provider/
 
       - name: Run acceptance tests
-        if: inputs.run_filter == '' || matrix.name == 'suite'
+        if: inputs.run_filter == '' || matrix.filter
         env:
           TF_ACC: "1"
           RUN_FILTER: ${{ inputs.run_filter }}

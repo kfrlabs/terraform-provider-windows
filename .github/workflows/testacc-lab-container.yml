@@ -25,11 +25,12 @@
 #     when the Dockerfile, its scripts or the host's OpenSSH change, and the
 #     container is recreated only when its image is stale. Rotating
 #     LAB_WINDOWS_PASSWORD just resets the account in the running container.
-#   * The suite runs as concurrent lanes (.github/scripts/Invoke-AccTests.ps1,
-#     .github/testacc-groups.json). All windows_feature tests share one lane,
-#     so DISM work never overlaps with itself; the other families run beside
-#     it. Wall time is bounded by the windows_feature lane, instead of being
-#     the sum of every test (~45-60 minutes before).
+#   * The suite runs as two concurrent lanes (.github/scripts/Invoke-AccTests.ps1,
+#     .github/testacc-groups.json): every windows_feature test in one, so DISM
+#     work never overlaps with itself, and every other family in the other.
+#     The feature lane mostly waits on DISM inside the target container, so it
+#     leaves room for the second one. Kept at two: running every family at
+#     once was CPU/memory bound on a 4-vCPU runner (see testacc-windows.yml).
 
 name: testacc-lab-container
 
@@ -156,7 +157,7 @@ jobs:
           & ./.github/scripts/Invoke-AccTests.ps1 `
             -Binary "$env:RUNNER_TEMP\provider-acc.test.exe" `
             -WorkingDirectory (Join-Path $env:GITHUB_WORKSPACE 'internal\provider') `
-            -Lanes 'feature-basic+feature-import+feature-datasource storage identity-net scheduling packages rest' `
+            -Lanes 'feature-basic+feature-import+feature-datasource storage+identity-net+scheduling+packages+rest' `
             -RunFilter "$env:RUN_FILTER" `
             -LogDirectory (Join-Path $env:RUNNER_TEMP 'testacc-logs') `
             -Timeout 50m `

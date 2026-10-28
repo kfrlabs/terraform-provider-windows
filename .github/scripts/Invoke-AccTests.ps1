@@ -4,10 +4,12 @@
 
 .DESCRIPTION
   The acceptance suite has no t.Parallel(), so a single `go test` run executes
-  every test back to back. Most tests are latency-bound (terraform process,
-  SSH dial, remote PowerShell) and touch distinct, uniquely named resources,
-  so running several resource families at once on the same target cuts wall
-  time without sharing state between tests.
+  every test back to back. Lanes run concurrently, but only use more than one
+  where the machine has room: on a 4-vCPU windows-latest runner, where the
+  target is the runner itself, concurrent families were CPU/memory bound
+  (2-3x slower each, then out of memory), so testacc-windows.yml runs one
+  lane per runner. The script still gives every job the same group
+  definitions, failure annotations and step summary.
 
   Groups are defined in .github/testacc-groups.json. -Lanes is a
   whitespace-separated list of lanes; each lane runs in its own test process,
