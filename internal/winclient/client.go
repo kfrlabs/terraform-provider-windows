@@ -299,8 +299,10 @@ func (c *Client) runOneShot(ctx context.Context, script, secret string) (string,
 		// and reading concurrently is a data race (also risks truncated
 		// output). Close unblocks Run, so this waits only for the local
 		// copies to drain, not for the remote command. done is buffered,
-		// so this is immediate if Run already finished.
-		<-done
+		// so this is immediate if Run already finished. Run's own error
+		// is irrelevant here: after Close it only reports the teardown,
+		// while the caller needs the context error.
+		_ = <-done
 		return stdout.String(), stderr.String(), ctx.Err()
 	case runErr := <-done:
 		if runErr != nil {
