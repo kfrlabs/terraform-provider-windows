@@ -9,7 +9,9 @@
 //   - addLPDiag: *LegacyPackageError path (with/without cause/context),
 //     plain-error fallback, deterministic context ordering
 //   - Configure: nil ProviderData (no-op), wrong type (error), happy path
-//   - ConfigValidators: ExactlyOneOf source_path/source_url present
+//   - ConfigValidators: ExactlyOneOf source_path/source_url present,
+//     legacyPackageSourceValidator (http requires checksum, unpinned-URL
+//     and md5/sha1 warnings)
 //   - ImportState: empty id, valid id, whitespace trimmed
 //   - applyState: state-merge semantics on observable fields
 package provider
@@ -178,12 +180,12 @@ func TestLPRegex_SourceURL(t *testing.T) {
 }
 
 func TestLPRegex_Checksum(t *testing.T) {
-	for _, s := range []string{"sha256:deadbeef", "sha1:00", "md5:abcd"} {
+	for _, s := range []string{"sha256:deadbeef", "sha512:abcd", "sha1:00", "md5:abcd"} {
 		if !lpChecksumRe.MatchString(s) {
 			t.Errorf("expected %q to match", s)
 		}
 	}
-	for _, s := range []string{"", "sha256:", "sha512:abcd", "deadbeef", "sha256:zz"} {
+	for _, s := range []string{"", "sha256:", "sha384:abcd", "deadbeef", "sha256:zz"} {
 		if lpChecksumRe.MatchString(s) {
 			t.Errorf("expected %q NOT to match", s)
 		}
@@ -312,8 +314,157 @@ func TestLegacyPackageResource_Configure_HappyPath(t *testing.T) {
 func TestLegacyPackageResource_ConfigValidators_NotEmpty(t *testing.T) {
 	r := &windowsLegacyPackageResource{}
 	v := r.ConfigValidators(context.Background())
-	if len(v) == 0 {
-		t.Fatal("expected at least one ConfigValidator (ExactlyOneOf source_path/source_url)")
+	if len(v) < 2 {
+		t.Fatalf("expected at least two ConfigValidators (ExactlyOneOf source_path/source_url + source integrity), got %d", len(v))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// legacyPackageSourceValidator (issue #175)
+// ---------------------------------------------------------------------------
+
+// lpSourceTestConfig builds a tfsdk.Config with the given source_url/checksum
+// values (empty string = null) for driving the source integrity validator.
+func lpSourceTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, sourceURL, checksum string) tfsdk.Config {
+	t.Helper()
+	str := tftypes.String
+	b := tftypes.Bool
+	num := tftypes.Number
+	urlVal := tftypes.NewValue(str, nil)
+	if sourceURL != "" {
+		urlVal = tftypes.NewValue(str, sourceURL)
+	}
+	sumVal := tftypes.NewValue(str, nil)
+	if checksum != "" {
+		sumVal = tftypes.NewValue(str, checksum)
+	}
+	raw := tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id":                   str,
+		"name":                 str,
+		"installer_type":       str,
+		"source_path":          str,
+		"source_url":           str,
+		"checksum":             str,
+		"insecure_skip_verify": b,
+		"product_id":           str,
+		"display_name_pattern": str,
+		"install_args":         tftypes.List{ElementType: str},
+		"uninstall_args":       tftypes.List{ElementType: str},
+		"uninstall_command":    str,
+		"valid_exit_codes":     tftypes.List{ElementType: num},
+		"working_directory":    str,
+		"timeout_seconds":      num,
+		"log_path":             str,
+		"environment":          tftypes.Map{ElementType: str},
+		"installed_version":    str,
+		"installed":            b,
+		"install_date":         str,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"update": str,
+			"delete": str,
+		}},
+	}}, map[string]tftypes.Value{
+		"id":                   tftypes.NewValue(str, nil),
+		"name":                 tftypes.NewValue(str, "pkg"),
+		"installer_type":       tftypes.NewValue(str, "msi"),
+		"source_path":          tftypes.NewValue(str, nil),
+		"source_url":           urlVal,
+		"checksum":             sumVal,
+		"insecure_skip_verify": tftypes.NewValue(b, nil),
+		"product_id":           tftypes.NewValue(str, nil),
+		"display_name_pattern": tftypes.NewValue(str, nil),
+		"install_args":         tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"uninstall_args":       tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"uninstall_command":    tftypes.NewValue(str, nil),
+		"valid_exit_codes":     tftypes.NewValue(tftypes.List{ElementType: num}, nil),
+		"working_directory":    tftypes.NewValue(str, nil),
+		"timeout_seconds":      tftypes.NewValue(num, nil),
+		"log_path":             tftypes.NewValue(str, nil),
+		"environment":          tftypes.NewValue(tftypes.Map{ElementType: str}, nil),
+		"installed_version":    tftypes.NewValue(str, nil),
+		"installed":            tftypes.NewValue(b, nil),
+		"install_date":         tftypes.NewValue(str, nil),
+		"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"update": str,
+			"delete": str,
+		}}, nil),
+	})
+	return tfsdk.Config{Schema: schemaResp.Schema, Raw: raw}
+}
+
+func lpSourceValidatorDiags(t *testing.T, sourceURL, checksum string) diag.Diagnostics {
+	t.Helper()
+	r := &windowsLegacyPackageResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	var validator legacyPackageSourceValidator
+	for _, v := range r.ConfigValidators(context.Background()) {
+		if sv, ok := v.(legacyPackageSourceValidator); ok {
+			validator = sv
+		}
+	}
+	resp := &resource.ValidateConfigResponse{}
+	validator.ValidateResource(context.Background(), resource.ValidateConfigRequest{
+		Config: lpSourceTestConfig(t, schemaResp, sourceURL, checksum),
+	}, resp)
+	return resp.Diagnostics
+}
+
+func lpDiagCounts(diags diag.Diagnostics) (errors, warnings int) {
+	for _, d := range diags {
+		switch d.Severity() {
+		case diag.SeverityError:
+			errors++
+		case diag.SeverityWarning:
+			warnings++
+		}
+	}
+	return errors, warnings
+}
+
+func TestLegacyPackageSourceValidator(t *testing.T) {
+	cases := []struct {
+		name       string
+		sourceURL  string
+		checksum   string
+		wantErrors int
+		wantWarns  int
+		wantSubstr string // expected in an error/warning detail
+	}{
+		{"http without checksum fails", "http://mirror.internal/pkg.msi", "", 1, 0, "checksum is required"},
+		{"HTTP uppercase scheme without checksum fails", "HTTP://mirror.internal/pkg.msi", "", 1, 0, "checksum is required"},
+		{"https without checksum warns", "https://mirror.internal/pkg.msi", "", 0, 1, "Unpinned"},
+		{"https with sha256 is clean", "https://mirror.internal/pkg.msi", "sha256:deadbeef", 0, 0, ""},
+		{"https with sha512 is clean", "https://mirror.internal/pkg.msi", "sha512:deadbeef", 0, 0, ""},
+		{"http with sha256 is clean", "http://mirror.internal/pkg.msi", "sha256:deadbeef", 0, 0, ""},
+		{"https with md5 warns", "https://mirror.internal/pkg.msi", "md5:abcd", 0, 1, "Weak checksum"},
+		{"https with sha1 warns", "https://mirror.internal/pkg.msi", "sha1:00", 0, 1, "Weak checksum"},
+		{"http with md5 warns but checksum present so no error", "http://mirror.internal/pkg.msi", "md5:abcd", 0, 1, "Weak checksum"},
+		{"no source_url is clean", "", "sha256:deadbeef", 0, 0, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := lpSourceValidatorDiags(t, tc.sourceURL, tc.checksum)
+			gotErr, gotWarn := lpDiagCounts(diags)
+			if gotErr != tc.wantErrors || gotWarn != tc.wantWarns {
+				t.Errorf("errors=%d warnings=%d, want errors=%d warnings=%d (diags: %v)",
+					gotErr, gotWarn, tc.wantErrors, tc.wantWarns, diags)
+			}
+			if tc.wantSubstr != "" {
+				found := false
+				for _, d := range diags {
+					if strings.Contains(d.Summary(), tc.wantSubstr) || strings.Contains(d.Detail(), tc.wantSubstr) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected a diagnostic containing %q, got: %v", tc.wantSubstr, diags)
+				}
+			}
+		})
 	}
 }
 

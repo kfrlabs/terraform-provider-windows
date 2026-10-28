@@ -62,8 +62,10 @@ var (
 	// source_url: http or https URL.
 	lpSourceURLRe = regexp.MustCompile(`^https?://`)
 
-	// checksum: <algo>:<hex>.
-	lpChecksumRe = regexp.MustCompile(`^(sha256|sha1|md5):[0-9a-fA-F]+$`)
+	// checksum: <algo>:<hex>. sha256/sha512 are recommended; md5/sha1 are
+	// still accepted for pre-existing configurations but trigger a
+	// deprecation warning (see legacyPackageSourceValidator).
+	lpChecksumRe = regexp.MustCompile(`^(sha256|sha512|sha1|md5):[0-9a-fA-F]+$`)
 
 	// product_id: GUID enclosed in braces.
 	lpProductIDRe = regexp.MustCompile(`^\{[0-9A-Fa-f-]{36}\}$`)
@@ -258,8 +260,8 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 
 			"source_url": schema.StringAttribute{
 				Optional:            true,
-				Description:         "HTTP/HTTPS URL fetched on the target host into $env:TEMP before exec. Mutually exclusive with source_path.",
-				MarkdownDescription: "HTTP/HTTPS URL fetched on the target host into `$env:TEMP` before exec. Mutually exclusive with `source_path`. Immutable (ForceNew).",
+				Description:         "HTTP/HTTPS URL fetched on the target host into $env:TEMP before exec. Mutually exclusive with source_path. An http:// URL requires checksum: without integrity verification anyone on the network path can substitute the installer, which then runs as the SSH user (typically an administrator).",
+				MarkdownDescription: "HTTP/HTTPS URL fetched on the target host into `$env:TEMP` before exec. Mutually exclusive with `source_path`. Immutable (ForceNew).\n\n**Threat model:** the downloaded installer is executed as the SSH user (typically an administrator). An `http://` URL **requires** `checksum`: without integrity verification anyone on the network path can substitute the binary (remote code execution on the managed host). Even over HTTPS, always pin `checksum` so a compromised mirror or account cannot ship a trojaned installer unnoticed.",
 				PlanModifiers: []planmodifier.String{
 					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
@@ -273,15 +275,15 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 
 			"checksum": schema.StringAttribute{
 				Optional:            true,
-				Description:         "Expected installer checksum, format <algo>:<hex>. Verified before exec.",
-				MarkdownDescription: "Expected installer checksum, format `<algo>:<hex>` where `<algo>` is one of `sha256`, `sha1`, `md5`. Verified before exec. Immutable (ForceNew).",
+				Description:         "Expected installer checksum, format <algo>:<hex>. Verified before exec. Required with an http:// source_url; strongly recommended otherwise. Use sha256 or sha512 (md5 and sha1 are deprecated).",
+				MarkdownDescription: "Expected installer checksum, format `<algo>:<hex>` where `<algo>` is one of `sha256`, `sha512`, `sha1`, `md5`. Verified before exec. Immutable (ForceNew).\n\nRequired with an `http://` `source_url`, strongly recommended otherwise (see `source_url` threat model). Prefer `sha256` or `sha512`: `md5` and `sha1` are cryptographically broken for integrity purposes and trigger a deprecation warning.",
 				PlanModifiers: []planmodifier.String{
 					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
 						lpChecksumRe,
-						"must match ^(sha256|sha1|md5):[0-9a-fA-F]+$",
+						"must match ^(sha256|sha512|sha1|md5):[0-9a-fA-F]+$",
 					),
 				},
 			},
@@ -458,6 +460,75 @@ func (r *windowsLegacyPackageResource) ConfigValidators(_ context.Context) []res
 			path.MatchRoot("source_path"),
 			path.MatchRoot("source_url"),
 		),
+		// Source integrity: an http:// installer URL without a pinned
+		// checksum is a remote-code-execution vector (issue #175).
+		legacyPackageSourceValidator{},
+	}
+}
+
+// legacyPackageSourceValidator enforces download integrity coherence:
+//
+//   - source_url with an http:// scheme REQUIRES checksum (error): over
+//     plaintext HTTP anyone on the network path can substitute the
+//     installer, which is then executed as the SSH user (typically an
+//     administrator).
+//   - source_url without any checksum warns even over HTTPS: a compromised
+//     mirror or account could otherwise ship a trojaned installer unnoticed.
+//   - md5:/sha1: checksums warn: both are broken for integrity purposes;
+//     prefer sha256/sha512 (removal is reserved for a future minor).
+type legacyPackageSourceValidator struct{}
+
+func (v legacyPackageSourceValidator) Description(_ context.Context) string {
+	return "validates source_url/checksum integrity coherence"
+}
+
+func (v legacyPackageSourceValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v legacyPackageSourceValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg windowsLegacyPackageModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if cfg.SourceURL.IsNull() || cfg.SourceURL.IsUnknown() {
+		return
+	}
+	rawURL := cfg.SourceURL.ValueString()
+	if rawURL == "" {
+		return
+	}
+
+	checksumMissing := cfg.Checksum.IsNull() || cfg.Checksum.IsUnknown() || cfg.Checksum.ValueString() == ""
+
+	// URL schemes are case-insensitive; match http:// regardless of case.
+	if strings.HasPrefix(strings.ToLower(rawURL), "http://") {
+		if checksumMissing {
+			resp.Diagnostics.AddAttributeError(path.Root("checksum"),
+				"checksum is required for http:// source_url",
+				"An installer fetched over plaintext HTTP without a pinned checksum can be substituted by "+
+					"anyone on the network path and is then executed as the SSH user (typically an administrator). "+
+					"Set checksum (prefer sha256 or sha512) or switch source_url to https://.")
+			return
+		}
+	} else if checksumMissing {
+		resp.Diagnostics.AddAttributeWarning(path.Root("source_url"),
+			"Unpinned source_url",
+			"Without checksum the downloaded installer is executed without integrity verification. "+
+				"Pin checksum (prefer sha256 or sha512) so a compromised mirror or account cannot ship "+
+				"a trojaned installer unnoticed.")
+	}
+
+	if !checksumMissing {
+		algo, _, _ := strings.Cut(strings.ToLower(cfg.Checksum.ValueString()), ":")
+		if algo == "md5" || algo == "sha1" {
+			resp.Diagnostics.AddAttributeWarning(path.Root("checksum"),
+				"Weak checksum algorithm",
+				"md5 and sha1 are cryptographically broken for integrity purposes and are deprecated; "+
+					"they will be rejected in a future minor version. Use sha256 or sha512.")
+		}
 	}
 }
 
