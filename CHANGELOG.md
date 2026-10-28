@@ -98,6 +98,16 @@ All notable changes to this project will be documented in this file.
   run on every PR without needing a Windows host or credentials (#134,
   #136).
 
+## [0.1.1] - 2026-10-08
+
+### Fixed
+
+- Release archives restore the `386` and `arm` (GOARM 6) targets for
+  `windows`, `linux` and `freebsd`, plus `freebsd/amd64` and
+  `freebsd/arm64`. The build matrix had been reduced to
+  `windows`/`linux`/`darwin` on `amd64`/`arm64` in v0.1.0, dropping the
+  platforms shipped through v0.0.14 (#115).
+
 ## [0.1.0] - 2026-10-08
 
 ### Added
