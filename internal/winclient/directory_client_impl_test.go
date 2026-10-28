@@ -209,6 +209,19 @@ func TestRunDirectoryEnvelope_Timeout(t *testing.T) {
 	if !IsDirectoryError(err, DirectoryErrorUnknown) {
 		t.Errorf("expected unknown (timeout) kind, got %v", err)
 	}
+	var de *DirectoryError
+	if !errors.As(err, &de) {
+		t.Fatalf("expected *DirectoryError, got %T", err)
+	}
+	// The shared envelope helper must not change the directory resource's
+	// diagnostic: the timeout message names the operation and the path, and
+	// the context keeps both plus the host.
+	if !strings.Contains(de.Message, `"read"`) || !strings.Contains(de.Message, `C:\\dir`) {
+		t.Errorf("Message = %q, want operation and path", de.Message)
+	}
+	if de.Context["path"] != `C:\dir` || de.Context["host"] != "win01" || de.Context["operation"] != "read" {
+		t.Errorf("Context = %#v", de.Context)
+	}
 }
 
 func TestRunDirectoryEnvelope_TransportError(t *testing.T) {
