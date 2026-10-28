@@ -121,6 +121,10 @@ function New-Directory([string]$P, [bool]$CreateParents, [string[]]$Wanted) {
       return
     }
     try {
+      # New-Item -Path already behaves literally: per the official cmdlet
+      # documentation it "works like the LiteralPath parameter of other
+      # cmdlets" and "wildcard characters are not interpreted" (New-Item
+      # has no -LiteralPath parameter at all). Brackets in $P are safe.
       New-Item -ItemType Directory -Path $P -Force:$CreateParents -ErrorAction Stop | Out-Null
     } catch {
       Emit-Err (Classify-DirectoryError $_) $_.Exception.Message @{ path = $P }

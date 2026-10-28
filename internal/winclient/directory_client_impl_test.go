@@ -321,6 +321,33 @@ func TestDirectoryCreate_InvalidAttribute(t *testing.T) {
 	}
 }
 
+// Bracket characters are legal in Windows paths (the schema regex only
+// excludes <>:"|?*) and must be created literally. New-Item -Path already
+// behaves literally for this cmdlet (per its documentation it "works like
+// the LiteralPath parameter of other cmdlets"; New-Item has no -LiteralPath
+// parameter at all), and this test locks that in: it fails if the create
+// script ever stops passing the user path verbatim to New-Item. See issue
+// #146 for the full investigation.
+func TestDirectoryCreate_BracketPathPassedVerbatim(t *testing.T) {
+	var got string
+	restore := stubDirRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+		got = script
+		return dirOK(t, fakeDirData(false, 0, nil)), "", nil
+	})
+	defer restore()
+
+	d := NewDirectoryClient(newDirTestClient(t))
+	if _, err := d.Create(context.Background(), DirectoryInput{Path: `C:\data[2024]\logs`, CreateParents: true}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "New-Item -ItemType Directory -Path ") {
+		t.Errorf("create script must pass the user path to New-Item -Path, got:\n%s", got)
+	}
+	if strings.Contains(got, "New-Item -ItemType Directory -LiteralPath ") {
+		t.Errorf("New-Item has no -LiteralPath parameter; using it breaks every create (see #146), got:\n%s", got)
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Read
 // -----------------------------------------------------------------------------

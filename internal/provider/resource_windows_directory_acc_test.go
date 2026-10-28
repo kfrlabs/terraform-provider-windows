@@ -57,6 +57,38 @@ resource "windows_directory" "test" {
 	})
 }
 
+// TestAccWindowsDirectory_BracketPath — directory names containing PowerShell
+// wildcard characters ([ and ], both legal in Windows paths and accepted by
+// the schema regex) must be created literally, not glob-expanded (issue
+// #146). Runs the full lifecycle so a mis-expanded path fails loudly.
+func TestAccWindowsDirectory_BracketPath(t *testing.T) {
+	testAccDirectoryPreCheck(t)
+
+	cfg := `
+resource "windows_directory" "brackets" {
+  path = "C:\\TF_ACC_dir_[brackets]"
+}
+`
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_directory.brackets", "path", `C:\TF_ACC_dir_[brackets]`),
+					resource.TestCheckResourceAttr("windows_directory.brackets", "ensure", "present"),
+					resource.TestCheckResourceAttr("windows_directory.brackets", "id", `C:\TF_ACC_dir_[brackets]`),
+				),
+			},
+			// Idempotency: replanning the same config yields no diff.
+			{
+				Config:   cfg,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
 // TestAccWindowsDirectory_AttributesUpdateInPlace — changing attributes only
 // (no ForceNew).
 func TestAccWindowsDirectory_AttributesUpdateInPlace(t *testing.T) {
