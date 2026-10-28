@@ -50,6 +50,16 @@ type testServerOptions struct {
 	// simulating a session that dies mid-use — for recovery tests.
 	dropAfterCalls int
 
+	// dropIdleAfterCalls, when > 0, closes the SSH channel right after the
+	// response for that many requests, while the session is idle between
+	// calls. The next call's write then fails (request never reached the
+	// REPL), which is the only case where a transparent retry is safe
+	// (#171). Unlike dropAfterCalls — which records the next request and
+	// then drops without responding (outcome unknown, must not be
+	// replayed) — this simulates a stale session (idle timeout, crashed
+	// remote) that died before the next request was sent.
+	dropIdleAfterCalls int
+
 	// stderrBeforeEndMarker, when true, writes the canned stderr BEFORE the
 	// stdout end marker, matching the real bootstrap's ordering (the script
 	// writes its stderr while it runs, before the bootstrap emits the stdout
@@ -274,6 +284,10 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 				writeFramedLine(ch.Stderr(), opts.stderr)
 			}
 			_, _ = fmt.Fprintf(ch.Stderr(), "%s\n", replEndStderrLine)
+
+			if opts.dropIdleAfterCalls > 0 && calls == opts.dropIdleAfterCalls {
+				return // idle death between calls: the next write fails
+			}
 		}
 
 		_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))

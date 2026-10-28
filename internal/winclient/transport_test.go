@@ -547,16 +547,18 @@ func TestTransportConcurrentCallsAreSerialised(t *testing.T) {
 	}
 }
 
-// A session that dies mid-use (dropped connection, crashed remote process)
-// must be transparently re-established rather than permanently failing every
-// subsequent call.
+// A session that dies while idle between calls (dropped connection, crashed
+// remote process, idle timeout) must be transparently re-established rather
+// than permanently failing every subsequent call. Only this case is safe to
+// retry: the next request never reached the REPL, so replaying it cannot
+// double-execute a script (#171).
 func TestTransportRecoversFromDroppedSession(t *testing.T) {
 	noAgent(t)
 	keyPEM, pub, _ := newClientKeypair(t)
 	srv := startTestServer(t, testServerOptions{
-		authorizedKey:  pub,
-		stdout:         "ok",
-		dropAfterCalls: 1, // the second request on a given connection is never answered
+		authorizedKey:      pub,
+		stdout:             "ok",
+		dropIdleAfterCalls: 1, // close the session while idle after request 1
 	})
 
 	c := newTransportTestClient(t, Config{
@@ -567,7 +569,7 @@ func TestTransportRecoversFromDroppedSession(t *testing.T) {
 	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
 		t.Fatalf("first call: stdout = %q", stdout)
 	}
-	// The server drops the connection after serving request 1 on it. This
+	// The server closed the session while idle after request 1. This
 	// second call must transparently reconnect and succeed rather than
 	// surfacing the dropped session as an error.
 	if stdout, _ := mustRun(t, c, "Get-OtherThing"); stdout != "ok" {
@@ -576,6 +578,78 @@ func TestTransportRecoversFromDroppedSession(t *testing.T) {
 
 	if got := srv.Connections(); got != 2 {
 		t.Errorf("connections = %d, want 2 (one reconnect after the drop)", got)
+	}
+}
+
+// dropAfterCalls: 1 records the doomed request server-side, then drops the
+// channel without responding — exactly the "write OK, response lost" case.
+// The client must return an error, open no new connection for a retry, and
+// leave the request recorded exactly once.
+func TestTransportMidResponseDropIsNotRetried(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey:  pub,
+		stdout:         "ok",
+		dropAfterCalls: 1, // the second request is recorded, then never answered
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+		t.Fatalf("first call: stdout = %q", stdout)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	if _, _, err := c.RunPowerShell(ctx, "Get-OtherThing"); err == nil {
+		t.Fatal("expected an error when the response is lost mid-request")
+	} else if strings.Contains(err.Error(), "could not be re-established") {
+		t.Errorf("mid-response drop must not attempt a redial, got: %v", err)
+	}
+
+	if got := len(srv.Requests()); got != 2 {
+		t.Errorf("requests = %d, want 2 (first ok + doomed second, no replay)", got)
+	}
+	if got := srv.Connections(); got != 1 {
+		t.Errorf("connections = %d, want 1 (no redial after a sent request)", got)
+	}
+
+	// The dead session was torn down: the next call with a live context
+	// establishes a fresh session and succeeds.
+	if stdout, _ := mustRun(t, c, "Get-Again"); stdout != "ok" {
+		t.Fatalf("third call: stdout = %q, want %q", stdout, "ok")
+	}
+}
+
+// A cancelled/expired context mid-request is returned directly (matching
+// context.Canceled/DeadlineExceeded) without redialing with the already-done
+// context (#171). Exactly one connection is opened.
+func TestTransportCancelledCtxDoesNotRedial(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+		t.Fatalf("first call: stdout = %q", stdout)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := c.RunPowerShell(cancelled, "Get-OtherThing"); err == nil {
+		t.Fatal("expected an error with an already-cancelled context")
+	} else if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected a context.Canceled error, got: %v", err)
+	}
+	if got := srv.Connections(); got != 1 {
+		t.Errorf("connections = %d, want 1 (cancelled call must not redial)", got)
 	}
 }
 

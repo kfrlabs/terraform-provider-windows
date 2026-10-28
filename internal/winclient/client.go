@@ -137,9 +137,18 @@ func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin strin
 
 // run sends one request to the persistent PowerShell session, establishing
 // it first if needed, and retries exactly once against a freshly
-// re-established session if the existing one turns out to be dead. That
+// re-established session only when the request is known not to have reached
+// the REPL (the write failed, or the session was dead before sending). That
 // keeps a stale session (remote crash, dropped TCP connection, idle
-// timeout) from permanently failing every subsequent call.
+// timeout) from permanently failing every subsequent call, without replaying
+// a script that may already have run on the target (#171).
+//
+// A transport failure after the request bytes were written has an unknown
+// outcome — the script may have run fully, partially, or not at all — so it
+// is reported without replaying, and the dead session is torn down so the
+// next call starts fresh. A cancelled/expired context is returned directly
+// without redialing: redialing with an already-done context can never
+// succeed and only masks the real cause.
 //
 // When no pwsh.exe is available the persistent session cannot be
 // established at all; the client then pins itself to the one-shot fallback
@@ -190,8 +199,31 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 		return stdout, stderr, err
 	}
 
+	// Transport failure or cancellation: the session is unusable, tear it
+	// down so the next call starts fresh.
 	_ = c.session.Close()
 	c.session = nil
+
+	// A cancelled/expired context is returned directly without redialing
+	// (#171): a redial with an already-done context can never succeed and
+	// only produces a misleading "session dropped" wrapper.
+	if ctx.Err() != nil {
+		return stdout, stderr, fmt.Errorf("winclient: powershell call aborted: %w", ctx.Err())
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return stdout, stderr, fmt.Errorf("winclient: powershell call aborted: %w", err)
+	}
+
+	// Retry exactly once only when the request is known not to have reached
+	// the REPL (write failed before any byte was accepted). After a
+	// successful write the outcome is unknown — the script may have run —
+	// so report without replaying to avoid double side effects on
+	// non-idempotent operations (Rename-Computer, local user creation,
+	// firewall changes, legacy installs).
+	var writeErr *replWriteError
+	if !errors.As(err, &writeErr) {
+		return stdout, stderr, fmt.Errorf("winclient: session dropped after request was sent (outcome unknown, script was not retried): %w", err)
+	}
 
 	sess, dialErr := newPersistentSession(ctx, c)
 	if dialErr != nil {
@@ -318,10 +350,10 @@ func (c *Client) runOneShot(ctx context.Context, script, secret string) (string,
 
 // isSessionBroken reports whether err indicates the persistent session
 // itself is unusable (closed pipe, dropped connection, protocol framing
-// lost) as opposed to the script it just ran having failed on a healthy
-// session, which surfaces as a *replScriptError and must be reported
-// without tearing the session down: the failure is deterministic, so a
-// retry would only repeat its side effects.
+// lost, cancelled context) as opposed to the script it just ran having
+// failed on a healthy session, which surfaces as a *replScriptError and must
+// be reported without tearing the session down: the failure is
+// deterministic, so a retry would only repeat its side effects.
 func isSessionBroken(err error) bool {
 	if err == nil {
 		return false
@@ -329,6 +361,29 @@ func isSessionBroken(err error) bool {
 	var scriptErr *replScriptError
 	return !errors.As(err, &scriptErr)
 }
+
+// replWriteError reports that the REPL request bytes were never accepted by
+// the remote end (stdin write failed). The script is known not to have
+// started, so retrying on a fresh session is safe.
+type replWriteError struct{ err error }
+
+func (e *replWriteError) Error() string {
+	return "winclient: write REPL request: " + e.err.Error()
+}
+
+func (e *replWriteError) Unwrap() error { return e.err }
+
+// replTransportError reports that the request was written but the response
+// never arrived (connection dropped mid-response, framing lost). The outcome
+// is unknown — the script may have run fully or partially — so the caller
+// must report without replaying it.
+type replTransportError struct{ err error }
+
+func (e *replTransportError) Error() string {
+	return "winclient: REPL response lost after request was sent: " + e.err.Error()
+}
+
+func (e *replTransportError) Unwrap() error { return e.err }
 
 // dial opens a new SSH connection to the configured host. The whole connect
 // phase (TCP dial plus SSH handshake and auth) is bounded by the earlier of
@@ -504,24 +559,37 @@ func newPersistentSession(ctx context.Context, c *Client) (*persistentSession, e
 }
 
 // run sends one request and waits for its framed response, honouring ctx
-// for cancellation. Transport/protocol failures (and ctx cancellation) are
-// returned as non-nil errors and let Client.run tear the session down and
-// retry once on a fresh one; an uncaught script error on a healthy session
-// is returned as a *replScriptError so the caller reports it immediately
-// without a pointless retry (the failure is deterministic).
+// for cancellation. A write failure is returned as a *replWriteError (safe
+// to retry: the script never started); a failure after a successful write is
+// returned as a *replTransportError (outcome unknown: the script may have
+// run, so it must not be replayed). An uncaught script error on a healthy
+// session is returned as a *replScriptError so the caller reports it
+// immediately without a pointless retry (the failure is deterministic).
 func (ps *persistentSession) run(ctx context.Context, script, secret string) (string, string, error) {
 	type result struct {
 		stdout, stderr string
 		status         int
 		err            error
 	}
+	// Fast path for an already-done context: return without spawning the
+	// writer goroutine. Starting a Write concurrent with the teardown Close
+	// races inside x/crypto/ssh (channel Write vs CloseWrite), and no I/O
+	// on a dead context can succeed anyway. The caller tears the session
+	// down.
+	if ctx.Err() != nil {
+		return "", "", ctx.Err()
+	}
 	done := make(chan result, 1)
 	go func() {
 		if _, err := io.WriteString(ps.stdin, encodeReplRequest(script, secret)); err != nil {
-			done <- result{err: fmt.Errorf("winclient: write REPL request: %w", err)}
+			done <- result{err: &replWriteError{err: err}}
 			return
 		}
 		stdout, stderr, status, err := readReplResponse(ps.stdout, ps.stderr)
+		if err != nil {
+			done <- result{stdout: stdout, stderr: stderr, err: &replTransportError{err: err}}
+			return
+		}
 		done <- result{stdout, stderr, status, err}
 	}()
 
