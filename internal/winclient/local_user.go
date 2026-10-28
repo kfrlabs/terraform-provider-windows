@@ -368,10 +368,13 @@ if (-not (Get-Command New-LocalUser -ErrorAction SilentlyContinue)) {
     return
 }
 
-# Pre-flight: name collision check (EC-1)
+# Pre-flight: name collision check (EC-1). The already_exists message
+# references the runtime $existing identity rather than interpolating the
+# Go-side input: names may legally contain $ and backticks, which
+# PowerShell would expand inside a double-quoted string.
 try {
     $existing = Get-LocalUser -Name %s -ErrorAction Stop
-    Emit-Err 'already_exists' ("local user '%s' already exists on this host (SID: " + $existing.SID.Value + "); use 'terraform import' to bring it under management instead of creating a duplicate") @{ sid = $existing.SID.Value; name = $existing.Name }
+    Emit-Err 'already_exists' ("local user '" + $existing.Name + "' already exists on this host (SID: " + $existing.SID.Value + "); use 'terraform import' to bring it under management instead of creating a duplicate") @{ sid = $existing.SID.Value; name = $existing.Name }
     return
 } catch {
     $fq = $_.FullyQualifiedErrorId
@@ -398,7 +401,7 @@ try {
     Emit-Err $kind $_.Exception.Message @{ name = %s; step = 'new_local_user'; pwlen = $PlainPassword.Length }
 }
 `,
-		qName, input.Name, qName,
+		qName, qName,
 		qName, optParts.String(),
 		qName)
 

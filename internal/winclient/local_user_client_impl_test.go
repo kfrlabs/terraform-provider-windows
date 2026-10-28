@@ -1238,3 +1238,29 @@ func TestLocalUserClient_Update_SingleSetLocalUserCall(t *testing.T) {
 		t.Error("Set-LocalUser has no -UserMayNotChangePassword parameter")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Pre-flight error must not interpolate raw user input (issue #167)
+// -----------------------------------------------------------------------------
+
+// User names may legally contain $ and backticks, which PowerShell expands
+// inside double-quoted strings. The already_exists message must reference
+// the runtime $existing identity instead of the Go-side input.
+func TestLocalUserClient_Create_AlreadyExists_NoRawInterpolation(t *testing.T) {
+	_, lc := newLUClient(t)
+
+	var script string
+	defer stubLUInput(func(_ context.Context, _ *Client, s, _ string) (string, string, error) {
+		script = s
+		return luErr(t, "already_exists", "exists"), "", nil
+	})()
+
+	_, _ = lc.Create(context.Background(), UserInput{Name: `svc$test`, Enabled: true}, "pass")
+
+	if !strings.Contains(script, "$existing.Name") {
+		t.Errorf("already_exists message must use the runtime $existing.Name, got:\n%s", script)
+	}
+	if strings.Contains(script, "local user 'svc$test'") {
+		t.Errorf("script must not interpolate the raw input name into a double-quoted message, got:\n%s", script)
+	}
+}

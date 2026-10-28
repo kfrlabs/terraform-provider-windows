@@ -803,3 +803,29 @@ func TestPsQuoteFromLGTest(t *testing.T) {
 		}
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Pre-flight error must not interpolate raw user input (issue #167)
+// -----------------------------------------------------------------------------
+
+// Group names may legally contain $ and backticks, which PowerShell expands
+// inside double-quoted strings. The already_exists message must reference
+// the runtime $existing identity instead of the Go-side input.
+func TestLocalGroupCreate_AlreadyExists_NoRawInterpolation(t *testing.T) {
+	var script string
+	restore := stubLGRun(func(_ context.Context, _ *Client, s string) (string, string, error) {
+		script = s
+		return lgErr(t, "already_exists", "exists"), "", nil
+	})
+	defer restore()
+
+	lc := NewLocalGroupClient(newLGTestClient(t))
+	_, _ = lc.Create(context.Background(), GroupInput{Name: `ops$test`})
+
+	if !strings.Contains(script, "$existing.Name") {
+		t.Errorf("already_exists message must use the runtime $existing.Name, got:\n%s", script)
+	}
+	if strings.Contains(script, "local group 'ops$test'") {
+		t.Errorf("script must not interpolate the raw input name into a double-quoted message, got:\n%s", script)
+	}
+}

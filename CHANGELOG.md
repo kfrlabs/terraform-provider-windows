@@ -34,6 +34,11 @@ All notable changes to this project will be documented in this file.
   GO-2026-6061 xDS RBAC + HTTP/2 transport flaws); the scan is clean after
   the bump. Exposure in practice is local-only (Terraform CLI ↔ provider
   plugin over loopback) (#165).
+- `windows_local_group` / `windows_local_user` Create pre-flight errors no
+  longer interpolate the raw input name into a PowerShell double-quoted
+  string; the already-exists message references the runtime `$existing`
+  identity instead, so names containing `$` or backticks render verbatim
+  (#167).
 
 ### Added
 
