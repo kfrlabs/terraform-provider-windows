@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -60,6 +61,12 @@ type testServerOptions struct {
 	// remainder, serves the canned response once, and exits with status.
 	// It models one powershell.exe process per call (pre-#81 transport).
 	oneShot bool
+
+	// oneShotStreamDelay, when > 0 in one-shot mode, streams the canned
+	// stdout one line at a time with this delay between lines instead of
+	// all at once, so cancellation can land mid-stream — for the
+	// runOneShot cancellation race test (#172).
+	oneShotStreamDelay time.Duration
 
 	// refusePwsh, when true, drops any exec channel whose command starts
 	// with pwsh.exe without responding, simulating a host with no
@@ -293,7 +300,14 @@ func (s *testServer) serveOneShot(ch ssh.Channel, opts testServerOptions) {
 	})
 	s.mu.Unlock()
 
-	writeFramedLine(ch, opts.stdout)
+	if opts.oneShotStreamDelay > 0 {
+		for _, line := range strings.Split(opts.stdout, "\n") {
+			time.Sleep(opts.oneShotStreamDelay)
+			_, _ = fmt.Fprintf(ch, "%s\n", line)
+		}
+	} else {
+		writeFramedLine(ch, opts.stdout)
+	}
 	writeFramedLine(ch.Stderr(), opts.stderr)
 	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(opts.status)}))
 }
