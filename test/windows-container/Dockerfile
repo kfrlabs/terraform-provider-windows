@@ -1,21 +1,16 @@
 # Test harness for the terraform-provider-windows acceptance suite.
-# OpenSSH binaries are copied from the host: same OS build, no download needed.
+#
+# The image holds no credential: the `tfacc` account is created (or its
+# password reset) at container start from the TFACC_PASSWORD environment
+# variable, see set-tfacc-user.ps1. One image therefore serves any password,
+# and rotating the lab secret no longer means rebuilding.
+#
+# Layers are ordered from least to most likely to change, so the PowerShell 7
+# download is reused from the build cache when only the SSH configuration,
+# the OpenSSH binaries or the scripts change.
 FROM mcr.microsoft.com/windows/servercore:ltsc2025
 
-COPY OpenSSH C:/OpenSSH/
-COPY entrypoint.cmd C:/entrypoint.cmd
-
 SHELL ["powershell", "-NoProfile", "-Command", "$ErrorActionPreference='Stop';"]
-
-# Local admin account used by the provider over SSH. The password must not
-# contain the account name, and must stay under 15 characters to avoid the
-# interactive net.exe prompt.
-ARG TFACC_PASSWORD
-
-RUN if ([string]::IsNullOrWhiteSpace($env:TFACC_PASSWORD)) { throw 'TFACC_PASSWORD build argument is required.' } ; \
-    $p = ConvertTo-SecureString $env:TFACC_PASSWORD -AsPlainText -Force ; \
-    New-LocalUser -Name tfacc -Password $p -PasswordNeverExpires -AccountNeverExpires | Out-Null ; \
-    Add-LocalGroupMember -Group Administrators -Member tfacc
 
 # PowerShell 7: the provider prefers a persistent pwsh.exe session and only
 # falls back to one powershell.exe (5.1) process per call without it (see
@@ -30,8 +25,8 @@ RUN $msi = Join-Path $env:TEMP 'PowerShell-win-x64.msi' ; \
     Remove-Item $msi -Force
 
 # Separate layer on purpose: it starts with a fresh environment, so this
-# also proves pwsh.exe resolves via the system PATH — which is exactly how
-# the provider will invoke it over SSH — and that the installed version
+# also proves pwsh.exe resolves via the system PATH, which is exactly how
+# the provider will invoke it over SSH, and that the installed version
 # matches the pin above.
 RUN $v = & pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' ; \
     if ($v -ne $env:POWERSHELL_VERSION) { throw "pwsh version mismatch: got $v, want $env:POWERSHELL_VERSION" } ; \
@@ -39,16 +34,21 @@ RUN $v = & pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' ; \
 
 # Minimal sshd_config written from scratch: the shipped default ends with a
 # "Match Group administrators" block, so appended directives land inside that
-# block and sshd refuses to start.
-RUN New-Item -ItemType Directory -Force -Path C:\ProgramData\ssh | Out-Null
-RUN Set-Content -Path C:\ProgramData\ssh\sshd_config -Encoding ascii -Value 'Port 22'
-RUN Add-Content -Path C:\ProgramData\ssh\sshd_config -Encoding ascii -Value 'PasswordAuthentication yes'
-RUN Add-Content -Path C:\ProgramData\ssh\sshd_config -Encoding ascii -Value 'PubkeyAuthentication yes'
-RUN Add-Content -Path C:\ProgramData\ssh\sshd_config -Encoding ascii -Value 'StrictModes no'
-RUN Add-Content -Path C:\ProgramData\ssh\sshd_config -Encoding ascii -Value 'LogLevel VERBOSE'
+# block and sshd refuses to start. SyslogFacility LOCAL0 enables file
+# logging, so a failed start is diagnosable from docker exec.
+RUN New-Item -ItemType Directory -Force -Path C:\ProgramData\ssh | Out-Null ; \
+    Set-Content -Path C:\ProgramData\ssh\sshd_config -Encoding ascii -Value @( \
+      'Port 22', \
+      'PasswordAuthentication yes', \
+      'PubkeyAuthentication yes', \
+      'StrictModes no', \
+      'LogLevel VERBOSE', \
+      'SyslogFacility LOCAL0')
 
-# File logging, so a failed start is diagnosable from docker exec.
-RUN Add-Content -Path C:\ProgramData\ssh\sshd_config -Encoding ascii -Value 'SyslogFacility LOCAL0'
+# OpenSSH binaries are copied from the host: same OS build, no download needed.
+COPY OpenSSH C:/OpenSSH/
+COPY set-tfacc-user.ps1 C:/set-tfacc-user.ps1
+COPY entrypoint.cmd C:/entrypoint.cmd
 
 # sshd needs SeTcbPrivilege for CreateProcessAsUserW; started as
 # ContainerAdministrator it fails with error 1314 right after the handshake,
