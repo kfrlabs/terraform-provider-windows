@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -309,7 +310,7 @@ func parseLPState(resp *psResponse) (*LegacyPackageState, error) {
 // Create runs the installer end-to-end: source resolution, checksum
 // verification, exec, exit-code validation, and state read-back.
 func (l *LegacyPackageClientImpl) Create(ctx context.Context, in LegacyPackageInput) (*LegacyPackageState, error) {
-	resp, err := l.runEnvelope(ctx, "Create", in, lpCreateBody)
+	resp, err := l.runEnvelope(ctx, "Create", in, lpCreateScript())
 	if err != nil {
 		return nil, err
 	}
@@ -459,6 +460,26 @@ function Invoke-LpProcess {
 }
 `
 
+// lpCreateScript renders the Create pipeline: lpCreateBody with the
+// installer-download step expanded to the shared TLS-safe fragment (see
+// download.go). Download failures keep the download_failed envelope the
+// previous inline block emitted.
+func lpCreateScript() string {
+	fragment := psInvokeDownload(
+		"([string]$cfg.source_url)",
+		"",
+		"([bool]$cfg.insecure_skip_verify)",
+		"$installerPath",
+	)
+	indented := "    " + strings.ReplaceAll(fragment, "\n", "\n    ")
+	download := "  try {\n" + indented + "\n" +
+		"  } catch {\n" +
+		`    Emit-Err 'download_failed' ("download error: " + $_.Exception.Message) @{ url = [string]$cfg.source_url }` + "\n" +
+		"    return\n" +
+		"  }"
+	return strings.NewReplacer("@@LP_DOWNLOAD@@", download).Replace(lpCreateBody)
+}
+
 // lpCreateBody runs the full install pipeline:
 //  1. Resolve the installer (download via Invoke-WebRequest if source_url).
 //  2. Verify the checksum (Get-FileHash).
@@ -495,19 +516,7 @@ if ($cfg.source_path) {
   if ([string]::IsNullOrEmpty($fname)) { $fname = 'installer_' + [guid]::NewGuid().ToString() + '.bin' }
   $installerPath = Join-Path $tmpDir $fname
   $downloaded = $true
-  $prevCB = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
-  if ([bool]$cfg.insecure_skip_verify) {
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-  }
-  try {
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls
-    Invoke-WebRequest -Uri ([string]$cfg.source_url) -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
-  } catch {
-    Emit-Err 'download_failed' ("download error: " + $_.Exception.Message) @{ url = [string]$cfg.source_url }
-    return
-  } finally {
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $prevCB
-  }
+@@LP_DOWNLOAD@@
 } else {
   Emit-Err 'invalid_parameter' "either source_path or source_url is required" @{}
   return

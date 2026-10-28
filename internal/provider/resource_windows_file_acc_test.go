@@ -13,7 +13,11 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"testing"
@@ -422,3 +426,59 @@ resource "windows_file" "second" {
 
 // regexpMustCompile keeps the ExpectError call sites readable.
 func regexpMustCompile(s string) *regexp.Regexp { return regexp.MustCompile(s) }
+
+// TestAccWindowsFile_TargetDownloadSelfSignedTLS proves the shared
+// target-side download fragment (issue #174) honours
+// source_url_insecure_skip_verify on the PowerShell 7 transport: the
+// httptest TLS server presents a certificate the host does not trust, so
+// strict validation must fail and the opt-out must land the exact bytes
+// (verified through the remote content_sha256).
+func TestAccWindowsFile_TargetDownloadSelfSignedTLS(t *testing.T) {
+	testAccFilePreCheck(t)
+
+	payload := []byte("windows-file-tls-probe-payload")
+	digest := sha256.Sum256(payload)
+	wantSHA := hex.EncodeToString(digest[:])
+
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(tlsSrv.Close)
+
+	path := fileTestDir + `\tls-probe.bin`
+	cfg := func(skipVerify bool) string {
+		return fmt.Sprintf(`
+resource "windows_file" "tls" {
+  path                            = %q
+  download_on                     = "target"
+  source_url                      = %q
+  source_url_sha256               = %q
+  source_url_insecure_skip_verify = %t
+}
+`, path, tlsSrv.URL+"/payload.bin", wantSHA, skipVerify)
+	}
+
+	// Strict validation against an untrusted certificate must fail.
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      cfg(false),
+				ExpectError: regexpMustCompile(`download_failed`),
+			},
+		},
+	})
+
+	// With the opt-out, the download must succeed byte-identical.
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFileDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(true),
+				Check: resource.TestCheckResourceAttr(
+					"windows_file.tls", "content_sha256", wantSHA),
+			},
+		},
+	})
+}

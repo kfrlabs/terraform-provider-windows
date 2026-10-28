@@ -255,17 +255,28 @@ const psFileAcquireStdin = `      $b64 = [Console]::In.ReadToEnd()
 
 // psFileAcquireDownload downloads on the target host (download_on = "target").
 // Placeholders: @@URL@@ @@HEADERS@@ @@SKIPTLS@@.
-const psFileAcquireDownload = `      $prevCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
-      try {
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-        if (@@SKIPTLS@@) { [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true } }
-        Invoke-WebRequest -Uri @@URL@@ -OutFile $tmp -UseBasicParsing -Headers @@HEADERS@@ -MaximumRedirection 5
+//
+// The download itself is psInvokeDownload (see download.go): a single
+// TLS-safe implementation shared with windows_legacy_package, honouring
+// insecure_skip_verify on both PowerShell editions and restoring the
+// process-global protocol/callback state afterwards. Download failures are
+// terminating errors for the caller's catch to translate.
+const psFileAcquireDownload = `      try {
+@@DOWNLOAD@@
       } catch {
         Emit-Err 'download_failed' $_.Exception.Message @{ url = @@URL@@ }
         return
-      } finally {
-        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $prevCallback
       }`
+
+// psFileAcquireDownloadBody renders psFileAcquireDownload for one download:
+// TLS handling comes from the shared helper, headers/skip expressions from
+// the caller.
+func psFileAcquireDownloadBody(urlExpr, headersExpr, skipTLSExpr string) string {
+	return strings.NewReplacer(
+		"@@URL@@", urlExpr,
+		"@@DOWNLOAD@@", psInvokeDownload(urlExpr, headersExpr, skipTLSExpr, "$tmp"),
+	).Replace(psFileAcquireDownload)
+}
 
 // psFileReadBody is the Read script template. Placeholder: @@PATH@@.
 // It returns metadata only and never transfers file bytes (decision D-1).
@@ -508,11 +519,11 @@ func buildFileSetScript(input FileInput) (script, stdin string, err error) {
 			return "", "", &FileError{Kind: FileErrorInvalidInput,
 				Message: `download_on = "target" requires source_url_sha256: without a pinned checksum the provider cannot verify what the host downloaded`}
 		}
-		acquire = strings.NewReplacer(
-			"@@URL@@", psQuote(input.SourceURL),
-			"@@HEADERS@@", psHeadersHashtable(input.SourceURLHeaders),
-			"@@SKIPTLS@@", "$"+psBool(input.SourceURLInsecureSkipVerify),
-		).Replace(psFileAcquireDownload)
+		acquire = psFileAcquireDownloadBody(
+			psQuote(input.SourceURL),
+			psHeadersHashtable(input.SourceURLHeaders),
+			"$"+psBool(input.SourceURLInsecureSkipVerify),
+		)
 	} else {
 		if _, verr := ValidateFileContentBase64(input.ContentBase64); verr != nil {
 			return "", "", verr
