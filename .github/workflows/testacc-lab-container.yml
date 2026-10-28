@@ -12,8 +12,18 @@
 # This is deliberately NOT wired to pull_request: self-hosted runners
 # executing arbitrary fork-PR code is the textbook privilege-escalation path
 # (see GitHub's own self-hosted-runner security guidance), and this runner
-# also has Docker-host-level reach on the lab network. workflow_dispatch and
-# a nightly schedule keep it opt-in / maintainer-triggered only.
+# also has Docker-host-level reach on the lab network. workflow_dispatch
+# keeps it opt-in / maintainer-triggered only.
+#
+# There is currently no schedule trigger, although the suite was designed
+# for a nightly run: the repository is public but the LAB-WINDOCKER-01
+# runner's organization group disallows public repositories
+# (allows_public_repositories=false), so every scheduled run queued forever
+# and was eventually cancelled (see #129). Re-add the cron below once the
+# runner is reachable from this repository again — either the group policy
+# is relaxed by an organization admin or the runner moves to a group that
+# allows public repositories — and close #129 with a green nightly as
+# evidence.
 #
 # Note: the runner sits in an organization runner group. A public repository
 # can only use it if that group allows public repositories; otherwise jobs
@@ -46,10 +56,13 @@ on:
         type: boolean
         required: false
         default: false
-  schedule:
-    # Nightly, well outside business hours (UTC). Catches drift between
-    # releases without needing a human to remember to run it.
-    - cron: "17 2 * * *"
+  # No schedule trigger while #129 is open: with the runner unreachable
+  # (public repository vs. allows_public_repositories=false on the runner
+  # group), every nightly queued forever and was cancelled. To restore it:
+  #   schedule:
+  #     # Nightly, well outside business hours (UTC). Catches drift between
+  #     # releases without needing a human to remember to run it.
+  #     - cron: "17 2 * * *"
 
 permissions:
   contents: read
