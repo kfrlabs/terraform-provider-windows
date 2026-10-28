@@ -63,6 +63,15 @@ All notable changes to this project will be documented in this file.
   reason. Dial, handshake and context errors are returned as-is, so the
   operator sees the real cause and the next call still establishes the
   persistent session (#170).
+- Target-side downloads (`windows_legacy_package` installer fetch and
+  `windows_file` with `download_on = "target"`) share one TLS-safe
+  implementation: PowerShell 7 uses the native `-SkipCertificateCheck`
+  switch (the old `ServicePointManager` callback was a silent no-op there,
+  so `insecure_skip_verify` had no effect), Windows PowerShell 5.1 adds
+  TLS 1.2 to the existing protocols instead of replacing the set (TLS 1.0
+  and 1.1 are never enabled anymore), and both the protocol set and the
+  validation callback are restored afterwards instead of leaking into
+  later operations of the shared session (#174).
 - Fixed PowerShell injection through Unicode single quotes: `psQuote` now
   doubles every character the PowerShell tokenizer treats as a single quote
   (U+0027, U+2018, U+2019, U+201A, U+201B), mirroring .NET's
