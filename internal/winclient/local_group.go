@@ -229,11 +229,15 @@ if (-not (Get-Command New-LocalGroup -ErrorAction SilentlyContinue)) {
     return
 }
 
-# Pre-flight: detect name collision before calling New-LocalGroup (EC-1)
+# Pre-flight: detect name collision before calling New-LocalGroup (EC-1).
+# The already_exists message references the runtime $existing identity
+# (name and SID) rather than interpolating the Go-side input: names may
+# legally contain $ and backticks, which PowerShell would expand inside a
+# double-quoted string. $existing is already fetched by the lookup above.
 try {
     $existing = Get-LocalGroup -Name %s -ErrorAction Stop
     $existingSid = $existing.SID.Value
-    Emit-Err 'already_exists' ("local group '%s' already exists on this host (SID: " + $existingSid + "); use 'terraform import' to bring it under management instead of creating a duplicate") @{ sid = $existingSid; name = $existing.Name }
+    Emit-Err 'already_exists' ("local group '" + $existing.Name + "' already exists on this host (SID: " + $existingSid + "); use 'terraform import' to bring it under management instead of creating a duplicate") @{ sid = $existingSid; name = $existing.Name }
     return
 } catch {
     if ($_.FullyQualifiedErrorId -notmatch 'GroupNotFound' -and $_.Exception.Message -notmatch 'was not found') {
@@ -252,7 +256,7 @@ try {
     $kind = Classify-LG $_.Exception.Message $_.FullyQualifiedErrorId
     Emit-Err $kind $_.Exception.Message @{ name = %s; step = 'new_local_group' }
 }
-`, qName, input.Name, qName, qName, qDesc, qName)
+`, qName, qName, qName, qDesc, qName)
 
 	resp, err := lc.runLGEnvelope(ctx, "create", input.Name, script)
 	if err != nil {
