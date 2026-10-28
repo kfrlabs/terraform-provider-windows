@@ -302,7 +302,7 @@ func (c *Client) runOneShot(ctx context.Context, script, secret string) (string,
 		// so this is immediate if Run already finished. Run's own error
 		// is irrelevant here: after Close it only reports the teardown,
 		// while the caller needs the context error.
-		_ = <-done
+		<-done //nolint:errcheck // receive synchronises with the copy goroutines; the value is intentionally discarded
 		return stdout.String(), stderr.String(), ctx.Err()
 	case runErr := <-done:
 		if runErr != nil {
