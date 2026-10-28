@@ -370,8 +370,11 @@ func buildPSValueExpr(input RegistryValueInput) (string, error) {
 				Message: fmt.Sprintf("invalid REG_QWORD value %q", *input.ValueString), Cause: err}
 		}
 		// Use ::Parse to avoid PS literal overflow for values > Int64.MaxValue.
-		return fmt.Sprintf("([System.BitConverter]::ToInt64([System.BitConverter]::GetBytes([uint64]::Parse('%s')), 0))",
-			strconv.FormatUint(u64, 10)), nil
+		// The digits are routed through psQuote so no hand-rolled quoting
+		// remains in this file (digits contain no quote characters, so this
+		// renders identically to a '%s' template).
+		return fmt.Sprintf("([System.BitConverter]::ToInt64([System.BitConverter]::GetBytes([uint64]::Parse(%s)), 0))",
+			psQuote(strconv.FormatUint(u64, 10))), nil
 
 	case RegistryValueKindMultiString:
 		strs := input.ValueStrings
