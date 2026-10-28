@@ -20,6 +20,17 @@ provider "windows" {
 resource "windows_hostname" "this" {
   name  = "WEB01"
   force = true
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled rename or read-back
+  # surfaces a timeout diagnostic instead of blocking Terraform
+  # indefinitely.
+  timeouts = {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 output "hostname_reboot_pending" {

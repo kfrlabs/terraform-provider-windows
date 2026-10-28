@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -45,6 +47,13 @@ type windowsHostnameResource struct {
 	hn winclient.WindowsHostnameClient
 }
 
+// hostnameDefaultTimeout is the fallback per-operation timeout when the user
+// does not provide a `timeouts {}` block. Rename and read-back operations
+// issue blocking Win32/CIM calls that can stall on an unhealthy host; every
+// CRUD handler bounds its work with this default so a stall surfaces a
+// timeout diagnostic instead of blocking Terraform indefinitely (issue #153).
+const hostnameDefaultTimeout = 10 * time.Minute
+
 // windowsHostnameModel is the Terraform state/plan model for the
 // windows_hostname resource. Field tags match the snake_case attribute names
 // declared in the schema below.
@@ -52,13 +61,14 @@ type windowsHostnameResource struct {
 // MachineID is anchored as the Terraform resource ID (EC-8, EC-10): it
 // survives renames and detects machine replacement out-of-band.
 type windowsHostnameModel struct {
-	ID            types.String `tfsdk:"id"`
-	Name          types.String `tfsdk:"name"`
-	CurrentName   types.String `tfsdk:"current_name"`
-	PendingName   types.String `tfsdk:"pending_name"`
-	RebootPending types.Bool   `tfsdk:"reboot_pending"`
-	MachineID     types.String `tfsdk:"machine_id"`
-	Force         types.Bool   `tfsdk:"force"`
+	ID            types.String   `tfsdk:"id"`
+	Name          types.String   `tfsdk:"name"`
+	CurrentName   types.String   `tfsdk:"current_name"`
+	PendingName   types.String   `tfsdk:"pending_name"`
+	RebootPending types.Bool     `tfsdk:"reboot_pending"`
+	MachineID     types.String   `tfsdk:"machine_id"`
+	Force         types.Bool     `tfsdk:"force"`
+	Timeouts      timeouts.Value `tfsdk:"timeouts"`
 }
 
 // netbiosNameRegex enforces the structural part of the NetBIOS rule.
@@ -105,13 +115,13 @@ func (r *windowsHostnameResource) Metadata(_ context.Context, req resource.Metad
 }
 
 // Schema returns the complete TPF schema.
-func (r *windowsHostnameResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = windowsHostnameSchemaDefinition()
+func (r *windowsHostnameResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = windowsHostnameSchemaDefinition(ctx)
 }
 
 // windowsHostnameSchemaDefinition returns the resource schema. Extracted into
 // a function so it can be unit-tested independently of the resource type.
-func windowsHostnameSchemaDefinition() schema.Schema {
+func windowsHostnameSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages the NetBIOS computer name (hostname) of a remote Windows machine over SSH/PowerShell.\n\n" +
 			"Renames are **asynchronous**: `Rename-Computer` only persists the new name to the registry; the change becomes active after the next reboot. " +
@@ -177,6 +187,12 @@ func windowsHostnameSchemaDefinition() schema.Schema {
 					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to hostnameDefaultTimeout
+			// so a stalled rename or read-back surfaces a timeout diagnostic
+			// instead of blocking Terraform indefinitely (issue #153).
+			"timeouts": timeouts.Attributes(ctx, hnTimeoutsOpts),
 		},
 	}
 }
@@ -216,6 +232,15 @@ func (r *windowsHostnameResource) Create(ctx context.Context, req resource.Creat
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	createTimeout, diags := plan.Timeouts.Create(ctx, hostnameDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	in := winclient.HostnameInput{
 		Name:  plan.Name.ValueString(),
 		Force: plan.Force.ValueBool(),
@@ -239,6 +264,15 @@ func (r *windowsHostnameResource) Read(ctx context.Context, req resource.ReadReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := state.Timeouts.Read(ctx, hostnameDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	id := state.MachineID.ValueString()
 	if id == "" {
 		id = state.ID.ValueString()
@@ -272,6 +306,15 @@ func (r *windowsHostnameResource) Update(ctx context.Context, req resource.Updat
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	updateTimeout, diags := plan.Timeouts.Update(ctx, hostnameDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	id := prior.MachineID.ValueString()
 	if id == "" {
 		id = prior.ID.ValueString()
@@ -302,6 +345,18 @@ func (r *windowsHostnameResource) Delete(ctx context.Context, req resource.Delet
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// No remote I/O happens on this path, but still resolve the timeout so
+	// a misconfigured `timeouts {}` block surfaces a diagnostic rather
+	// than passing silently.
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, hostnameDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	current := state.CurrentName.ValueString()
 	tflog.Warn(ctx,
 		fmt.Sprintf("windows_hostname destroy is a no-op; the computer keeps its current name (%s)", current),
@@ -316,6 +371,17 @@ func (r *windowsHostnameResource) Delete(ctx context.Context, req resource.Delet
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+
+// hnTimeoutsOpts declares which per-operation timeouts the resource exposes.
+// The schema derives from it; keep the values together with the handlers,
+// since a null timeouts value whose attribute types disagree with the schema
+// is rejected by the framework as a provider type error.
+var hnTimeoutsOpts = timeouts.Opts{
+	Create: true,
+	Read:   true,
+	Update: true,
+	Delete: true,
+}
 
 // modelFromHostnameState projects a winclient.HostnameState onto a
 // windowsHostnameModel, preserving desired-input fields (name, force) from
@@ -338,6 +404,9 @@ func modelFromHostnameState(state *winclient.HostnameState, prior windowsHostnam
 		RebootPending: types.BoolValue(state.RebootPending),
 		MachineID:     types.StringValue(state.MachineID),
 		Force:         force,
+		// Preserve the user-configured per-operation timeouts across the
+		// projection (Set overwrites the full state object).
+		Timeouts: prior.Timeouts,
 	}
 }
 

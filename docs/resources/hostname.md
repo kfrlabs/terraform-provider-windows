@@ -44,6 +44,17 @@ provider "windows" {
 resource "windows_hostname" "this" {
   name  = "WEB01"
   force = true
+
+  # Bound every remote operation explicitly: without this block each
+  # operation defaults to 10 minutes, and a stalled rename or read-back
+  # surfaces a timeout diagnostic instead of blocking Terraform
+  # indefinitely.
+  timeouts = {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 output "hostname_reboot_pending" {
@@ -75,6 +86,7 @@ Comparison against `current_name` / `pending_name` is **case-insensitive** (idem
 ### Optional
 
 - `force` (Boolean) When `true`, passes `-Force` to `Rename-Computer` to suppress the interactive confirmation prompt. Default: `false`.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
@@ -83,6 +95,16 @@ Comparison against `current_name` / `pending_name` is **case-insensitive** (idem
 - `machine_id` (String) Stable per-machine identifier read from `HKLM:\SOFTWARE\Microsoft\Cryptography\MachineGuid`. Anchors the Terraform resource ID across renames (EC-10).
 - `pending_name` (String) Hostname queued to take effect on next reboot. Equal to `current_name` when no rename is pending. Drift comparison for `name` is performed against `pending_name` (NOT `current_name`) to avoid an apply loop while a reboot is pending (EC-3).
 - `reboot_pending` (Boolean) True when `pending_name` differs from `current_name` (case-insensitive). Drives downstream reboot triggers.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 

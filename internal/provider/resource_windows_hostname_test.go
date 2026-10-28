@@ -11,6 +11,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -71,7 +72,41 @@ func hnObjectType() tftypes.Object {
 		"reboot_pending": tftypes.Bool,
 		"machine_id":     tftypes.String,
 		"force":          tftypes.Bool,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// hnNullTimeoutsValue is the absent value for the `timeouts {}` block.
+func hnNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
+}
+
+// hnTimeoutsValue builds a `timeouts {}` value carrying a duration for one
+// named operation (create/read/update/delete), the rest null.
+func hnTimeoutsValue(op, d string) tftypes.Value {
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	vals[op] = tftypes.NewValue(tftypes.String, d)
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, vals)
 }
 
 func hnObj(overrides map[string]tftypes.Value) tftypes.Value {
@@ -83,6 +118,7 @@ func hnObj(overrides map[string]tftypes.Value) tftypes.Value {
 		"reboot_pending": tftypes.NewValue(tftypes.Bool, false),
 		"machine_id":     tftypes.NewValue(tftypes.String, nil),
 		"force":          tftypes.NewValue(tftypes.Bool, false),
+		"timeouts":       hnNullTimeoutsValue(),
 	}
 	for k, v := range overrides {
 		base[k] = v
@@ -112,8 +148,8 @@ func TestHostnameMetadata(t *testing.T) {
 }
 
 func TestHostnameSchema_HasRequiredAttributes(t *testing.T) {
-	s := windowsHostnameSchemaDefinition()
-	want := []string{"id", "name", "current_name", "pending_name", "reboot_pending", "machine_id", "force"}
+	s := windowsHostnameSchemaDefinition(context.Background())
+	want := []string{"id", "name", "current_name", "pending_name", "reboot_pending", "machine_id", "force", "timeouts"}
 	for _, k := range want {
 		if _, ok := s.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
@@ -246,7 +282,7 @@ func TestHostnameConfigure_Valid(t *testing.T) {
 
 func TestHostnameImportState(t *testing.T) {
 	r := &windowsHostnameResource{}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
 	}
@@ -274,7 +310,7 @@ func TestHostnameCreate_HappyPath(t *testing.T) {
 		createOut: fakeHnState("guid-1", "OLD-NAME", "NEW-NAME", true),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -313,7 +349,7 @@ func TestHostnameCreate_PermissionDenied(t *testing.T) {
 		),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -340,7 +376,7 @@ func TestHostnameCreate_DomainJoined(t *testing.T) {
 		),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -366,7 +402,7 @@ func TestHostnameRead_HappyPath(t *testing.T) {
 		readOut: fakeHnState("guid-1", "MYHOST", "MYHOST", false),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -400,7 +436,7 @@ func TestHostnameRead_MachineMismatch_RemovesResource(t *testing.T) {
 		),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -432,7 +468,7 @@ func TestHostnameRead_DomainJoined_ReturnsError(t *testing.T) {
 		),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -456,7 +492,7 @@ func TestHostnameRead_FallbackToID_WhenMachineIDEmpty(t *testing.T) {
 		readOut: fakeHnState("guid-1", "MYHOST", "MYHOST", false),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -483,7 +519,7 @@ func TestHostnameRead_GenericError(t *testing.T) {
 		),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	prior := tfsdk.State{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -510,7 +546,7 @@ func TestHostnameUpdate_HappyPath(t *testing.T) {
 		updateOut: fakeHnState("guid-1", "OLD-NAME", "NEW-NAME", true),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -553,7 +589,7 @@ func TestHostnameUpdate_MachineMismatch(t *testing.T) {
 		),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -584,7 +620,7 @@ func TestHostnameUpdate_FallbackToIDWhenMachineIDEmpty(t *testing.T) {
 		updateOut: fakeHnState("guid-1", "OLD-NAME", "NEW-NAME", true),
 	}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	plan := tfsdk.Plan{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -617,7 +653,7 @@ func TestHostnameUpdate_FallbackToIDWhenMachineIDEmpty(t *testing.T) {
 func TestHostnameDelete_NoOp(t *testing.T) {
 	fake := &fakeHostnameClient{deleteErr: nil}
 	r := &windowsHostnameResource{hn: fake}
-	schemaDef := windowsHostnameSchemaDefinition()
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	state := tfsdk.State{
 		Schema: schemaDef,
 		Raw: hnObj(map[string]tftypes.Value{
@@ -809,5 +845,125 @@ func TestAddHostnameDiag_StructuredErrorNoContext(t *testing.T) {
 	detail := diags.Errors()[0].Detail()
 	if !strings.Contains(detail, "Access is denied") {
 		t.Errorf("detail should contain message: %s", detail)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (issue #153): a stalled rename or read-back must surface a bounded
+// diagnostic instead of blocking Terraform indefinitely.
+// ---------------------------------------------------------------------------
+
+func TestHostnameSchema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsHostnameSchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #153: CRUD must be time-bounded)")
+	}
+}
+
+// hangHostnameClient simulates the stalled transport from issue #153: Update
+// blocks until the passed context is done, then returns the context error —
+// mirroring a rename/read-back that never answers.
+type hangHostnameClient struct {
+	fakeHostnameClient
+}
+
+func (f *hangHostnameClient) Update(ctx context.Context, _ string, _ winclient.HostnameInput) (*winclient.HostnameState, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestHostnameUpdate_StalledTransportIsBounded(t *testing.T) {
+	r := &windowsHostnameResource{hn: &hangHostnameClient{}}
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
+
+	newName := tftypes.NewValue(tftypes.String, "NEW-NAME")
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: hnObj(map[string]tftypes.Value{
+			"name":       newName,
+			"machine_id": tftypes.NewValue(tftypes.String, "guid-1"),
+			"timeouts":   hnTimeoutsValue("update", "200ms"),
+		}),
+	}
+	prior := tfsdk.State{
+		Schema: schemaDef,
+		Raw: hnObj(map[string]tftypes.Value{
+			"name":       tftypes.NewValue(tftypes.String, "OLD-NAME"),
+			"machine_id": tftypes.NewValue(tftypes.String, "guid-1"),
+		}),
+	}
+	resp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
+	}
+
+	start := time.Now()
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: prior}, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the update timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Update blocked for %v with a 200ms timeout; the stalled-transport hang from issue #153 is back", elapsed)
+	}
+}
+
+func TestHostnameCreate_PreservesTimeouts(t *testing.T) {
+	fake := &fakeHostnameClient{
+		createOut: fakeHnState("guid-1", "OLD-NAME", "NEW-NAME", true),
+	}
+	r := &windowsHostnameResource{hn: fake}
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
+
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: hnObj(map[string]tftypes.Value{
+			"name":     tftypes.NewValue(tftypes.String, "NEW-NAME"),
+			"timeouts": hnTimeoutsValue("create", "5m"),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
+	}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create unexpected diags: %v", resp.Diagnostics)
+	}
+	var m windowsHostnameModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if m.MachineID.ValueString() != "guid-1" {
+		t.Errorf("MachineID = %q, want guid-1", m.MachineID.ValueString())
+	}
+	got, diags := m.Timeouts.Create(context.Background(), hostnameDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through Create state projection: create = %v, want 5m", got)
+	}
+}
+
+func TestHostnameImportState_LeavesTimeoutsNull(t *testing.T) {
+	// ImportState uses SetAttribute (no full Set), so the timeouts value
+	// stays null with the schema's types. Guards against regressions that
+	// would break the subsequent Read.
+	r := &windowsHostnameResource{}
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
+	}
+	r.ImportState(context.Background(),
+		resource.ImportStateRequest{ID: "9a8b7c6d-1234-5678-abcd-ef0123456789"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState unexpected diags: %v", resp.Diagnostics)
+	}
+	var m windowsHostnameModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if !m.Timeouts.IsNull() {
+		t.Errorf("imported timeouts should be null, got %v", m.Timeouts)
 	}
 }
