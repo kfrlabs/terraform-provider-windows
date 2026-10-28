@@ -464,7 +464,7 @@ resource "windows_file" "tls" {
 		Steps: []resource.TestStep{
 			{
 				Config:      cfg(false),
-				ExpectError: regexpMustCompile(`download_failed`),
+				ExpectError: regexpMustCompile(`SSL connection could not be established`),
 			},
 		},
 	})
