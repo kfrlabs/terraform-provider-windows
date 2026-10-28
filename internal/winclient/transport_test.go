@@ -1055,3 +1055,93 @@ func TestTransportNonASCIIOutputRoundTripsBothTransports(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Connect-phase timeout: the SSH handshake is bounded by the configured
+// timeout and by the context (issue #169).
+// ---------------------------------------------------------------------------
+
+// startSilentListener accepts TCP connections and never speaks SSH: the
+// stalled-handshake fixture. Accepted connections are held open (reads
+// discarded) until the client goes away, mimicking an overloaded sshd, a
+// half-open middlebox, or a wrong service on the SSH port.
+func startSilentListener(t *testing.T) (string, int) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				_, _ = io.Copy(io.Discard, conn)
+			}()
+		}
+	}()
+	addr := ln.Addr().(*net.TCPAddr)
+	return addr.IP.String(), addr.Port
+}
+
+// A host that accepts TCP but never speaks SSH must not hang dial: the
+// whole connect phase is bounded by the configured timeout.
+func TestDialStalledHandshakeBoundedByTimeout(t *testing.T) {
+	host, port := startSilentListener(t)
+	c := newTransportTestClient(t, Config{
+		Host: host, Port: port, Username: "tester",
+		Password: "secret", InsecureIgnoreHostKey: true, Timeout: 2 * time.Second,
+	})
+
+	start := time.Now()
+	_, err := c.dial(context.Background())
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected an error dialling a server that never speaks SSH")
+	}
+	if !strings.Contains(err.Error(), "handshake") {
+		t.Errorf("expected a handshake error, got: %v", err)
+	}
+	// The 2s connect budget must bound the call: fail fast is wrong (the
+	// budget was not honoured), hanging past a generous margin is wrong.
+	if elapsed < 500*time.Millisecond {
+		t.Errorf("dial failed after %v with a 2s timeout: the connect budget was not honoured", elapsed)
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("dial took %v against a stalled handshake with a 2s timeout", elapsed)
+	}
+	t.Logf("dial failed after %v: %v", elapsed, err)
+}
+
+// Cancelling the context during a stalled handshake aborts dial promptly
+// with a context error instead of waiting out the configured timeout.
+func TestDialStalledHandshakeAbortedByContextCancel(t *testing.T) {
+	_, port := startSilentListener(t)
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: port, Username: "tester",
+		Password: "secret", InsecureIgnoreHostKey: true, Timeout: 5 * time.Minute,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	_, err := c.dial(ctx)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected an error after cancelling the context mid-handshake")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected a context.Canceled error, got: %v", err)
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("dial took %v to honour cancellation (5m configured timeout)", elapsed)
+	}
+	t.Logf("dial aborted after %v: %v", elapsed, err)
+}
