@@ -53,6 +53,13 @@ All notable changes to this project will be documented in this file.
   completes, and cancelling the context aborts a stalled key exchange/auth
   promptly with a context error instead of hanging until the per-resource
   timeouts fire (#169).
+- A transient failure establishing the first persistent session no longer
+  pins the client to the slow one-shot transport: only a healthy SSH
+  connection that fails the REPL handshake (positively indicating a host
+  without `pwsh.exe`) falls back, now with a `tflog` warning recording the
+  reason. Dial, handshake and context errors are returned as-is, so the
+  operator sees the real cause and the next call still establishes the
+  persistent session (#170).
 - Fixed PowerShell injection through Unicode single quotes: `psQuote` now
   doubles every character the PowerShell tokenizer treats as a single quote
   (U+0027, U+2018, U+2019, U+201A, U+201B), mirroring .NET's

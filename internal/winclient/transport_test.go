@@ -2,6 +2,7 @@ package winclient
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-log/tflogtest"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -1144,4 +1146,111 @@ func TestDialStalledHandshakeAbortedByContextCancel(t *testing.T) {
 		t.Errorf("dial took %v to honour cancellation (5m configured timeout)", elapsed)
 	}
 	t.Logf("dial aborted after %v: %v", elapsed, err)
+}
+
+// ---------------------------------------------------------------------------
+// One-shot fallback scoping: only a healthy SSH connection that fails to
+// speak the REPL bootstrap pins the client to one-shot (issue #170).
+// ---------------------------------------------------------------------------
+
+// closedPort returns a loopback port that nothing is listening on, so
+// dialling it fails fast with connection refused.
+func closedPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	return port
+}
+
+// A dial failure on the first call is returned as-is and must not pin the
+// client to the one-shot transport: a refused connection is transient, not
+// proof that pwsh.exe is missing.
+func TestFirstCallDialErrorDoesNotPinOneShot(t *testing.T) {
+	noAgent(t)
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: closedPort(t), Username: "tester",
+		Password: "secret", InsecureIgnoreHostKey: true, Timeout: testTimeout,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	_, _, err := c.RunPowerShell(ctx, "Get-Thing")
+	if err == nil {
+		t.Fatal("expected an error dialling a closed port")
+	}
+	t.Logf("first call failed as expected: %v", err)
+	if c.oneShot {
+		t.Error("transient dial failure pinned the client to one-shot")
+	}
+}
+
+// A cancelled context on the first call is returned as-is, and the next
+// call with a live context still establishes the persistent session: the
+// subsequent calls share exactly one SSH connection.
+func TestFirstCallCancelledCtxDoesNotPinOneShot(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := c.RunPowerShell(cancelled, "Get-Thing")
+	if err == nil {
+		t.Fatal("expected an error with an already-cancelled context")
+	} else if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected a context.Canceled error, got: %v", err)
+	}
+	if c.oneShot {
+		t.Fatal("cancelled first call pinned the client to one-shot")
+	}
+
+	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+		t.Fatalf("second call: stdout = %q, want %q", stdout, "ok")
+	}
+	if stdout, _ := mustRun(t, c, "Get-OtherThing"); stdout != "ok" {
+		t.Fatalf("third call: stdout = %q, want %q", stdout, "ok")
+	}
+	if got := srv.Connections(); got != 1 {
+		t.Errorf("connections = %d, want 1 (persistent session reused)", got)
+	}
+}
+
+// Switching to the one-shot transport is logged with the reason.
+func TestOneShotFallbackIsLogged(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", oneShot: true, refusePwsh: true})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	var buf bytes.Buffer
+	ctx := tflogtest.RootLogger(context.Background(), &buf)
+	ctx, cancel := context.WithTimeout(ctx, testTimeout)
+	defer cancel()
+	if _, _, err := c.RunPowerShell(ctx, "Get-Thing"); err != nil {
+		t.Fatalf("RunPowerShell: %v", err)
+	}
+	if !c.oneShot {
+		t.Fatal("client should have fallen back to one-shot")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "falling back to one-shot") {
+		t.Errorf("expected a one-shot fallback warning in logs, got: %q", out)
+	} else if !strings.Contains(out, "warn") {
+		t.Errorf("expected warning level in logs, got: %q", out)
+	}
 }

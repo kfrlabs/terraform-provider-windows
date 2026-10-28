@@ -19,6 +19,8 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+
 	"golang.org/x/crypto/ssh"
 )
 
@@ -141,7 +143,10 @@ func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin strin
 //
 // When no pwsh.exe is available the persistent session cannot be
 // established at all; the client then pins itself to the one-shot fallback
-// (one powershell.exe process per call) for the rest of its lifetime.
+// (one powershell.exe process per call) for the rest of its lifetime — and
+// only then: transport-level failures (dial, handshake, cancelled context)
+// are returned as-is without changing the client mode, so a transient blip
+// on the first call does not silently slow every later one (#170).
 func (c *Client) run(ctx context.Context, script, secret string) (string, string, error) {
 	if c == nil {
 		return "", "", fmt.Errorf("winclient: nil client")
@@ -157,8 +162,25 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 	if c.session == nil {
 		sess, err := newPersistentSession(ctx, c)
 		if err != nil {
-			c.oneShot = true
-			return c.runOneShot(ctx, script, secret)
+			// Fall back to one-shot only when the failure positively
+			// indicates that pwsh.exe is unavailable: the SSH connection
+			// is healthy but the remote end did not speak the REPL
+			// bootstrap (see replHandshakeError). Transport-level
+			// failures (dial, handshake, cancelled/expired ctx) are
+			// returned as-is: pinning one-shot on a transient blip would
+			// silently pay a fresh SSH connection plus a cold
+			// powershell.exe start on every later call, and the original
+			// error is what diagnoses the failure when the operator sees
+			// it (instead of whatever the fallback then reports).
+			var hsErr *replHandshakeError
+			if ctx.Err() == nil && errors.As(err, &hsErr) {
+				c.oneShot = true
+				tflog.Warn(ctx, "Persistent PowerShell session unavailable, falling back to one-shot transport", map[string]interface{}{
+					"reason": hsErr.Error(),
+				})
+				return c.runOneShot(ctx, script, secret)
+			}
+			return "", "", err
 		}
 		c.session = sess
 	}
@@ -373,6 +395,21 @@ type replScriptError struct{}
 func (e *replScriptError) Error() string {
 	return "winclient: powershell script raised an uncaught error"
 }
+
+// replHandshakeError reports that the SSH connection itself is healthy but
+// the remote end did not speak the persistent-session REPL bootstrap: the
+// command exited (or answered something unexpected) before printing the
+// ready marker. Against a reachable host that positively indicates pwsh.exe
+// is unavailable (ADR-0010) — as opposed to a transport-level failure
+// (dial, handshake, cancelled context) — so Client.run falls back to the
+// one-shot transport only for this error kind.
+type replHandshakeError struct{ err error }
+
+func (e *replHandshakeError) Error() string {
+	return "winclient: REPL handshake failed: " + e.err.Error()
+}
+
+func (e *replHandshakeError) Unwrap() error { return e.err }
 
 // persistentSession wraps one SSH connection running the REPL bootstrap. It
 // is not safe for concurrent use; Client.mu is what makes that safe in
