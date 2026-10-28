@@ -18,6 +18,15 @@ All notable changes to this project will be documented in this file.
   a healthy session are reported once, on the existing session, and only
   genuine transport failures trigger the re-establish-and-retry path
   (#124, #125).
+- `windows_firewall_rule`, `windows_local_group_member`, `windows_local_user`,
+  `windows_registry_value`, `windows_local_group`,
+  `windows_environment_variable` and `windows_directory` CRUD are now bounded
+  by per-operation `timeouts` blocks (10m defaults), continuing
+  the campaign that started with `windows_service` (hostname still open
+  as #153): a stalled PowerShell/SSH
+  session surfaces a timeout diagnostic instead of blocking Terraform
+  indefinitely (#122/#123, #126/#132, #133/#135, #139/#141, #148/#149,
+  #150/#151, #154/#156).
 
 ### Added
 
