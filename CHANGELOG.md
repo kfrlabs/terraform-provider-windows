@@ -39,6 +39,14 @@ All notable changes to this project will be documented in this file.
   string; the already-exists message references the runtime `$existing`
   identity instead, so names containing `$` or backticks render verbatim
   (#167).
+- `windows_legacy_package` downloads are integrity-gated at plan time: an
+  `http://` `source_url` without `checksum` now fails planning (plaintext
+  HTTP lets anyone on the network path substitute an installer that is then
+  executed as the SSH user, typically an administrator). A `source_url`
+  without any `checksum` warns even over HTTPS, and `md5:`/`sha1:`
+  checksums warn as deprecated (both are broken for integrity purposes;
+  removal reserved for a future minor). `sha512` is now accepted alongside
+  `sha256`, and the resource docs record the threat model (#175).
 - Fixed PowerShell injection through Unicode single quotes: `psQuote` now
   doubles every character the PowerShell tokenizer treats as a single quote
   (U+0027, U+2018, U+2019, U+201A, U+201B), mirroring .NET's
