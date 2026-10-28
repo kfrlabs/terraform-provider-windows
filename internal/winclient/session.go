@@ -223,7 +223,7 @@ func readReplReady(stdout *bufio.Reader) (marker string, err error) {
 		if err == nil {
 			err = fmt.Errorf("unexpected handshake line %q", trimmed)
 		}
-		return "", fmt.Errorf("winclient: REPL handshake failed: %w", err)
+		return "", &replHandshakeError{err: err}
 	}
 	return strings.TrimSuffix(strings.TrimPrefix(trimmed, replReadyPrefix), replReadySuffix), nil
 }
