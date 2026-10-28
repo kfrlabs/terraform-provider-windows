@@ -53,6 +53,9 @@ All notable changes to this project will be documented in this file.
   completes, and cancelling the context aborts a stalled key exchange/auth
   promptly with a context error instead of hanging until the per-resource
   timeouts fire (#169).
+- Cancelling a one-shot call no longer races with the SSH session's output
+  copy goroutines: `runOneShot` closes the session and waits for
+  `session.Run` before reading the captured buffers (#172).
 - A transient failure establishing the first persistent session no longer
   pins the client to the slow one-shot transport: only a healthy SSH
   connection that fails the REPL handshake (positively indicating a host

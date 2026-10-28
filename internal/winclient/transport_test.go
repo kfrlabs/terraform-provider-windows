@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -1253,4 +1254,43 @@ func TestOneShotFallbackIsLogged(t *testing.T) {
 	} else if !strings.Contains(out, "warn") {
 		t.Errorf("expected warning level in logs, got: %q", out)
 	}
+}
+
+// Cancelling a one-shot call while output is streaming must not race with
+// the session's copy goroutines: runOneShot closes the session and waits
+// for session.Run before reading the buffers (issue #172). Run with -race
+// to prove the absence of the race; the timing assertions prove the call
+// still returns promptly instead of waiting out the remote command.
+func TestOneShotCancelMidStream(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	lines := make([]string, 12)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%02d", i)
+	}
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey: pub, stdout: strings.Join(lines, "\n"),
+		oneShot: true, oneShotStreamDelay: 250 * time.Millisecond,
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	c.oneShot = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, _, err := c.RunPowerShell(ctx, "Get-Thing")
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a context.DeadlineExceeded error, got: %v", err)
+	}
+	// The full stream would take ~3s; the cancelled call must return
+	// promptly instead of waiting it out.
+	if elapsed > 2500*time.Millisecond {
+		t.Errorf("cancelled one-shot call took %v", elapsed)
+	}
+	t.Logf("cancelled one-shot call returned after %v", elapsed)
 }

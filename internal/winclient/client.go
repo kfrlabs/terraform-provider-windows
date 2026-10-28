@@ -294,6 +294,13 @@ func (c *Client) runOneShot(ctx context.Context, script, secret string) (string,
 	select {
 	case <-ctx.Done():
 		_ = session.Close()
+		// Wait for session.Run to return before reading the buffers:
+		// Run's internal copy goroutines may still be writing to them,
+		// and reading concurrently is a data race (also risks truncated
+		// output). Close unblocks Run, so this waits only for the local
+		// copies to drain, not for the remote command. done is buffered,
+		// so this is immediate if Run already finished.
+		<-done
 		return stdout.String(), stderr.String(), ctx.Err()
 	case runErr := <-done:
 		if runErr != nil {
