@@ -20,13 +20,12 @@ All notable changes to this project will be documented in this file.
   (#124, #125).
 - `windows_firewall_rule`, `windows_local_group_member`, `windows_local_user`,
   `windows_registry_value`, `windows_local_group`,
-  `windows_environment_variable` and `windows_directory` CRUD are now bounded
-  by per-operation `timeouts` blocks (10m defaults), continuing
-  the campaign that started with `windows_service` (hostname still open
-  as #153): a stalled PowerShell/SSH
-  session surfaces a timeout diagnostic instead of blocking Terraform
-  indefinitely (#122/#123, #126/#132, #133/#135, #139/#141, #148/#149,
-  #150/#151, #154/#156).
+  `windows_environment_variable`, `windows_directory` and `windows_hostname`
+  CRUD are now bounded by per-operation `timeouts` blocks (10m defaults),
+  completing the campaign that started with `windows_service`: a stalled
+  PowerShell/SSH session surfaces a timeout diagnostic instead of blocking
+  Terraform indefinitely (#122/#123, #126/#132, #133/#135, #139/#141,
+  #148/#149, #150/#151, #154/#156, #153/#155).
 
 ### Added
 
