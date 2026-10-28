@@ -47,6 +47,12 @@ All notable changes to this project will be documented in this file.
   checksums warn as deprecated (both are broken for integrity purposes;
   removal reserved for a future minor). `sha512` is now accepted alongside
   `sha256`, and the resource docs record the threat model (#175).
+- The SSH connect phase is now genuinely bounded by the provider `timeout`
+  (TCP dial plus handshake, as documented): the handshake connection carries
+  a deadline of `min(timeout, context deadline)`, lifted once the handshake
+  completes, and cancelling the context aborts a stalled key exchange/auth
+  promptly with a context error instead of hanging until the per-resource
+  timeouts fire (#169).
 - Fixed PowerShell injection through Unicode single quotes: `psQuote` now
   doubles every character the PowerShell tokenizer treats as a single quote
   (U+0027, U+2018, U+2019, U+201A, U+201B), mirroring .NET's

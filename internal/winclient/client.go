@@ -299,18 +299,64 @@ func isSessionBroken(err error) bool {
 	return !errors.As(err, &scriptErr)
 }
 
-// dial opens a new SSH connection to the configured host, honouring ctx for
-// cancellation of the underlying TCP dial.
+// dial opens a new SSH connection to the configured host. The whole connect
+// phase (TCP dial plus SSH handshake and auth) is bounded by the earlier of
+// the configured timeout and the context deadline, and cancelling ctx aborts
+// a stalled handshake promptly.
+//
+// ssh.ClientConfig.Timeout is only honoured by ssh.Dial, not by the
+// NewClientConn used here, and ctx is not consulted after the TCP connect —
+// so without the deadline below, a host that accepts TCP but stalls during
+// key exchange/auth (overloaded sshd, half-open middlebox, wrong service on
+// the port, MaxStartups throttling) would hang until the per-resource
+// timeouts fire, or forever on code paths that dial before racing ctx.
 func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 	d := net.Dialer{Timeout: c.cfg.Timeout}
 	conn, err := d.DialContext(ctx, "tcp", c.address)
 	if err != nil {
 		return nil, fmt.Errorf("winclient: dial: %w", err)
 	}
+	// Bound every handshake byte by the earlier of the configured timeout
+	// and the context deadline.
+	handshakeDeadline := time.Now().Add(c.cfg.Timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(handshakeDeadline) {
+		handshakeDeadline = ctxDeadline
+	}
+	if err := conn.SetDeadline(handshakeDeadline); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("winclient: set handshake deadline: %w", err)
+	}
+	// NewClientConn does not watch ctx, so close the connection from a
+	// goroutine while the handshake runs; the blocked handshake then fails
+	// immediately. The done channel keeps a late cancellation from closing
+	// a connection the handshake has already handed off.
+	handshakeDone := make(chan struct{})
+	defer close(handshakeDone)
+	stopWatch := context.AfterFunc(ctx, func() {
+		select {
+		case <-handshakeDone:
+		default:
+			_ = conn.Close()
+		}
+	})
+	defer stopWatch()
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, c.address, c.sshCfg)
 	if err != nil {
 		_ = conn.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// Surface the context error so callers can match on
+			// context.Canceled/DeadlineExceeded; the handshake failure is
+			// attached for diagnosis.
+			return nil, fmt.Errorf("winclient: ssh handshake aborted (%v): %w", err, ctxErr)
+		}
 		return nil, fmt.Errorf("winclient: ssh handshake: %w", err)
+	}
+	// The handshake completed: lift the connect-phase deadline so later I/O
+	// on the connection is governed by ctx and the per-call logic again,
+	// not by the dial budget.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("winclient: clear handshake deadline: %w", err)
 	}
 	return ssh.NewClient(sshConn, chans, reqs), nil
 }
