@@ -39,7 +39,6 @@ $ErrorActionPreference = 'Stop'
 $groups = (Get-Content -Raw -Path $GroupsFile | ConvertFrom-Json).groups
 $byName = @{}
 foreach ($g in $groups) { $byName[$g.name] = $g }
-$claimed = (@($groups | Where-Object { -not $_.catchAll } | ForEach-Object { "($($_.run))" })) -join '|'
 
 $plan = @()
 if ($RunFilter) {
@@ -48,15 +47,19 @@ if ($RunFilter) {
     foreach ($lane in ($Lanes -split '\s+' | Where-Object { $_ })) {
         $names = @($lane -split '\+')
         $runs = @()
-        $skip = ''
+        $catchAll = $false
         foreach ($n in $names) {
             $g = $byName[$n]
             if (-not $g) { throw "unknown test group '$n' (see $GroupsFile)" }
-            if ($g.catchAll) {
-                if ($names.Count -gt 1) { throw "catch-all group '$n' must be alone in its lane" }
-                $skip = $claimed
-            }
+            if ($g.catchAll) { $catchAll = $true }
             $runs += "($($g.run))"
+        }
+        $skip = ''
+        if ($catchAll) {
+            # The catch-all matches every test, so a lane holding it is
+            # expressed as a skip instead: every test claimed by a group that
+            # is not in this lane. Empty when the lane holds every group.
+            $skip = (@($groups | Where-Object { -not $_.catchAll -and $names -notcontains $_.name } | ForEach-Object { "($($_.run))" })) -join '|'
         }
         $plan += [pscustomobject]@{ Name = $lane; Run = ($runs -join '|'); Skip = $skip }
     }
