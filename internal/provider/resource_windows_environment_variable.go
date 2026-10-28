@@ -13,8 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -46,6 +49,14 @@ type windowsEnvVarResource struct {
 	client winclient.EnvVarClient
 }
 
+// envVarDefaultTimeout is the fallback per-operation timeout when the user
+// does not provide a `timeouts {}` block. Variable operations (registry
+// writes plus the WM_SETTINGCHANGE broadcast) issue blocking Win32 calls
+// that can stall on an unhealthy host; every CRUD handler bounds its work
+// with this default so a stall surfaces a timeout diagnostic instead of
+// blocking Terraform indefinitely (issue #150).
+const envVarDefaultTimeout = 10 * time.Minute
+
 // ---------------------------------------------------------------------------
 // windowsEnvVarModel — Terraform state/plan model
 // ---------------------------------------------------------------------------
@@ -56,11 +67,12 @@ type windowsEnvVarResource struct {
 // The computed id is assembled at Create/Import time as "<scope>:<name>"
 // (e.g. "machine:JAVA_HOME"). It is never mutated by Update operations.
 type windowsEnvVarModel struct {
-	ID     types.String `tfsdk:"id"`
-	Name   types.String `tfsdk:"name"`
-	Value  types.String `tfsdk:"value"`
-	Scope  types.String `tfsdk:"scope"`
-	Expand types.Bool   `tfsdk:"expand"`
+	ID       types.String   `tfsdk:"id"`
+	Name     types.String   `tfsdk:"name"`
+	Value    types.String   `tfsdk:"value"`
+	Scope    types.String   `tfsdk:"scope"`
+	Expand   types.Bool     `tfsdk:"expand"`
+	Timeouts timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +128,7 @@ func (v envVarNameValidator) ValidateString(
 
 // windowsEnvVarSchemaDefinition returns the schema.Schema for the
 // windows_environment_variable resource.
-func windowsEnvVarSchemaDefinition() schema.Schema {
+func windowsEnvVarSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a single Windows environment variable " +
 			"(`machine` or `user` scope) on a remote host via SSH + PowerShell. " +
@@ -179,6 +191,12 @@ func windowsEnvVarSchemaDefinition() schema.Schema {
 					"`true`: `REG_EXPAND_SZ` — Windows expands `%VAR%` tokens for applications. " +
 					"Updatable in-place: changing `expand` rewrites the registry kind without replacement.",
 			},
+
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to envVarDefaultTimeout
+			// so a stalled variable operation surfaces a timeout diagnostic
+			// instead of blocking Terraform indefinitely (issue #150).
+			"timeouts": timeouts.Attributes(ctx, evTimeoutsOpts),
 		},
 	}
 }
@@ -193,14 +211,46 @@ func windowsEnvVarConfigValidators() []resource.ConfigValidator {
 // Metadata / Schema / ConfigValidators
 // ---------------------------------------------------------------------------
 
+// evTimeoutsOpts declares which per-operation timeouts the resource exposes.
+// The schema and evNullTimeouts both derive from it; keep them together,
+// since a null timeouts value whose attribute types disagree with the schema
+// is rejected by the framework as a provider type error.
+var evTimeoutsOpts = timeouts.Opts{
+	Create: true,
+	Read:   true,
+	Update: true,
+	Delete: true,
+}
+
+// evNullTimeouts returns a null timeouts value carrying the schema's attribute
+// types. The zero timeouts.Value wraps an object with NO attribute types,
+// which the framework rejects on State.Set — the failure mode on import,
+// where there is no prior state to copy the value from.
+func evNullTimeouts() timeouts.Value {
+	attrTypes := map[string]attr.Type{}
+	if evTimeoutsOpts.Create {
+		attrTypes["create"] = types.StringType
+	}
+	if evTimeoutsOpts.Read {
+		attrTypes["read"] = types.StringType
+	}
+	if evTimeoutsOpts.Update {
+		attrTypes["update"] = types.StringType
+	}
+	if evTimeoutsOpts.Delete {
+		attrTypes["delete"] = types.StringType
+	}
+	return timeouts.Value{Object: types.ObjectNull(attrTypes)}
+}
+
 // Metadata sets the resource type name ("windows_environment_variable").
 func (r *windowsEnvVarResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_environment_variable"
 }
 
 // Schema returns the full TPF schema for windows_environment_variable.
-func (r *windowsEnvVarResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = windowsEnvVarSchemaDefinition()
+func (r *windowsEnvVarResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = windowsEnvVarSchemaDefinition(ctx)
 }
 
 // ConfigValidators returns resource-level config validators.
@@ -276,6 +326,14 @@ func (r *windowsEnvVarResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, envVarDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	scope := winclient.EnvVarScope(plan.Scope.ValueString())
 	input := winclient.EnvVarInput{
 		Scope:  scope,
@@ -307,6 +365,10 @@ func (r *windowsEnvVarResource) Create(ctx context.Context, req resource.CreateR
 		Name:   plan.Name,
 		Value:  types.StringValue(evState.Value),
 		Expand: types.BoolValue(evState.Expand),
+		// Preserve the user-configured per-operation timeouts: the remote
+		// projection carries only Win32-observed fields, and Set overwrites
+		// the full state object.
+		Timeouts: plan.Timeouts,
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
@@ -322,6 +384,14 @@ func (r *windowsEnvVarResource) Read(ctx context.Context, req resource.ReadReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := state.Timeouts.Read(ctx, envVarDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	id := state.ID.ValueString()
 	parts := strings.SplitN(id, ":", 2)
@@ -384,6 +454,14 @@ func (r *windowsEnvVarResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
+	updateTimeout, diags := plan.Timeouts.Update(ctx, envVarDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	scope := winclient.EnvVarScope(plan.Scope.ValueString())
 	input := winclient.EnvVarInput{
 		Scope:  scope,
@@ -424,6 +502,14 @@ func (r *windowsEnvVarResource) Delete(ctx context.Context, req resource.DeleteR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, envVarDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	id := state.ID.ValueString()
 	parts := strings.SplitN(id, ":", 2)
@@ -512,6 +598,9 @@ func (r *windowsEnvVarResource) ImportState(ctx context.Context, req resource.Im
 		Name:   types.StringValue(name),
 		Value:  types.StringValue(evState.Value),
 		Expand: types.BoolValue(evState.Expand),
+		// Import starts from no prior state: use a schema-typed null (the
+		// subsequent Read fills in the configured values).
+		Timeouts: evNullTimeouts(),
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)

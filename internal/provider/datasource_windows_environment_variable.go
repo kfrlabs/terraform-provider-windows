@@ -42,6 +42,19 @@ func (d *windowsEnvVarDataSource) Metadata(_ context.Context, req datasource.Met
 	resp.TypeName = req.ProviderTypeName + "_environment_variable"
 }
 
+// windowsEnvVarDataSourceModel is the Terraform state/config model for the
+// windows_environment_variable data source. It mirrors the resource model
+// minus the `timeouts` block: data sources expose no per-operation timeouts,
+// so the model must stay in sync with the data source schema (a struct with
+// extra fields fails decoding).
+type windowsEnvVarDataSourceModel struct {
+	ID     types.String `tfsdk:"id"`
+	Name   types.String `tfsdk:"name"`
+	Value  types.String `tfsdk:"value"`
+	Scope  types.String `tfsdk:"scope"`
+	Expand types.Bool   `tfsdk:"expand"`
+}
+
 // Schema returns the TPF schema for the windows_environment_variable data source.
 func (d *windowsEnvVarDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
@@ -104,7 +117,7 @@ func (d *windowsEnvVarDataSource) Configure(_ context.Context, req datasource.Co
 // exist, because a data source that silently succeeds for a missing variable
 // would create phantom data.
 func (d *windowsEnvVarDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var config windowsEnvVarModel
+	var config windowsEnvVarDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -134,7 +147,7 @@ func (d *windowsEnvVarDataSource) Read(ctx context.Context, req datasource.ReadR
 		return
 	}
 
-	state := windowsEnvVarModel{
+	state := windowsEnvVarDataSourceModel{
 		ID:     types.StringValue(envVarID(scope, name)),
 		Scope:  config.Scope,
 		Name:   config.Name,
