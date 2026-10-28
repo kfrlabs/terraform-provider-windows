@@ -39,6 +39,15 @@ All notable changes to this project will be documented in this file.
   string; the already-exists message references the runtime `$existing`
   identity instead, so names containing `$` or backticks render verbatim
   (#167).
+- Fixed PowerShell injection through Unicode single quotes: `psQuote` now
+  doubles every character the PowerShell tokenizer treats as a single quote
+  (U+0027, U+2018, U+2019, U+201A, U+201B), mirroring .NET's
+  `EscapeSingleQuotedStringContent`. Previously only the ASCII apostrophe
+  was escaped, so a value such as `x’; <code>; ’` terminated the string
+  literal and executed arbitrary code as the SSH user. `psQuote` /
+  `psQuoteList` moved to a dedicated `internal/winclient/psquote.go` with
+  table-driven tests, and the last hand-rolled `'%s'` quoting
+  (`REG_QWORD` value expression) is routed through `psQuote` (#173).
 
 ### Added
 

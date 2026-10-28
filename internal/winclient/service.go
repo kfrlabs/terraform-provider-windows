@@ -42,28 +42,12 @@ type ServiceClient struct {
 func NewServiceClient(c *Client) *ServiceClient { return &ServiceClient{c: c} }
 
 // -----------------------------------------------------------------------------
-// PowerShell helpers — safe quoting and JSON envelope
+// PowerShell JSON envelope
 // -----------------------------------------------------------------------------
-
-// psQuote returns s wrapped as a single-quoted PowerShell string literal, with
-// embedded single quotes doubled. No PowerShell expansion occurs inside single
-// quotes, which prevents $var, backtick, and subexpression injection.
-func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
-// psQuoteList renders a []string as a PowerShell string array literal.
-// Example: []string{"A", "B"} -> "@('A','B')". An empty slice renders as "@()".
-func psQuoteList(items []string) string {
-	if len(items) == 0 {
-		return "@()"
-	}
-	parts := make([]string, len(items))
-	for i, it := range items {
-		parts[i] = psQuote(it)
-	}
-	return "@(" + strings.Join(parts, ",") + ")"
-}
+//
+// Note: safe string quoting lives in psquote.go. Every user-supplied string
+// reaching a script must go through psQuote/psQuoteList; secrets additionally
+// travel on stdin, never in the script body.
 
 // psHeader is prepended to every script. It defines:
 //
