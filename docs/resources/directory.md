@@ -33,6 +33,16 @@ resource "windows_directory" "cache" {
 resource "windows_directory" "scratch" {
   path             = "C:\\ProgramData\\app\\scratch"
   recursive_delete = true
+
+  # Bound every remote operation explicitly. Without this block each operation
+  # defaults to 10 minutes; a stalled PowerShell/SSH session then surfaces a
+  # timeout diagnostic instead of blocking Terraform indefinitely.
+  timeouts = {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # A directory under a path whose parents must already exist.
@@ -62,6 +72,7 @@ resource "windows_directory" "decommissioned" {
 - `create_parent_directories` (Boolean) Create missing parent directories. They are never removed on destroy.
 - `ensure` (String) Whether the directory should be "present" (default) or "absent".
 - `recursive_delete` (Boolean) When true, deleting the resource removes the directory's content as well (`Remove-Item -Recurse`). When false (default), deleting a non-empty directory fails explicitly rather than silently discarding files not managed by Terraform.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
@@ -69,6 +80,16 @@ resource "windows_directory" "decommissioned" {
 - `id` (String) Normalised absolute path of the directory. Identical to the import ID format.
 - `item_count` (Number) Number of items (files and sub-directories) directly contained in the directory (non-recursive).
 - `last_write_time` (String) Last write timestamp of the directory, ISO 8601 UTC.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 

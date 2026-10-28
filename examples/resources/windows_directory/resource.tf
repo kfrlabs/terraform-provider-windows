@@ -15,6 +15,16 @@ resource "windows_directory" "cache" {
 resource "windows_directory" "scratch" {
   path             = "C:\\ProgramData\\app\\scratch"
   recursive_delete = true
+
+  # Bound every remote operation explicitly. Without this block each operation
+  # defaults to 10 minutes; a stalled PowerShell/SSH session then surfaces a
+  # timeout diagnostic instead of blocking Terraform indefinitely.
+  timeouts = {
+    create = "20m"
+    read   = "5m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # A directory under a path whose parents must already exist.

@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -55,10 +57,17 @@ type windowsDirectoryModel struct {
 	CreateParentDirectories types.Bool   `tfsdk:"create_parent_directories"`
 	Attributes              types.List   `tfsdk:"attributes"`
 
-	ExistsChildren types.Bool   `tfsdk:"exists_children"`
-	ItemCount      types.Int64  `tfsdk:"item_count"`
-	LastWriteTime  types.String `tfsdk:"last_write_time"`
+	ExistsChildren types.Bool     `tfsdk:"exists_children"`
+	ItemCount      types.Int64    `tfsdk:"item_count"`
+	LastWriteTime  types.String   `tfsdk:"last_write_time"`
+	Timeouts       timeouts.Value `tfsdk:"timeouts"`
 }
+
+// directoryDefaultTimeout is the fallback per-operation timeout when the user
+// does not provide a `timeouts {}` block. Recursive deletes of large trees
+// can take a while, but a stalled PowerShell/SSH session must never block
+// Terraform forever: every CRUD handler bounds its work with this default.
+const directoryDefaultTimeout = 10 * time.Minute
 
 // Ensure values for the `ensure` attribute.
 const (
@@ -81,11 +90,11 @@ func (r *windowsDirectoryResource) Metadata(_ context.Context, req resource.Meta
 	resp.TypeName = req.ProviderTypeName + "_directory"
 }
 
-func (r *windowsDirectoryResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = windowsDirectorySchemaDefinition()
+func (r *windowsDirectoryResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = windowsDirectorySchemaDefinition(ctx)
 }
 
-func windowsDirectorySchemaDefinition() schema.Schema {
+func windowsDirectorySchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages a directory on a remote Windows host over SSH + PowerShell: presence, " +
 			"NTFS attributes, and absence.\n\n" +
@@ -149,6 +158,16 @@ func windowsDirectorySchemaDefinition() schema.Schema {
 				Computed:    true,
 				Description: "Last write timestamp of the directory, ISO 8601 UTC.",
 			},
+			// Per-operation timeouts (terraform-plugin-framework-timeouts).
+			// Create/Read/Update/Delete each default to directoryDefaultTimeout
+			// so a stalled remote command surfaces a timeout diagnostic
+			// instead of blocking Terraform indefinitely.
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create: true,
+				Read:   true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -266,6 +285,14 @@ func (r *windowsDirectoryResource) Create(ctx context.Context, req resource.Crea
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, directoryDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	if plan.Ensure.ValueString() == directoryEnsureAbsent {
 		// Nothing to create; a subsequent Read/Delete cycle will converge.
 		plan.ID = types.StringValue(plan.Path.ValueString())
@@ -311,6 +338,14 @@ func (r *windowsDirectoryResource) Read(ctx context.Context, req resource.ReadRe
 		return
 	}
 
+	readTimeout, diags := state.Timeouts.Read(ctx, directoryDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	path := state.Path.ValueString()
 	if path == "" {
 		path = state.ID.ValueString()
@@ -347,6 +382,14 @@ func (r *windowsDirectoryResource) Update(ctx context.Context, req resource.Upda
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	updateTimeout, diags := plan.Timeouts.Update(ctx, directoryDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 
 	path := plan.Path.ValueString()
 
@@ -406,6 +449,14 @@ func (r *windowsDirectoryResource) Delete(ctx context.Context, req resource.Dele
 		return
 	}
 
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, directoryDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	path := state.Path.ValueString()
 	if path == "" {
 		path = state.ID.ValueString()
@@ -450,7 +501,21 @@ func (r *windowsDirectoryResource) ImportState(ctx context.Context, req resource
 		Ensure:                  types.StringValue(directoryEnsurePresent),
 		RecursiveDelete:         types.BoolValue(false),
 		CreateParentDirectories: types.BoolValue(true),
+		Timeouts:                dirNullTimeouts(),
 	}
 	applyDirectoryState(&model, ds, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
+}
+
+// dirNullTimeouts returns a null timeouts value carrying the schema's
+// attribute types. The zero timeouts.Value wraps an object with NO attribute
+// types, which the framework rejects on State.Set — the failure mode on
+// import, where there is no prior state to copy the value from.
+func dirNullTimeouts() timeouts.Value {
+	return timeouts.Value{Object: types.ObjectNull(map[string]attr.Type{
+		"create": types.StringType,
+		"read":   types.StringType,
+		"update": types.StringType,
+		"delete": types.StringType,
+	})}
 }
