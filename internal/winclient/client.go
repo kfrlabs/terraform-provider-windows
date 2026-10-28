@@ -571,6 +571,14 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 		status         int
 		err            error
 	}
+	// Fast path for an already-done context: return without spawning the
+	// writer goroutine. Starting a Write concurrent with the teardown Close
+	// races inside x/crypto/ssh (channel Write vs CloseWrite), and no I/O
+	// on a dead context can succeed anyway. The caller tears the session
+	// down.
+	if ctx.Err() != nil {
+		return "", "", ctx.Err()
+	}
 	done := make(chan result, 1)
 	go func() {
 		if _, err := io.WriteString(ps.stdin, encodeReplRequest(script, secret)); err != nil {
