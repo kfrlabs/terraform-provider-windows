@@ -72,6 +72,10 @@ All notable changes to this project will be documented in this file.
   and 1.1 are never enabled anymore), and both the protocol set and the
   validation callback are restored afterwards instead of leaking into
   later operations of the shared session (#174).
+- Release archives now ship `terraform-registry-manifest.json` both as a
+  `<project>_<version>_manifest.json` release asset and inside
+  `<project>_<version>_SHA256SUMS`, so the Terraform Registry records
+  protocol 6.0 instead of assuming 5.0 (#176).
 - Fixed PowerShell injection through Unicode single quotes: `psQuote` now
   doubles every character the PowerShell tokenizer treats as a single quote
   (U+0027, U+2018, U+2019, U+201A, U+201B), mirroring .NET's
