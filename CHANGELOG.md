@@ -27,6 +27,13 @@ All notable changes to this project will be documented in this file.
   diagnostic instead of blocking Terraform indefinitely (#122/#123,
   #126/#132, #133/#135, #139/#141, #148/#149, #150/#151, #154/#156,
   #153/#155).
+- Bumped `google.golang.org/grpc` v1.79.3 → v1.83.2 (indirect dependency
+  via the plugin-framework transport): `govulncheck` reported three
+  reachable vulnerabilities (GO-2026-6443 server panic on missing
+  authority/Host headers, GO-2026-6348 HTTP/2 DATA fragmentation OOM,
+  GO-2026-6061 xDS RBAC + HTTP/2 transport flaws); the scan is clean after
+  the bump. Exposure in practice is local-only (Terraform CLI ↔ provider
+  plugin over loopback) (#165).
 
 ### Added
 
