@@ -27,7 +27,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -98,7 +100,24 @@ func dirObjectType() tftypes.Object {
 		"exists_children":           tftypes.Bool,
 		"item_count":                tftypes.Number,
 		"last_write_time":           tftypes.String,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
 	}}
+}
+
+// dirNullTimeoutsValue is the zero (absent) value for the `timeouts {}`
+// nested attribute, matching the shape in dirObjectType.
+func dirNullTimeoutsValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, nil)
 }
 
 func dirObjBase() map[string]tftypes.Value {
@@ -112,6 +131,7 @@ func dirObjBase() map[string]tftypes.Value {
 		"exists_children":           tftypes.NewValue(tftypes.Bool, false),
 		"item_count":                tftypes.NewValue(tftypes.Number, 0),
 		"last_write_time":           tftypes.NewValue(tftypes.String, "2026-10-01T12:00:00Z"),
+		"timeouts":                  dirNullTimeoutsValue(),
 	}
 }
 
@@ -125,13 +145,13 @@ func dirObj(overrides map[string]tftypes.Value) tftypes.Value {
 
 func dirState(t *testing.T, overrides map[string]tftypes.Value) tfsdk.State {
 	t.Helper()
-	s := windowsDirectorySchemaDefinition()
+	s := windowsDirectorySchemaDefinition(context.Background())
 	return tfsdk.State{Raw: dirObj(overrides), Schema: s}
 }
 
 func dirPlan(t *testing.T, overrides map[string]tftypes.Value) tfsdk.Plan {
 	t.Helper()
-	s := windowsDirectorySchemaDefinition()
+	s := windowsDirectorySchemaDefinition(context.Background())
 	return tfsdk.Plan{Raw: dirObj(overrides), Schema: s}
 }
 
@@ -168,10 +188,11 @@ func TestWindowsDirectoryResource_Metadata(t *testing.T) {
 }
 
 func TestWindowsDirectorySchemaDefinition(t *testing.T) {
-	s := windowsDirectorySchemaDefinition()
+	s := windowsDirectorySchemaDefinition(context.Background())
 	for _, name := range []string{
 		"id", "path", "ensure", "recursive_delete", "create_parent_directories",
 		"attributes", "exists_children", "item_count", "last_write_time",
+		"timeouts",
 	} {
 		if _, ok := s.Attributes[name]; !ok {
 			t.Errorf("schema missing attribute %q", name)
@@ -224,7 +245,7 @@ func TestWindowsDirectoryResource_Create_HappyPath(t *testing.T) {
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.CreateRequest{Plan: dirPlan(t, nil)}
-	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.Create(context.Background(), req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -245,7 +266,7 @@ func TestWindowsDirectoryResource_Create_EnsureAbsent_NoClientCall(t *testing.T)
 	req := resource.CreateRequest{Plan: dirPlan(t, map[string]tftypes.Value{
 		"ensure": tftypes.NewValue(tftypes.String, "absent"),
 	})}
-	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.Create(context.Background(), req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -261,7 +282,7 @@ func TestWindowsDirectoryResource_Create_Error(t *testing.T) {
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.CreateRequest{Plan: dirPlan(t, nil)}
-	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.Create(context.Background(), req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -278,7 +299,7 @@ func TestWindowsDirectoryResource_Read_HappyPath(t *testing.T) {
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.ReadRequest{State: dirState(t, nil)}
-	resp := &resource.ReadResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.Read(context.Background(), req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -327,7 +348,7 @@ func TestWindowsDirectoryResource_Read_Error(t *testing.T) {
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.ReadRequest{State: dirState(t, nil)}
-	resp := &resource.ReadResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.Read(context.Background(), req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -344,7 +365,7 @@ func TestWindowsDirectoryResource_Update_Attributes(t *testing.T) {
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.UpdateRequest{Plan: dirPlan(t, nil)}
-	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.Update(context.Background(), req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -362,7 +383,7 @@ func TestWindowsDirectoryResource_Update_EnsureToAbsent_CallsDelete(t *testing.T
 	req := resource.UpdateRequest{Plan: dirPlan(t, map[string]tftypes.Value{
 		"ensure": tftypes.NewValue(tftypes.String, "absent"),
 	})}
-	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.Update(context.Background(), req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -381,7 +402,7 @@ func TestWindowsDirectoryResource_Update_DriftRecreate(t *testing.T) {
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.UpdateRequest{Plan: dirPlan(t, nil)}
-	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.Update(context.Background(), req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -436,7 +457,7 @@ func TestWindowsDirectoryResource_ImportState_HappyPath(t *testing.T) {
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.ImportStateRequest{ID: `C:\app\logs`}
-	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.ImportState(context.Background(), req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -458,7 +479,7 @@ func TestWindowsDirectoryResource_ImportState_NotFound(t *testing.T) {
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.ImportStateRequest{ID: `C:\missing`}
-	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.ImportState(context.Background(), req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -470,10 +491,108 @@ func TestWindowsDirectoryResource_ImportState_EmptyID(t *testing.T) {
 	r := &windowsDirectoryResource{client: &fakeDirectoryClient{}}
 
 	req := resource.ImportStateRequest{ID: ""}
-	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition()}}
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
 	r.ImportState(context.Background(), req, resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Error("expected diagnostic error for empty import ID")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Timeouts (issue #154): a stalled remote command must surface a bounded
+// diagnostic instead of blocking Terraform indefinitely.
+// -----------------------------------------------------------------------------
+
+func TestWindowsDirectorySchema_HasTimeoutsBlock(t *testing.T) {
+	s := windowsDirectorySchemaDefinition(context.Background())
+	if _, ok := s.Attributes["timeouts"]; !ok {
+		t.Fatal("schema missing timeouts block (issue #154: CRUD must be time-bounded)")
+	}
+}
+
+// hangDirectoryClient simulates a stalled transport: Create blocks until the
+// passed context is done, then returns the context error.
+type hangDirectoryClient struct {
+	fakeDirectoryClient
+}
+
+func (f *hangDirectoryClient) Create(ctx context.Context, in winclient.DirectoryInput) (*winclient.DirectoryState, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// dirTimeoutsRaw builds the raw tftypes value for a timeouts block carrying
+// the given per-operation durations.
+func dirTimeoutsRaw(durations map[string]string) tftypes.Value {
+	vals := map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	}
+	for op, d := range durations {
+		vals[op] = tftypes.NewValue(tftypes.String, d)
+	}
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, vals)
+}
+
+// mustDirTimeouts decodes dirTimeoutsRaw through the resource schema, the
+// same path the framework takes for real plans.
+func mustDirTimeouts(t *testing.T, durations map[string]string) timeouts.Value {
+	t.Helper()
+	ctx := context.Background()
+	plan := tfsdk.Plan{
+		Schema: windowsDirectorySchemaDefinition(ctx),
+		Raw: dirObj(map[string]tftypes.Value{
+			"timeouts": dirTimeoutsRaw(durations),
+		}),
+	}
+	var m windowsDirectoryModel
+	if diags := plan.Get(ctx, &m); diags.HasError() {
+		t.Fatalf("plan.Get timeouts: %v", diags)
+	}
+	return m.Timeouts
+}
+
+func TestWindowsDirectoryModelFromState_PreservesTimeouts(t *testing.T) {
+	prior := windowsDirectoryModel{
+		Timeouts: mustDirTimeouts(t, map[string]string{"create": "5m"}),
+	}
+	// applyDirectoryState projects onto the caller's model; timeouts configured
+	// by the operator must survive the projection.
+	m := prior
+	applyDirectoryState(&m, okDirState(`C:\app\logs`), &diag.Diagnostics{})
+	got, diags := m.Timeouts.Create(context.Background(), directoryDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("Timeouts not preserved through applyDirectoryState: create = %v, want 5m", got)
+	}
+}
+
+func TestWindowsDirectoryResource_Create_StalledTransportIsBounded(t *testing.T) {
+	r := &windowsDirectoryResource{client: &hangDirectoryClient{}}
+
+	req := resource.CreateRequest{Plan: dirPlan(t, map[string]tftypes.Value{
+		"timeouts": dirTimeoutsRaw(map[string]string{"create": "200ms"}),
+	})}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
+
+	start := time.Now()
+	r.Create(context.Background(), req, resp)
+	elapsed := time.Since(start)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag when the transport stalls past the create timeout")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("Create blocked for %v with a 200ms timeout", elapsed)
 	}
 }
