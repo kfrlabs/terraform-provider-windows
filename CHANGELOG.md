@@ -180,6 +180,19 @@ All notable changes to this project will be documented in this file.
   resource's `winclient.LegacyPackageClient.Read` (no new winclient code) and
   the sibling resource default for `timeouts.read`. Partial fix for #206
   (`file` data source follows in a later PR).
+- New `windows_file` data source: metadata-only read-only lookup of an
+  existing file by `path`, exposing the observed `content_sha256`,
+  `size_bytes` and `last_write_time` without managing the file. Content is
+  deliberately NOT exposed: returning file content from a data source would
+  persist arbitrary host file bytes (frequently secrets, keys, configs) into
+  terraform state on every read/plan, and winclient caps content with
+  truncation anyway; metadata + digest covers the stated use cases
+  (existence check, hash for triggers block, pre-deploy read). Reuses the
+  sibling resource's `winclient.FileClient.Read` metadata path — the host
+  computes the digest itself (`Get-FileSha256`, no bytes transferred) and
+  the byte-transferring `ReadContent` path stays reserved for resource import
+  (no new winclient code) — and the sibling resource default for
+  `timeouts.read`. Completes all four data sources for #206.
 
 ## [0.1.1] - 2026-10-08
 
