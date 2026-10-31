@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -82,10 +83,16 @@ type windowsServiceModel struct {
 	// ServicePasswordWO is WriteOnly: never persisted in state. Read from
 	// req.Config during Create/Update (the plan value is null at apply);
 	// the framework drops it on resp.State.Set(). Mutually exclusive
-	// with ServicePassword.
-	ServicePasswordWO types.String   `tfsdk:"service_password_wo"`
-	Dependencies      types.List     `tfsdk:"dependencies"`
-	Timeouts          timeouts.Value `tfsdk:"timeouts"`
+	// with ServicePassword. Rotation is driven exclusively by
+	// ServicePasswordWOVersion: changing only the secret value is a no-op.
+	ServicePasswordWO types.String `tfsdk:"service_password_wo"`
+	// ServicePasswordWOVersion is the rotation counter for
+	// ServicePasswordWO (never the secret itself). Changing it between
+	// prior state and plan forwards the configured secret to Windows;
+	// without a change the stored credential is left untouched.
+	ServicePasswordWOVersion types.Int64    `tfsdk:"service_password_wo_version"`
+	Dependencies             types.List     `tfsdk:"dependencies"`
+	Timeouts                 timeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the resource type name.
@@ -184,13 +191,38 @@ func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:  true,
 				Sensitive: true,
 				WriteOnly: true,
+				Validators: []validator.String{
+					// A WriteOnly value cannot be diffed, so the version
+					// counter is what drives rotation and is mandatory
+					// (windows_file content_wo precedent).
+					stringvalidator.AlsoRequires(path.MatchRoot("service_password_wo_version")),
+				},
 				MarkdownDescription: "Write-only password for `service_account` (TPF v1.14+). " +
 					"Same Windows-side semantics as `service_password` (sent to `Set-Service` / SCM " +
-					"on every Create / Update), **but the plaintext is never persisted in " +
+					"on Create / version-gated Update), **but the plaintext is never persisted in " +
 					"`terraform.tfstate`** \u2014 the framework drops it from state automatically.\n\n" +
-					"Mutually exclusive with `service_password`. Because the WriteOnly value is " +
-					"re-read from configuration on every plan, no separate version counter is " +
-					"required for rotation: change the value and re-apply.",
+					"Because the value is not in state, Terraform cannot detect changes to the " +
+					"password content. Rotation is driven exclusively by `service_password_wo_version`: " +
+					"increment the version and re-apply with the new password value. Changing only " +
+					"`service_password_wo` without bumping the version is a no-op.\n\n" +
+					"Mutually exclusive with `service_password`.",
+			},
+			"service_password_wo_version": schema.Int64Attribute{
+				Optional: true,
+				MarkdownDescription: "Version counter for `service_password_wo` rotation. " +
+					"Change this value to rotate the password: when it changes between prior state " +
+					"and plan, the provider re-applies the password via the SCM `Change` call " +
+					"regardless of whether the password value changed. Conventionally starts at 1. " +
+					"Changing only `service_password_wo` without changing this version leaves the " +
+					"stored credential untouched. Removing the version is not a rotation.",
+				Description: "Version counter for service_password_wo rotation. " +
+					"Change this value to rotate the password: when it changes between prior state " +
+					"and plan, the provider re-applies the password via the SCM Change call " +
+					"regardless of whether the password value changed. Conventionally starts at 1. " +
+					"Removing the version is not a rotation.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
 			},
 			"dependencies": schema.ListAttribute{
 				ElementType: types.StringType,
@@ -288,12 +320,34 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 		"start_type":      plan.StartType.ValueString(),
 		"service_account": plan.ServiceAccount.ValueString(),
 		"desired_status":  plan.Status.ValueString(),
+		// The version counter is safe to log; the secret itself never is.
+		"service_password_wo_version": plan.ServicePasswordWOVersion.ValueInt64(),
 	})
 
 	deps, diags := listToStrings(ctx, plan.Dependencies)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	// Fail-closed rotation guard (issue #194), mirroring Update: a set
+	// service_password_wo_version with no password supplied must not reach
+	// Windows as a blank credential. Built-in or empty service_account
+	// values skip this guard so the EC-4/EC-11 ConfigValidator stays the
+	// single diagnostic source for those cases. The secret itself is never
+	// logged.
+	servicePassword := effectiveServicePassword(plan, config)
+	if !plan.ServicePasswordWOVersion.IsNull() && !plan.ServicePasswordWOVersion.IsUnknown() && servicePassword == "" {
+		if acct := plan.ServiceAccount.ValueString(); acct != "" && !builtinAccountRe.MatchString(acct) {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("service_password_wo_version"),
+				"service_password_wo_version is set but no password supplied",
+				"`service_password_wo_version` is set but neither `service_password_wo` nor "+
+					"`service_password` is set. Provide a non-empty value on one of them "+
+					"(fail-closed: the service is not created with a blank credential).",
+			)
+			return
+		}
 	}
 
 	input := winclient.ServiceInput{
@@ -304,7 +358,7 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 		StartType:       plan.StartType.ValueString(),
 		DesiredStatus:   plan.Status.ValueString(),
 		ServiceAccount:  plan.ServiceAccount.ValueString(),
-		ServicePassword: effectiveServicePassword(plan, config),
+		ServicePassword: servicePassword,
 		Dependencies:    deps,
 	}
 
@@ -403,7 +457,36 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 		"service_account": plan.ServiceAccount.ValueString(),
 		"desired_status":  plan.Status.ValueString(),
 		"prior_status":    prior.Status.ValueString(),
+		// Version counters are safe to log; the secret itself never is.
+		"plan_password_wo_version":  plan.ServicePasswordWOVersion.ValueInt64(),
+		"prior_password_wo_version": prior.ServicePasswordWOVersion.ValueInt64(),
 	})
+
+	// Password rotation is version-gated (issue #194): the WriteOnly
+	// service_password_wo value is null in state, so only a
+	// service_password_wo_version bump between prior state and plan
+	// forwards the configured secret to Windows. Changing only the
+	// secret value without bumping the version is a no-op (the stored
+	// credential is left untouched: empty means "no password change"
+	// in the winclient Update script). The legacy service_password
+	// path is still value-compared for post-import recovery.
+	var servicePassword string
+	if servicePasswordVersionChanged(plan, prior) {
+		servicePassword = effectiveServicePassword(plan, config)
+		if servicePassword == "" {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("service_password_wo_version"),
+				"service_password_wo_version changed but no password supplied",
+				"service_password_wo_version changed between prior state and plan, "+
+					"but neither `service_password_wo` nor `service_password` is set. "+
+					"Provide a non-empty value on one of them (fail-closed: the stored "+
+					"credential is left untouched rather than blanked).",
+			)
+			return
+		}
+	} else if servicePasswordValueChanged(plan, prior) {
+		servicePassword = effectiveServicePassword(plan, config)
+	}
 
 	input := winclient.ServiceInput{
 		Name:            name,
@@ -412,7 +495,7 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 		StartType:       plan.StartType.ValueString(),
 		DesiredStatus:   plan.Status.ValueString(),
 		ServiceAccount:  plan.ServiceAccount.ValueString(),
-		ServicePassword: effectiveServicePassword(plan, config),
+		ServicePassword: servicePassword,
 		Dependencies:    deps,
 	}
 
@@ -504,6 +587,10 @@ func modelFromState(s *winclient.ServiceState, prior windowsServiceModel) window
 	// local_user omission) instead of copying the prior value into the
 	// state-bound model.
 	out.ServicePasswordWO = types.StringNull()
+	// service_password_wo_version IS persisted (the counter, never the
+	// secret): carry it through like local_user PasswordWoVersion so a
+	// bump between plan and apply is detectable at the next Update.
+	out.ServicePasswordWOVersion = prior.ServicePasswordWOVersion
 
 	// dependencies
 	depVals := make([]attr.Value, 0, len(s.Dependencies))
@@ -619,6 +706,35 @@ func credentialAttrSet(m windowsServiceModel) (string, bool) {
 		return "service_password", true
 	}
 	return "", false
+}
+
+// servicePasswordVersionChanged reports whether service_password_wo_version
+// changed between prior state and plan. Unknown values (first apply, import
+// paths) never count as a change: Int64 Equal returns false when either
+// side is unknown, which would otherwise trigger a spurious rotation
+// (local_user localUserPasswordVersionChanged precedent). A null plan
+// (version removed) is not a rotation either, so removing the version
+// never trips the fail-closed guard.
+func servicePasswordVersionChanged(plan, prior windowsServiceModel) bool {
+	if plan.ServicePasswordWOVersion.IsUnknown() || prior.ServicePasswordWOVersion.IsUnknown() {
+		return false
+	}
+	if plan.ServicePasswordWOVersion.IsNull() {
+		return false
+	}
+	return !plan.ServicePasswordWOVersion.Equal(prior.ServicePasswordWOVersion)
+}
+
+// servicePasswordValueChanged reports whether the legacy service_password
+// value changed between prior state and plan (post-import recovery path).
+// Unknown values never count as a change. The WriteOnly
+// service_password_wo is always null in state, so it is intentionally not
+// compared here: only a version bump rotates it.
+func servicePasswordValueChanged(plan, prior windowsServiceModel) bool {
+	if plan.ServicePassword.IsUnknown() || prior.ServicePassword.IsUnknown() {
+		return false
+	}
+	return !plan.ServicePassword.Equal(prior.ServicePassword)
 }
 
 // effectiveServicePassword returns the plaintext to forward to the

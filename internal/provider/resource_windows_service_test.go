@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -53,7 +54,7 @@ func TestSchema_HasRequiredAttributes(t *testing.T) {
 	wantAttrs := []string{
 		"id", "name", "display_name", "description", "binary_path",
 		"start_type", "status", "current_status", "service_account",
-		"service_password", "service_password_wo", "dependencies",
+		"service_password", "service_password_wo", "service_password_wo_version", "dependencies",
 		"timeouts",
 	}
 	for _, k := range wantAttrs {
@@ -143,18 +144,19 @@ func buildValidatorConfig(t *testing.T, account, password *string) tfsdk.Config 
 	}
 
 	obj := tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"id":                  tftypes.String,
-		"name":                tftypes.String,
-		"display_name":        tftypes.String,
-		"description":         tftypes.String,
-		"binary_path":         tftypes.String,
-		"start_type":          tftypes.String,
-		"status":              tftypes.String,
-		"current_status":      tftypes.String,
-		"service_account":     tftypes.String,
-		"service_password":    tftypes.String,
-		"service_password_wo": tftypes.String,
-		"dependencies":        tftypes.List{ElementType: tftypes.String},
+		"id":                          tftypes.String,
+		"name":                        tftypes.String,
+		"display_name":                tftypes.String,
+		"description":                 tftypes.String,
+		"binary_path":                 tftypes.String,
+		"start_type":                  tftypes.String,
+		"status":                      tftypes.String,
+		"current_status":              tftypes.String,
+		"service_account":             tftypes.String,
+		"service_password":            tftypes.String,
+		"service_password_wo":         tftypes.String,
+		"service_password_wo_version": tftypes.Number,
+		"dependencies":                tftypes.List{ElementType: tftypes.String},
 		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 			"create": tftypes.String,
 			"read":   tftypes.String,
@@ -162,19 +164,20 @@ func buildValidatorConfig(t *testing.T, account, password *string) tfsdk.Config 
 			"delete": tftypes.String,
 		}},
 	}}, map[string]tftypes.Value{
-		"id":                  tftypes.NewValue(tftypes.String, nil),
-		"name":                tftypes.NewValue(tftypes.String, "svc"),
-		"display_name":        tftypes.NewValue(tftypes.String, nil),
-		"description":         tftypes.NewValue(tftypes.String, nil),
-		"binary_path":         tftypes.NewValue(tftypes.String, `C:\x.exe`),
-		"start_type":          tftypes.NewValue(tftypes.String, nil),
-		"status":              tftypes.NewValue(tftypes.String, nil),
-		"current_status":      tftypes.NewValue(tftypes.String, nil),
-		"service_account":     val(account),
-		"service_password":    val(password),
-		"service_password_wo": tftypes.NewValue(tftypes.String, nil),
-		"dependencies":        tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"timeouts":            svcNullTimeoutsValue(),
+		"id":                          tftypes.NewValue(tftypes.String, nil),
+		"name":                        tftypes.NewValue(tftypes.String, "svc"),
+		"display_name":                tftypes.NewValue(tftypes.String, nil),
+		"description":                 tftypes.NewValue(tftypes.String, nil),
+		"binary_path":                 tftypes.NewValue(tftypes.String, `C:\x.exe`),
+		"start_type":                  tftypes.NewValue(tftypes.String, nil),
+		"status":                      tftypes.NewValue(tftypes.String, nil),
+		"current_status":              tftypes.NewValue(tftypes.String, nil),
+		"service_account":             val(account),
+		"service_password":            val(password),
+		"service_password_wo":         tftypes.NewValue(tftypes.String, nil),
+		"service_password_wo_version": tftypes.NewValue(tftypes.Number, nil),
+		"dependencies":                tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"timeouts":                    svcNullTimeoutsValue(),
 	})
 
 	return tfsdk.Config{
@@ -501,18 +504,19 @@ func (f *fakeSvcClient) PauseService(_ context.Context, _ string) error { f.paus
 // objectType mirrors the resource schema as a tftypes.Object shape.
 func serviceObjectType() tftypes.Object {
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"id":                  tftypes.String,
-		"name":                tftypes.String,
-		"display_name":        tftypes.String,
-		"description":         tftypes.String,
-		"binary_path":         tftypes.String,
-		"start_type":          tftypes.String,
-		"status":              tftypes.String,
-		"current_status":      tftypes.String,
-		"service_account":     tftypes.String,
-		"service_password":    tftypes.String,
-		"service_password_wo": tftypes.String,
-		"dependencies":        tftypes.List{ElementType: tftypes.String},
+		"id":                          tftypes.String,
+		"name":                        tftypes.String,
+		"display_name":                tftypes.String,
+		"description":                 tftypes.String,
+		"binary_path":                 tftypes.String,
+		"start_type":                  tftypes.String,
+		"status":                      tftypes.String,
+		"current_status":              tftypes.String,
+		"service_account":             tftypes.String,
+		"service_password":            tftypes.String,
+		"service_password_wo":         tftypes.String,
+		"service_password_wo_version": tftypes.Number,
+		"dependencies":                tftypes.List{ElementType: tftypes.String},
 		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 			"create": tftypes.String,
 			"read":   tftypes.String,
@@ -537,19 +541,20 @@ func svcNullTimeoutsValue() tftypes.Value {
 // represented as null.
 func svcObj(overrides map[string]tftypes.Value) tftypes.Value {
 	base := map[string]tftypes.Value{
-		"id":                  tftypes.NewValue(tftypes.String, nil),
-		"name":                tftypes.NewValue(tftypes.String, nil),
-		"display_name":        tftypes.NewValue(tftypes.String, nil),
-		"description":         tftypes.NewValue(tftypes.String, nil),
-		"binary_path":         tftypes.NewValue(tftypes.String, nil),
-		"start_type":          tftypes.NewValue(tftypes.String, nil),
-		"status":              tftypes.NewValue(tftypes.String, nil),
-		"current_status":      tftypes.NewValue(tftypes.String, nil),
-		"service_account":     tftypes.NewValue(tftypes.String, nil),
-		"service_password":    tftypes.NewValue(tftypes.String, nil),
-		"service_password_wo": tftypes.NewValue(tftypes.String, nil),
-		"dependencies":        tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"timeouts":            svcNullTimeoutsValue(),
+		"id":                          tftypes.NewValue(tftypes.String, nil),
+		"name":                        tftypes.NewValue(tftypes.String, nil),
+		"display_name":                tftypes.NewValue(tftypes.String, nil),
+		"description":                 tftypes.NewValue(tftypes.String, nil),
+		"binary_path":                 tftypes.NewValue(tftypes.String, nil),
+		"start_type":                  tftypes.NewValue(tftypes.String, nil),
+		"status":                      tftypes.NewValue(tftypes.String, nil),
+		"current_status":              tftypes.NewValue(tftypes.String, nil),
+		"service_account":             tftypes.NewValue(tftypes.String, nil),
+		"service_password":            tftypes.NewValue(tftypes.String, nil),
+		"service_password_wo":         tftypes.NewValue(tftypes.String, nil),
+		"service_password_wo_version": tftypes.NewValue(tftypes.Number, nil),
+		"dependencies":                tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"timeouts":                    svcNullTimeoutsValue(),
 	}
 	for k, v := range overrides {
 		base[k] = v
@@ -614,6 +619,131 @@ func TestCreate_Handler_ClientError(t *testing.T) {
 
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error diag from already_exists")
+	}
+}
+
+// TestCreate_ForwardsWOPassword (issue #194): Create with
+// service_password_wo + service_password_wo_version forwards the configured
+// secret to Windows and preserves the version in state (the secret itself
+// is never persisted).
+func TestCreate_ForwardsWOPassword(t *testing.T) {
+	fake := &fakeSvcClient{createOut: stateOK()}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	wo := "initial-secret"
+	ver := int64(1)
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_account":             tftypes.NewValue(tftypes.String, `DOMAIN\svc-app`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: svcObj(nil)},
+	}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan:   plan,
+		Config: svcUpdateConfig(schemaDef, &wo, &ver),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diags: %v", resp.Diagnostics)
+	}
+	if fake.createIn.ServicePassword != "initial-secret" {
+		t.Errorf("Create must forward the configured secret, got %q", fake.createIn.ServicePassword)
+	}
+	var m windowsServiceModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ServicePasswordWOVersion.ValueInt64() != 1 {
+		t.Errorf("state must preserve the version, got %v", m.ServicePasswordWOVersion)
+	}
+	if !m.ServicePasswordWO.IsNull() {
+		t.Error("ServicePasswordWO must stay null in state (WriteOnly, never persisted)")
+	}
+}
+
+// TestCreate_VersionWithoutSecret_FailsClosed (issue #194): Create with
+// service_password_wo_version set but no password supplied fails before
+// calling Windows instead of creating the service with a blank credential.
+func TestCreate_VersionWithoutSecret_FailsClosed(t *testing.T) {
+	fake := &fakeSvcClient{createOut: stateOK()}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	ver := int64(1)
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_account":             tftypes.NewValue(tftypes.String, `DOMAIN\svc-app`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: svcObj(nil)},
+	}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan:   plan,
+		Config: svcUpdateConfig(schemaDef, nil, &ver),
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected fail-closed error when the version is set but no secret was supplied")
+	}
+	if !strings.Contains(diagSummary(resp.Diagnostics), "service_password_wo_version") {
+		t.Errorf("error should reference service_password_wo_version: %s", diagSummary(resp.Diagnostics))
+	}
+	if fake.createIn.Name != "" {
+		t.Error("Create must not reach Windows when the secret is missing (fail closed)")
+	}
+}
+
+// TestCreate_VersionWithoutSecret_BuiltinAccountSkipsGuard (issue #194):
+// with a built-in or empty service_account the Create fail-closed guard
+// stays out of the way so the EC-4/EC-11 ConfigValidator remains the
+// single diagnostic source for those cases.
+func TestCreate_VersionWithoutSecret_BuiltinAccountSkipsGuard(t *testing.T) {
+	for _, account := range []string{"LocalSystem", ""} {
+		fake := &fakeSvcClient{createOut: stateOK()}
+		r := &windowsServiceResource{svc: fake}
+
+		schemaDef := windowsServiceSchemaDefinition(context.Background())
+		ver := int64(1)
+		plan := tfsdk.Plan{
+			Schema: schemaDef,
+			Raw: svcObj(map[string]tftypes.Value{
+				"name":                        tftypes.NewValue(tftypes.String, "svc"),
+				"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+				"service_account":             tftypes.NewValue(tftypes.String, account),
+				"service_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+			}),
+		}
+		resp := &resource.CreateResponse{
+			State: tfsdk.State{Schema: schemaDef, Raw: svcObj(nil)},
+		}
+		r.Create(context.Background(), resource.CreateRequest{
+			Plan:   plan,
+			Config: svcUpdateConfig(schemaDef, nil, &ver),
+		}, resp)
+
+		// The guard must not fire on service_password_wo_version here;
+		// any credential/account complaint comes from EC-4/EC-11 at plan
+		// time, not from Create.
+		for _, d := range resp.Diagnostics {
+			if d.Severity() == diag.SeverityError && strings.Contains(d.Summary(), "service_password_wo_version") {
+				t.Errorf("account %q: Create guard must defer to EC-4/EC-11, got: %s", account, d.Summary())
+			}
+		}
+		if fake.createIn.Name == "" {
+			t.Errorf("account %q: Create must proceed past the guard (EC-4/EC-11 owns the diagnostic)", account)
+		}
 	}
 }
 
@@ -906,5 +1036,299 @@ func TestCreate_Handler_StalledTransportIsBounded(t *testing.T) {
 	}
 	if elapsed > 30*time.Second {
 		t.Errorf("Create blocked for %v with a 200ms timeout; the stalled-transport hang from issue #109 is back", elapsed)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// service_password_wo_version rotation (issue #194)
+// -----------------------------------------------------------------------------
+
+func TestSchema_ServicePasswordWOVersion(t *testing.T) {
+	s := windowsServiceSchemaDefinition(context.Background())
+	a, ok := s.Attributes["service_password_wo_version"]
+	if !ok {
+		t.Fatal("schema missing service_password_wo_version (issue #194)")
+	}
+	v, ok := a.(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("service_password_wo_version must be an Int64Attribute (local_user precedent), got %T", a)
+	}
+	if !v.Optional {
+		t.Error("service_password_wo_version must be Optional")
+	}
+	if v.Computed {
+		t.Error("service_password_wo_version must not be Computed")
+	}
+	if len(v.Validators) != 1 {
+		t.Fatalf("service_password_wo_version must carry exactly one validator (AtLeast(1)), got %d", len(v.Validators))
+	}
+	if d := v.MarkdownDescription; !strings.Contains(d, "service_password_wo") || !strings.Contains(d, "version") {
+		t.Errorf("service_password_wo_version description must explain version-driven rotation, got: %q", d)
+	}
+}
+
+func TestSchema_ServicePasswordWO_AlsoRequiresVersion(t *testing.T) {
+	s := windowsServiceSchemaDefinition(context.Background())
+	a, ok := s.Attributes["service_password_wo"]
+	if !ok {
+		t.Fatal("schema missing service_password_wo")
+	}
+	wo, ok := a.(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("service_password_wo must be a StringAttribute, got %T", a)
+	}
+	found := false
+	for _, v := range wo.Validators {
+		if strings.Contains(v.Description(context.Background()), "service_password_wo_version") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("service_password_wo must AlsoRequires service_password_wo_version (windows_file content_wo precedent)")
+	}
+	if strings.Contains(wo.MarkdownDescription, "no separate version counter") {
+		t.Error("service_password_wo description must not claim no version counter is required (issue #194)")
+	}
+}
+
+func TestModelFromState_PreservesWOVersion(t *testing.T) {
+	s := &winclient.ServiceState{Name: "svc", Dependencies: []string{}}
+	prior := windowsServiceModel{
+		ServicePasswordWOVersion: types.Int64Value(2),
+		ServicePasswordWO:        types.StringNull(),
+	}
+	got := modelFromState(s, prior)
+	if got.ServicePasswordWOVersion.ValueInt64() != 2 {
+		t.Errorf("ServicePasswordWOVersion must be preserved from prior state, got %v", got.ServicePasswordWOVersion)
+	}
+	if !got.ServicePasswordWO.IsNull() {
+		t.Error("ServicePasswordWO must stay null in state (WriteOnly, never persisted)")
+	}
+}
+
+func TestServicePasswordVersionChanged(t *testing.T) {
+	v := func(n *int64) types.Int64 {
+		if n == nil {
+			return types.Int64Null()
+		}
+		return types.Int64Value(*n)
+	}
+	one, two := int64(1), int64(2)
+	cases := []struct {
+		name  string
+		plan  types.Int64
+		prior types.Int64
+		want  bool
+	}{
+		{"equal is no change", v(&one), v(&one), false},
+		{"bump is a change", v(&two), v(&one), true},
+		{"null to value is a change", v(&one), v(nil), true},
+		{"value to null (removal) is not a rotation", v(nil), v(&one), false},
+		{"null to null is no change", v(nil), v(nil), false},
+		{"unknown plan is no change", types.Int64Unknown(), v(&one), false},
+		{"unknown prior is no change", v(&two), types.Int64Unknown(), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			plan := windowsServiceModel{ServicePasswordWOVersion: c.plan}
+			prior := windowsServiceModel{ServicePasswordWOVersion: c.prior}
+			if got := servicePasswordVersionChanged(plan, prior); got != c.want {
+				t.Errorf("servicePasswordVersionChanged = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// svcUpdateConfig builds a tfsdk.Config carrying the WriteOnly secret, as the
+// framework would at apply time (the plan value is null at apply).
+func svcUpdateConfig(schemaDef schema.Schema, wo *string, version *int64) tfsdk.Config {
+	woVal := tftypes.NewValue(tftypes.String, nil)
+	if wo != nil {
+		woVal = tftypes.NewValue(tftypes.String, *wo)
+	}
+	verVal := tftypes.NewValue(tftypes.Number, nil)
+	if version != nil {
+		verVal = tftypes.NewValue(tftypes.Number, *version)
+	}
+	return tfsdk.Config{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"service_password_wo":         woVal,
+			"service_password_wo_version": verVal,
+		}),
+	}
+}
+
+func TestUpdate_VersionBump_ForwardsWOPassword(t *testing.T) {
+	fake := &fakeSvcClient{updateOut: stateOK()}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	wo := "rotated-secret"
+	ver := int64(2)
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+		}),
+	}
+	priorState := tfsdk.State{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"id":                          tftypes.NewValue(tftypes.String, "svc"),
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		}),
+	}
+	req := resource.UpdateRequest{
+		Plan:   plan,
+		State:  priorState,
+		Config: svcUpdateConfig(schemaDef, &wo, &ver),
+	}
+	resp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: priorState.Raw.Copy()},
+	}
+	r.Update(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diags: %v", resp.Diagnostics)
+	}
+	if fake.updateIn.ServicePassword != "rotated-secret" {
+		t.Errorf("version bump must forward the configured secret, got %q", fake.updateIn.ServicePassword)
+	}
+	var m windowsServiceModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ServicePasswordWOVersion.ValueInt64() != 2 {
+		t.Errorf("state must preserve the bumped version, got %v", m.ServicePasswordWOVersion)
+	}
+	if !m.ServicePasswordWO.IsNull() {
+		t.Error("ServicePasswordWO must stay null in state (WriteOnly, never persisted)")
+	}
+}
+
+func TestUpdate_NoVersionBump_DoesNotResendPassword(t *testing.T) {
+	fake := &fakeSvcClient{updateOut: stateOK()}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	// The secret was changed in configuration but the version was not
+	// bumped: rotation is a no-op (issue #194).
+	wo := "changed-without-bump"
+	ver := int64(1)
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		}),
+	}
+	priorState := tfsdk.State{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"id":                          tftypes.NewValue(tftypes.String, "svc"),
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		}),
+	}
+	req := resource.UpdateRequest{
+		Plan:   plan,
+		State:  priorState,
+		Config: svcUpdateConfig(schemaDef, &wo, &ver),
+	}
+	resp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: priorState.Raw.Copy()},
+	}
+	r.Update(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diags: %v", resp.Diagnostics)
+	}
+	// Empty means "no password change" in the winclient Update script.
+	if fake.updateIn.ServicePassword != "" {
+		t.Errorf("without a version bump the stored credential must be left untouched, got %q", fake.updateIn.ServicePassword)
+	}
+}
+
+func TestUpdate_VersionBump_WithoutSecret_FailsClosed(t *testing.T) {
+	fake := &fakeSvcClient{updateOut: stateOK()}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+		}),
+	}
+	priorState := tfsdk.State{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"id":                          tftypes.NewValue(tftypes.String, "svc"),
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		}),
+	}
+	ver := int64(2)
+	req := resource.UpdateRequest{
+		Plan:   plan,
+		State:  priorState,
+		Config: svcUpdateConfig(schemaDef, nil, &ver),
+	}
+	resp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: priorState.Raw.Copy()},
+	}
+	r.Update(context.Background(), req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected fail-closed error when the version bumped but no secret was supplied")
+	}
+	if !strings.Contains(diagSummary(resp.Diagnostics), "service_password_wo_version") {
+		t.Errorf("error should reference service_password_wo_version: %s", diagSummary(resp.Diagnostics))
+	}
+	if fake.updateIn.Name != "" {
+		t.Error("Update must not reach Windows when the rotation secret is missing (fail closed)")
+	}
+}
+
+func TestUpdate_LegacyPasswordChange_ForwardsPassword(t *testing.T) {
+	fake := &fakeSvcClient{updateOut: stateOK()}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":             tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":      tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password": tftypes.NewValue(tftypes.String, "new-secret"),
+		}),
+	}
+	priorState := tfsdk.State{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"id":               tftypes.NewValue(tftypes.String, "svc"),
+			"name":             tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":      tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password": tftypes.NewValue(tftypes.String, "old-secret"),
+		}),
+	}
+	req := resource.UpdateRequest{Plan: plan, State: priorState}
+	resp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: priorState.Raw.Copy()},
+	}
+	r.Update(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diags: %v", resp.Diagnostics)
+	}
+	if fake.updateIn.ServicePassword != "new-secret" {
+		t.Errorf("legacy service_password change must be forwarded, got %q", fake.updateIn.ServicePassword)
 	}
 }

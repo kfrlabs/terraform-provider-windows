@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_service`: `service_password_wo` rotation never triggered — the
+  WriteOnly value is null in state, so Terraform could not detect content
+  changes and every `Update` either re-sent the password unconditionally or
+  never rotated it. Rotation is now driven exclusively by the new
+  `service_password_wo_version` counter (Int64, `Optional`, `AtLeast(1)`,
+  following the `windows_local_user` `password_wo_version` precedent):
+  changing the version forwards the configured secret to Windows, changing
+  only `service_password_wo` without changing the version is a no-op, and a
+  version change with no secret supplied fails closed instead of blanking
+  the stored credential.
+  `service_password_wo` now `AlsoRequires` the version, and the legacy
+  `service_password` path is still value-compared for post-import recovery
+  (#194).
+  Action required: existing `service_password_wo` configurations must add
+  `service_password_wo_version = 1` (change the value to rotate).
 - `windows_service` CRUD is now bounded by a per-operation `timeouts` block
   (`create`/`read`/`update`/`delete`, 10m defaults): a stalled PowerShell/SSH
   session surfaces a timeout diagnostic instead of blocking Terraform
