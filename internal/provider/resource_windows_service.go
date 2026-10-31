@@ -185,7 +185,14 @@ func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 				DeprecationMessage: "Use `service_password_wo` instead. The `service_password` attribute persists the plaintext in `terraform.tfstate` (sensitive but readable by anyone with state access). `service_password_wo` is a WriteOnly attribute (TPF v1.14+) and is never written to state. This attribute will be removed in v2.x.",
 				MarkdownDescription: "**Deprecated, use `service_password_wo`.** Password for `service_account`. Sensitive and semantic write-only on the Windows side (not read back), " +
 					"but **persisted as a Sensitive value in `terraform.tfstate`** under the legacy attribute. " +
-					"For a no-state-leak alternative see `service_password_wo`.",
+					"For a no-state-leak alternative see `service_password_wo`.\n\n" +
+					"The value must not contain carriage return or line feed characters " +
+					"(rejected at plan time): secrets are read with `ReadLine()`, so anything " +
+					"from the first line break on would be silently truncated. If the value " +
+					"comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.",
+				Validators: []validator.String{
+					secretNoLineBreakValidator{},
+				},
 			},
 			"service_password_wo": schema.StringAttribute{
 				Optional:  true,
@@ -196,11 +203,18 @@ func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 					// counter is what drives rotation and is mandatory
 					// (windows_file content_wo precedent).
 					stringvalidator.AlsoRequires(path.MatchRoot("service_password_wo_version")),
+					// Secrets are read with ReadLine(): reject \r / \n at
+					// plan time against the configured value (issue #195).
+					secretNoLineBreakValidator{},
 				},
 				MarkdownDescription: "Write-only password for `service_account` (TPF v1.14+). " +
 					"Same Windows-side semantics as `service_password` (sent to `Set-Service` / SCM " +
 					"on Create / version-gated Update), **but the plaintext is never persisted in " +
 					"`terraform.tfstate`** \u2014 the framework drops it from state automatically.\n\n" +
+					"The value must not contain carriage return or line feed characters " +
+					"(rejected at plan time): secrets are read with `ReadLine()`, so anything " +
+					"from the first line break on would be silently truncated. If the value " +
+					"comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.\n\n" +
 					"Because the value is not in state, Terraform cannot detect changes to the " +
 					"password content. Rotation is driven exclusively by `service_password_wo_version`: " +
 					"increment the version and re-apply with the new password value. Changing only " +

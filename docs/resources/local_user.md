@@ -150,9 +150,13 @@ Constraints:
 
 The plaintext is injected via stdin inside the PowerShell script and **never appears in SSH trace logs or provider diagnostics** (ADR-LU-3, EC-6) — but it **does land in `terraform.tfstate`** as a Sensitive value. For a no-state-leak alternative, see `password_wo`.
 
+The value must not contain carriage return or line feed characters (rejected at plan time): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.
+
 After `terraform import`, this attribute is `null`. Set it in HCL before the next apply (EC-11).
 - `password_never_expires` (Boolean) When true, the account password never expires regardless of the local password policy. Maps to -PasswordNeverExpires.
 - `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only password for the user account (TPF v1.14+ WriteOnly). Same semantics as `password` regarding stdin injection and Windows password policy, **but the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
+
+The value must not contain carriage return or line feed characters (rejected at plan time against the configured value): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.
 
 Because the value is not in state, Terraform cannot detect changes to the password content. Rotation is driven exclusively by `password_wo_version`: increment the version and re-apply with the new password value. The provider calls `Set-LocalUser -Password` whenever the version changes between prior state and current plan.
 

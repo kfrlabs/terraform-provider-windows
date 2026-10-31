@@ -524,16 +524,31 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						Sensitive:          true,
 						DeprecationMessage: "Use `password_wo` instead. The `password` attribute persists the plaintext in `terraform.tfstate` (Sensitive but readable by anyone with state access). `password_wo` is a WriteOnly attribute (TPF v1.14+) and is never written to state. Both share the existing `password_wo_version` counter for rotation. This attribute will be removed in v2.x.",
 						MarkdownDescription: "**Deprecated, use `password_wo`.** Account password (ADR-ST-3). Required when `logon_type=\"Password\"` (EC-4). " +
-							"Sensitive on the wire **but persisted in `terraform.tfstate`**.",
+							"Sensitive on the wire **but persisted in `terraform.tfstate`**.\n\n" +
+							"The value must not contain carriage return or line feed characters " +
+							"(rejected at plan time): secrets are read with `ReadLine()`, so anything " +
+							"from the first line break on would be silently truncated. If the value " +
+							"comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.",
+						Validators: []validator.String{
+							secretNoLineBreakValidator{},
+						},
 					},
 					"password_wo": schema.StringAttribute{
 						Optional:  true,
 						Sensitive: true,
 						WriteOnly: true,
+						Validators: []validator.String{
+							secretNoLineBreakValidator{},
+						},
 						MarkdownDescription: "Write-only account password (TPF v1.14+ WriteOnly). " +
 							"Same Windows-side semantics as `password` (ADR-ST-3) but **the plaintext " +
 							"is never persisted in `terraform.tfstate`** \u2014 the framework drops it " +
 							"from state automatically.\n\n" +
+							"The value must not contain carriage return or line feed characters " +
+							"(rejected at plan time against the configured value): secrets are read " +
+							"with `ReadLine()`, so anything from the first line break on would be " +
+							"silently truncated. If the value comes from `file()`, wrap it with " +
+							"`trimspace()` to strip the trailing newline.\n\n" +
 							"Mutually exclusive with `password`. Rotation is driven exclusively by " +
 							"`password_wo_version`: increment the version and re-apply with the new " +
 							"value. The provider re-registers the principal whenever the version " +
