@@ -123,6 +123,17 @@ All notable changes to this project will be documented in this file.
   PowerShell/SSH session surfaces a timeout diagnostic instead of blocking
   plan forever. Omitting the block keeps the previous behavior bounded by
   the default (#197).
+- `windows_file` downloads are integrity-gated at plan time, mirroring the
+  `windows_legacy_package` posture (#175): an `http://` `source_url`
+  without `source_url_sha256` now fails planning regardless of
+  `download_on` (plaintext HTTP lets anyone on the network path substitute
+  the payload before it is written to the host). A `source_url` without a
+  digest still warns even over HTTPS, now worded around integrity
+  verification instead of plan performance — a compromised mirror or
+  account could otherwise ship a trojaned payload unnoticed — and
+  `source_url_insecure_skip_verify` warns that without a pinned digest it
+  voids the only remaining origin check. The resource docs record the
+  threat model (#204).
 
 ### Added
 

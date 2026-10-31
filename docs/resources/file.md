@@ -122,9 +122,13 @@ variable "license" { sensitive = true }
 - `overwrite` (Boolean) When false, creating the resource fails if the file already exists.
 - `source` (String) Path to a local file on the machine running Terraform. It is read and hashed at plan time, so editing the local file produces a diff.
 - `source_url` (String) HTTP(S) URL of the content to deploy.
+
+**Threat model:** an `http://` URL **requires** `source_url_sha256`: without integrity verification anyone on the network path can substitute the payload before it is written to the host. Even over HTTPS, always pin `source_url_sha256` so a compromised mirror or account cannot ship a trojaned payload unnoticed.
 - `source_url_headers` (Map of String, Sensitive) Additional HTTP headers (private repository tokens, etc.).
 - `source_url_insecure_skip_verify` (Boolean) Skip TLS certificate verification for `source_url`. Raises a warning diagnostic.
-- `source_url_sha256` (String) Expected SHA-256 of the downloaded payload. Required when `download_on = "target"`. When omitted the provider must download the URL on every plan to detect drift.
+- `source_url_sha256` (String) Expected SHA-256 of the downloaded payload.
+
+Required with an `http://` `source_url` and when `download_on = "target"`; strongly recommended otherwise (see the `source_url` threat model). When pinned, plans stay local with no download at plan time and every payload is verified before it is written.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
