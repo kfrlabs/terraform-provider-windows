@@ -290,6 +290,7 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsDirectoryDataSource,
 		NewWindowsEnvironmentVariableDataSource,
 		NewWindowsFeatureDataSource,
+		NewWindowsFileDataSource,
 		NewWindowsFileACLDataSource,
 		NewWindowsFirewallRuleDataSource,
 		NewWindowsHostnameDataSource,
