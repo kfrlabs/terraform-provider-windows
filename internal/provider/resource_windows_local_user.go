@@ -365,17 +365,32 @@ func windowsLocalUserSchemaDefinition(ctx context.Context) schema.Schema {
 					"appears in SSH trace logs or provider diagnostics** (ADR-LU-3, EC-6) — but it " +
 					"**does land in `terraform.tfstate`** as a Sensitive value. For a no-state-leak " +
 					"alternative, see `password_wo`.\n\n" +
+					"The value must not contain carriage return or line feed characters " +
+					"(rejected at plan time): secrets are read with `ReadLine()`, so anything " +
+					"from the first line break on would be silently truncated. If the value " +
+					"comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.\n\n" +
 					"After `terraform import`, this attribute is `null`. Set it in HCL before " +
 					"the next apply (EC-11).",
+				Validators: []validator.String{
+					secretNoLineBreakValidator{},
+				},
 			},
 			"password_wo": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true,
 				WriteOnly: true,
+				Validators: []validator.String{
+					secretNoLineBreakValidator{},
+				},
 				MarkdownDescription: "Write-only password for the user account (TPF v1.14+ WriteOnly). " +
 					"Same semantics as `password` regarding stdin injection and Windows password " +
 					"policy, **but the plaintext is never persisted in `terraform.tfstate`** — " +
 					"the framework drops it from state automatically.\n\n" +
+					"The value must not contain carriage return or line feed characters " +
+					"(rejected at plan time against the configured value): secrets are read " +
+					"with `ReadLine()`, so anything from the first line break on would be " +
+					"silently truncated. If the value comes from `file()`, wrap it with " +
+					"`trimspace()` to strip the trailing newline.\n\n" +
 					"Because the value is not in state, Terraform cannot detect changes to the " +
 					"password content. Rotation is driven exclusively by `password_wo_version`: " +
 					"increment the version and re-apply with the new password value. The provider " +

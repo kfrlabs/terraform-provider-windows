@@ -57,6 +57,24 @@ resource "windows_service" "slow_host" {
   }
 }
 
+# Write-only credential rotation (issue #194): the plaintext never reaches
+# `terraform.tfstate`. Rotation is driven exclusively by
+# `service_password_wo_version` — change it and re-apply with the new password
+# value; changing only `service_password_wo` without changing the version is
+# a no-op.
+resource "windows_service" "app_wo" {
+  name                        = "myapp-wo"
+  display_name                = "My Application (WriteOnly)"
+  description                 = "Business application managed by Terraform."
+  binary_path                 = "C:\\Program Files\\MyApp\\myapp.exe"
+  start_type                  = "Automatic"
+  status                      = "Running"
+  service_account             = "DOMAIN\\svc-myapp"
+  service_password_wo         = var.svc_myapp_password
+  service_password_wo_version = 1
+  dependencies                = ["LanmanServer", "Tcpip"]
+}
+
 # Advanced example: service running under a domain account with dependencies.
 resource "windows_service" "app" {
   name             = "myapp"
@@ -88,7 +106,11 @@ resource "windows_service" "app" {
 - `display_name` (String) Human-readable display name shown in services.msc. Defaults to name if omitted.
 - `service_account` (String) Account under which the service runs. Defaults to LocalSystem.
 - `service_password` (String, Sensitive, Deprecated) **Deprecated, use `service_password_wo`.** Password for `service_account`. Sensitive and semantic write-only on the Windows side (not read back), but **persisted as a Sensitive value in `terraform.tfstate`** under the legacy attribute. For a no-state-leak alternative see `service_password_wo`.
+
+The value must not contain carriage return or line feed characters (rejected at plan time): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.
 - `service_password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only password for `service_account` (TPF v1.14+). Same Windows-side semantics as `service_password` (sent to `Set-Service` / SCM on Create / version-gated Update), **but the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
+
+The value must not contain carriage return or line feed characters (rejected at plan time): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.
 
 Because the value is not in state, Terraform cannot detect changes to the password content. Rotation is driven exclusively by `service_password_wo_version`: increment the version and re-apply with the new password value. Changing only `service_password_wo` without bumping the version is a no-op.
 

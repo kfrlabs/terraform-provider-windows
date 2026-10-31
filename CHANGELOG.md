@@ -100,6 +100,15 @@ All notable changes to this project will be documented in this file.
   `psQuoteList` moved to a dedicated `internal/winclient/psquote.go` with
   table-driven tests, and the last hand-rolled `'%s'` quoting
   (`REG_QWORD` value expression) is routed through `psQuote` (#173).
+- `windows_local_user` (`password`/`password_wo`),
+  `windows_scheduled_task` (`principal.password`/`principal.password_wo`)
+  and `windows_service` (`service_password`/`service_password_wo`) now
+  reject values containing carriage return or line feed characters at plan
+  time: secrets are streamed over stdin and consumed with `ReadLine()`, so
+  anything from the first line break on was silently truncated. The
+  diagnostic suggests `trimspace()` for the common `file()` trailing-newline
+  footgun and never echoes the secret value. No transport change, no
+  `wo_version` counter change (#195).
 
 ### Added
 
