@@ -20,6 +20,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Weekly so a newly published CVE in an unchanged dependency surfaces
+    # without waiting for a PR (see #205). Scheduled runs execute only the
+    # govulncheck job below; the other jobs are skipped on this trigger.
+    - cron: "23 5 * * 1"
 
 permissions:
   contents: read
@@ -31,6 +36,7 @@ concurrency:
 jobs:
   build:
     name: build & vet (go ${{ matrix.go }})
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,6 +61,7 @@ jobs:
 
   test:
     name: unit tests
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     # No `needs: build`: `go test` compiles the packages it exercises on its
     # own, in a fresh runner that shares no build cache with the `build` job
@@ -83,6 +90,7 @@ jobs:
 
   lint:
     name: golangci-lint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -98,6 +106,23 @@ jobs:
           version: v2.15.0
           # .golangci.yml at the repo root drives the rule set (incl. run.timeout).
 
+  govulncheck:
+    # Reachability-aware vulnerability scan (see #205). Blocking: unlike
+    # Dependabot version updates, it fails the PR when a CVE is reachable
+    # from provider code, and stays quiet otherwise.
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
   terraform-cli-offline:
     # Hermetic Terraform-CLI tier for test/terraform-cli: init, fmt -check,
     # validate and the mocked `terraform test` run — none of which needs a
@@ -105,6 +130,7 @@ jobs:
     # real CLI (schema serving, example HCL, mock wiring) in a way Go unit
     # tests cannot. Online --apply stages stay out: they need the lab host.
     name: terraform CLI offline suite
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

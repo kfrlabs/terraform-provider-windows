@@ -4,6 +4,15 @@
 #     Major bumps require human review (Plugin Framework breaking changes).
 #   - GitHub Actions: weekly, pin to SHA recommended downstream but kept
 #     on tags here for readability; Dependabot updates them in lockstep.
+#
+#   - Security updates are enabled separately at the repository level
+#     (Settings -> Code security -> Dependabot security updates); this file
+#     only configures version updates. Per the Dependabot docs, advisory
+#     PRs bypass everything below: they are not subject to
+#     open-pull-requests-limit (separate fixed limit), are not captured by
+#     groups scoped with `applies-to: version-updates`, and are unaffected
+#     by `ignore` entries scoped with `update-types: version-update:*`
+#     (see #205).
 
 version: 2
 
@@ -19,9 +28,11 @@ updates:
     labels: ["dependencies", "go"]
     groups:
       hashicorp-tf:
+        applies-to: version-updates
         patterns:
           - "github.com/hashicorp/terraform-plugin-*"
       test-deps:
+        applies-to: version-updates
         patterns:
           - "github.com/stretchr/*"
           - "github.com/google/go-cmp"

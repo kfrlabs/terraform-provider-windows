@@ -56,7 +56,7 @@ global directive. Read it before modifying the image.
 
 Unit tests never reach a **Windows** host, but they do speak SSH: `internal/winclient/transport_test.go` drives real handshakes against the in-process server in `sshtest_test.go` (x/crypto's server side, loopback, no build tag, milliseconds). That tier is what covers auth method selection, host key acceptance/rejection, the `-EncodedCommand` + UTF-16LE-on-stdin bootstrap, and (since #81) persistent-session reuse, concurrent-call serialisation and recovery from a dropped session — none of which fakes can prove. Keep it free of Docker, network and external images so it stays part of the default `make test`.
 
-Enabled linters (`.golangci.yml`): `errcheck`, `gofmt` (simplify), `gosec`, `govet`, `ineffassign`, `staticcheck`, `unused`. `_test.go` files are excluded from `errcheck`/`gosec`.
+Enabled linters (`.golangci.yml`): `errcheck`, `gofmt` (simplify), `gosec`, `govet`, `ineffassign`, `staticcheck`, `unused`. `_test.go` files are excluded from `errcheck`/`gosec`. Vulnerability scanning (`go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`, version pinned like other CI tools) runs as a blocking `govulncheck` job in `test.yml`, plus a weekly schedule; it fails only on CVEs reachable from provider code (#205).
 
 ## Architecture
 
