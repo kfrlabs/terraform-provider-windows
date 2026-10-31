@@ -289,6 +289,7 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 	return []func() datasource.DataSource{
 		NewWindowsEnvironmentVariableDataSource,
 		NewWindowsFeatureDataSource,
+		NewWindowsFileACLDataSource,
 		NewWindowsFirewallRuleDataSource,
 		NewWindowsHostnameDataSource,
 		NewWindowsLegacyPackageDataSource,
