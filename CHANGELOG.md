@@ -136,6 +136,16 @@ All notable changes to this project will be documented in this file.
   run on every PR without needing a Windows host or credentials (#134,
   #136).
 
+### Changed
+
+- The `docs` workflow drift gate is now blocking: `go generate ./...`
+  (tfplugindocs) on a clean checkout reproduces `docs/` byte-identically —
+  the curated per-page content lives in the schema `MarkdownDescription`
+  strings and in `examples/`, which the built-in templates render, so no
+  per-resource template migration was needed — and any drift now fails CI
+  instead of warning. Never hand-edit `docs/`; run `make docs` and commit
+  the result (#199).
+
 ## [0.1.1] - 2026-10-08
 
 ### Fixed
