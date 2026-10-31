@@ -919,12 +919,10 @@ func (c *ScheduledTaskClientImpl) Create(ctx context.Context, input ScheduledTas
 $_stExisting = $null
 try { $_stExisting = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop } catch {}
 if ($null -ne $_stExisting) {
-  Emit-Err 'already_exists' ('Task already exists: %s. Use terraform import to adopt it.') @{ task_name = %s; task_path = %s }
+  Emit-Err 'already_exists' ('Task already exists: ' + %s + '. Use terraform import to adopt it.') @{ task_name = %s; task_path = %s }
   return
 }
-`, psQuote(input.Name), psQuote(input.Path),
-		strings.ReplaceAll(id, "'", "''"),
-		psQuote(input.Name), psQuote(input.Path))
+`, psQuote(input.Name), psQuote(input.Path), psQuote(id), psQuote(input.Name), psQuote(input.Path))
 
 	// Folder creation (ADR-ST-1)
 	fmt.Fprintf(&sb, "if (-not (Ensure-TaskFolder %s)) { return }\n", psQuote(input.Path))
@@ -1210,13 +1208,13 @@ func (c *ScheduledTaskClientImpl) ImportByID(ctx context.Context, id string) (*S
 $_stTask = $null
 try { $_stTask = Get-ScheduledTask -TaskName %s -TaskPath %s -ErrorAction Stop } catch {}
 if ($null -eq $_stTask) {
-  Emit-Err 'not_found' ('Task not found for import: %s') @{ task_name = %s; task_path = %s }
+  Emit-Err 'not_found' ('Task not found for import: ' + %s) @{ task_name = %s; task_path = %s }
   return
 }
 Read-TaskState %s %s
 `,
 		psQuote(taskName), psQuote(taskPath),
-		strings.ReplaceAll(id, "'", "''"),
+		psQuote(id),
 		psQuote(taskName), psQuote(taskPath),
 		psQuote(taskName), psQuote(taskPath),
 	)
