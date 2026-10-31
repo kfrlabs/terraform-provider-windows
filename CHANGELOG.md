@@ -157,6 +157,16 @@ All notable changes to this project will be documented in this file.
   instead of warning. Never hand-edit `docs/`; run `make docs` and commit
   the result (#199).
 
+### Data Sources
+
+- New `windows_legacy_package` data source: read-only lookup of an installed
+  MSI/EXE package by `product_id` (MSI ProductCode GUID) or `display_name`
+  (exact EXE `DisplayName`), exposing `installed`, `installed_version` and
+  `install_date` without managing the package lifecycle. Reuses the sibling
+  resource's `winclient.LegacyPackageClient.Read` (no new winclient code) and
+  the sibling resource default for `timeouts.read`. Partial fix for #206
+  (`directory`, `file` and `file_acl` data sources follow in later PRs).
+
 ## [0.1.1] - 2026-10-08
 
 ### Fixed
