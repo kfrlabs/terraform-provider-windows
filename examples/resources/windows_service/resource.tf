@@ -42,6 +42,24 @@ resource "windows_service" "slow_host" {
   }
 }
 
+# Write-only credential rotation (issue #194): the plaintext never reaches
+# `terraform.tfstate`. Rotation is driven exclusively by
+# `service_password_wo_version` — change it and re-apply with the new password
+# value; changing only `service_password_wo` without changing the version is
+# a no-op.
+resource "windows_service" "app_wo" {
+  name                        = "myapp-wo"
+  display_name                = "My Application (WriteOnly)"
+  description                 = "Business application managed by Terraform."
+  binary_path                 = "C:\\Program Files\\MyApp\\myapp.exe"
+  start_type                  = "Automatic"
+  status                      = "Running"
+  service_account             = "DOMAIN\\svc-myapp"
+  service_password_wo         = var.svc_myapp_password
+  service_password_wo_version = 1
+  dependencies                = ["LanmanServer", "Tcpip"]
+}
+
 # Advanced example: service running under a domain account with dependencies.
 resource "windows_service" "app" {
   name             = "myapp"

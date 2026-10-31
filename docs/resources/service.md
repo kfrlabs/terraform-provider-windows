@@ -88,9 +88,12 @@ resource "windows_service" "app" {
 - `display_name` (String) Human-readable display name shown in services.msc. Defaults to name if omitted.
 - `service_account` (String) Account under which the service runs. Defaults to LocalSystem.
 - `service_password` (String, Sensitive, Deprecated) **Deprecated, use `service_password_wo`.** Password for `service_account`. Sensitive and semantic write-only on the Windows side (not read back), but **persisted as a Sensitive value in `terraform.tfstate`** under the legacy attribute. For a no-state-leak alternative see `service_password_wo`.
-- `service_password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only password for `service_account` (TPF v1.14+). Same Windows-side semantics as `service_password` (sent to `Set-Service` / SCM on every Create / Update), **but the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
+- `service_password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only password for `service_account` (TPF v1.14+). Same Windows-side semantics as `service_password` (sent to `Set-Service` / SCM on Create / version-gated Update), **but the plaintext is never persisted in `terraform.tfstate`** — the framework drops it from state automatically.
 
-Mutually exclusive with `service_password`. Because the WriteOnly value is re-read from configuration on every plan, no separate version counter is required for rotation: change the value and re-apply.
+Because the value is not in state, Terraform cannot detect changes to the password content. Rotation is driven exclusively by `service_password_wo_version`: increment the version and re-apply with the new password value. Changing only `service_password_wo` without bumping the version is a no-op.
+
+Mutually exclusive with `service_password`.
+- `service_password_wo_version` (Number) Version counter for `service_password_wo` rotation. Change this value to rotate the password: when it changes between prior state and plan, the provider re-applies the password via the SCM `Change` call regardless of whether the password value changed. Conventionally starts at 1. Changing only `service_password_wo` without changing this version leaves the stored credential untouched. Removing the version is not a rotation.
 - `start_type` (String) Service start mode. One of: Automatic, AutomaticDelayedStart, Manual, Disabled.
 - `status` (String) Desired runtime state: Running, Stopped, or Paused. Null = observe-only.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
