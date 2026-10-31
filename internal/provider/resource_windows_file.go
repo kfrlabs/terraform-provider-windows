@@ -187,9 +187,15 @@ func windowsFileSchemaDefinition(ctx context.Context) schema.Schema {
 			"source_url": schema.StringAttribute{
 				Optional: true,
 				Validators: []validator.String{
-					stringvalidator.RegexMatches(regexp.MustCompile(`^https?://`), "must be an http:// or https:// URL"),
+					stringvalidator.RegexMatches(regexp.MustCompile(`(?i)^https?://`), "must be an http:// or https:// URL"),
 				},
-				Description: "HTTP(S) URL of the content to deploy.",
+				Description: "HTTP(S) URL of the content to deploy. An http:// URL requires source_url_sha256: " +
+					"without integrity verification anyone on the network path can substitute the payload before it is written to the host. " +
+					"Even over HTTPS, always pin source_url_sha256 so a compromised mirror or account cannot ship a trojaned payload unnoticed.",
+				MarkdownDescription: "HTTP(S) URL of the content to deploy.\n\n" +
+					"**Threat model:** an `http://` URL **requires** `source_url_sha256`: without integrity verification " +
+					"anyone on the network path can substitute the payload before it is written to the host. " +
+					"Even over HTTPS, always pin `source_url_sha256` so a compromised mirror or account cannot ship a trojaned payload unnoticed.",
 			},
 			"source_url_sha256": schema.StringAttribute{
 				Optional: true,
@@ -198,8 +204,12 @@ func windowsFileSchemaDefinition(ctx context.Context) schema.Schema {
 					// CV-5: only meaningful alongside source_url.
 					stringvalidator.AlsoRequires(path.MatchRoot("source_url")),
 				},
-				Description: "Expected SHA-256 of the downloaded payload. Required when `download_on = \"target\"`. " +
-					"When omitted the provider must download the URL on every plan to detect drift.",
+				Description: "Expected SHA-256 of the downloaded payload. Required with an http:// source_url and when " +
+					"download_on = \"target\"; strongly recommended otherwise (see the source_url threat model). " +
+					"When pinned, plans stay local with no download at plan time and every payload is verified before it is written.",
+				MarkdownDescription: "Expected SHA-256 of the downloaded payload.\n\n" +
+					"Required with an `http://` `source_url` and when `download_on = \"target\"`; strongly recommended otherwise " +
+					"(see the `source_url` threat model). When pinned, plans stay local with no download at plan time and every payload is verified before it is written.",
 			},
 			"source_url_headers": schema.MapAttribute{
 				Optional:    true,
@@ -357,7 +367,10 @@ func (v fileNoTraversalValidator) ValidateString(_ context.Context, req validato
 }
 
 // fileCrossFieldValidator implements CV-4 (target download needs a pinned
-// checksum) and CV-6 (system/temporary are mutually exclusive).
+// checksum) and CV-6 (system/temporary are mutually exclusive), plus the
+// #204 plaintext-HTTP integrity gate (mirrors legacyPackageSourceValidator,
+// issue #175; deliberately duplicated rather than shared so legacy_package
+// behavior stays untouched).
 type fileCrossFieldValidator struct{}
 
 func (v fileCrossFieldValidator) Description(_ context.Context) string {
@@ -399,19 +412,48 @@ func (v fileCrossFieldValidator) ValidateResource(ctx context.Context, req resou
 		}
 	}
 
-	// Warn on an unpinned URL: every plan then performs a GET.
-	if !cfg.SourceURL.IsNull() && cfg.SourceURLSHA256.IsNull() &&
+	// Warn on an unpinned URL: the payload is written without integrity
+	// verification, so a compromised mirror or account can ship a trojaned
+	// payload unnoticed. A pinned digest also keeps plans local.
+	// (An http:// URL without a digest errors below instead of warning;
+	// download_on = "target" without a digest already errored above as CV-4.)
+	digestMissing := cfg.SourceURLSHA256.IsNull() || cfg.SourceURLSHA256.IsUnknown() ||
+		cfg.SourceURLSHA256.ValueString() == ""
+	urlKnown := !cfg.SourceURL.IsNull() && !cfg.SourceURL.IsUnknown() &&
+		cfg.SourceURL.ValueString() != ""
+	isHTTP := urlKnown && strings.HasPrefix(strings.ToLower(cfg.SourceURL.ValueString()), "http://")
+	if isHTTP {
+		// #204 (cf. #175): plaintext HTTP without a pinned digest lets
+		// anyone on the network path substitute the payload before it is
+		// written to the host. Error regardless of download_on. The double
+		// diagnostic with CV-4 (http + download_on = "target" + no digest)
+		// is intentional: both rules are violated and each message is
+		// actionable on its own. Unlike legacy_package, there is no early
+		// return here because CV-4 and this gate check distinct conditions.
+		if digestMissing {
+			resp.Diagnostics.AddAttributeError(path.Root("source_url_sha256"),
+				"source_url_sha256 is required for http:// source_url",
+				"A file fetched over plaintext HTTP without a pinned digest can be substituted by "+
+					"anyone on the network path before it is written to the host. "+
+					"Set source_url_sha256 or switch source_url to https://.")
+		}
+	} else if urlKnown && digestMissing &&
 		cfg.DownloadOn.ValueString() != fileDownloadOnTarget {
 		resp.Diagnostics.AddAttributeWarning(path.Root("source_url"),
 			"Unpinned source_url",
-			"Without source_url_sha256 the provider must download the URL on every plan to detect drift. "+
-				"Pin the digest to keep plans local and to get integrity verification.")
+			"Without source_url_sha256 the downloaded payload is written without integrity verification. "+
+				"Pin source_url_sha256 so a compromised mirror or account cannot ship a trojaned payload unnoticed.")
 	}
 
 	if cfg.SourceURLInsecureSkipVerify.ValueBool() {
+		detail := "source_url_insecure_skip_verify = true disables certificate validation for this download."
+		if digestMissing && urlKnown {
+			detail += " Without a pinned source_url_sha256 this voids the only remaining origin check: " +
+				"anyone on the network path can substitute the payload before it is written to the host."
+		}
 		resp.Diagnostics.AddAttributeWarning(path.Root("source_url_insecure_skip_verify"),
 			"TLS verification disabled",
-			"source_url_insecure_skip_verify = true disables certificate validation for this download.")
+			detail)
 	}
 }
 
