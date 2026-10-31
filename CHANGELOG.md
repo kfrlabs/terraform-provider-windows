@@ -165,14 +165,21 @@ All notable changes to this project will be documented in this file.
   `effective_access_rules` without managing the DACL. Reuses the sibling
   resource's `winclient.FileACLClient.Read` (no new winclient code) and the
   sibling resource default for `timeouts.read`. Partial fix for #206
-  (`directory` and `file` data sources follow in later PRs).
+  (`file` data source follows in a later PR).
+- New `windows_directory` data source: read-only lookup of the observed
+  state of an existing directory by `path`, exposing the observed
+  `exists_children`, `item_count`, `last_write_time` and `attributes`
+  without managing the directory. Reuses the sibling resource's
+  `winclient.DirectoryClient.Read` (no new winclient code) and the sibling
+  resource default for `timeouts.read`. Partial fix for #206 (`file` data
+  source follows in a later PR, pending the content design decision).
 - New `windows_legacy_package` data source: read-only lookup of an installed
   MSI/EXE package by `product_id` (MSI ProductCode GUID) or `display_name`
   (exact EXE `DisplayName`), exposing `installed`, `installed_version` and
   `install_date` without managing the package lifecycle. Reuses the sibling
   resource's `winclient.LegacyPackageClient.Read` (no new winclient code) and
   the sibling resource default for `timeouts.read`. Partial fix for #206
-  (`directory` and `file` data sources follow in later PRs).
+  (`file` data source follows in a later PR).
 
 ## [0.1.1] - 2026-10-08
 
