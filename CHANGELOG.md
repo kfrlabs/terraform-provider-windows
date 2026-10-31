@@ -159,13 +159,20 @@ All notable changes to this project will be documented in this file.
 
 ### Data Sources
 
+- New `windows_file_acl` data source: read-only lookup of the NTFS security
+  descriptor of an existing file or directory by `path`, exposing the observed
+  `owner`, `owner_sid`, `target_type`, `inheritance_enabled`, `sddl` and
+  `effective_access_rules` without managing the DACL. Reuses the sibling
+  resource's `winclient.FileACLClient.Read` (no new winclient code) and the
+  sibling resource default for `timeouts.read`. Partial fix for #206
+  (`directory` and `file` data sources follow in later PRs).
 - New `windows_legacy_package` data source: read-only lookup of an installed
   MSI/EXE package by `product_id` (MSI ProductCode GUID) or `display_name`
   (exact EXE `DisplayName`), exposing `installed`, `installed_version` and
   `install_date` without managing the package lifecycle. Reuses the sibling
   resource's `winclient.LegacyPackageClient.Read` (no new winclient code) and
   the sibling resource default for `timeouts.read`. Partial fix for #206
-  (`directory`, `file` and `file_acl` data sources follow in later PRs).
+  (`directory` and `file` data sources follow in later PRs).
 
 ## [0.1.1] - 2026-10-08
 
