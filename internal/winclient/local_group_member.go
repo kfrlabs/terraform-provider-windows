@@ -10,10 +10,9 @@
 //
 // Reused helpers from service.go / local_group.go (same package):
 //   - psQuote             — single-quote PowerShell literal
-//   - extractLastJSONLine — scan stdout for last JSON-starting line
-//   - truncate            — cap strings for diagnostic context
+//   - runEnvelope         — shared JSON envelope pipeline (envelope.go)
 //   - runPowerShell       — package-level hook for testability
-//   - psResponse          — parsed Emit-OK / Emit-Err JSON envelope
+//   - psResponse          — parsed Emit-OK / Emit-Err JSON envelope (aliases Envelope)
 //   - lgPsHeader          — PowerShell header with Emit-OK / Emit-Err / Classify-LG
 //
 // The three-tier orphaned-SID fallback for List (EC-6, ADR-LGM-5):
@@ -97,68 +96,26 @@ func normalizePrincipalSource(s string) string {
 // ---------------------------------------------------------------------------
 
 // runLGMEnvelope executes script (prefixed with lgPsHeader) on the remote host
-// and returns the parsed psResponse envelope. op is the operation name and key
-// is a diagnostic identifier used in error context.
+// and returns the parsed psResponse envelope through the shared runEnvelope
+// helper (#198). op is the operation name and key is a diagnostic identifier
+// used in error context.
 //
 // Transport / PS-level errors that bypass Emit-Err (non-zero exit, context
 // cancellation) are translated into *LocalGroupMemberError with Kind=Unknown.
 func (mc *LocalGroupMemberClient) runLGMEnvelope(ctx context.Context, op, key, script string) (*psResponse, error) {
-	full := lgPsHeader + "\n" + script
-	stdout, stderr, err := runPowerShell(ctx, mc.c, full)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, NewLocalGroupMemberError(LocalGroupMemberErrorUnknown,
-				fmt.Sprintf("operation %q timed out or was cancelled", op),
-				ctx.Err(),
-				map[string]string{
-					"operation": op, "key": key, "host": mc.c.cfg.Host,
-				})
-		}
-		return nil, NewLocalGroupMemberError(LocalGroupMemberErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err,
-			map[string]string{
-				"operation": op, "key": key, "host": mc.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{"key": key, "host": mc.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPowerShell(ctx, mc.c, full)
+		},
+		op, lgPsHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewLocalGroupMemberError(LocalGroupMemberErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op),
-			nil,
-			map[string]string{
-				"operation": op, "key": key, "host": mc.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewLocalGroupMemberError(LocalGroupMemberErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewLocalGroupMemberError(LocalGroupMemberErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op),
-			jerr,
-			map[string]string{
-				"operation": op, "key": key, "host": mc.c.cfg.Host,
-				"stdout": truncate(stdout, 2048),
-			})
-	}
-
-	if !resp.OK {
-		kind := mapLGMKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["key"] = key
-		ctxMap["host"] = mc.c.cfg.Host
-		return &resp, NewLocalGroupMemberError(kind, resp.Message, nil, ctxMap)
-	}
-	return &resp, nil
+	return resp, NewLocalGroupMemberError(mapLGMKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }
 
 // ---------------------------------------------------------------------------

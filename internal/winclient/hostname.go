@@ -72,14 +72,10 @@ func validateNetBIOS(name string) error {
 	return nil
 }
 
-// hostnamePSResponse is the JSON envelope produced by Emit-OK/Emit-Err.
-type hostnamePSResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// hostnamePSResponse is the JSON envelope produced by Emit-OK/Emit-Err. It
+// aliases the shared Envelope type so every resource parses the same shape
+// through runEnvelope (#198).
+type hostnamePSResponse = Envelope
 
 // hostnameStatePayload is the data shape emitted by the Read script.
 type hostnameStatePayload struct {
@@ -134,60 +130,36 @@ function Read-HostnameState {
 `
 
 // runHostnameEnvelope executes script (prepended with psHostnameHeader) and
-// parses the JSON envelope. Transport / cancellation errors that bypass
-// Emit-Err are mapped to HostnameErrorUnreachable / HostnameErrorUnknown.
+// parses the JSON envelope through the shared runEnvelope helper (#198).
+// Transport / cancellation errors that bypass Emit-Err are mapped to
+// HostnameErrorUnreachable / HostnameErrorUnknown. Caller-supplied baseCtx
+// entries (e.g. desired_name on rename) are preserved alongside the
+// connection identity.
 func (h *HostnameClient) runHostnameEnvelope(ctx context.Context, op, script string, baseCtx map[string]string) (*hostnamePSResponse, error) {
-	full := psHostnameHeader + "\n" + script
-	stdout, stderr, err := runHostnamePowerShell(ctx, h.c, full)
-
-	if baseCtx == nil {
-		baseCtx = map[string]string{}
+	baseContext := map[string]string{
+		"host":      h.c.cfg.Host,
+		"port":      fmt.Sprintf("%d", h.c.cfg.Port),
+		"transport": "ssh",
 	}
-	baseCtx["operation"] = op
-	baseCtx["host"] = h.c.cfg.Host
-	baseCtx["port"] = fmt.Sprintf("%d", h.c.cfg.Port)
-	baseCtx["transport"] = "ssh"
-
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, NewHostnameError(HostnameErrorUnreachable,
-				fmt.Sprintf("operation %q timed out or was cancelled", op),
-				ctxErr, baseCtx)
+	for k, v := range baseCtx {
+		baseContext[k] = v
+	}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runHostnamePowerShell(ctx, h.c, full)
+		},
+		op, psHostnameHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
+	}
+	if eerr.Stage != EnvelopeStageRemote {
+		kind := HostnameErrorUnknown
+		if eerr.Stage == EnvelopeStageTimeout || eerr.Stage == EnvelopeStageTransport {
+			kind = HostnameErrorUnreachable
 		}
-		baseCtx["stderr"] = truncate(stderr, 2048)
-		baseCtx["stdout"] = truncate(stdout, 2048)
-		return nil, NewHostnameError(HostnameErrorUnreachable,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err, baseCtx)
+		return nil, NewHostnameError(kind, eerr.Message, eerr.Cause, eerr.Context)
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		baseCtx["stdout"] = truncate(stdout, 2048)
-		baseCtx["stderr"] = truncate(stderr, 2048)
-		return nil, NewHostnameError(HostnameErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op), nil, baseCtx)
-	}
-	var resp hostnamePSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		baseCtx["stdout"] = truncate(stdout, 2048)
-		return nil, NewHostnameError(HostnameErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op), jerr, baseCtx)
-	}
-	if !resp.OK {
-		kind := mapHostnameKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		for k, v := range baseCtx {
-			if _, ok := ctxMap[k]; !ok {
-				ctxMap[k] = v
-			}
-		}
-		return &resp, NewHostnameError(kind, resp.Message, nil, ctxMap)
-	}
-	return &resp, nil
+	return resp, NewHostnameError(mapHostnameKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }
 
 // mapHostnameKind translates a PS-side "kind" string to a typed

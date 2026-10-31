@@ -10,10 +10,9 @@
 //
 // Reused helpers from service.go (same package):
 //   - psQuote          — single-quote PowerShell literal with embedded ' doubled
-//   - extractLastJSONLine — scan stdout for last JSON-starting line
-//   - truncate         — cap strings for diagnostic context
+//   - runEnvelope      — shared JSON envelope pipeline (envelope.go)
 //   - runPowerShell    — package-level hook for testability
-//   - psResponse       — parsed Emit-OK / Emit-Err JSON envelope
+//   - psResponse       — parsed Emit-OK / Emit-Err JSON envelope (aliases Envelope)
 package winclient
 
 import (
@@ -125,65 +124,27 @@ func mapLGKind(k string) LocalGroupErrorKind {
 // ---------------------------------------------------------------------------
 
 // runLGEnvelope executes script (prefixed with lgPsHeader) on the remote host
-// and returns the parsed psResponse envelope. key is a diagnostic identifier
-// (sid or name) used in error context.
+// and returns the parsed psResponse envelope through the shared runEnvelope
+// helper (#198). key is a diagnostic identifier (sid or name) used in error
+// context.
 //
 // Transport / PS-level errors that bypass Emit-Err (non-zero exit, context
 // cancellation) are translated into *LocalGroupError with
 // Kind=LocalGroupErrorUnknown.
 func (lc *LocalGroupClient) runLGEnvelope(ctx context.Context, op, key, script string) (*psResponse, error) {
-	full := lgPsHeader + "\n" + script
-	stdout, stderr, err := runPowerShell(ctx, lc.c, full)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-				fmt.Sprintf("operation %q timed out or was cancelled", op),
-				ctx.Err(), map[string]string{
-					"operation": op, "key": key, "host": lc.c.cfg.Host,
-				})
-		}
-		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err, map[string]string{
-				"operation": op, "key": key, "host": lc.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{"key": key, "host": lc.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPowerShell(ctx, lc.c, full)
+		},
+		op, lgPsHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op), nil,
-			map[string]string{
-				"operation": op, "key": key, "host": lc.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewLocalGroupError(LocalGroupErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op), jerr,
-			map[string]string{
-				"operation": op, "key": key, "host": lc.c.cfg.Host,
-				"stdout": truncate(stdout, 2048),
-			})
-	}
-
-	if !resp.OK {
-		kind := mapLGKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["key"] = key
-		ctxMap["host"] = lc.c.cfg.Host
-		return &resp, NewLocalGroupError(kind, resp.Message, nil, ctxMap)
-	}
-	return &resp, nil
+	return resp, NewLocalGroupError(mapLGKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }
 
 // ---------------------------------------------------------------------------

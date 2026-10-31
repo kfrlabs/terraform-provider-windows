@@ -365,14 +365,10 @@ const psFileACLResetBody = `
 }
 `
 
-// fileACLPSResponse is the parsed JSON envelope for ACL operations.
-type fileACLPSResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// fileACLPSResponse is the parsed JSON envelope for ACL operations. It
+// aliases the shared Envelope type so every resource parses the same shape
+// through runEnvelope (#198).
+type fileACLPSResponse = Envelope
 
 // fileACLDataPayload mirrors the JSON object returned by the scripts.
 // AccessRules is json.RawMessage because ConvertTo-Json serialises a
@@ -388,63 +384,28 @@ type fileACLDataPayload struct {
 	AccessRules        json.RawMessage `json:"access_rules"`
 }
 
-// runScript executes a PS script and parses the JSON envelope.
+// runScript executes a PS script and parses the JSON envelope through the
+// shared runEnvelope helper (#198). stdin carries the ACL specification as
+// JSON and is never copied into error context or logs.
 func (f *FileACLClientImpl) runScript(ctx context.Context, op, script, stdin string) (*fileACLPSResponse, error) {
-	stdout, stderr, err := runFileACLPowerShell(ctx, f.c, script, stdin)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, &FileACLError{
-				Kind:    FileACLErrorUnknown,
-				Message: fmt.Sprintf("operation %q timed out or was cancelled", op),
-				Cause:   ctxErr,
-				Context: map[string]string{"operation": op, "host": f.c.cfg.Host},
-			}
-		}
+	baseContext := map[string]string{"host": f.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runFileACLPowerShell(ctx, f.c, full, stdin)
+		},
+		op, script, stdin, baseContext)
+	if eerr == nil {
+		return resp, nil
+	}
+	if eerr.Stage != EnvelopeStageRemote {
 		return nil, &FileACLError{
 			Kind:    FileACLErrorUnknown,
-			Message: fmt.Sprintf("SSH transport error during %q", op),
-			Cause:   err,
-			Context: map[string]string{
-				"operation": op, "host": f.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
+			Message: eerr.Message,
+			Cause:   eerr.Cause,
+			Context: eerr.Context,
 		}
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, &FileACLError{
-			Kind:    FileACLErrorUnknown,
-			Message: fmt.Sprintf("no JSON envelope returned from %q", op),
-			Context: map[string]string{
-				"operation": op, "host": f.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
-		}
-	}
-
-	var resp fileACLPSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, &FileACLError{
-			Kind:    FileACLErrorUnknown,
-			Message: fmt.Sprintf("invalid JSON envelope from %q", op),
-			Cause:   jerr,
-			Context: map[string]string{"operation": op, "stdout": truncate(stdout, 2048)},
-		}
-	}
-
-	if !resp.OK {
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["host"] = f.c.cfg.Host
-		return &resp, &FileACLError{Kind: mapFileACLErrorKind(resp.Kind), Message: resp.Message, Context: ctxMap}
-	}
-	return &resp, nil
+	return resp, &FileACLError{Kind: mapFileACLErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapFileACLErrorKind translates the PS-side "kind" string to a typed kind.

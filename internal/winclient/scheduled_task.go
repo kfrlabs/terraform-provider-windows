@@ -310,13 +310,10 @@ function Remove-EmptyFolder([string]$FolderPath) {
 // JSON envelope structs
 // ---------------------------------------------------------------------------
 
-type stPSResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// stPSResponse is the parsed JSON envelope for scheduled task operations.
+// It aliases the shared Envelope type so every resource parses the same
+// shape through runEnvelope (#198).
+type stPSResponse = Envelope
 
 type stTaskPayload struct {
 	Name           string              `json:"name"`
@@ -388,46 +385,16 @@ var runSTPSInput = func(ctx context.Context, c *Client, script, stdin string) (s
 }
 
 func (c *ScheduledTaskClientImpl) runSTEnvelope(ctx context.Context, op, id, script string) (*stPSResponse, error) {
-	full := psSTHeader + "\n" + script
-	stdout, stderr, err := runSTPS(ctx, c.c, full)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-				fmt.Sprintf("operation %q for %q timed out or was cancelled", op, id),
-				ctx.Err(),
-				map[string]string{"op": op, "id": id, "host": c.c.cfg.Host})
-		}
-		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err,
-			map[string]string{"op": op, "id": id, "host": c.c.cfg.Host,
-				"stderr": truncate(stderr, 2048), "stdout": truncate(stdout, 2048)})
+	baseContext := map[string]string{"op": op, "id": id, "host": c.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runSTPS(ctx, c.c, full)
+		},
+		op, psSTHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-			fmt.Sprintf("no JSON envelope from %q", op), nil,
-			map[string]string{"op": op, "id": id,
-				"stderr": truncate(stderr, 2048), "stdout": truncate(stdout, 2048)})
-	}
-	var resp stPSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-			fmt.Sprintf("invalid JSON from %q", op), jerr,
-			map[string]string{"op": op, "id": id, "stdout": truncate(stdout, 2048)})
-	}
-	if !resp.OK {
-		kind := mapSTKind(resp.Kind)
-		ctx2 := resp.Context
-		if ctx2 == nil {
-			ctx2 = map[string]string{}
-		}
-		ctx2["op"] = op
-		ctx2["id"] = id
-		ctx2["host"] = c.c.cfg.Host
-		return &resp, NewScheduledTaskError(kind, resp.Message, nil, ctx2)
-	}
-	return &resp, nil
+	return resp, mapSTEnvelopeError(eerr, op, id)
 }
 
 // runSTEnvelopeWithInput is the stdin-aware sibling of runSTEnvelope. It is used
@@ -435,46 +402,34 @@ func (c *ScheduledTaskClientImpl) runSTEnvelope(ctx context.Context, op, id, scr
 // piped over stdin instead of embedded in the script body. The stdin value is
 // NEVER copied into error context or logs.
 func (c *ScheduledTaskClientImpl) runSTEnvelopeWithInput(ctx context.Context, op, id, script, stdin string) (*stPSResponse, error) {
-	full := psSTHeader + "\n" + script
-	stdout, stderr, err := runSTPSInput(ctx, c.c, full, stdin)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-				fmt.Sprintf("operation %q for %q timed out or was cancelled", op, id),
-				ctx.Err(),
-				map[string]string{"op": op, "id": id, "host": c.c.cfg.Host})
-		}
-		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err,
-			map[string]string{"op": op, "id": id, "host": c.c.cfg.Host,
-				"stderr": truncate(stderr, 2048), "stdout": truncate(stdout, 2048)})
+	baseContext := map[string]string{"op": op, "id": id, "host": c.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runSTPSInput(ctx, c.c, full, stdin)
+		},
+		op, psSTHeader+"\n"+script, stdin, baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-			fmt.Sprintf("no JSON envelope from %q", op), nil,
-			map[string]string{"op": op, "id": id,
-				"stderr": truncate(stderr, 2048), "stdout": truncate(stdout, 2048)})
+	return resp, mapSTEnvelopeError(eerr, op, id)
+}
+
+// mapSTEnvelopeError converts a shared EnvelopeError into the historical
+// *ScheduledTaskError for this resource, preserving the op/id context keys
+// and the historical timeout / no-envelope / invalid-JSON messages.
+func mapSTEnvelopeError(eerr *EnvelopeError, op, id string) error {
+	switch eerr.Stage {
+	case EnvelopeStageTimeout:
+		eerr.Message = fmt.Sprintf("operation %q for %q timed out or was cancelled", op, id)
+	case EnvelopeStageNoEnvelope:
+		eerr.Message = fmt.Sprintf("no JSON envelope from %q", op)
+	case EnvelopeStageInvalidJSON:
+		eerr.Message = fmt.Sprintf("invalid JSON from %q", op)
 	}
-	var resp stPSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewScheduledTaskError(ScheduledTaskErrorUnknown,
-			fmt.Sprintf("invalid JSON from %q", op), jerr,
-			map[string]string{"op": op, "id": id, "stdout": truncate(stdout, 2048)})
+	if eerr.Stage != EnvelopeStageRemote {
+		return NewScheduledTaskError(ScheduledTaskErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	if !resp.OK {
-		kind := mapSTKind(resp.Kind)
-		ctx2 := resp.Context
-		if ctx2 == nil {
-			ctx2 = map[string]string{}
-		}
-		ctx2["op"] = op
-		ctx2["id"] = id
-		ctx2["host"] = c.c.cfg.Host
-		return &resp, NewScheduledTaskError(kind, resp.Message, nil, ctx2)
-	}
-	return &resp, nil
+	return NewScheduledTaskError(mapSTKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }
 
 func mapSTKind(k string) ScheduledTaskErrorKind {

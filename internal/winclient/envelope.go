@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Envelope is the JSON object produced by the Emit-OK/Emit-Err helpers.
@@ -178,6 +179,31 @@ func runEnvelope(
 		}
 	}
 	return &resp, nil
+}
+
+// extractLastJSONLine scans stdout and returns the last line that starts with
+// '{' — the JSON envelope produced by Emit-OK/Emit-Err. Any preceding PS
+// warning lines are ignored.
+func extractLastJSONLine(stdout string) string {
+	lines := strings.Split(strings.ReplaceAll(stdout, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		// Belt-and-braces for #102: strip one leading BOM before the
+		// prefix match so a BOM-emitting encoder cannot hide the envelope.
+		// Trim on both sides of the BOM so "  \uFEFF{...}" and "\uFEFF  {...}"
+		// normalize before the HasPrefix check.
+		trim := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "\uFEFF"))
+		if strings.HasPrefix(trim, "{") {
+			return trim
+		}
+	}
+	return ""
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "...[truncated]"
 }
 
 // envelopeContext builds a fresh diagnostic map: base entries first, then

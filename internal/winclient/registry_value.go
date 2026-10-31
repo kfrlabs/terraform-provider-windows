@@ -239,14 +239,10 @@ var runRegistryValuePowerShell = func(ctx context.Context, c *Client, script str
 	return c.RunPowerShell(ctx, script)
 }
 
-// rvPSResponse is the parsed JSON envelope for registry value operations.
-type rvPSResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// rvPSResponse is the parsed JSON envelope for registry value operations. It
+// aliases the shared Envelope type so every resource parses the same shape
+// through runEnvelope (#198).
+type rvPSResponse = Envelope
 
 // rvDataPayload mirrors the JSON object returned by Set and Read PS scripts.
 // ValueStrings is json.RawMessage to handle the PowerShell ConvertTo-Json
@@ -259,64 +255,27 @@ type rvDataPayload struct {
 	ValueBinary  *string         `json:"value_binary"`
 }
 
-// runScript executes a PS script and parses the JSON envelope.
+// runScript executes a PS script and parses the JSON envelope through the
+// shared runEnvelope helper (#198).
 func (r *RegistryValueClientImpl) runScript(ctx context.Context, op, script string) (*rvPSResponse, error) {
-	stdout, stderr, err := runRegistryValuePowerShell(ctx, r.c, script)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, &RegistryValueError{
-				Kind:    RegistryValueErrorUnknown,
-				Message: fmt.Sprintf("operation %q timed out or was cancelled", op),
-				Cause:   ctxErr,
-				Context: map[string]string{"operation": op, "host": r.c.cfg.Host},
-			}
-		}
+	baseContext := map[string]string{"host": r.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runRegistryValuePowerShell(ctx, r.c, full)
+		},
+		op, script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
+	}
+	if eerr.Stage != EnvelopeStageRemote {
 		return nil, &RegistryValueError{
 			Kind:    RegistryValueErrorUnknown,
-			Message: fmt.Sprintf("SSH transport error during %q", op),
-			Cause:   err,
-			Context: map[string]string{
-				"operation": op, "host": r.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
+			Message: eerr.Message,
+			Cause:   eerr.Cause,
+			Context: eerr.Context,
 		}
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, &RegistryValueError{
-			Kind:    RegistryValueErrorUnknown,
-			Message: fmt.Sprintf("no JSON envelope returned from %q", op),
-			Context: map[string]string{
-				"operation": op, "host": r.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
-		}
-	}
-
-	var resp rvPSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, &RegistryValueError{
-			Kind:    RegistryValueErrorUnknown,
-			Message: fmt.Sprintf("invalid JSON envelope from %q", op),
-			Cause:   jerr,
-			Context: map[string]string{"operation": op, "stdout": truncate(stdout, 2048)},
-		}
-	}
-
-	if !resp.OK {
-		kind := mapRegistryValueErrorKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["host"] = r.c.cfg.Host
-		return &resp, &RegistryValueError{Kind: kind, Message: resp.Message, Context: ctxMap}
-	}
-	return &resp, nil
+	return resp, &RegistryValueError{Kind: mapRegistryValueErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapRegistryValueErrorKind translates the PS-side "kind" string to a typed RegistryValueErrorKind.

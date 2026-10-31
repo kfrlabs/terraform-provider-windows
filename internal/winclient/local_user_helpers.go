@@ -14,7 +14,6 @@ package winclient
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -33,8 +32,8 @@ import (
 // On failure, returns a *LocalUserError. Callers that need a different error
 // type should check for LocalUserErrorNotFound and wrap accordingly.
 //
-// Reuses luPsHeader, runPowerShell, extractLastJSONLine, truncate, psResponse,
-// mapLUKind, and parseUserData from local_user.go (same package).
+// Reuses luPsHeader and runPowerShell from local_user.go (same package),
+// with envelope parsing centralised in runEnvelope (see envelope.go).
 func ResolveLocalUserSID(ctx context.Context, c *Client, nameOrSID string) (*UserState, error) {
 	q := psQuote(nameOrSID)
 
@@ -56,64 +55,29 @@ try {
 }
 `, param, q)
 
-	stdout, stderr, err := runPowerShell(ctx, c, script)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, NewLocalUserError(LocalUserErrorUnknown,
-				"ResolveLocalUserSID: operation timed out or was cancelled",
-				ctx.Err(),
-				map[string]string{"user": nameOrSID, "host": c.cfg.Host},
-			)
+	baseContext := map[string]string{"user": nameOrSID, "host": c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPowerShell(ctx, c, full)
+		},
+		"resolve_local_user_sid", script, "", baseContext)
+	if eerr == nil {
+		return parseUserData("resolve_local_user_sid", resp.Data)
+	}
+	if eerr.Stage == EnvelopeStageTimeout {
+		return nil, NewLocalUserError(LocalUserErrorUnknown,
+			"ResolveLocalUserSID: operation timed out or was cancelled",
+			eerr.Cause, eerr.Context)
+	}
+	if eerr.Stage != EnvelopeStageRemote {
+		msg := "ResolveLocalUserSID: SSH transport error"
+		switch eerr.Stage {
+		case EnvelopeStageNoEnvelope:
+			msg = "ResolveLocalUserSID: no JSON envelope returned"
+		case EnvelopeStageInvalidJSON:
+			msg = "ResolveLocalUserSID: invalid JSON envelope"
 		}
-		return nil, NewLocalUserError(LocalUserErrorUnknown,
-			"ResolveLocalUserSID: SSH transport error",
-			err,
-			map[string]string{
-				"user":   nameOrSID,
-				"host":   c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
-		)
+		return nil, NewLocalUserError(LocalUserErrorUnknown, msg, eerr.Cause, eerr.Context)
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewLocalUserError(LocalUserErrorUnknown,
-			"ResolveLocalUserSID: no JSON envelope returned",
-			nil,
-			map[string]string{
-				"user":   nameOrSID,
-				"host":   c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
-		)
-	}
-
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewLocalUserError(LocalUserErrorUnknown,
-			"ResolveLocalUserSID: invalid JSON envelope",
-			jerr,
-			map[string]string{
-				"user":   nameOrSID,
-				"host":   c.cfg.Host,
-				"stdout": truncate(stdout, 2048),
-			},
-		)
-	}
-
-	if !resp.OK {
-		kind := mapLUKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["user"] = nameOrSID
-		ctxMap["host"] = c.cfg.Host
-		return nil, NewLocalUserError(kind, resp.Message, nil, ctxMap)
-	}
-
-	return parseUserData("resolve_local_user_sid", resp.Data)
+	return nil, NewLocalUserError(mapLUKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }

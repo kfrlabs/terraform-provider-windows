@@ -94,69 +94,34 @@ var runPowerShell = func(ctx context.Context, c *Client, script string) (string,
 }
 
 // psResponse is the unmarshalled JSON envelope produced by Emit-OK/Emit-Err.
-type psResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// It aliases the shared Envelope type so every resource parses the same
+// shape through runEnvelope (#198).
+type psResponse = Envelope
 
 // runEnvelope executes script (prefixed with psHeader) and returns the parsed
-// envelope. Transport / PS-level errors that bypass Emit-Err (non-zero exit,
-// context cancellation) are translated into *ServiceError with Kind=unknown or
-// Kind=timeout as appropriate.
+// envelope through the shared runEnvelope helper (#198). Transport /
+// PS-level errors that bypass Emit-Err (non-zero exit, context cancellation)
+// are translated into *ServiceError with Kind=unknown or Kind=timeout as
+// appropriate.
 func (s *ServiceClient) runEnvelope(ctx context.Context, op, name, script string) (*psResponse, error) {
-	full := psHeader + "\n" + script
-	stdout, stderr, err := runPowerShell(ctx, s.c, full)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, NewServiceError(ServiceErrorTimeout,
-				fmt.Sprintf("operation %q timed out or was cancelled", op),
-				ctxErr, map[string]string{
-					"operation": op, "name": name, "host": s.c.cfg.Host,
-				})
-		}
-		return nil, NewServiceError(ServiceErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err, map[string]string{
-				"operation": op, "name": name, "host": s.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{"name": name, "host": s.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPowerShell(ctx, s.c, full)
+		},
+		op, psHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewServiceError(ServiceErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op), nil,
-			map[string]string{
-				"operation": op, "name": name, "host": s.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	if eerr.Stage == EnvelopeStageTimeout {
+		return nil, NewServiceError(ServiceErrorTimeout, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewServiceError(ServiceErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op), jerr,
-			map[string]string{
-				"operation": op, "name": name, "host": s.c.cfg.Host,
-				"stdout": truncate(stdout, 2048),
-			})
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewServiceError(ServiceErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	if !resp.OK {
-		kind := mapKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["name"] = name
-		ctxMap["host"] = s.c.cfg.Host
-		return &resp, NewServiceError(kind, resp.Message, nil, ctxMap)
-	}
-	return &resp, nil
+	kind := mapKind(eerr.RemoteKind)
+	msg := eerr.Message
+	return resp, NewServiceError(kind, msg, nil, eerr.Context)
 }
 
 // runEnvelopeWithInput is the stdin-aware sibling of runEnvelope. It is used
@@ -165,81 +130,24 @@ func (s *ServiceClient) runEnvelope(ctx context.Context, op, name, script string
 //
 // Transport / parsing semantics are identical to runEnvelope.
 func (s *ServiceClient) runEnvelopeWithInput(ctx context.Context, op, name, script, stdin string) (*psResponse, error) {
-	full := psHeader + "\n" + script
-	stdout, stderr, err := runPSInput(ctx, s.c, full, stdin)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, NewServiceError(ServiceErrorTimeout,
-				fmt.Sprintf("operation %q timed out or was cancelled", op),
-				ctxErr, map[string]string{
-					"operation": op, "name": name, "host": s.c.cfg.Host,
-				})
-		}
-		return nil, NewServiceError(ServiceErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err, map[string]string{
-				"operation": op, "name": name, "host": s.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{"name": name, "host": s.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPSInput(ctx, s.c, full, stdin)
+		},
+		op, psHeader+"\n"+script, stdin, baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewServiceError(ServiceErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op), nil,
-			map[string]string{
-				"operation": op, "name": name, "host": s.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	if eerr.Stage == EnvelopeStageTimeout {
+		return nil, NewServiceError(ServiceErrorTimeout, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewServiceError(ServiceErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op), jerr,
-			map[string]string{
-				"operation": op, "name": name, "host": s.c.cfg.Host,
-				"stdout": truncate(stdout, 2048),
-			})
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewServiceError(ServiceErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	if !resp.OK {
-		kind := mapKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["name"] = name
-		ctxMap["host"] = s.c.cfg.Host
-		return &resp, NewServiceError(kind, resp.Message, nil, ctxMap)
-	}
-	return &resp, nil
-}
-
-// extractLastJSONLine scans stdout and returns the last line that starts with
-// '{' — the JSON envelope produced by Emit-OK/Emit-Err. Any preceding PS
-// warning lines are ignored.
-func extractLastJSONLine(stdout string) string {
-	lines := strings.Split(strings.ReplaceAll(stdout, "\r\n", "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		// Belt-and-braces for #102: strip one leading BOM before the
-		// prefix match so a BOM-emitting encoder cannot hide the envelope.
-		// Trim on both sides of the BOM so "  \uFEFF{...}" and "\uFEFF  {...}"
-		// normalize before the HasPrefix check.
-		trim := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "\uFEFF"))
-		if strings.HasPrefix(trim, "{") {
-			return trim
-		}
-	}
-	return ""
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "...[truncated]"
+	kind := mapKind(eerr.RemoteKind)
+	msg := eerr.Message
+	return resp, NewServiceError(kind, msg, nil, eerr.Context)
 }
 
 // mapKind translates a PS-side "kind" string to a typed ServiceErrorKind.

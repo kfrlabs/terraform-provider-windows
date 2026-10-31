@@ -90,14 +90,10 @@ function Ensure-FeatureCmdlets {
 }
 `
 
-// featurePSResponse is the parsed JSON envelope for feature operations.
-type featurePSResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// featurePSResponse is the parsed JSON envelope for feature operations. It
+// aliases the shared Envelope type so every resource parses the same shape
+// through runEnvelope (#198).
+type featurePSResponse = Envelope
 
 // runFeaturePowerShell is the indirection used by FeatureClient. Tests can
 // override it; production code must not.
@@ -106,59 +102,33 @@ var runFeaturePowerShell = func(ctx context.Context, c *Client, script string) (
 }
 
 // runFeatureEnvelope executes script (prepended with psFeatureHeader) and
-// parses the JSON envelope.
+// parses the JSON envelope through the shared runEnvelope helper (#198).
 func (f *FeatureClient) runFeatureEnvelope(ctx context.Context, op, name, script string) (*featurePSResponse, error) {
-	full := psFeatureHeader + "\n" + script
-	stdout, stderr, err := runFeaturePowerShell(ctx, f.c, full)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, NewFeatureError(FeatureErrorTimeout,
-				fmt.Sprintf("operation %q on feature %q timed out or was cancelled (consider increasing provider timeout for long installs such as Web-Server)", op, name),
-				ctxErr,
-				map[string]string{"operation": op, "name": name, "host": f.c.cfg.Host})
-		}
-		return nil, NewFeatureError(FeatureErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err,
-			map[string]string{
-				"operation": op, "name": name, "host": f.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{"name": name, "host": f.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runFeaturePowerShell(ctx, f.c, full)
+		},
+		op, psFeatureHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
 
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewFeatureError(FeatureErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op), nil,
-			map[string]string{
-				"operation": op, "name": name, "host": f.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	// Context cancellation keeps the historical FeatureErrorTimeout kind and
+	// message, which names the operation and points at long installs.
+	if eerr.Stage == EnvelopeStageTimeout {
+		eerr.Message = fmt.Sprintf("operation %q on feature %q timed out or was cancelled (consider increasing provider timeout for long installs such as Web-Server)", op, name)
+		return nil, NewFeatureError(FeatureErrorTimeout, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	var resp featurePSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewFeatureError(FeatureErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op), jerr,
-			map[string]string{"operation": op, "name": name, "host": f.c.cfg.Host, "stdout": truncate(stdout, 2048)})
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewFeatureError(FeatureErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	if !resp.OK {
-		kind := mapFeatureKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["name"] = name
-		ctxMap["host"] = f.c.cfg.Host
-		msg := resp.Message
-		if kind == FeatureErrorPermission {
-			msg += " (Local Administrator on the target host is required.)"
-		}
-		return &resp, NewFeatureError(kind, msg, nil, ctxMap)
+	kind := mapFeatureKind(eerr.RemoteKind)
+	msg := eerr.Message
+	if kind == FeatureErrorPermission {
+		msg += " (Local Administrator on the target host is required.)"
 	}
-	return &resp, nil
+	return resp, NewFeatureError(kind, msg, nil, eerr.Context)
 }
 
 // mapFeatureKind translates the PS-side "kind" string to a typed FeatureErrorKind.

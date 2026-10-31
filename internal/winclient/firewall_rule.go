@@ -10,10 +10,9 @@
 //
 // Reused helpers from service.go (same package):
 //   - psQuote, psQuoteList        - safe PS string/array literals
-//   - extractLastJSONLine          - scan stdout for JSON envelope
-//   - truncate                     - cap strings for diagnostic context
+//   - runEnvelope                 - shared JSON envelope pipeline (envelope.go)
 //   - runPowerShell                - package-level hook (testable)
-//   - psResponse                   - Emit-OK / Emit-Err JSON envelope struct
+//   - psResponse                   - Emit-OK / Emit-Err JSON envelope (aliases Envelope)
 package winclient
 
 import (
@@ -375,71 +374,29 @@ func buildFirewallParams(op, name, policyStore string, input FirewallRuleInput) 
 }
 
 // runFirewallEnvelope executes script (prefixed with frPsHeader) and returns
-// the parsed psResponse envelope. Transport/PS-level errors that bypass
-// Emit-Err are translated into *FirewallRuleError.
+// the parsed psResponse envelope through the shared runEnvelope helper
+// (#198). Transport/PS-level errors that bypass Emit-Err are translated into
+// *FirewallRuleError.
 func (c *FirewallRuleClient) runFirewallEnvelope(ctx context.Context, op, name, script string) (*psResponse, error) {
-	full := frPsHeader + "\n" + script
-	stdout, stderr, err := runPowerShell(ctx, c.c, full)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, NewFirewallRuleError(
-				FirewallRuleErrorUnknown,
-				fmt.Sprintf("operation %q timed out or was cancelled", op),
-				ctxErr,
-				map[string]string{"operation": op, "name": name, "host": c.c.cfg.Host},
-			)
-		}
+	baseContext := map[string]string{"name": name, "host": c.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPowerShell(ctx, c.c, full)
+		},
+		op, frPsHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
+	}
+	if eerr.Stage != EnvelopeStageRemote {
 		return nil, NewFirewallRuleError(
 			FirewallRuleErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err,
-			map[string]string{
-				"operation": op, "name": name, "host": c.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
+			eerr.Message,
+			eerr.Cause,
+			eerr.Context,
 		)
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewFirewallRuleError(
-			FirewallRuleErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op),
-			nil,
-			map[string]string{
-				"operation": op, "name": name, "host": c.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
-		)
-	}
-
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewFirewallRuleError(
-			FirewallRuleErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op),
-			jerr,
-			map[string]string{
-				"operation": op, "name": name, "host": c.c.cfg.Host,
-				"stdout": truncate(stdout, 2048),
-			},
-		)
-	}
-
-	if !resp.OK {
-		kind := mapFirewallKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["name"] = name
-		ctxMap["host"] = c.c.cfg.Host
-		return &resp, NewFirewallRuleError(kind, resp.Message, nil, ctxMap)
-	}
-	return &resp, nil
+	kind := mapFirewallKind(eerr.RemoteKind)
+	return resp, NewFirewallRuleError(kind, eerr.Message, nil, eerr.Context)
 }
 
 // ---------------------------------------------------------------------------
