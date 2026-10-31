@@ -34,6 +34,7 @@ output "winget_package_info" {
 ### Optional
 
 - `source` (String) Winget source to query. One of `winget`, `msstore`, or `""` (ARP-only entries). Optional input; defaults to `winget` when not set. Echoed back as computed so users can read the effective value (set to `""` when the match is detected as ARP-only).
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
@@ -43,3 +44,10 @@ output "winget_package_info" {
 - `is_installed` (Boolean) `true` when `installed_version` is non-empty.
 - `is_update_available` (Boolean) `true` when both `installed_version` and `available_version` are non-empty and differ.
 - `name` (String) `DisplayName` as reported by winget for the matched package.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

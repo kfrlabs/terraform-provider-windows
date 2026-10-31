@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -24,12 +25,16 @@ import (
 type fakeHostnameClientDS struct {
 	readOut *winclient.HostnameState
 	readErr error
+
+	deadline time.Time
+	ok       bool
 }
 
 func (f *fakeHostnameClientDS) Create(_ context.Context, _ winclient.HostnameInput) (*winclient.HostnameState, error) {
 	panic("Create not used in data source")
 }
-func (f *fakeHostnameClientDS) Read(_ context.Context, _ string) (*winclient.HostnameState, error) {
+func (f *fakeHostnameClientDS) Read(ctx context.Context, _ string) (*winclient.HostnameState, error) {
+	f.deadline, f.ok = ctx.Deadline()
 	return f.readOut, f.readErr
 }
 func (f *fakeHostnameClientDS) Update(_ context.Context, _ string, _ winclient.HostnameInput) (*winclient.HostnameState, error) {
@@ -50,6 +55,7 @@ func hostnameDSObjType() tftypes.Object {
 		"pending_name":   tftypes.String,
 		"reboot_pending": tftypes.Bool,
 		"machine_id":     tftypes.String,
+		"timeouts":       dsTimeoutsObjType(),
 	}}
 }
 
@@ -65,6 +71,7 @@ func hostnameDSConfig() tfsdk.Config {
 			"pending_name":   tftypes.NewValue(tftypes.String, nil),
 			"reboot_pending": tftypes.NewValue(tftypes.Bool, nil),
 			"machine_id":     tftypes.NewValue(tftypes.String, nil),
+			"timeouts":       dsNullTimeoutsValue(),
 		}),
 	}
 }
@@ -96,7 +103,7 @@ func TestHostnameDSSchema_AllAttributes(t *testing.T) {
 	d := &windowsHostnameDataSource{}
 	resp := &datasource.SchemaResponse{}
 	d.Schema(context.Background(), datasource.SchemaRequest{}, resp)
-	want := []string{"id", "current_name", "pending_name", "reboot_pending", "machine_id"}
+	want := []string{"id", "current_name", "pending_name", "reboot_pending", "machine_id", "timeouts"}
 	for _, k := range want {
 		if _, ok := resp.Schema.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
@@ -121,9 +128,9 @@ func TestHostnameDSSchema_NoExtraAttributes(t *testing.T) {
 	d := &windowsHostnameDataSource{}
 	resp := &datasource.SchemaResponse{}
 	d.Schema(context.Background(), datasource.SchemaRequest{}, resp)
-	// Singleton: 5 attributes (id + 4 computed).
-	if len(resp.Schema.Attributes) != 5 {
-		t.Errorf("schema has %d attributes, want 5", len(resp.Schema.Attributes))
+	// Singleton: 6 attributes (id + 4 computed + timeouts).
+	if len(resp.Schema.Attributes) != 6 {
+		t.Errorf("schema has %d attributes, want 6", len(resp.Schema.Attributes))
 	}
 }
 
@@ -240,5 +247,45 @@ func TestHostnameDSRead_Error(t *testing.T) {
 	d.Read(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error from read failure")
+	}
+}
+
+// TestHostnameDSRead_BoundedByTimeouts verifies the data source Read runs
+// under a deadline derived from `timeouts.read` (issue #197):
+// hostnameDSDefaultTimeout when the block is absent, the configured value
+// when set.
+func TestHostnameDSRead_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", hostnameDSDefaultTimeout},
+		{"custom", "8s", 8 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeHostnameClientDS{
+				readOut: &winclient.HostnameState{CurrentName: "HOST"},
+			}
+			d := &windowsHostnameDataSource{hn: fake}
+			cfg := hostnameDSConfig()
+			if tc.customRead != "" {
+				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
+			}
+			resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
+			d.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #197)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
 	}
 }

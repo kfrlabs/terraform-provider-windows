@@ -8,7 +8,9 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -36,13 +38,20 @@ type windowsLocalGroupDataSource struct {
 	grp winclient.WindowsLocalGroupClient
 }
 
+// localGroupDSDefaultTimeout bounds the data source Read when the
+// configuration omits the `timeouts` block, matching the sibling resource
+// default so a stalled session surfaces a timeout diagnostic instead of
+// blocking plan forever (issue #197).
+const localGroupDSDefaultTimeout = 10 * time.Minute
+
 // windowsLocalGroupDataSourceModel is the Terraform state model for the
 // windows_local_group data source.
 type windowsLocalGroupDataSourceModel struct {
-	ID          types.String `tfsdk:"id"`
-	Name        types.String `tfsdk:"name"`
-	SID         types.String `tfsdk:"sid"`
-	Description types.String `tfsdk:"description"`
+	ID          types.String     `tfsdk:"id"`
+	Name        types.String     `tfsdk:"name"`
+	SID         types.String     `tfsdk:"sid"`
+	Description types.String     `tfsdk:"description"`
+	Timeouts    dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_local_group").
@@ -51,7 +60,7 @@ func (d *windowsLocalGroupDataSource) Metadata(_ context.Context, req datasource
 }
 
 // Schema returns the TPF schema for the windows_local_group data source.
-func (d *windowsLocalGroupDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsLocalGroupDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the observed state of a Windows local group without managing its lifecycle.\n\n" +
 			"Exactly one of `name` or `sid` must be provided as the lookup key. " +
@@ -77,6 +86,11 @@ func (d *windowsLocalGroupDataSource) Schema(_ context.Context, _ datasource.Sch
 				Computed:    true,
 				Description: "Free-text description of the group as returned by Windows.",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to localGroupDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -114,6 +128,14 @@ func (d *windowsLocalGroupDataSource) Read(ctx context.Context, req datasource.R
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := config.Timeouts.Read(ctx, localGroupDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	tflog.Debug(ctx, "windows_local_group data source Read start", map[string]interface{}{
 		"name": config.Name.ValueString(),
@@ -161,6 +183,7 @@ func (d *windowsLocalGroupDataSource) Read(ctx context.Context, req datasource.R
 		Name:        types.StringValue(gs.Name),
 		SID:         types.StringValue(gs.SID),
 		Description: types.StringValue(gs.Description),
+		Timeouts:    config.Timeouts,
 	}
 
 	tflog.Debug(ctx, "windows_local_group data source Read end", map[string]interface{}{

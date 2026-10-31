@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	datasourceschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -35,22 +36,24 @@ import (
 
 func dsEvObjectType() tftypes.Object {
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"id":     tftypes.String,
-		"name":   tftypes.String,
-		"value":  tftypes.String,
-		"scope":  tftypes.String,
-		"expand": tftypes.Bool,
+		"id":       tftypes.String,
+		"name":     tftypes.String,
+		"value":    tftypes.String,
+		"scope":    tftypes.String,
+		"expand":   tftypes.Bool,
+		"timeouts": dsTimeoutsObjType(),
 	}}
 }
 
 // dsEvObjBase returns a base tftypes.Value map for the datasource config.
 func dsEvObjBase() map[string]tftypes.Value {
 	return map[string]tftypes.Value{
-		"id":     tftypes.NewValue(tftypes.String, nil),
-		"name":   tftypes.NewValue(tftypes.String, "JAVA_HOME"),
-		"value":  tftypes.NewValue(tftypes.String, nil),
-		"scope":  tftypes.NewValue(tftypes.String, "machine"),
-		"expand": tftypes.NewValue(tftypes.Bool, nil),
+		"id":       tftypes.NewValue(tftypes.String, nil),
+		"name":     tftypes.NewValue(tftypes.String, "JAVA_HOME"),
+		"value":    tftypes.NewValue(tftypes.String, nil),
+		"scope":    tftypes.NewValue(tftypes.String, "machine"),
+		"expand":   tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts": dsNullTimeoutsValue(),
 	}
 }
 
@@ -100,13 +103,13 @@ func TestEnvVarDataSource_Metadata(t *testing.T) {
 
 func TestEnvVarDataSource_Schema_HasAttributes(t *testing.T) {
 	s := dsEvSchema()
-	for _, k := range []string{"id", "name", "value", "scope", "expand"} {
+	for _, k := range []string{"id", "name", "value", "scope", "expand", "timeouts"} {
 		if _, ok := s.Attributes[k]; !ok {
 			t.Errorf("datasource schema missing attribute %q", k)
 		}
 	}
-	if len(s.Attributes) != 5 {
-		t.Errorf("datasource schema has %d attributes, want 5", len(s.Attributes))
+	if len(s.Attributes) != 6 {
+		t.Errorf("datasource schema has %d attributes, want 6", len(s.Attributes))
 	}
 }
 
@@ -422,4 +425,68 @@ func TestEnvVarDataSource_InterfaceAssertions(t *testing.T) {
 	// Compile-time interface checks; this test just ensures the code compiles.
 	var _ datasource.DataSource = (*windowsEnvVarDataSource)(nil)
 	var _ datasource.DataSourceWithConfigure = (*windowsEnvVarDataSource)(nil)
+}
+
+// ---------------------------------------------------------------------------
+// Read — bounded by timeouts.read (issue #197)
+// ---------------------------------------------------------------------------
+
+// deadlineEnvVarClientDS wraps the shared fake to capture the context
+// deadline the data source Read executes under.
+type deadlineEnvVarClientDS struct {
+	*fakeEnvVarClient
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineEnvVarClientDS) Read(ctx context.Context, scope winclient.EnvVarScope, name string) (*winclient.EnvVarState, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return f.fakeEnvVarClient.Read(ctx, scope, name)
+}
+
+// TestEnvVarDataSource_Read_BoundedByTimeouts verifies the data source Read
+// runs under a deadline derived from `timeouts.read` (issue #197):
+// envVarDSDefaultTimeout when the block is absent, the configured value
+// when set.
+func TestEnvVarDataSource_Read_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", envVarDSDefaultTimeout},
+		{"custom", "8s", 8 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &deadlineEnvVarClientDS{fakeEnvVarClient: &fakeEnvVarClient{
+				readOut: &winclient.EnvVarState{
+					Scope: winclient.EnvVarScopeMachine,
+					Name:  "JAVA_HOME",
+					Value: "C:\\jdk17",
+				},
+			}}
+			ds := &windowsEnvVarDataSource{client: fake}
+			cfg := dsEvConfig(t, map[string]tftypes.Value{
+				"name":  tftypes.NewValue(tftypes.String, "JAVA_HOME"),
+				"scope": tftypes.NewValue(tftypes.String, "machine"),
+			})
+			if tc.customRead != "" {
+				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
+			}
+			resp := &datasource.ReadResponse{State: tfsdk.State{Schema: dsEvSchema()}}
+			ds.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("unexpected error: %v", evDiagSummaries(resp.Diagnostics))
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #197)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
+	}
 }

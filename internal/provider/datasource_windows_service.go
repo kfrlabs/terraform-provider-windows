@@ -8,7 +8,9 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -34,18 +36,25 @@ type windowsServiceDataSource struct {
 	svc winclient.WindowsServiceClient
 }
 
+// serviceDSDefaultTimeout bounds the data source Read when the configuration
+// omits the `timeouts` block, matching the sibling resource default so a
+// stalled session surfaces a timeout diagnostic instead of blocking plan
+// forever (issue #197).
+const serviceDSDefaultTimeout = 10 * time.Minute
+
 // windowsServiceDataSourceModel is the Terraform state model for the
 // windows_service data source.
 type windowsServiceDataSourceModel struct {
-	ID             types.String `tfsdk:"id"`
-	Name           types.String `tfsdk:"name"`
-	DisplayName    types.String `tfsdk:"display_name"`
-	Description    types.String `tfsdk:"description"`
-	BinaryPath     types.String `tfsdk:"binary_path"`
-	StartType      types.String `tfsdk:"start_type"`
-	CurrentStatus  types.String `tfsdk:"current_status"`
-	ServiceAccount types.String `tfsdk:"service_account"`
-	Dependencies   types.List   `tfsdk:"dependencies"`
+	ID             types.String     `tfsdk:"id"`
+	Name           types.String     `tfsdk:"name"`
+	DisplayName    types.String     `tfsdk:"display_name"`
+	Description    types.String     `tfsdk:"description"`
+	BinaryPath     types.String     `tfsdk:"binary_path"`
+	StartType      types.String     `tfsdk:"start_type"`
+	CurrentStatus  types.String     `tfsdk:"current_status"`
+	ServiceAccount types.String     `tfsdk:"service_account"`
+	Dependencies   types.List       `tfsdk:"dependencies"`
+	Timeouts       dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_service").
@@ -54,7 +63,7 @@ func (d *windowsServiceDataSource) Metadata(_ context.Context, req datasource.Me
 }
 
 // Schema returns the TPF schema for the windows_service data source.
-func (d *windowsServiceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsServiceDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the observed state of a Windows service without managing its lifecycle.\n\n" +
 			"Write-only attributes (`status`, `service_password`) are intentionally absent.\n\n" +
@@ -97,6 +106,11 @@ func (d *windowsServiceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Computed:    true,
 				Description: "Ordered list of short service names this service depends on.",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to serviceDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -124,6 +138,14 @@ func (d *windowsServiceDataSource) Read(ctx context.Context, req datasource.Read
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := config.Timeouts.Read(ctx, serviceDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	name := config.Name.ValueString()
 	tflog.Debug(ctx, "windows_service data source Read start", map[string]interface{}{"name": name})
@@ -168,6 +190,7 @@ func (d *windowsServiceDataSource) Read(ctx context.Context, req datasource.Read
 		CurrentStatus:  types.StringValue(svcState.CurrentStatus),
 		ServiceAccount: types.StringValue(svcState.ServiceAccount),
 		Dependencies:   deps,
+		Timeouts:       config.Timeouts,
 	}
 
 	tflog.Debug(ctx, "windows_service data source Read end", map[string]interface{}{

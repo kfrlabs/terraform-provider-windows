@@ -115,6 +115,14 @@ All notable changes to this project will be documented in this file.
   operations on each resource): a stalled PowerShell/SSH session during
   refresh surfaces a timeout diagnostic instead of blocking Terraform
   indefinitely (#196).
+- All 11 data sources now expose a `timeouts { read }` block backed by
+  `terraform-plugin-framework-timeouts/datasource/timeouts`: Read is bounded
+  by the configured value, defaulting to the sibling resource default (30m
+  for `windows_feature` / `windows_winget_package`, 5m for
+  `windows_scheduled_task`, 10m for the other eight), so a stalled
+  PowerShell/SSH session surfaces a timeout diagnostic instead of blocking
+  plan forever. Omitting the block keeps the previous behavior bounded by
+  the default (#197).
 
 ### Added
 

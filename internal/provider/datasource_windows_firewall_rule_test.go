@@ -17,6 +17,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -35,14 +36,18 @@ type fakeFirewallClientDS struct {
 	readErr         error
 	lastName        string
 	lastPolicyStore string
+
+	deadline time.Time
+	ok       bool
 }
 
 func (f *fakeFirewallClientDS) Create(_ context.Context, _ winclient.FirewallRuleInput) (*winclient.FirewallRuleState, error) {
 	panic("Create not used in data source")
 }
-func (f *fakeFirewallClientDS) Read(_ context.Context, name, policyStore string) (*winclient.FirewallRuleState, error) {
+func (f *fakeFirewallClientDS) Read(ctx context.Context, name, policyStore string) (*winclient.FirewallRuleState, error) {
 	f.lastName = name
 	f.lastPolicyStore = policyStore
+	f.deadline, f.ok = ctx.Deadline()
 	return f.readOut, f.readErr
 }
 func (f *fakeFirewallClientDS) Update(_ context.Context, _ string, _ string, _ winclient.FirewallRuleInput) (*winclient.FirewallRuleState, error) {
@@ -78,6 +83,7 @@ func firewallDSObjType() tftypes.Object {
 		"program":               tftypes.String,
 		"service":               tftypes.String,
 		"interface_type":        tftypes.String,
+		"timeouts":              dsTimeoutsObjType(),
 	}}
 }
 
@@ -119,6 +125,7 @@ func firewallDSConfig(name string, policyStore *string) tfsdk.Config {
 			"program":               tftypes.NewValue(tftypes.String, nil),
 			"service":               tftypes.NewValue(tftypes.String, nil),
 			"interface_type":        tftypes.NewValue(tftypes.String, nil),
+			"timeouts":              dsNullTimeoutsValue(),
 		}),
 	}
 }
@@ -156,15 +163,15 @@ func TestFirewallRuleDS_Schema_AllAttributes(t *testing.T) {
 		"profile", "edge_traversal_policy", "group", "policy_store",
 		"protocol", "local_port", "remote_port",
 		"local_address", "remote_address",
-		"program", "service", "interface_type",
+		"program", "service", "interface_type", "timeouts",
 	}
 	for _, k := range want {
 		if _, ok := resp.Schema.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
 		}
 	}
-	if len(resp.Schema.Attributes) != 19 {
-		t.Errorf("expected 19 attributes, got %d", len(resp.Schema.Attributes))
+	if len(resp.Schema.Attributes) != 20 {
+		t.Errorf("expected 20 attributes, got %d", len(resp.Schema.Attributes))
 	}
 }
 
@@ -498,5 +505,51 @@ func TestAddFirewallDataSourceDiag_PlainError(t *testing.T) {
 	}
 	if ds[0].Detail() != "boom" {
 		t.Errorf("detail = %q, want boom", ds[0].Detail())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Read — bounded by timeouts.read (issue #197)
+// ---------------------------------------------------------------------------
+
+// TestFirewallRuleDSRead_BoundedByTimeouts verifies the data source Read runs
+// under a deadline derived from `timeouts.read` (issue #197):
+// firewallRuleDSDefaultTimeout when the block is absent, the configured value
+// when set.
+func TestFirewallRuleDSRead_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", firewallRuleDSDefaultTimeout},
+		{"custom", "8s", 8 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeFirewallClientDS{
+				readOut: &winclient.FirewallRuleState{
+					Name: "AllowSSH", PolicyStore: "PersistentStore",
+				},
+			}
+			d := &windowsFirewallRuleDataSource{fw: fake}
+			cfg := firewallDSConfig("AllowSSH", nil)
+			if tc.customRead != "" {
+				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
+			}
+			resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
+			d.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #197)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
 	}
 }

@@ -8,7 +8,9 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -36,22 +38,29 @@ type windowsLocalUserDataSource struct {
 	user winclient.LocalUserClient
 }
 
+// localUserDSDefaultTimeout bounds the data source Read when the configuration
+// omits the `timeouts` block, matching the sibling resource default so a
+// stalled session surfaces a timeout diagnostic instead of blocking plan
+// forever (issue #197).
+const localUserDSDefaultTimeout = 10 * time.Minute
+
 // windowsLocalUserDataSourceModel is the Terraform state model for the
 // windows_local_user data source.
 type windowsLocalUserDataSourceModel struct {
-	ID                       types.String `tfsdk:"id"`
-	SID                      types.String `tfsdk:"sid"`
-	Name                     types.String `tfsdk:"name"`
-	FullName                 types.String `tfsdk:"full_name"`
-	Description              types.String `tfsdk:"description"`
-	Enabled                  types.Bool   `tfsdk:"enabled"`
-	PasswordNeverExpires     types.Bool   `tfsdk:"password_never_expires"`
-	UserMayNotChangePassword types.Bool   `tfsdk:"user_may_not_change_password"`
-	AccountNeverExpires      types.Bool   `tfsdk:"account_never_expires"`
-	AccountExpires           types.String `tfsdk:"account_expires"`
-	LastLogon                types.String `tfsdk:"last_logon"`
-	PasswordLastSet          types.String `tfsdk:"password_last_set"`
-	PrincipalSource          types.String `tfsdk:"principal_source"`
+	ID                       types.String     `tfsdk:"id"`
+	SID                      types.String     `tfsdk:"sid"`
+	Name                     types.String     `tfsdk:"name"`
+	FullName                 types.String     `tfsdk:"full_name"`
+	Description              types.String     `tfsdk:"description"`
+	Enabled                  types.Bool       `tfsdk:"enabled"`
+	PasswordNeverExpires     types.Bool       `tfsdk:"password_never_expires"`
+	UserMayNotChangePassword types.Bool       `tfsdk:"user_may_not_change_password"`
+	AccountNeverExpires      types.Bool       `tfsdk:"account_never_expires"`
+	AccountExpires           types.String     `tfsdk:"account_expires"`
+	LastLogon                types.String     `tfsdk:"last_logon"`
+	PasswordLastSet          types.String     `tfsdk:"password_last_set"`
+	PrincipalSource          types.String     `tfsdk:"principal_source"`
+	Timeouts                 dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_local_user").
@@ -60,7 +69,7 @@ func (d *windowsLocalUserDataSource) Metadata(_ context.Context, req datasource.
 }
 
 // Schema returns the TPF schema for the windows_local_user data source.
-func (d *windowsLocalUserDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsLocalUserDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the observed state of a Windows local user account without managing " +
 			"its lifecycle. Exactly one of `name` or `sid` must be provided as the lookup key.\n\n" +
@@ -124,6 +133,11 @@ func (d *windowsLocalUserDataSource) Schema(_ context.Context, _ datasource.Sche
 				Computed:    true,
 				Description: "Origin of the account: Local, ActiveDirectory, AzureAD, MicrosoftAccount, or Unknown.",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to localUserDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -161,6 +175,14 @@ func (d *windowsLocalUserDataSource) Read(ctx context.Context, req datasource.Re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := config.Timeouts.Read(ctx, localUserDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	tflog.Debug(ctx, "windows_local_user data source Read start", map[string]interface{}{
 		"name": config.Name.ValueString(),
@@ -217,6 +239,7 @@ func (d *windowsLocalUserDataSource) Read(ctx context.Context, req datasource.Re
 		LastLogon:                types.StringValue(us.LastLogon),
 		PasswordLastSet:          types.StringValue(us.PasswordLastSet),
 		PrincipalSource:          types.StringValue(us.PrincipalSource),
+		Timeouts:                 config.Timeouts,
 	}
 
 	tflog.Debug(ctx, "windows_local_user data source Read end", map[string]interface{}{

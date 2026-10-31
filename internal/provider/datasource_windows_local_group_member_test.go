@@ -11,8 +11,12 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -47,6 +51,7 @@ func TestLocalGroupMemberDSSchema_AllAttributes(t *testing.T) {
 	want := []string{
 		"id", "group_name", "member_name",
 		"group_sid", "member_sid", "member_principal_source",
+		"timeouts",
 	}
 	for _, k := range want {
 		if _, ok := resp.Schema.Attributes[k]; !ok {
@@ -131,5 +136,55 @@ func TestLocalGroupMemberDS_IsDataSourceOnly(t *testing.T) {
 	var ds any = NewWindowsLocalGroupMemberDataSource()
 	if _, ok := ds.(datasource.DataSource); !ok {
 		t.Error("expected datasource.DataSource implementation")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts — read bound (issue #197)
+// ---------------------------------------------------------------------------
+
+// memberDSTimeouts builds a datasource timeouts.Value for resolution tests,
+// reusing the schema's attribute types so the value matches what the
+// framework decodes. A nil read yields the absent-block (null) value.
+func memberDSTimeouts(t *testing.T, read *string) dstimeouts.Value {
+	t.Helper()
+	var v attr.Value = types.StringNull()
+	if read != nil {
+		v = types.StringValue(*read)
+	}
+	obj, diags := types.ObjectValue(
+		map[string]attr.Type{"read": types.StringType},
+		map[string]attr.Value{"read": v},
+	)
+	if diags.HasError() {
+		t.Fatalf("ObjectValue: %v", diags)
+	}
+	return dstimeouts.Value{Object: obj}
+}
+
+// TestLocalGroupMemberDSTimeouts_ReadResolution verifies `timeouts.read`
+// resolution for the data source (issue #197):
+// localGroupMemberDSDefaultTimeout when the block is absent, the configured
+// value when set. The full Read path needs a live host (ResolveGroup runs
+// PowerShell against the target), so resolution is asserted at the model
+// level; the other data sources cover deadline propagation end to end.
+func TestLocalGroupMemberDSTimeouts_ReadResolution(t *testing.T) {
+	ctx := context.Background()
+
+	got, diags := memberDSTimeouts(t, nil).Read(ctx, localGroupMemberDSDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("null timeouts diags: %v", diags)
+	}
+	if got != localGroupMemberDSDefaultTimeout {
+		t.Errorf("null timeouts resolved to %v, want default %v", got, localGroupMemberDSDefaultTimeout)
+	}
+
+	custom := "45s"
+	got, diags = memberDSTimeouts(t, &custom).Read(ctx, localGroupMemberDSDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("custom timeouts diags: %v", diags)
+	}
+	if got != 45*time.Second {
+		t.Errorf("custom timeouts resolved to %v, want 45s", got)
 	}
 }

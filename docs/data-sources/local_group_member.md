@@ -57,9 +57,20 @@ output "admin_user_principal_source" {
 - `group_name` (String) Name or SID of the target local group (e.g. "Administrators" or "S-1-5-32-544").
 - `member_name` (String) Name of the member to look up within the group. Matched case-insensitively against the name Windows reports, either bare ("alice") or host-qualified ("HOST\\alice"). Echoed back as written; see member_sid for the resolved identity.
 
+### Optional
+
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
+
 ### Read-Only
 
 - `group_sid` (String) Security Identifier of the group, resolved from group_name.
 - `id` (String) Composite data source ID: "<group_sid>/<member_sid>".
 - `member_principal_source` (String) Account origin: Local, ActiveDirectory, AzureAD, MicrosoftAccount, or Unknown (orphaned SID).
 - `member_sid` (String) Security Identifier of the member account.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

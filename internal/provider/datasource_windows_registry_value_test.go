@@ -10,6 +10,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -25,12 +26,16 @@ import (
 type fakeRegistryValueClientDS struct {
 	readOut *winclient.RegistryValueState
 	readErr error
+
+	deadline time.Time
+	ok       bool
 }
 
 func (f *fakeRegistryValueClientDS) Set(_ context.Context, _ winclient.RegistryValueInput) (*winclient.RegistryValueState, error) {
 	panic("Set not used in data source")
 }
-func (f *fakeRegistryValueClientDS) Read(_ context.Context, _, _, _ string, _ bool) (*winclient.RegistryValueState, error) {
+func (f *fakeRegistryValueClientDS) Read(ctx context.Context, _, _, _ string, _ bool) (*winclient.RegistryValueState, error) {
+	f.deadline, f.ok = ctx.Deadline()
 	return f.readOut, f.readErr
 }
 func (f *fakeRegistryValueClientDS) Delete(_ context.Context, _, _, _ string) error {
@@ -52,6 +57,7 @@ func regValueDSObjType() tftypes.Object {
 		"value_string":                 tftypes.String,
 		"value_strings":                tftypes.List{ElementType: tftypes.String},
 		"value_binary":                 tftypes.String,
+		"timeouts":                     dsTimeoutsObjType(),
 	}}
 }
 
@@ -71,6 +77,7 @@ func regValueDSConfig(hive, path, name string) tfsdk.Config {
 			"value_string":                 tftypes.NewValue(tftypes.String, nil),
 			"value_strings":                tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 			"value_binary":                 tftypes.NewValue(tftypes.String, nil),
+			"timeouts":                     dsNullTimeoutsValue(),
 		}),
 	}
 }
@@ -106,6 +113,7 @@ func TestRegistryValueDSSchema_AllAttributes(t *testing.T) {
 		"id", "hive", "path", "name",
 		"expand_environment_variables",
 		"type", "value_string", "value_strings", "value_binary",
+		"timeouts",
 	}
 	for _, k := range want {
 		if _, ok := resp.Schema.Attributes[k]; !ok {
@@ -339,5 +347,56 @@ func TestRegistryValueDSRead_GenericError(t *testing.T) {
 	d.Read(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Read — bounded by timeouts.read (issue #197)
+// ---------------------------------------------------------------------------
+
+// TestRegistryValueDSRead_BoundedByTimeouts verifies the data source Read runs
+// under a deadline derived from `timeouts.read` (issue #197):
+// registryValueDSDefaultTimeout when the block is absent, the configured value
+// when set.
+func TestRegistryValueDSRead_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+	val := "C:\\Windows"
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", registryValueDSDefaultTimeout},
+		{"custom", "8s", 8 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeRegistryValueClientDS{
+				readOut: &winclient.RegistryValueState{
+					Hive:        "HKLM",
+					Path:        "SOFTWARE\\MyApp",
+					Name:        "InstallDir",
+					Kind:        winclient.RegistryValueKindString,
+					ValueString: &val,
+				},
+			}
+			d := &windowsRegistryValueDataSource{client: fake}
+			cfg := regValueDSConfig("HKLM", "SOFTWARE\\MyApp", "InstallDir")
+			if tc.customRead != "" {
+				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
+			}
+			resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
+			d.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #197)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
 	}
 }

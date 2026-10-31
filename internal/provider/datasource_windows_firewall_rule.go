@@ -12,7 +12,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -45,28 +47,35 @@ type windowsFirewallRuleDataSource struct {
 // Model
 // ---------------------------------------------------------------------------
 
+// firewallRuleDSDefaultTimeout bounds the data source Read when the
+// configuration omits the `timeouts` block, matching the sibling resource
+// default so a stalled session surfaces a timeout diagnostic instead of
+// blocking plan forever (issue #197).
+const firewallRuleDSDefaultTimeout = 10 * time.Minute
+
 // windowsFirewallRuleDataSourceModel mirrors windowsFirewallRuleModel for the
 // data source (read-only). Tfsdk tags must match the schema attribute keys.
 type windowsFirewallRuleDataSourceModel struct {
-	ID                  types.String `tfsdk:"id"`
-	Name                types.String `tfsdk:"name"`
-	DisplayName         types.String `tfsdk:"display_name"`
-	Description         types.String `tfsdk:"description"`
-	Enabled             types.Bool   `tfsdk:"enabled"`
-	Direction           types.String `tfsdk:"direction"`
-	Action              types.String `tfsdk:"action"`
-	Profile             types.List   `tfsdk:"profile"`
-	EdgeTraversalPolicy types.String `tfsdk:"edge_traversal_policy"`
-	Group               types.String `tfsdk:"group"`
-	PolicyStore         types.String `tfsdk:"policy_store"`
-	Protocol            types.String `tfsdk:"protocol"`
-	LocalPort           types.List   `tfsdk:"local_port"`
-	RemotePort          types.List   `tfsdk:"remote_port"`
-	LocalAddress        types.List   `tfsdk:"local_address"`
-	RemoteAddress       types.List   `tfsdk:"remote_address"`
-	Program             types.String `tfsdk:"program"`
-	Service             types.String `tfsdk:"service"`
-	InterfaceType       types.String `tfsdk:"interface_type"`
+	ID                  types.String     `tfsdk:"id"`
+	Name                types.String     `tfsdk:"name"`
+	DisplayName         types.String     `tfsdk:"display_name"`
+	Description         types.String     `tfsdk:"description"`
+	Enabled             types.Bool       `tfsdk:"enabled"`
+	Direction           types.String     `tfsdk:"direction"`
+	Action              types.String     `tfsdk:"action"`
+	Profile             types.List       `tfsdk:"profile"`
+	EdgeTraversalPolicy types.String     `tfsdk:"edge_traversal_policy"`
+	Group               types.String     `tfsdk:"group"`
+	PolicyStore         types.String     `tfsdk:"policy_store"`
+	Protocol            types.String     `tfsdk:"protocol"`
+	LocalPort           types.List       `tfsdk:"local_port"`
+	RemotePort          types.List       `tfsdk:"remote_port"`
+	LocalAddress        types.List       `tfsdk:"local_address"`
+	RemoteAddress       types.List       `tfsdk:"remote_address"`
+	Program             types.String     `tfsdk:"program"`
+	Service             types.String     `tfsdk:"service"`
+	InterfaceType       types.String     `tfsdk:"interface_type"`
+	Timeouts            dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_firewall_rule").
@@ -78,7 +87,7 @@ func (d *windowsFirewallRuleDataSource) Metadata(_ context.Context, req datasour
 //
 // `name` is Required. `policy_store` is Optional with implicit default
 // "PersistentStore" applied at Read time. All other attributes are Computed.
-func (d *windowsFirewallRuleDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsFirewallRuleDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the observed state of a Windows Defender Firewall " +
 			"with Advanced Security rule on a remote Windows host via SSH and " +
@@ -172,6 +181,11 @@ func (d *windowsFirewallRuleDataSource) Schema(_ context.Context, _ datasource.S
 				Computed:    true,
 				Description: "Interface type (`Any`, `Wireless`, `Wired`, `RemoteAccess`).",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to firewallRuleDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -205,6 +219,14 @@ func (d *windowsFirewallRuleDataSource) Read(ctx context.Context, req datasource
 		return
 	}
 
+	readTimeout, diags := config.Timeouts.Read(ctx, firewallRuleDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	name := config.Name.ValueString()
 	policyStore := config.PolicyStore.ValueString()
 	if policyStore == "" {
@@ -237,6 +259,7 @@ func (d *windowsFirewallRuleDataSource) Read(ctx context.Context, req datasource
 	}
 
 	model := firewallStateToDataSourceModel(state)
+	model.Timeouts = config.Timeouts
 
 	tflog.Debug(ctx, "windows_firewall_rule data source Read end", map[string]interface{}{
 		"name":      model.Name.ValueString(),

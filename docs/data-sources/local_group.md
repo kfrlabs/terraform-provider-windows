@@ -60,8 +60,16 @@ output "admins_description" {
 
 - `name` (String) Name of the local group. Exactly one of name or sid must be specified.
 - `sid` (String) Security Identifier (SID) of the group (e.g. `S-1-5-21-...-1001`). Exactly one of `name` or `sid` must be specified.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
 - `description` (String) Free-text description of the group as returned by Windows.
 - `id` (String) Data source ID; equal to the group SID.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

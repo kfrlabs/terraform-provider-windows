@@ -53,6 +53,7 @@ data "windows_firewall_rule" "gp_rule" {
 ### Optional
 
 - `policy_store` (String) Policy store the rule lives in. Defaults to `PersistentStore`. One of: `PersistentStore`, `ActiveStore`, `GroupPolicy`, `RSOP`, `SystemDefaults`, `StaticServiceStore`, `ConfigurableServiceStore`.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
@@ -73,3 +74,10 @@ data "windows_firewall_rule" "gp_rule" {
 - `remote_address` (List of String) Remote IP addresses, CIDR ranges, or address keywords.
 - `remote_port` (List of String) Remote TCP/UDP port(s).
 - `service` (String) Short name of the matched Windows service, or `Any`.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

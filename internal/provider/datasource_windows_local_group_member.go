@@ -8,7 +8,9 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -35,15 +37,22 @@ type windowsLocalGroupMemberDataSource struct {
 	member winclient.ClientLocalGroupMember
 }
 
+// localGroupMemberDSDefaultTimeout bounds the data source Read when the
+// configuration omits the `timeouts` block, matching the sibling resource
+// default so a stalled session surfaces a timeout diagnostic instead of
+// blocking plan forever (issue #197).
+const localGroupMemberDSDefaultTimeout = 10 * time.Minute
+
 // windowsLocalGroupMemberDataSourceModel is the Terraform state model for the
 // windows_local_group_member data source.
 type windowsLocalGroupMemberDataSourceModel struct {
-	ID                    types.String `tfsdk:"id"`
-	GroupName             types.String `tfsdk:"group_name"`
-	MemberName            types.String `tfsdk:"member_name"`
-	GroupSID              types.String `tfsdk:"group_sid"`
-	MemberSID             types.String `tfsdk:"member_sid"`
-	MemberPrincipalSource types.String `tfsdk:"member_principal_source"`
+	ID                    types.String     `tfsdk:"id"`
+	GroupName             types.String     `tfsdk:"group_name"`
+	MemberName            types.String     `tfsdk:"member_name"`
+	GroupSID              types.String     `tfsdk:"group_sid"`
+	MemberSID             types.String     `tfsdk:"member_sid"`
+	MemberPrincipalSource types.String     `tfsdk:"member_principal_source"`
+	Timeouts              dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_local_group_member").
@@ -52,7 +61,7 @@ func (d *windowsLocalGroupMemberDataSource) Metadata(_ context.Context, req data
 }
 
 // Schema returns the TPF schema for the windows_local_group_member data source.
-func (d *windowsLocalGroupMemberDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsLocalGroupMemberDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the membership state of a specific (group, member) pair by name " +
 			"without managing the membership lifecycle.\n\n" +
@@ -87,6 +96,11 @@ func (d *windowsLocalGroupMemberDataSource) Schema(_ context.Context, _ datasour
 				Computed:    true,
 				Description: "Account origin: Local, ActiveDirectory, AzureAD, MicrosoftAccount, or Unknown (orphaned SID).",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to localGroupMemberDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -120,6 +134,14 @@ func (d *windowsLocalGroupMemberDataSource) Read(ctx context.Context, req dataso
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := config.Timeouts.Read(ctx, localGroupMemberDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	groupName := config.GroupName.ValueString()
 	memberName := config.MemberName.ValueString()
@@ -191,6 +213,7 @@ func (d *windowsLocalGroupMemberDataSource) Read(ctx context.Context, req dataso
 		GroupSID:              types.StringValue(found.GroupSID),
 		MemberSID:             types.StringValue(found.MemberSID),
 		MemberPrincipalSource: types.StringValue(found.PrincipalSource),
+		Timeouts:              config.Timeouts,
 	}
 
 	tflog.Debug(ctx, "windows_local_group_member data source Read end", map[string]interface{}{

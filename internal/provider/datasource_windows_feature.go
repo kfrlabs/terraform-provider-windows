@@ -10,7 +10,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -35,16 +37,23 @@ type windowsFeatureDataSource struct {
 	feat winclient.WindowsFeatureClient
 }
 
+// featureDSDefaultTimeout bounds the data source Read when the configuration
+// omits the `timeouts` block, matching the sibling resource default so a
+// stalled session surfaces a timeout diagnostic instead of blocking plan
+// forever (issue #197).
+const featureDSDefaultTimeout = 30 * time.Minute
+
 // windowsFeatureDataSourceModel is the Terraform state model for the
 // windows_feature data source.
 type windowsFeatureDataSourceModel struct {
-	ID             types.String `tfsdk:"id"`
-	Name           types.String `tfsdk:"name"`
-	DisplayName    types.String `tfsdk:"display_name"`
-	Description    types.String `tfsdk:"description"`
-	Installed      types.Bool   `tfsdk:"installed"`
-	RestartPending types.Bool   `tfsdk:"restart_pending"`
-	InstallState   types.String `tfsdk:"install_state"`
+	ID             types.String     `tfsdk:"id"`
+	Name           types.String     `tfsdk:"name"`
+	DisplayName    types.String     `tfsdk:"display_name"`
+	Description    types.String     `tfsdk:"description"`
+	Installed      types.Bool       `tfsdk:"installed"`
+	RestartPending types.Bool       `tfsdk:"restart_pending"`
+	InstallState   types.String     `tfsdk:"install_state"`
+	Timeouts       dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_feature").
@@ -53,7 +62,7 @@ func (d *windowsFeatureDataSource) Metadata(_ context.Context, req datasource.Me
 }
 
 // Schema returns the TPF schema for the windows_feature data source.
-func (d *windowsFeatureDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsFeatureDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the observed state of a Windows Server role or feature without " +
 			"managing its lifecycle. Backed by `Get-WindowsFeature` (ServerManager module).\n\n" +
@@ -88,6 +97,11 @@ func (d *windowsFeatureDataSource) Schema(_ context.Context, _ datasource.Schema
 				Computed:    true,
 				Description: "Current install state: Installed, Available, or Removed.",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to featureDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -115,6 +129,14 @@ func (d *windowsFeatureDataSource) Read(ctx context.Context, req datasource.Read
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := config.Timeouts.Read(ctx, featureDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	name := config.Name.ValueString()
 	tflog.Debug(ctx, "windows_feature data source Read start", map[string]interface{}{"name": name})
@@ -149,6 +171,7 @@ func (d *windowsFeatureDataSource) Read(ctx context.Context, req datasource.Read
 		Installed:      types.BoolValue(info.Installed),
 		RestartPending: types.BoolValue(info.RestartPending),
 		InstallState:   types.StringValue(info.InstallState),
+		Timeouts:       config.Timeouts,
 	}
 
 	tflog.Debug(ctx, "windows_feature data source Read end", map[string]interface{}{

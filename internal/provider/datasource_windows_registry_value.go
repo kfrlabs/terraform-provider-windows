@@ -9,7 +9,9 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -37,18 +39,25 @@ type windowsRegistryValueDataSource struct {
 	client winclient.RegistryValueClient
 }
 
+// registryValueDSDefaultTimeout bounds the data source Read when the
+// configuration omits the `timeouts` block, matching the sibling resource
+// default so a stalled session surfaces a timeout diagnostic instead of
+// blocking plan forever (issue #197).
+const registryValueDSDefaultTimeout = 10 * time.Minute
+
 // windowsRegistryValueDataSourceModel is the Terraform state model for the
 // windows_registry_value data source.
 type windowsRegistryValueDataSourceModel struct {
-	ID                         types.String `tfsdk:"id"`
-	Hive                       types.String `tfsdk:"hive"`
-	Path                       types.String `tfsdk:"path"`
-	Name                       types.String `tfsdk:"name"`
-	ExpandEnvironmentVariables types.Bool   `tfsdk:"expand_environment_variables"`
-	Type                       types.String `tfsdk:"type"`
-	ValueString                types.String `tfsdk:"value_string"`
-	ValueStrings               types.List   `tfsdk:"value_strings"`
-	ValueBinary                types.String `tfsdk:"value_binary"`
+	ID                         types.String     `tfsdk:"id"`
+	Hive                       types.String     `tfsdk:"hive"`
+	Path                       types.String     `tfsdk:"path"`
+	Name                       types.String     `tfsdk:"name"`
+	ExpandEnvironmentVariables types.Bool       `tfsdk:"expand_environment_variables"`
+	Type                       types.String     `tfsdk:"type"`
+	ValueString                types.String     `tfsdk:"value_string"`
+	ValueStrings               types.List       `tfsdk:"value_strings"`
+	ValueBinary                types.String     `tfsdk:"value_binary"`
+	Timeouts                   dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_registry_value").
@@ -57,7 +66,7 @@ func (d *windowsRegistryValueDataSource) Metadata(_ context.Context, req datasou
 }
 
 // Schema returns the TPF schema for the windows_registry_value data source.
-func (d *windowsRegistryValueDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsRegistryValueDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads a single named Windows registry value without managing its lifecycle.\n\n" +
 			"Lookup keys: `hive`, `path`, and `name` (all required; use `name = \"\"` for the Default value).\n\n" +
@@ -100,6 +109,11 @@ func (d *windowsRegistryValueDataSource) Schema(_ context.Context, _ datasource.
 				Computed:    true,
 				Description: "Binary value for REG_BINARY/REG_NONE as a lowercase hex string.",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to registryValueDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -128,6 +142,14 @@ func (d *windowsRegistryValueDataSource) Read(ctx context.Context, req datasourc
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := config.Timeouts.Read(ctx, registryValueDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	hive := config.Hive.ValueString()
 	regPath := config.Path.ValueString()
@@ -166,6 +188,7 @@ func (d *windowsRegistryValueDataSource) Read(ctx context.Context, req datasourc
 		Path:                       types.StringValue(rv.Path),
 		Name:                       types.StringValue(rv.Name),
 		ExpandEnvironmentVariables: config.ExpandEnvironmentVariables,
+		Timeouts:                   config.Timeouts,
 	}
 
 	applyRVStateDS(&state, rv, &resp.Diagnostics)

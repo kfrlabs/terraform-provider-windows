@@ -14,8 +14,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -28,12 +31,16 @@ import (
 type fakeSTClientDS struct {
 	readOut *winclient.ScheduledTaskState
 	readErr error
+
+	deadline time.Time
+	ok       bool
 }
 
 func (f *fakeSTClientDS) Create(_ context.Context, _ winclient.ScheduledTaskInput) (*winclient.ScheduledTaskState, error) {
 	panic("not used in data source")
 }
-func (f *fakeSTClientDS) Read(_ context.Context, _ string) (*winclient.ScheduledTaskState, error) {
+func (f *fakeSTClientDS) Read(ctx context.Context, _ string) (*winclient.ScheduledTaskState, error) {
+	f.deadline, f.ok = ctx.Deadline()
 	return f.readOut, f.readErr
 }
 func (f *fakeSTClientDS) Update(_ context.Context, _ string, _ winclient.ScheduledTaskInput) (*winclient.ScheduledTaskState, error) {
@@ -66,7 +73,7 @@ func TestSTDataSource_Schema_HasRequiredAttributes(t *testing.T) {
 	wantAttrs := []string{
 		"id", "name", "path", "description", "enabled", "state",
 		"last_run_time", "last_task_result", "next_run_time",
-		"principal", "actions", "triggers", "settings",
+		"principal", "actions", "triggers", "settings", "timeouts",
 	}
 	for _, k := range wantAttrs {
 		if _, ok := s.Attributes[k]; !ok {
@@ -369,5 +376,127 @@ func TestSTDataSource_Read_PermissionDenied(t *testing.T) {
 	diags := scheduledTaskErrDiag("DataSource.Read", err)
 	if !diags.HasError() {
 		t.Error("expected error diagnostic for permission denied")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Read — bounded by timeouts.read (issue #197)
+// ---------------------------------------------------------------------------
+
+// stDSObjType mirrors the data source schema as a tftypes object, so the
+// framework-level Read below decodes config exactly as Terraform would.
+func stDSObjType() tftypes.Object {
+	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id":               tftypes.String,
+		"name":             tftypes.String,
+		"path":             tftypes.String,
+		"description":      tftypes.String,
+		"enabled":          tftypes.Bool,
+		"state":            tftypes.String,
+		"last_run_time":    tftypes.String,
+		"last_task_result": tftypes.Number,
+		"next_run_time":    tftypes.String,
+		"principal": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"user_id":    tftypes.String,
+			"logon_type": tftypes.String,
+			"run_level":  tftypes.String,
+		}},
+		"actions": tftypes.List{ElementType: tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"execute":           tftypes.String,
+			"arguments":         tftypes.String,
+			"working_directory": tftypes.String,
+		}}},
+		"triggers": tftypes.List{ElementType: tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"type":                 tftypes.String,
+			"enabled":              tftypes.Bool,
+			"start_boundary":       tftypes.String,
+			"end_boundary":         tftypes.String,
+			"execution_time_limit": tftypes.String,
+			"delay":                tftypes.String,
+			"days_interval":        tftypes.Number,
+			"days_of_week":         tftypes.List{ElementType: tftypes.String},
+			"weeks_interval":       tftypes.Number,
+			"user_id":              tftypes.String,
+			"subscription":         tftypes.String,
+		}}},
+		"settings": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"allow_demand_start":             tftypes.Bool,
+			"allow_hard_terminate":           tftypes.Bool,
+			"start_when_available":           tftypes.Bool,
+			"run_only_if_network_available":  tftypes.Bool,
+			"execution_time_limit":           tftypes.String,
+			"multiple_instances":             tftypes.String,
+			"disallow_start_if_on_batteries": tftypes.Bool,
+			"stop_if_going_on_batteries":     tftypes.Bool,
+			"wake_to_run":                    tftypes.Bool,
+			"run_only_if_idle":               tftypes.Bool,
+		}},
+		"timeouts": dsTimeoutsObjType(),
+	}}
+}
+
+// stDSConfig builds a tfsdk.Config for the data source Read with only the
+// lookup key set; everything else (including `timeouts`) is null.
+func stDSConfig(name string) tfsdk.Config {
+	d := &windowsScheduledTaskDataSource{}
+	sr := datasource.SchemaResponse{}
+	d.Schema(context.Background(), datasource.SchemaRequest{}, &sr)
+	objType := stDSObjType()
+	nullStr := tftypes.NewValue(tftypes.String, nil)
+	return tfsdk.Config{
+		Schema: sr.Schema,
+		Raw: tftypes.NewValue(objType, map[string]tftypes.Value{
+			"id":               nullStr,
+			"name":             tftypes.NewValue(tftypes.String, name),
+			"path":             nullStr,
+			"description":      nullStr,
+			"enabled":          tftypes.NewValue(tftypes.Bool, nil),
+			"state":            nullStr,
+			"last_run_time":    nullStr,
+			"last_task_result": tftypes.NewValue(tftypes.Number, nil),
+			"next_run_time":    nullStr,
+			"principal":        tftypes.NewValue(objType.AttributeTypes["principal"], nil),
+			"actions":          tftypes.NewValue(objType.AttributeTypes["actions"], nil),
+			"triggers":         tftypes.NewValue(objType.AttributeTypes["triggers"], nil),
+			"settings":         tftypes.NewValue(objType.AttributeTypes["settings"], nil),
+			"timeouts":         dsNullTimeoutsValue(),
+		}),
+	}
+}
+
+// TestSTDataSourceRead_BoundedByTimeouts verifies the data source Read runs
+// under a deadline derived from `timeouts.read` (issue #197):
+// stDSDefaultTimeout when the block is absent, the configured value when set.
+func TestSTDataSourceRead_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", stDSDefaultTimeout},
+		{"custom", "8s", 8 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeSTClientDS{readOut: minimalSTState("T", `\`)}
+			d := &windowsScheduledTaskDataSource{stClient: fake}
+			cfg := stDSConfig("T")
+			if tc.customRead != "" {
+				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
+			}
+			resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
+			d.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #197)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
 	}
 }

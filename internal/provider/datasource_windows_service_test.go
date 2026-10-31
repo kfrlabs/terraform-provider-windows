@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -24,12 +25,16 @@ import (
 type fakeServiceClientDS struct {
 	readOut *winclient.ServiceState
 	readErr error
+
+	deadline time.Time
+	ok       bool
 }
 
 func (f *fakeServiceClientDS) Create(_ context.Context, _ winclient.ServiceInput) (*winclient.ServiceState, error) {
 	panic("Create not used in data source")
 }
-func (f *fakeServiceClientDS) Read(_ context.Context, _ string) (*winclient.ServiceState, error) {
+func (f *fakeServiceClientDS) Read(ctx context.Context, _ string) (*winclient.ServiceState, error) {
+	f.deadline, f.ok = ctx.Deadline()
 	return f.readOut, f.readErr
 }
 func (f *fakeServiceClientDS) Update(_ context.Context, _ string, _ winclient.ServiceInput) (*winclient.ServiceState, error) {
@@ -63,6 +68,7 @@ func serviceDSObjType() tftypes.Object {
 		"current_status":  tftypes.String,
 		"service_account": tftypes.String,
 		"dependencies":    tftypes.List{ElementType: tftypes.String},
+		"timeouts":        dsTimeoutsObjType(),
 	}}
 }
 
@@ -82,6 +88,7 @@ func serviceDSConfig(name string) tfsdk.Config {
 			"current_status":  tftypes.NewValue(tftypes.String, nil),
 			"service_account": tftypes.NewValue(tftypes.String, nil),
 			"dependencies":    tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+			"timeouts":        dsNullTimeoutsValue(),
 		}),
 	}
 }
@@ -116,7 +123,7 @@ func TestServiceDSSchema_AllAttributes(t *testing.T) {
 	want := []string{
 		"id", "name", "display_name", "description",
 		"binary_path", "start_type", "current_status",
-		"service_account", "dependencies",
+		"service_account", "dependencies", "timeouts",
 	}
 	for _, k := range want {
 		if _, ok := resp.Schema.Attributes[k]; !ok {
@@ -324,5 +331,45 @@ func TestServiceDSRead_GenericError(t *testing.T) {
 	d.Read(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error from generic failure")
+	}
+}
+
+// TestServiceDSRead_BoundedByTimeouts verifies the data source Read runs
+// under a deadline derived from `timeouts.read` (issue #197):
+// serviceDSDefaultTimeout when the block is absent, the configured value
+// when set.
+func TestServiceDSRead_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", serviceDSDefaultTimeout},
+		{"custom", "8s", 8 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeServiceClientDS{
+				readOut: &winclient.ServiceState{Name: "Spooler"},
+			}
+			d := &windowsServiceDataSource{svc: fake}
+			cfg := serviceDSConfig("Spooler")
+			if tc.customRead != "" {
+				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
+			}
+			resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
+			d.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #197)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
 	}
 }

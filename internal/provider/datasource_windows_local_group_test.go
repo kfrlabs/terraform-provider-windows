@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -26,6 +27,9 @@ type fakeLocalGroupClientDS struct {
 	importByNameErr error
 	importBySIDOut  *winclient.GroupState
 	importBySIDErr  error
+
+	deadline time.Time
+	ok       bool
 }
 
 func (f *fakeLocalGroupClientDS) Create(_ context.Context, _ winclient.GroupInput) (*winclient.GroupState, error) {
@@ -40,10 +44,12 @@ func (f *fakeLocalGroupClientDS) Update(_ context.Context, _ string, _ winclient
 func (f *fakeLocalGroupClientDS) Delete(_ context.Context, _ string) error {
 	panic("Delete not used in data source")
 }
-func (f *fakeLocalGroupClientDS) ImportByName(_ context.Context, _ string) (*winclient.GroupState, error) {
+func (f *fakeLocalGroupClientDS) ImportByName(ctx context.Context, _ string) (*winclient.GroupState, error) {
+	f.deadline, f.ok = ctx.Deadline()
 	return f.importByNameOut, f.importByNameErr
 }
-func (f *fakeLocalGroupClientDS) ImportBySID(_ context.Context, _ string) (*winclient.GroupState, error) {
+func (f *fakeLocalGroupClientDS) ImportBySID(ctx context.Context, _ string) (*winclient.GroupState, error) {
+	f.deadline, f.ok = ctx.Deadline()
 	return f.importBySIDOut, f.importBySIDErr
 }
 
@@ -57,6 +63,7 @@ func localGroupDSObjType() tftypes.Object {
 		"name":        tftypes.String,
 		"sid":         tftypes.String,
 		"description": tftypes.String,
+		"timeouts":    dsTimeoutsObjType(),
 	}}
 }
 
@@ -71,6 +78,7 @@ func localGroupDSConfigByName(name string) tfsdk.Config {
 			"name":        tftypes.NewValue(tftypes.String, name),
 			"sid":         tftypes.NewValue(tftypes.String, nil),
 			"description": tftypes.NewValue(tftypes.String, nil),
+			"timeouts":    dsNullTimeoutsValue(),
 		}),
 	}
 }
@@ -86,6 +94,7 @@ func localGroupDSConfigBySID(sid string) tfsdk.Config {
 			"name":        tftypes.NewValue(tftypes.String, nil),
 			"sid":         tftypes.NewValue(tftypes.String, sid),
 			"description": tftypes.NewValue(tftypes.String, nil),
+			"timeouts":    dsNullTimeoutsValue(),
 		}),
 	}
 }
@@ -117,7 +126,7 @@ func TestLocalGroupDSSchema_AllAttributes(t *testing.T) {
 	d := &windowsLocalGroupDataSource{}
 	resp := &datasource.SchemaResponse{}
 	d.Schema(context.Background(), datasource.SchemaRequest{}, resp)
-	for _, k := range []string{"id", "name", "sid", "description"} {
+	for _, k := range []string{"id", "name", "sid", "description", "timeouts"} {
 		if _, ok := resp.Schema.Attributes[k]; !ok {
 			t.Errorf("schema missing attribute %q", k)
 		}
@@ -218,6 +227,53 @@ func TestLocalGroupDSRead_ByName_HappyPath(t *testing.T) {
 	}
 	if state.ID.ValueString() != "S-1-5-32-544" {
 		t.Errorf("ID = %q, want SID", state.ID.ValueString())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Read — bounded by timeouts.read (issue #197)
+// ---------------------------------------------------------------------------
+
+// TestLocalGroupDSRead_BoundedByTimeouts verifies the data source Read runs
+// under a deadline derived from `timeouts.read` (issue #197):
+// localGroupDSDefaultTimeout when the block is absent, the configured value
+// when set.
+func TestLocalGroupDSRead_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", localGroupDSDefaultTimeout},
+		{"custom", "8s", 8 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeLocalGroupClientDS{
+				importByNameOut: &winclient.GroupState{
+					Name: "Administrators",
+					SID:  "S-1-5-32-544",
+				},
+			}
+			d := &windowsLocalGroupDataSource{grp: fake}
+			cfg := localGroupDSConfigByName("Administrators")
+			if tc.customRead != "" {
+				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
+			}
+			resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
+			d.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #197)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
 	}
 }
 
