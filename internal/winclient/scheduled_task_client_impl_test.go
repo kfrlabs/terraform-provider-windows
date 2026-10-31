@@ -1752,6 +1752,61 @@ func TestSTImportByID_SubFolder(t *testing.T) {
 	}
 }
 
+// TestSTPsQuoteUnicode_CreateAndImport is the #203 regression guard: the
+// Create pre-flight and ImportByID diagnostics must quote the task id with
+// psQuote (which doubles U+0027 plus U+2018/U+2019/U+201A/U+201B). A name
+// containing U+2019 must never appear raw in the script, where PowerShell
+// would treat it as a literal terminator.
+func TestSTPsQuoteUnicode_CreateAndImport(t *testing.T) {
+	// U+2019 only (no ASCII quote): the raw value must be absent from the
+	// script while the doubled psQuote form is present.
+	const evilName = "Evil\u2019Task\u2019; Write-Host PWNED; #"
+	const taskPath = `\`
+	id := taskPath + evilName
+
+	_, impl := newSTTestClient(t)
+	var captured string
+	defer stubSTBoth(func(_ context.Context, _ *Client, script string) (string, string, error) {
+		captured = script
+		return buildMinimalPayloadJSON(t, evilName, taskPath), "", nil
+	})()
+
+	// Site 1: Create pre-flight already_exists diagnostic.
+	createInput := ScheduledTaskInput{
+		Name: evilName, Path: taskPath, Enabled: true,
+		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
+		Triggers: []ScheduledTaskTriggerInput{{Type: "Daily", StartBoundary: "2026-01-01T00:00:00Z"}},
+	}
+	if _, err := impl.Create(context.Background(), createInput); err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	createScript := captured
+	if want := "('Task already exists: ' + " + psQuote(id); !strings.Contains(createScript, want) {
+		t.Errorf("Create pre-flight does not safely quote id:\nmissing %q\nscript:\n%s", want, createScript)
+	}
+	if strings.Contains(createScript, evilName) {
+		t.Errorf("SECURITY: raw U+2019 task name in Create script (literal terminator):\n%s", createScript)
+	}
+	if !strings.Contains(createScript, "\u2019\u2019") {
+		t.Errorf("Create script missing doubled U+2019 escaping:\n%s", createScript)
+	}
+
+	// Site 2: ImportByID not_found diagnostic.
+	if _, err := impl.ImportByID(context.Background(), id); err != nil {
+		t.Fatalf("ImportByID error: %v", err)
+	}
+	importScript := captured
+	if want := "('Task not found for import: ' + " + psQuote(id); !strings.Contains(importScript, want) {
+		t.Errorf("ImportByID does not safely quote id:\nmissing %q\nscript:\n%s", want, importScript)
+	}
+	if strings.Contains(importScript, evilName) {
+		t.Errorf("SECURITY: raw U+2019 task id in ImportByID script (literal terminator):\n%s", importScript)
+	}
+	if !strings.Contains(importScript, "\u2019\u2019") {
+		t.Errorf("ImportByID script missing doubled U+2019 escaping:\n%s", importScript)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
