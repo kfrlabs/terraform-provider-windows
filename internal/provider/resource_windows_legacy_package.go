@@ -422,6 +422,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 			// distinct from the installer-process `timeout_seconds`).
 			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
 				Create: true,
+				Read:   true,
 				Update: true,
 				Delete: true,
 			}),
@@ -606,6 +607,13 @@ func (r *windowsLegacyPackageResource) Read(ctx context.Context, req resource.Re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	readTimeout, diags := state.Timeouts.Read(ctx, lpDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 	id := state.ID.ValueString()
 	if id == "" {
 		// Nothing to refresh (fresh import edge-case).

@@ -80,7 +80,7 @@ type windowsWingetPackageModel struct {
 	InstalledVersion types.String `tfsdk:"installed_version"`
 	Name             types.String `tfsdk:"name"`
 
-	// Per-operation timeouts (Create / Update / Delete). See wpDefaultTimeout.
+	// Per-operation timeouts (Create / Read / Update / Delete). See wpDefaultTimeout.
 	Timeouts timeouts.Value `tfsdk:"timeouts"`
 }
 
@@ -222,6 +222,7 @@ func (r *windowsWingetPackageResource) Schema(ctx context.Context, _ resource.Sc
 
 			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
 				Create: true,
+				Read:   true,
 				Update: true,
 				Delete: true,
 			}),
@@ -326,6 +327,14 @@ func (r *windowsWingetPackageResource) Read(ctx context.Context, req resource.Re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := state.Timeouts.Read(ctx, wpDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	tflog.Debug(ctx, "windows_winget_package Read", map[string]interface{}{
 		"package_id": state.PackageID.ValueString(),

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -361,6 +362,7 @@ func lpSourceTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, sourc
 		"install_date":         str,
 		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 			"create": str,
+			"read":   str,
 			"update": str,
 			"delete": str,
 		}},
@@ -387,6 +389,7 @@ func lpSourceTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, sourc
 		"install_date":         tftypes.NewValue(str, nil),
 		"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 			"create": str,
+			"read":   str,
 			"update": str,
 			"delete": str,
 		}}, nil),
@@ -473,9 +476,61 @@ func TestLegacyPackageSourceValidator(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func lpNullRawState() tftypes.Value {
+	return lpStateWith(nil)
+}
+
+// lpTimeoutsWithRead builds a `timeouts {}` value carrying a read duration.
+func lpTimeoutsWithRead(d string) tftypes.Value {
+	str := tftypes.String
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": str,
+		"read":   str,
+		"update": str,
+		"delete": str,
+	}}, map[string]tftypes.Value{
+		"create": tftypes.NewValue(str, nil),
+		"read":   tftypes.NewValue(str, d),
+		"update": tftypes.NewValue(str, nil),
+		"delete": tftypes.NewValue(str, nil),
+	})
+}
+
+// lpStateWith builds a complete legacy-package state with optional overrides.
+func lpStateWith(overrides map[string]tftypes.Value) tftypes.Value {
 	str := tftypes.String
 	b := tftypes.Bool
 	num := tftypes.Number
+	base := map[string]tftypes.Value{
+		"id":                   tftypes.NewValue(str, nil),
+		"name":                 tftypes.NewValue(str, nil),
+		"installer_type":       tftypes.NewValue(str, nil),
+		"source_path":          tftypes.NewValue(str, nil),
+		"source_url":           tftypes.NewValue(str, nil),
+		"checksum":             tftypes.NewValue(str, nil),
+		"insecure_skip_verify": tftypes.NewValue(b, nil),
+		"product_id":           tftypes.NewValue(str, nil),
+		"display_name_pattern": tftypes.NewValue(str, nil),
+		"install_args":         tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"uninstall_args":       tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"uninstall_command":    tftypes.NewValue(str, nil),
+		"valid_exit_codes":     tftypes.NewValue(tftypes.List{ElementType: num}, nil),
+		"working_directory":    tftypes.NewValue(str, nil),
+		"timeout_seconds":      tftypes.NewValue(num, nil),
+		"log_path":             tftypes.NewValue(str, nil),
+		"environment":          tftypes.NewValue(tftypes.Map{ElementType: str}, nil),
+		"installed_version":    tftypes.NewValue(str, nil),
+		"installed":            tftypes.NewValue(b, nil),
+		"install_date":         tftypes.NewValue(str, nil),
+		"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"read":   str,
+			"update": str,
+			"delete": str,
+		}}, nil),
+	}
+	for k, v := range overrides {
+		base[k] = v
+	}
 	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 		"id":                   str,
 		"name":                 str,
@@ -499,36 +554,92 @@ func lpNullRawState() tftypes.Value {
 		"install_date":         str,
 		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 			"create": str,
+			"read":   str,
 			"update": str,
 			"delete": str,
 		}},
-	}}, map[string]tftypes.Value{
-		"id":                   tftypes.NewValue(str, nil),
-		"name":                 tftypes.NewValue(str, nil),
-		"installer_type":       tftypes.NewValue(str, nil),
-		"source_path":          tftypes.NewValue(str, nil),
-		"source_url":           tftypes.NewValue(str, nil),
-		"checksum":             tftypes.NewValue(str, nil),
-		"insecure_skip_verify": tftypes.NewValue(b, nil),
-		"product_id":           tftypes.NewValue(str, nil),
-		"display_name_pattern": tftypes.NewValue(str, nil),
-		"install_args":         tftypes.NewValue(tftypes.List{ElementType: str}, nil),
-		"uninstall_args":       tftypes.NewValue(tftypes.List{ElementType: str}, nil),
-		"uninstall_command":    tftypes.NewValue(str, nil),
-		"valid_exit_codes":     tftypes.NewValue(tftypes.List{ElementType: num}, nil),
-		"working_directory":    tftypes.NewValue(str, nil),
-		"timeout_seconds":      tftypes.NewValue(num, nil),
-		"log_path":             tftypes.NewValue(str, nil),
-		"environment":          tftypes.NewValue(tftypes.Map{ElementType: str}, nil),
-		"installed_version":    tftypes.NewValue(str, nil),
-		"installed":            tftypes.NewValue(b, nil),
-		"install_date":         tftypes.NewValue(str, nil),
-		"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-			"create": str,
-			"update": str,
-			"delete": str,
-		}}, nil),
-	})
+	}}, base)
+}
+
+// deadlineLPClient captures the ctx deadline seen by Read (issue #196).
+type deadlineLPClient struct {
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineLPClient) Create(_ context.Context, _ winclient.LegacyPackageInput) (*winclient.LegacyPackageState, error) {
+	return nil, nil
+}
+
+func (f *deadlineLPClient) Read(ctx context.Context, id string) (*winclient.LegacyPackageState, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return &winclient.LegacyPackageState{
+		ID:               id,
+		ProductID:        id,
+		InstalledVersion: "1.0.0",
+		Installed:        true,
+		InstallDate:      "2026-01-15",
+	}, nil
+}
+
+func (f *deadlineLPClient) Update(_ context.Context, _ string, _ winclient.LegacyPackageInput) (*winclient.LegacyPackageState, error) {
+	return nil, nil
+}
+
+func (f *deadlineLPClient) Delete(_ context.Context, _ string) error { return nil }
+
+// lpNullTimeoutsValue is the absent value for the `timeouts {}` block.
+func lpNullTimeoutsValue() tftypes.Value {
+	str := tftypes.String
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": str,
+		"read":   str,
+		"update": str,
+		"delete": str,
+	}}, nil)
+}
+
+// TestLegacyPackageRead_BoundedByTimeouts verifies Read runs under a deadline
+// derived from `timeouts.read` (issue #196): lpDefaultTimeout when the block
+// is absent, the configured value when set.
+func TestLegacyPackageRead_BoundedByTimeouts(t *testing.T) {
+	id := "{01234567-89AB-CDEF-0123-456789ABCDEF}"
+	cases := []struct {
+		name     string
+		timeouts tftypes.Value
+		want     time.Duration
+	}{
+		{"default", lpNullTimeoutsValue(), lpDefaultTimeout},
+		{"custom", lpTimeoutsWithRead("5s"), 5 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &deadlineLPClient{}
+			r := &windowsLegacyPackageResource{lp: fake}
+			schemaResp := &resource.SchemaResponse{}
+			r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+			prior := tfsdk.State{
+				Schema: schemaResp.Schema,
+				Raw: lpStateWith(map[string]tftypes.Value{
+					"id":       tftypes.NewValue(tftypes.String, id),
+					"timeouts": tc.timeouts,
+				}),
+			}
+			resp := &resource.ReadResponse{
+				State: tfsdk.State{Schema: schemaResp.Schema, Raw: prior.Raw.Copy()},
+			}
+			r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #196)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
+	}
 }
 
 func TestLegacyPackageResource_ImportState_Empty(t *testing.T) {

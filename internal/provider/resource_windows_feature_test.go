@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -362,6 +363,7 @@ func featureObjectType() tftypes.Object {
 		"install_state":            tftypes.String,
 		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 			"create": tftypes.String,
+			"read":   tftypes.String,
 			"update": tftypes.String,
 			"delete": tftypes.String,
 		}},
@@ -373,9 +375,25 @@ func featureObjectType() tftypes.Object {
 func featureNullTimeoutsValue() tftypes.Value {
 	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 		"create": tftypes.String,
+		"read":   tftypes.String,
 		"update": tftypes.String,
 		"delete": tftypes.String,
 	}}, nil)
+}
+
+// featureTimeoutsWithRead builds a `timeouts {}` value carrying a read duration.
+func featureTimeoutsWithRead(d string) tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, d),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	})
 }
 
 func featObj(overrides map[string]tftypes.Value) tftypes.Value {
@@ -787,6 +805,60 @@ func TestFeatureDelete_Handler_PermissionDenied(t *testing.T) {
 	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("permission_denied during Delete must surface as error")
+	}
+}
+
+// deadlineFeatureClient captures the ctx deadline seen by Read (issue #196).
+type deadlineFeatureClient struct {
+	fakeFeatureClient
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineFeatureClient) Read(ctx context.Context, _ string) (*winclient.FeatureInfo, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return okFeatureInfo(), nil
+}
+
+// TestFeatureRead_BoundedByTimeouts verifies Read runs under a deadline derived
+// from `timeouts.read` (issue #196): featureDefaultTimeout when the block is
+// absent, the configured value when set.
+func TestFeatureRead_BoundedByTimeouts(t *testing.T) {
+	cases := []struct {
+		name     string
+		timeouts tftypes.Value
+		want     time.Duration
+	}{
+		{"default", featureNullTimeoutsValue(), featureDefaultTimeout},
+		{"custom", featureTimeoutsWithRead("5s"), 5 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &deadlineFeatureClient{}
+			r := &windowsFeatureResource{feat: fake}
+			schemaDef := windowsFeatureSchemaDefinition(context.Background())
+			prior := tfsdk.State{
+				Schema: schemaDef,
+				Raw: featObj(map[string]tftypes.Value{
+					"id":       tftypes.NewValue(tftypes.String, "Web-Server"),
+					"name":     tftypes.NewValue(tftypes.String, "Web-Server"),
+					"timeouts": tc.timeouts,
+				}),
+			}
+			resp := &resource.ReadResponse{
+				State: tfsdk.State{Schema: schemaDef, Raw: prior.Raw.Copy()},
+			}
+			r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #196)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
 	}
 }
 

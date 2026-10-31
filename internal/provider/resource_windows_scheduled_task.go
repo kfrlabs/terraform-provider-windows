@@ -793,6 +793,14 @@ func (r *windowsScheduledTaskResource) Read(ctx context.Context, req resource.Re
 		return
 	}
 
+	readTimeout, diags := current.Timeouts.Read(ctx, stDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	id := current.ID.ValueString()
 	tflog.Debug(ctx, "windows_scheduled_task Read", map[string]interface{}{"id": id})
 	state, err := r.stClient.Read(ctx, id)
@@ -970,6 +978,10 @@ func (r *windowsScheduledTaskResource) Delete(ctx context.Context, req resource.
 // ImportState imports a Scheduled Task by its composite ID.
 func (r *windowsScheduledTaskResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	id := req.ID
+	// No prior state exists at import time, so a configured timeouts.read
+	// cannot be honoured; bound the remote call with stDefaultTimeout instead.
+	ctx, cancel := context.WithTimeout(ctx, stDefaultTimeout)
+	defer cancel()
 	state, err := r.stClient.ImportByID(ctx, id)
 	if err != nil {
 		resp.Diagnostics.Append(scheduledTaskErrDiag("Import", err)...)
@@ -1490,6 +1502,7 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 // rejected by the framework as a provider type error.
 var stTimeoutsOpts = timeouts.Opts{
 	Create: true,
+	Read:   true,
 	Update: true,
 	Delete: true,
 }

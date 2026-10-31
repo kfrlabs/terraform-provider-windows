@@ -24,13 +24,16 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -561,6 +564,90 @@ func TestSTResource_Read_HappyPath(t *testing.T) {
 	}
 }
 
+// deadlineSTClient captures the ctx deadline seen by Read (issue #196).
+// Create/Update/Delete/ImportByID are promoted from the embedded fake.
+type deadlineSTClient struct {
+	fakeSTClient
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineSTClient) Read(ctx context.Context, _ string) (*winclient.ScheduledTaskState, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return f.readOut, f.readErr
+}
+
+// stTimeoutsWithRead builds a timeouts.Value carrying a read duration, reusing
+// the schema's attribute types so the value matches what the framework decodes.
+func stTimeoutsWithRead(t *testing.T, d string) timeouts.Value {
+	t.Helper()
+	obj, diags := types.ObjectValue(
+		map[string]attr.Type{
+			"create": types.StringType,
+			"read":   types.StringType,
+			"update": types.StringType,
+			"delete": types.StringType,
+		},
+		map[string]attr.Value{
+			"create": types.StringNull(),
+			"read":   types.StringValue(d),
+			"update": types.StringNull(),
+			"delete": types.StringNull(),
+		},
+	)
+	if diags.HasError() {
+		t.Fatalf("ObjectValue: %v", diags)
+	}
+	return timeouts.Value{Object: obj}
+}
+
+// TestSTResource_Read_BoundedByTimeouts verifies Read runs under a deadline
+// derived from `timeouts.read` (issue #196): stDefaultTimeout when the block
+// is absent, the configured value when set.
+func TestSTResource_Read_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+	r := &windowsScheduledTaskResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", stDefaultTimeout},
+		{"custom", "5s", 5 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			model, diags := stateToModel(ctx, minimalSTState("T", `\`), nil)
+			if diags.HasError() {
+				t.Fatalf("stateToModel: %v", diags)
+			}
+			if tc.customRead != "" {
+				model.Timeouts = stTimeoutsWithRead(t, tc.customRead)
+			}
+			prior := tfsdk.State{Schema: schemaResp.Schema}
+			if diags := prior.Set(ctx, model); diags.HasError() {
+				t.Fatalf("State.Set: %v", diags)
+			}
+			fake := &deadlineSTClient{fakeSTClient: fakeSTClient{readOut: minimalSTState("T", `\`)}}
+			r.stClient = fake
+			resp := &resource.ReadResponse{State: prior}
+			r.Read(ctx, resource.ReadRequest{State: prior}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #196)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
+	}
+}
+
 func TestSTResource_Read_Nil_RemoveResource(t *testing.T) {
 	// EC-9: nil state → drift → resource removed
 	fake := &fakeSTClient{readOut: nil, readErr: nil}
@@ -646,6 +733,43 @@ func TestSTResource_ImportState_NotFound(t *testing.T) {
 	diags := scheduledTaskErrDiag("Import", fake.importErr)
 	if !diags.HasError() {
 		t.Error("expected error diagnostic for import not found")
+	}
+}
+
+// deadlineImportSTClient captures the ctx deadline seen by ImportByID (issue
+// #196). Other operations are promoted from the embedded fake.
+type deadlineImportSTClient struct {
+	fakeSTClient
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineImportSTClient) ImportByID(ctx context.Context, _ string) (*winclient.ScheduledTaskState, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return f.importOut, f.importErr
+}
+
+// TestSTResource_ImportState_BoundedByTimeout verifies ImportState runs under
+// a deadline: no prior state exists at import time, so a configured
+// timeouts.read cannot be honoured and stDefaultTimeout bounds the call.
+func TestSTResource_ImportState_BoundedByTimeout(t *testing.T) {
+	ctx := context.Background()
+	r := &windowsScheduledTaskResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+
+	fake := &deadlineImportSTClient{fakeSTClient: fakeSTClient{importOut: minimalSTState("MyTask", `\`)}}
+	r.stClient = fake
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.ImportState(ctx, resource.ImportStateRequest{ID: `\MyTask`}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState diags: %v", resp.Diagnostics)
+	}
+	if !fake.ok {
+		t.Fatal("ImportState ran without a context deadline; ImportByID is unbounded (issue #196)")
+	}
+	if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > stDefaultTimeout {
+		t.Errorf("ImportState deadline in %v, want (0, %v]", remaining, stDefaultTimeout)
 	}
 }
 
