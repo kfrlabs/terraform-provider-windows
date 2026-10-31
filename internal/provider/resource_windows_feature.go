@@ -163,6 +163,7 @@ func windowsFeatureSchemaDefinition(ctx context.Context) schema.Schema {
 			// Per-operation timeouts (terraform-plugin-framework-timeouts).
 			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
 				Create: true,
+				Read:   true,
 				Update: true,
 				Delete: true,
 			}),
@@ -243,6 +244,13 @@ func (r *windowsFeatureResource) Read(ctx context.Context, req resource.ReadRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	readTimeout, diags := state.Timeouts.Read(ctx, featureDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 	name := state.Name.ValueString()
 	if name == "" {
 		name = state.ID.ValueString()

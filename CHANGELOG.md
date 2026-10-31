@@ -109,6 +109,12 @@ All notable changes to this project will be documented in this file.
   diagnostic suggests `trimspace()` for the common `file()` trailing-newline
   footgun and never echoes the secret value. No transport change, no
   `wo_version` counter change (#195).
+- `windows_feature`, `windows_legacy_package`, `windows_scheduled_task`
+  and `windows_winget_package` Read handlers are now bounded by a new
+  `timeouts.read` value (30m/30m/5m/30m defaults, matching the other CRUD
+  operations on each resource): a stalled PowerShell/SSH session during
+  refresh surfaces a timeout diagnostic instead of blocking Terraform
+  indefinitely (#196).
 
 ### Added
 

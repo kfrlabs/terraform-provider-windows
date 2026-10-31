@@ -17,6 +17,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -353,6 +354,7 @@ func wpSchemaObjectType() tftypes.Object {
 		"name":              tftypes.String,
 		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 			"create": tftypes.String,
+			"read":   tftypes.String,
 			"update": tftypes.String,
 			"delete": tftypes.String,
 		}},
@@ -365,9 +367,110 @@ func wpSchemaObjectType() tftypes.Object {
 func wpNullTimeoutsValue() tftypes.Value {
 	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 		"create": tftypes.String,
+		"read":   tftypes.String,
 		"update": tftypes.String,
 		"delete": tftypes.String,
 	}}, nil)
+}
+
+// wpTimeoutsWithRead builds a `timeouts {}` value carrying a read duration.
+func wpTimeoutsWithRead(d string) tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String,
+		"read":   tftypes.String,
+		"update": tftypes.String,
+		"delete": tftypes.String,
+	}}, map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, d),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	})
+}
+
+// wpObj builds a complete winget-package state value with optional overrides.
+func wpObj(overrides map[string]tftypes.Value) tftypes.Value {
+	base := map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
+		"installed_version": tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
+	}
+	for k, v := range overrides {
+		base[k] = v
+	}
+	return tftypes.NewValue(wpSchemaObjectType(), base)
+}
+
+// deadlineWPClient captures the ctx deadline seen by Read (issue #196).
+type deadlineWPClient struct {
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineWPClient) Install(_ context.Context, _ winclient.WingetPackageInput) (*winclient.WingetPackageState, error) {
+	return nil, nil
+}
+
+func (f *deadlineWPClient) Read(ctx context.Context, _, _ string) (*winclient.WingetPackageState, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return &winclient.WingetPackageState{InstalledVersion: "1.85.2", Name: "VS Code"}, nil
+}
+
+func (f *deadlineWPClient) Update(_ context.Context, _ winclient.WingetPackageInput) (*winclient.WingetPackageState, error) {
+	return nil, nil
+}
+
+func (f *deadlineWPClient) Uninstall(_ context.Context, _, _ string) (*winclient.WingetPackageState, error) {
+	return nil, nil
+}
+
+// TestWingetPackageRead_BoundedByTimeouts verifies Read runs under a deadline
+// derived from `timeouts.read` (issue #196): wpDefaultTimeout when the block
+// is absent, the configured value when set.
+func TestWingetPackageRead_BoundedByTimeouts(t *testing.T) {
+	cases := []struct {
+		name     string
+		timeouts tftypes.Value
+		want     time.Duration
+	}{
+		{"default", wpNullTimeoutsValue(), wpDefaultTimeout},
+		{"custom", wpTimeoutsWithRead("5s"), 5 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &deadlineWPClient{}
+			r := &windowsWingetPackageResource{wp: fake}
+			schemaResp := &resource.SchemaResponse{}
+			r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+			prior := tfsdk.State{
+				Schema: schemaResp.Schema,
+				Raw: wpObj(map[string]tftypes.Value{
+					"id":         tftypes.NewValue(tftypes.String, "winget:Foo.Bar"),
+					"package_id": tftypes.NewValue(tftypes.String, "Foo.Bar"),
+					"source":     tftypes.NewValue(tftypes.String, "winget"),
+					"timeouts":   tc.timeouts,
+				}),
+			}
+			resp := &resource.ReadResponse{
+				State: tfsdk.State{Schema: schemaResp.Schema, Raw: prior.Raw.Copy()},
+			}
+			r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", resp.Diagnostics)
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #196)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
+	}
 }
 
 func TestWingetPackageResource_ImportState_Valid(t *testing.T) {
