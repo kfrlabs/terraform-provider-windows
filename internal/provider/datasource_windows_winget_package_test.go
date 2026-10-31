@@ -23,6 +23,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	datasourceschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -51,16 +52,20 @@ type fakeWingetPackageClient struct {
 	updateErr    error
 	uninstallOut *winclient.WingetPackageState
 	uninstallErr error
+
+	deadline time.Time
+	ok       bool
 }
 
 func (f *fakeWingetPackageClient) Install(_ context.Context, _ winclient.WingetPackageInput) (*winclient.WingetPackageState, error) {
 	return f.installOut, f.installErr
 }
 
-func (f *fakeWingetPackageClient) Read(_ context.Context, packageID, source string) (*winclient.WingetPackageState, error) {
+func (f *fakeWingetPackageClient) Read(ctx context.Context, packageID, source string) (*winclient.WingetPackageState, error) {
 	f.readCalls++
 	f.lastReadPackageID = packageID
 	f.lastReadSource = source
+	f.deadline, f.ok = ctx.Deadline()
 	return f.readOut, f.readErr
 }
 
@@ -89,6 +94,7 @@ func dsWPObjectType() tftypes.Object {
 		"available_version":   tftypes.String,
 		"is_installed":        tftypes.Bool,
 		"is_update_available": tftypes.Bool,
+		"timeouts":            dsTimeoutsObjType(),
 	}}
 }
 
@@ -102,6 +108,7 @@ func dsWPObjBase() map[string]tftypes.Value {
 		"available_version":   tftypes.NewValue(tftypes.String, nil),
 		"is_installed":        tftypes.NewValue(tftypes.Bool, nil),
 		"is_update_available": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":            dsNullTimeoutsValue(),
 	}
 }
 
@@ -164,7 +171,7 @@ func TestWingetPackageDataSource_Schema_HasAllAttributes(t *testing.T) {
 	want := []string{
 		"id", "package_id", "source",
 		"name", "installed_version", "available_version",
-		"is_installed", "is_update_available",
+		"is_installed", "is_update_available", "timeouts",
 	}
 	for _, k := range want {
 		if _, ok := s.Attributes[k]; !ok {
@@ -455,4 +462,55 @@ func TestWingetPackageDataSource_Read_TransportError(t *testing.T) {
 func TestWingetPackageDataSource_InterfaceAssertions(t *testing.T) {
 	var _ datasource.DataSource = (*windowsWingetPackageDataSource)(nil)
 	var _ datasource.DataSourceWithConfigure = (*windowsWingetPackageDataSource)(nil)
+}
+
+// ---------------------------------------------------------------------------
+// Read — bounded by timeouts.read (issue #197)
+// ---------------------------------------------------------------------------
+
+// TestWingetPackageDataSource_Read_BoundedByTimeouts verifies the data source
+// Read runs under a deadline derived from `timeouts.read` (issue #197):
+// wpDSDefaultTimeout when the block is absent, the configured value when set.
+func TestWingetPackageDataSource_Read_BoundedByTimeouts(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		customRead string // empty = absent timeouts block (default)
+		want       time.Duration
+	}{
+		{"default", "", wpDSDefaultTimeout},
+		{"custom", "8s", 8 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeWingetPackageClient{
+				readOut: &winclient.WingetPackageState{
+					PackageID:        "Microsoft.PowerShell",
+					Source:           "winget",
+					InstalledVersion: "7.4.1",
+					Name:             "PowerShell",
+				},
+			}
+			ds := &windowsWingetPackageDataSource{client: fake}
+			cfg := dsWPConfig(t, map[string]tftypes.Value{
+				"package_id": tftypes.NewValue(tftypes.String, "Microsoft.PowerShell"),
+				"source":     tftypes.NewValue(tftypes.String, "winget"),
+			})
+			if tc.customRead != "" {
+				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
+			}
+			resp := &datasource.ReadResponse{State: dsWPState(t)}
+			ds.Read(ctx, datasource.ReadRequest{Config: cfg}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read diags: %v", dsWPDiagSummaries(resp.Diagnostics))
+			}
+			if !fake.ok {
+				t.Fatal("Read ran without a context deadline; timeouts.read is not bound (issue #197)")
+			}
+			if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > tc.want {
+				t.Errorf("Read deadline in %v, want (0, %v]", remaining, tc.want)
+			}
+		})
+	}
 }

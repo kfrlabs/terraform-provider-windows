@@ -70,6 +70,7 @@ output "windir_expanded" {
 ### Optional
 
 - `expand_environment_variables` (Boolean) When true, Read returns expanded REG_EXPAND_SZ values. Default: false. Only relevant for type=REG_EXPAND_SZ.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
@@ -78,3 +79,10 @@ output "windir_expanded" {
 - `value_binary` (String) Binary value for REG_BINARY/REG_NONE as a lowercase hex string.
 - `value_string` (String) String value for REG_SZ, REG_EXPAND_SZ, REG_DWORD (decimal uint32), REG_QWORD (decimal uint64).
 - `value_strings` (List of String) Multi-string value for REG_MULTI_SZ.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

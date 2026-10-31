@@ -52,6 +52,10 @@ output "iis_install_state" {
 
 - `name` (String) Technical name of the Windows feature to look up (e.g. `Web-Server`, `DNS`, `RSAT-AD-PowerShell`).
 
+### Optional
+
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
+
 ### Read-Only
 
 - `description` (String) Description string returned by Get-WindowsFeature.
@@ -60,3 +64,10 @@ output "iis_install_state" {
 - `install_state` (String) Current install state: Installed, Available, or Removed.
 - `installed` (Boolean) True when InstallState=Installed.
 - `restart_pending` (Boolean) True if the OS reports a pending reboot flag related to this feature.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

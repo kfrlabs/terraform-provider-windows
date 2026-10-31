@@ -42,8 +42,19 @@ output "tools_dir_is_expandable" {
 - `name` (String) Windows environment variable name to look up.
 - `scope` (String) Scope to look up: `"machine"` or `"user"`.
 
+### Optional
+
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
+
 ### Read-Only
 
 - `expand` (Boolean) `true` when the registry value kind is `REG_EXPAND_SZ`; `false` when `REG_SZ`.
 - `id` (String) Composite ID `"<scope>:<name>"`. Populated by the provider.
 - `value` (String) Verbatim value as stored in the registry (unexpanded `%VAR%` tokens).
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

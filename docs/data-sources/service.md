@@ -59,6 +59,10 @@ output "wuauserv_current_status" {
 
 - `name` (String) Short name of the Windows service to look up.
 
+### Optional
+
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
+
 ### Read-Only
 
 - `binary_path` (String) Full path to the service executable including any arguments.
@@ -69,3 +73,10 @@ output "wuauserv_current_status" {
 - `id` (String) Data source ID; equal to the Windows short service name.
 - `service_account` (String) Account under which the service runs (e.g. LocalSystem, NT AUTHORITY\NetworkService).
 - `start_type` (String) Service start mode: Automatic, AutomaticDelayedStart, Manual, or Disabled.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

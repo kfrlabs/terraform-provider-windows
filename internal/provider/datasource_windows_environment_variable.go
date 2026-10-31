@@ -10,7 +10,9 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -42,21 +44,25 @@ func (d *windowsEnvVarDataSource) Metadata(_ context.Context, req datasource.Met
 	resp.TypeName = req.ProviderTypeName + "_environment_variable"
 }
 
+// envVarDSDefaultTimeout bounds the data source Read when the configuration
+// omits the `timeouts` block, matching the sibling resource default so a
+// stalled session surfaces a timeout diagnostic instead of blocking plan
+// forever (issue #197).
+const envVarDSDefaultTimeout = 10 * time.Minute
+
 // windowsEnvVarDataSourceModel is the Terraform state/config model for the
-// windows_environment_variable data source. It mirrors the resource model
-// minus the `timeouts` block: data sources expose no per-operation timeouts,
-// so the model must stay in sync with the data source schema (a struct with
-// extra fields fails decoding).
+// windows_environment_variable data source.
 type windowsEnvVarDataSourceModel struct {
-	ID     types.String `tfsdk:"id"`
-	Name   types.String `tfsdk:"name"`
-	Value  types.String `tfsdk:"value"`
-	Scope  types.String `tfsdk:"scope"`
-	Expand types.Bool   `tfsdk:"expand"`
+	ID       types.String     `tfsdk:"id"`
+	Name     types.String     `tfsdk:"name"`
+	Value    types.String     `tfsdk:"value"`
+	Scope    types.String     `tfsdk:"scope"`
+	Expand   types.Bool       `tfsdk:"expand"`
+	Timeouts dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Schema returns the TPF schema for the windows_environment_variable data source.
-func (d *windowsEnvVarDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsEnvVarDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads a single Windows environment variable (`machine` or `user` scope) " +
 			"from a remote host via SSH + PowerShell. Returns the stored value verbatim " +
@@ -90,6 +96,11 @@ func (d *windowsEnvVarDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Computed:            true,
 				MarkdownDescription: "`true` when the registry value kind is `REG_EXPAND_SZ`; `false` when `REG_SZ`.",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to envVarDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -123,6 +134,14 @@ func (d *windowsEnvVarDataSource) Read(ctx context.Context, req datasource.ReadR
 		return
 	}
 
+	readTimeout, diags := config.Timeouts.Read(ctx, envVarDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	scope := winclient.EnvVarScope(config.Scope.ValueString())
 	name := config.Name.ValueString()
 
@@ -148,11 +167,12 @@ func (d *windowsEnvVarDataSource) Read(ctx context.Context, req datasource.ReadR
 	}
 
 	state := windowsEnvVarDataSourceModel{
-		ID:     types.StringValue(envVarID(scope, name)),
-		Scope:  config.Scope,
-		Name:   config.Name,
-		Value:  types.StringValue(evState.Value),
-		Expand: types.BoolValue(evState.Expand),
+		ID:       types.StringValue(envVarID(scope, name)),
+		Scope:    config.Scope,
+		Name:     config.Name,
+		Value:    types.StringValue(evState.Value),
+		Expand:   types.BoolValue(evState.Expand),
+		Timeouts: config.Timeouts,
 	}
 
 	tflog.Debug(ctx, "windows_environment_variable data source Read end", map[string]interface{}{

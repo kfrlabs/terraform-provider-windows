@@ -15,7 +15,9 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	datasourceschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -44,17 +46,24 @@ type windowsWingetPackageDataSource struct {
 	client winclient.WingetPackageClient
 }
 
+// wpDSDefaultTimeout bounds the data source Read when the configuration
+// omits the `timeouts` block, matching the sibling resource default so a
+// stalled session surfaces a timeout diagnostic instead of blocking plan
+// forever (issue #197).
+const wpDSDefaultTimeout = 30 * time.Minute
+
 // windowsWingetPackageDataSourceModel is the Terraform state model for the
 // data source. Field tags match attribute keys in the schema below.
 type windowsWingetPackageDataSourceModel struct {
-	ID                types.String `tfsdk:"id"`
-	PackageID         types.String `tfsdk:"package_id"`
-	Source            types.String `tfsdk:"source"`
-	Name              types.String `tfsdk:"name"`
-	InstalledVersion  types.String `tfsdk:"installed_version"`
-	AvailableVersion  types.String `tfsdk:"available_version"`
-	IsInstalled       types.Bool   `tfsdk:"is_installed"`
-	IsUpdateAvailable types.Bool   `tfsdk:"is_update_available"`
+	ID                types.String     `tfsdk:"id"`
+	PackageID         types.String     `tfsdk:"package_id"`
+	Source            types.String     `tfsdk:"source"`
+	Name              types.String     `tfsdk:"name"`
+	InstalledVersion  types.String     `tfsdk:"installed_version"`
+	AvailableVersion  types.String     `tfsdk:"available_version"`
+	IsInstalled       types.Bool       `tfsdk:"is_installed"`
+	IsUpdateAvailable types.Bool       `tfsdk:"is_update_available"`
+	Timeouts          dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_winget_package").
@@ -63,7 +72,7 @@ func (d *windowsWingetPackageDataSource) Metadata(_ context.Context, req datasou
 }
 
 // Schema returns the TPF schema for the windows_winget_package data source.
-func (d *windowsWingetPackageDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsWingetPackageDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = datasourceschema.Schema{
 		MarkdownDescription: "Reads the state of a single winget-managed package on a remote Windows host " +
 			"by executing `winget.exe` directly over SSH. " +
@@ -127,6 +136,12 @@ func (d *windowsWingetPackageDataSource) Schema(_ context.Context, _ datasource.
 				MarkdownDescription: "`true` when both `installed_version` and `available_version` are " +
 					"non-empty and differ.",
 			},
+
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to wpDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -165,6 +180,14 @@ func (d *windowsWingetPackageDataSource) Read(ctx context.Context, req datasourc
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := config.Timeouts.Read(ctx, wpDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	packageID := config.PackageID.ValueString()
 
@@ -221,6 +244,7 @@ func (d *windowsWingetPackageDataSource) Read(ctx context.Context, req datasourc
 		AvailableVersion:  types.StringValue(""),
 		IsInstalled:       types.BoolValue(remote.InstalledVersion != ""),
 		IsUpdateAvailable: types.BoolValue(false),
+		Timeouts:          config.Timeouts,
 	}
 
 	tflog.Debug(ctx, "windows_winget_package data source Read end", map[string]interface{}{

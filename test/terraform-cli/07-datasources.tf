@@ -57,6 +57,13 @@ data "windows_scheduled_task" "fixture" {
 
 data "windows_service" "fixture" {
   name = windows_service.fixture.name
+
+  # CLI-level coverage for the data source timeouts block (issue #197):
+  # parsed by validate and the mock test run. SingleNestedAttribute in
+  # this provider, `timeouts` only accepts the assignment form.
+  timeouts = {
+    read = "5m"
+  }
 }
 
 data "windows_hostname" "current" {}

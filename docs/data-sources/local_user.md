@@ -60,6 +60,7 @@ output "svc_app_sid" {
 
 - `name` (String) SAM account name of the user. Exactly one of `name` or `sid` must be specified.
 - `sid` (String) Security Identifier (SID) of the user. Exactly one of `name` or `sid` must be specified.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
@@ -74,3 +75,10 @@ output "svc_app_sid" {
 - `password_never_expires` (Boolean) True when the account password has no expiry policy.
 - `principal_source` (String) Origin of the account: Local, ActiveDirectory, AzureAD, MicrosoftAccount, or Unknown.
 - `user_may_not_change_password` (Boolean) True when self-service password change is blocked for this account.
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

@@ -8,7 +8,9 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -33,14 +35,21 @@ type windowsHostnameDataSource struct {
 	hn winclient.WindowsHostnameClient
 }
 
+// hostnameDSDefaultTimeout bounds the data source Read when the configuration
+// omits the `timeouts` block, matching the sibling resource default so a
+// stalled session surfaces a timeout diagnostic instead of blocking plan
+// forever (issue #197).
+const hostnameDSDefaultTimeout = 10 * time.Minute
+
 // windowsHostnameDataSourceModel is the Terraform state model for the
 // windows_hostname data source.
 type windowsHostnameDataSourceModel struct {
-	ID            types.String `tfsdk:"id"`
-	CurrentName   types.String `tfsdk:"current_name"`
-	PendingName   types.String `tfsdk:"pending_name"`
-	RebootPending types.Bool   `tfsdk:"reboot_pending"`
-	MachineID     types.String `tfsdk:"machine_id"`
+	ID            types.String     `tfsdk:"id"`
+	CurrentName   types.String     `tfsdk:"current_name"`
+	PendingName   types.String     `tfsdk:"pending_name"`
+	RebootPending types.Bool       `tfsdk:"reboot_pending"`
+	MachineID     types.String     `tfsdk:"machine_id"`
+	Timeouts      dstimeouts.Value `tfsdk:"timeouts"`
 }
 
 // Metadata sets the data source type name ("windows_hostname").
@@ -49,7 +58,7 @@ func (d *windowsHostnameDataSource) Metadata(_ context.Context, req datasource.M
 }
 
 // Schema returns the TPF schema for the windows_hostname data source.
-func (d *windowsHostnameDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsHostnameDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the current hostname state of the remote Windows host without " +
 			"managing it. This is a **singleton** data source — no lookup keys are required.\n\n" +
@@ -81,6 +90,11 @@ func (d *windowsHostnameDataSource) Schema(_ context.Context, _ datasource.Schem
 				Description:         "Stable per-machine identifier (HKLM Cryptography MachineGuid).",
 				MarkdownDescription: "Stable per-machine identifier read from `HKLM:\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid`.",
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to hostnameDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -110,6 +124,14 @@ func (d *windowsHostnameDataSource) Read(ctx context.Context, req datasource.Rea
 		return
 	}
 
+	readTimeout, diags := config.Timeouts.Read(ctx, hostnameDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	tflog.Debug(ctx, "windows_hostname data source Read start")
 
 	live, err := d.hn.Read(ctx, "")
@@ -124,6 +146,7 @@ func (d *windowsHostnameDataSource) Read(ctx context.Context, req datasource.Rea
 		PendingName:   types.StringValue(live.PendingName),
 		RebootPending: types.BoolValue(live.RebootPending),
 		MachineID:     types.StringValue(live.MachineID),
+		Timeouts:      config.Timeouts,
 	}
 
 	tflog.Debug(ctx, "windows_hostname data source Read end", map[string]interface{}{

@@ -7,7 +7,9 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -28,6 +30,12 @@ func NewWindowsScheduledTaskDataSource() datasource.DataSource {
 	return &windowsScheduledTaskDataSource{}
 }
 
+// stDSDefaultTimeout bounds the data source Read when the configuration
+// omits the `timeouts` block, matching the sibling resource default so a
+// stalled session surfaces a timeout diagnostic instead of blocking plan
+// forever (issue #197).
+const stDSDefaultTimeout = 5 * time.Minute
+
 // windowsScheduledTaskDataSource reads a Windows Scheduled Task.
 type windowsScheduledTaskDataSource struct {
 	stClient winclient.ScheduledTaskClient
@@ -39,7 +47,7 @@ func (d *windowsScheduledTaskDataSource) Metadata(_ context.Context, req datasou
 }
 
 // Schema returns the data source schema.
-func (d *windowsScheduledTaskDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *windowsScheduledTaskDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the current state of a Windows Scheduled Task.",
 		Attributes: map[string]schema.Attribute{
@@ -138,6 +146,11 @@ func (d *windowsScheduledTaskDataSource) Schema(_ context.Context, _ datasource.
 					"run_only_if_idle":               schema.BoolAttribute{Computed: true},
 				},
 			},
+			// Read timeout (terraform-plugin-framework-timeouts): bounds the
+			// remote lookup so a stalled session surfaces a timeout
+			// diagnostic instead of blocking plan forever (issue #197).
+			// Absent configuration falls back to stDSDefaultTimeout.
+			"timeouts": dstimeouts.Attributes(ctx),
 		},
 	}
 }
@@ -164,6 +177,14 @@ func (d *windowsScheduledTaskDataSource) Read(ctx context.Context, req datasourc
 		return
 	}
 
+	readTimeout, diags := config.Timeouts.Read(ctx, stDSDefaultTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	taskName := config.Name.ValueString()
 	taskPath := config.Path.ValueString()
 	if taskPath == "" {
@@ -187,6 +208,7 @@ func (d *windowsScheduledTaskDataSource) Read(ctx context.Context, req datasourc
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	model.Timeouts = config.Timeouts
 	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
 
@@ -302,17 +324,18 @@ var scheduledTaskDSPrincipalAttrTypes = map[string]attr.Type{
 
 // windowsScheduledTaskDSModel is the data source root model.
 type windowsScheduledTaskDSModel struct {
-	ID             types.String `tfsdk:"id"`
-	Name           types.String `tfsdk:"name"`
-	Path           types.String `tfsdk:"path"`
-	Description    types.String `tfsdk:"description"`
-	Enabled        types.Bool   `tfsdk:"enabled"`
-	State          types.String `tfsdk:"state"`
-	LastRunTime    types.String `tfsdk:"last_run_time"`
-	LastTaskResult types.Int64  `tfsdk:"last_task_result"`
-	NextRunTime    types.String `tfsdk:"next_run_time"`
-	Principal      types.Object `tfsdk:"principal"`
-	Actions        types.List   `tfsdk:"actions"`
-	Triggers       types.List   `tfsdk:"triggers"`
-	Settings       types.Object `tfsdk:"settings"`
+	ID             types.String     `tfsdk:"id"`
+	Name           types.String     `tfsdk:"name"`
+	Path           types.String     `tfsdk:"path"`
+	Description    types.String     `tfsdk:"description"`
+	Enabled        types.Bool       `tfsdk:"enabled"`
+	State          types.String     `tfsdk:"state"`
+	LastRunTime    types.String     `tfsdk:"last_run_time"`
+	LastTaskResult types.Int64      `tfsdk:"last_task_result"`
+	NextRunTime    types.String     `tfsdk:"next_run_time"`
+	Principal      types.Object     `tfsdk:"principal"`
+	Actions        types.List       `tfsdk:"actions"`
+	Triggers       types.List       `tfsdk:"triggers"`
+	Settings       types.Object     `tfsdk:"settings"`
+	Timeouts       dstimeouts.Value `tfsdk:"timeouts"`
 }
