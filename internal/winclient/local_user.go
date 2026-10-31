@@ -12,10 +12,9 @@
 //
 // Reused helpers from service.go (same package):
 //   - psQuote            — safe single-quote escaping
-//   - extractLastJSONLine — scan stdout for last JSON envelope
-//   - truncate            — cap strings for diagnostic context
+//   - runEnvelope        — shared JSON envelope pipeline (envelope.go)
 //   - runPowerShell       — package-level hook for testability
-//   - psResponse          — parsed Emit-OK / Emit-Err JSON envelope
+//   - psResponse          — parsed Emit-OK / Emit-Err JSON envelope (aliases Envelope)
 package winclient
 
 import (
@@ -228,57 +227,51 @@ func parseUserData(op string, data json.RawMessage) (*UserState, error) {
 // ---------------------------------------------------------------------------
 
 // runLUEnvelope executes script (prefixed with luPsHeader) and parses the
-// Emit-OK / Emit-Err JSON envelope. op is a diagnostic label; key is the
-// primary identifier (SID or name) used in error context.
+// Emit-OK / Emit-Err JSON envelope through the shared runEnvelope helper
+// (#198). op is a diagnostic label; key is the primary identifier (SID or
+// name) used in error context.
 func (lc *LocalUserClientImpl) runLUEnvelope(ctx context.Context, op, key, script string) (*psResponse, error) {
-	full := luPsHeader + "\n" + script
-	stdout, stderr, err := runPowerShell(ctx, lc.c, full)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, NewLocalUserError(LocalUserErrorUnknown,
-				fmt.Sprintf("operation %q timed out or was cancelled", op),
-				ctx.Err(), map[string]string{
-					"operation": op, "key": key, "host": lc.c.cfg.Host,
-				})
-		}
-		return nil, NewLocalUserError(LocalUserErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err, map[string]string{
-				"operation": op, "key": key, "host": lc.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{"key": key, "host": lc.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPowerShell(ctx, lc.c, full)
+		},
+		op, luPsHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-	return lc.parseLUEnvelope(op, key, stdout, stderr)
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewLocalUserError(LocalUserErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
+	}
+	return resp, NewLocalUserError(mapLUKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }
 
 // runLUEnvelopeWithInput executes script (prefixed with luPsHeader) with the
-// given stdin string (used for password injection) and parses the JSON envelope.
+// given stdin string (used for password injection) and parses the JSON
+// envelope through the shared runEnvelope helper (#198).
 // The stdin value is NEVER included in error context or logs.
 func (lc *LocalUserClientImpl) runLUEnvelopeWithInput(ctx context.Context, op, key, script, stdin string) (*psResponse, error) {
-	full := luPsHeader + "\n" + script
-	stdout, stderr, err := runPSInput(ctx, lc.c, full, stdin)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, NewLocalUserError(LocalUserErrorUnknown,
-				fmt.Sprintf("operation %q timed out or was cancelled", op),
-				ctx.Err(), map[string]string{
-					"operation": op, "key": key, "host": lc.c.cfg.Host,
-				})
-		}
-		return nil, NewLocalUserError(LocalUserErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err, map[string]string{
-				"operation": op, "key": key, "host": lc.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{"key": key, "host": lc.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPSInput(ctx, lc.c, full, stdin)
+		},
+		op, luPsHeader+"\n"+script, stdin, baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-	return lc.parseLUEnvelope(op, key, stdout, stderr)
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewLocalUserError(LocalUserErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
+	}
+	return resp, NewLocalUserError(mapLUKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }
 
 // parseLUEnvelope extracts the last JSON line from stdout and unmarshals the
 // Emit-OK / Emit-Err envelope. Returns a *LocalUserError on failure.
+//
+// Retained as a unit-test seam (see local_user_client_impl_test.go); the
+// production Create/Read/Update/Delete paths parse through the shared
+// runEnvelope helper via runLUEnvelope/runLUEnvelopeWithInput above.
 func (lc *LocalUserClientImpl) parseLUEnvelope(op, key, stdout, stderr string) (*psResponse, error) {
 	line := extractLastJSONLine(stdout)
 	if line == "" {

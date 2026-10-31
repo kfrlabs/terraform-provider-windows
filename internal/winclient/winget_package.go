@@ -518,71 +518,31 @@ func parseWPState(resp *psResponse) (*WingetPackageState, error) {
 // ---------------------------------------------------------------------------
 
 // runWPEnvelope executes a winget script (prefixed with wpHeader) over SSH
-// and parses the JSON envelope. Transport errors that bypass Emit-Err (non-zero
-// exit, context cancellation) are wrapped as WingetPackageErrorUnknown.
+// and parses the JSON envelope through the shared runEnvelope helper (#198).
+// Transport errors that bypass Emit-Err (non-zero exit, context cancellation)
+// are wrapped as WingetPackageErrorUnknown.
 func (w *WingetPackageClientImpl) runWPEnvelope(ctx context.Context, op, pkgID, script string) (*psResponse, error) {
-	full := wpHeader + "\n" + script
-	stdout, stderr, err := runPowerShell(ctx, w.c, full)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, NewWingetPackageError(WingetPackageErrorUnknown,
-				fmt.Sprintf("operation %q cancelled or timed out", op),
-				ctxErr,
-				map[string]string{
-					"operation":  op,
-					"package_id": pkgID,
-					"host":       w.c.cfg.Host,
-				})
-		}
-		return nil, NewWingetPackageError(WingetPackageErrorUnknown,
-			fmt.Sprintf("SSH transport error during %q", op),
-			err,
-			map[string]string{
-				"operation":  op,
-				"package_id": pkgID,
-				"host":       w.c.cfg.Host,
-				"stderr":     truncate(stderr, 2048),
-				"stdout":     truncate(stdout, 2048),
-			})
+	baseContext := map[string]string{
+		"package_id": pkgID,
+		"host":       w.c.cfg.Host,
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewWingetPackageError(WingetPackageErrorUnknown,
-			fmt.Sprintf("no JSON envelope returned from %q", op), nil,
-			map[string]string{
-				"operation":  op,
-				"package_id": pkgID,
-				"host":       w.c.cfg.Host,
-				"stderr":     truncate(stderr, 2048),
-				"stdout":     truncate(stdout, 2048),
-			})
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPowerShell(ctx, w.c, full)
+		},
+		op, wpHeader+"\n"+script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
 	}
-
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewWingetPackageError(WingetPackageErrorUnknown,
-			fmt.Sprintf("invalid JSON envelope from %q", op), jerr,
-			map[string]string{
-				"operation":  op,
-				"package_id": pkgID,
-				"host":       w.c.cfg.Host,
-				"stdout":     truncate(stdout, 2048),
-			})
+	// Preserve the historical winget timeout message.
+	if eerr.Stage == EnvelopeStageTimeout {
+		eerr.Message = fmt.Sprintf("operation %q cancelled or timed out", op)
 	}
-
-	if !resp.OK {
-		kind := wpMapKind(resp.Kind)
-		errCtx := resp.Context
-		if errCtx == nil {
-			errCtx = map[string]string{}
-		}
-		errCtx["operation"] = op
-		errCtx["package_id"] = pkgID
-		errCtx["host"] = w.c.cfg.Host
-		return &resp, NewWingetPackageError(kind, resp.Message, nil, errCtx)
+	if eerr.Stage != EnvelopeStageRemote {
+		return nil, NewWingetPackageError(WingetPackageErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	return &resp, nil
+	kind := wpMapKind(eerr.RemoteKind)
+	return resp, NewWingetPackageError(kind, eerr.Message, nil, eerr.Context)
 }
 
 // runRetryable executes a winget script with automatic retry for:

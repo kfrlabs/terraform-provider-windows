@@ -22,7 +22,6 @@ package winclient
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -357,14 +356,10 @@ var runFilePowerShell = func(ctx context.Context, c *Client, script, stdin strin
 	return c.RunPowerShellWithInput(ctx, script, stdin)
 }
 
-// filePSResponse is the parsed JSON envelope for file operations.
-type filePSResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// filePSResponse is the parsed JSON envelope for file operations. It aliases
+// the shared Envelope type so every resource parses the same shape through
+// runEnvelope (#198).
+type filePSResponse = Envelope
 
 // fileDataPayload mirrors the JSON object returned by the Set/Read scripts.
 // Attributes is json.RawMessage because ConvertTo-Json serialises a
@@ -379,63 +374,28 @@ type fileDataPayload struct {
 	ContentBase64 string          `json:"content_base64"`
 }
 
-// runScript executes a PS script and parses the JSON envelope.
+// runScript executes a PS script and parses the JSON envelope through the
+// shared runEnvelope helper (#198). stdin carries the file bytes for the
+// content-bearing paths and is never copied into error context or logs.
 func (f *FileClientImpl) runScript(ctx context.Context, op, script, stdin string) (*filePSResponse, error) {
-	stdout, stderr, err := runFilePowerShell(ctx, f.c, script, stdin)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, &FileError{
-				Kind:    FileErrorUnknown,
-				Message: fmt.Sprintf("operation %q timed out or was cancelled", op),
-				Cause:   ctxErr,
-				Context: map[string]string{"operation": op, "host": f.c.cfg.Host},
-			}
-		}
+	baseContext := map[string]string{"host": f.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runFilePowerShell(ctx, f.c, full, stdin)
+		},
+		op, script, stdin, baseContext)
+	if eerr == nil {
+		return resp, nil
+	}
+	if eerr.Stage != EnvelopeStageRemote {
 		return nil, &FileError{
 			Kind:    FileErrorUnknown,
-			Message: fmt.Sprintf("SSH transport error during %q", op),
-			Cause:   err,
-			Context: map[string]string{
-				"operation": op, "host": f.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
+			Message: eerr.Message,
+			Cause:   eerr.Cause,
+			Context: eerr.Context,
 		}
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, &FileError{
-			Kind:    FileErrorUnknown,
-			Message: fmt.Sprintf("no JSON envelope returned from %q", op),
-			Context: map[string]string{
-				"operation": op, "host": f.c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			},
-		}
-	}
-
-	var resp filePSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, &FileError{
-			Kind:    FileErrorUnknown,
-			Message: fmt.Sprintf("invalid JSON envelope from %q", op),
-			Cause:   jerr,
-			Context: map[string]string{"operation": op, "stdout": truncate(stdout, 2048)},
-		}
-	}
-
-	if !resp.OK {
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["host"] = f.c.cfg.Host
-		return &resp, &FileError{Kind: mapFileErrorKind(resp.Kind), Message: resp.Message, Context: ctxMap}
-	}
-	return &resp, nil
+	return resp, &FileError{Kind: mapFileErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapFileErrorKind translates the PS-side "kind" string to a typed FileErrorKind.

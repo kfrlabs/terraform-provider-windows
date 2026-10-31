@@ -203,14 +203,10 @@ var runEnvVarPowerShell = func(ctx context.Context, c *Client, script string) (s
 	return c.RunPowerShell(ctx, script)
 }
 
-// evPSResponse is the parsed JSON envelope for env var operations.
-type evPSResponse struct {
-	OK      bool              `json:"ok"`
-	Kind    string            `json:"kind,omitempty"`
-	Message string            `json:"message,omitempty"`
-	Context map[string]string `json:"context,omitempty"`
-	Data    json.RawMessage   `json:"data,omitempty"`
-}
+// evPSResponse is the parsed JSON envelope for env var operations. It
+// aliases the shared Envelope type so every resource parses the same shape
+// through runEnvelope (#198).
+type evPSResponse = Envelope
 
 // evSetData mirrors the JSON object returned by the Set PS script.
 type evSetData struct {
@@ -226,66 +222,27 @@ type evReadData struct {
 	Expand bool   `json:"expand"`
 }
 
-// runScript executes a PS script and parses the JSON envelope.
+// runScript executes a PS script and parses the JSON envelope through the
+// shared runEnvelope helper (#198).
 func (e *EnvVarClientImpl) runScript(ctx context.Context, op, script string) (*evPSResponse, error) {
-	stdout, stderr, err := runEnvVarPowerShell(ctx, e.c, script)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, &EnvVarError{
-				Kind:    EnvVarErrorUnknown,
-				Message: fmt.Sprintf("operation %q timed out or was cancelled", op),
-				Cause:   ctxErr,
-				Context: map[string]string{"operation": op, "host": e.c.cfg.Host},
-			}
-		}
+	baseContext := map[string]string{"host": e.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runEnvVarPowerShell(ctx, e.c, full)
+		},
+		op, script, "", baseContext)
+	if eerr == nil {
+		return resp, nil
+	}
+	if eerr.Stage != EnvelopeStageRemote {
 		return nil, &EnvVarError{
 			Kind:    EnvVarErrorUnknown,
-			Message: fmt.Sprintf("SSH transport error during %q", op),
-			Cause:   err,
-			Context: map[string]string{
-				"operation": op,
-				"host":      e.c.cfg.Host,
-				"stderr":    truncate(stderr, 2048),
-				"stdout":    truncate(stdout, 2048),
-			},
+			Message: eerr.Message,
+			Cause:   eerr.Cause,
+			Context: eerr.Context,
 		}
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, &EnvVarError{
-			Kind:    EnvVarErrorUnknown,
-			Message: fmt.Sprintf("no JSON envelope returned from %q", op),
-			Context: map[string]string{
-				"operation": op,
-				"host":      e.c.cfg.Host,
-				"stderr":    truncate(stderr, 2048),
-				"stdout":    truncate(stdout, 2048),
-			},
-		}
-	}
-
-	var resp evPSResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, &EnvVarError{
-			Kind:    EnvVarErrorUnknown,
-			Message: fmt.Sprintf("invalid JSON envelope from %q", op),
-			Cause:   jerr,
-			Context: map[string]string{"operation": op, "stdout": truncate(stdout, 2048)},
-		}
-	}
-
-	if !resp.OK {
-		kind := mapEnvVarErrorKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["host"] = e.c.cfg.Host
-		return &resp, &EnvVarError{Kind: kind, Message: resp.Message, Context: ctxMap}
-	}
-	return &resp, nil
+	return resp, &EnvVarError{Kind: mapEnvVarErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapEnvVarErrorKind translates the PS-side "kind" string to a typed EnvVarErrorKind.

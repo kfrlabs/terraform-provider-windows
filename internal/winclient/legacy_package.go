@@ -212,7 +212,8 @@ type deletePayload struct {
 
 // runEnvelope executes script over SSH with stdin piped from payload (JSON
 // encoded) and decodes the JSON envelope written to stdout by Emit-OK /
-// Emit-Err. Transport errors are wrapped as LegacyPackageError{Kind:"unknown"}.
+// Emit-Err through the shared runEnvelope helper (#198). Transport errors
+// are wrapped as LegacyPackageError{Kind:"unknown"}.
 func (l *LegacyPackageClientImpl) runEnvelope(ctx context.Context, op string, payload any, script string) (*psResponse, error) {
 	stdin, err := json.Marshal(payload)
 	if err != nil {
@@ -221,71 +222,33 @@ func (l *LegacyPackageClientImpl) runEnvelope(ctx context.Context, op string, pa
 			Context: map[string]string{"operation": op},
 		}
 	}
-	full := lpHeader + "\n" + script
-	// Route through the package-level runPSInput seam (also used by local_user.go)
-	// so unit tests can stub the SSH transport without a real host.
-	stdout, stderr, err := runPSInput(ctx, l.c, full, string(stdin))
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, &LegacyPackageError{
-				Kind: "timeout", Message: fmt.Sprintf("operation %q cancelled or timed out", op),
-				Cause: ctxErr,
-				Context: map[string]string{
-					"operation": op,
-					"host":      l.c.cfg.Host,
-				},
-			}
-		}
+	baseContext := map[string]string{"host": l.c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		// Route through the package-level runPSInput seam (also used by local_user.go)
+		// so unit tests can stub the SSH transport without a real host.
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPSInput(ctx, l.c, full, stdin)
+		},
+		op, lpHeader+"\n"+script, string(stdin), baseContext)
+	if eerr == nil {
+		return resp, nil
+	}
+	// Preserve the historical legacy timeout kind and message.
+	if eerr.Stage == EnvelopeStageTimeout {
 		return nil, &LegacyPackageError{
-			Kind: "unknown", Message: fmt.Sprintf("SSH transport error during %q", op),
-			Cause: err,
-			Context: map[string]string{
-				"operation": op,
-				"host":      l.c.cfg.Host,
-				"stderr":    truncate(stderr, 2048),
-				"stdout":    truncate(stdout, 2048),
-			},
+			Kind: "timeout", Message: fmt.Sprintf("operation %q cancelled or timed out", op),
+			Cause: eerr.Cause, Context: eerr.Context,
 		}
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
+	if eerr.Stage != EnvelopeStageRemote {
 		return nil, &LegacyPackageError{
-			Kind: "unknown", Message: fmt.Sprintf("no JSON envelope returned from %q", op),
-			Context: map[string]string{
-				"operation": op,
-				"host":      l.c.cfg.Host,
-				"stderr":    truncate(stderr, 2048),
-				"stdout":    truncate(stdout, 2048),
-			},
+			Kind: "unknown", Message: eerr.Message,
+			Cause: eerr.Cause, Context: eerr.Context,
 		}
 	}
-
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, &LegacyPackageError{
-			Kind: "unknown", Message: fmt.Sprintf("invalid JSON envelope from %q", op),
-			Cause: jerr,
-			Context: map[string]string{
-				"operation": op,
-				"host":      l.c.cfg.Host,
-				"stdout":    truncate(stdout, 2048),
-			},
-		}
+	return resp, &LegacyPackageError{
+		Kind: eerr.RemoteKind, Message: eerr.Message, Context: eerr.Context,
 	}
-
-	if !resp.OK {
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["operation"] = op
-		ctxMap["host"] = l.c.cfg.Host
-		return &resp, &LegacyPackageError{
-			Kind: resp.Kind, Message: resp.Message, Context: ctxMap,
-		}
-	}
-	return &resp, nil
 }
 
 // parseLPState decodes the Data field of resp into a *LegacyPackageState.

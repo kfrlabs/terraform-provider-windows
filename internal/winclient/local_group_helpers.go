@@ -16,7 +16,6 @@ package winclient
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -35,9 +34,9 @@ import (
 // *LocalGroupMemberError should check for LocalGroupErrorNotFound and wrap
 // it accordingly.
 //
-// The function reuses lgPsHeader, runPowerShell, extractLastJSONLine,
-// truncate, psResponse, mapLGKind, and parseGroupData from local_group.go
-// and service.go (all in the same package).
+// The function reuses lgPsHeader, runPowerShell and parseGroupData from
+// local_group.go and service.go (all in the same package), with envelope
+// parsing centralised in runEnvelope (see envelope.go).
 func ResolveGroup(ctx context.Context, c *Client, groupOrSID string) (*GroupState, error) {
 	q := psQuote(groupOrSID)
 
@@ -58,63 +57,29 @@ try {
 }
 `, param, q)
 
-	stdout, stderr, err := runPowerShell(ctx, c, script)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-				"ResolveGroup: operation timed out or was cancelled",
-				ctx.Err(),
-				map[string]string{
-					"group": groupOrSID,
-					"host":  c.cfg.Host,
-				})
+	baseContext := map[string]string{"group": groupOrSID, "host": c.cfg.Host}
+	resp, eerr := runEnvelope(ctx,
+		func(ctx context.Context, full, stdin string) (string, string, error) {
+			return runPowerShell(ctx, c, full)
+		},
+		"resolve_group", script, "", baseContext)
+	if eerr == nil {
+		return parseGroupData("resolve_group", resp.Data)
+	}
+	if eerr.Stage == EnvelopeStageTimeout {
+		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
+			"ResolveGroup: operation timed out or was cancelled",
+			eerr.Cause, eerr.Context)
+	}
+	if eerr.Stage != EnvelopeStageRemote {
+		msg := "ResolveGroup: SSH transport error"
+		switch eerr.Stage {
+		case EnvelopeStageNoEnvelope:
+			msg = "ResolveGroup: no JSON envelope returned"
+		case EnvelopeStageInvalidJSON:
+			msg = "ResolveGroup: invalid JSON envelope"
 		}
-		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-			"ResolveGroup: SSH transport error",
-			err,
-			map[string]string{
-				"group":  groupOrSID,
-				"host":   c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
+		return nil, NewLocalGroupError(LocalGroupErrorUnknown, msg, eerr.Cause, eerr.Context)
 	}
-
-	line := extractLastJSONLine(stdout)
-	if line == "" {
-		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-			"ResolveGroup: no JSON envelope returned",
-			nil,
-			map[string]string{
-				"group":  groupOrSID,
-				"host":   c.cfg.Host,
-				"stderr": truncate(stderr, 2048),
-				"stdout": truncate(stdout, 2048),
-			})
-	}
-
-	var resp psResponse
-	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
-			"ResolveGroup: invalid JSON envelope",
-			jerr,
-			map[string]string{
-				"group":  groupOrSID,
-				"host":   c.cfg.Host,
-				"stdout": truncate(stdout, 2048),
-			})
-	}
-
-	if !resp.OK {
-		kind := mapLGKind(resp.Kind)
-		ctxMap := resp.Context
-		if ctxMap == nil {
-			ctxMap = map[string]string{}
-		}
-		ctxMap["group"] = groupOrSID
-		ctxMap["host"] = c.cfg.Host
-		return nil, NewLocalGroupError(kind, resp.Message, nil, ctxMap)
-	}
-
-	return parseGroupData("resolve_group", resp.Data)
+	return nil, NewLocalGroupError(mapLGKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }
