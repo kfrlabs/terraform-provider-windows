@@ -287,6 +287,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 // DataSources returns the set of data sources implemented by this provider.
 func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
+		NewWindowsDirectoryDataSource,
 		NewWindowsEnvironmentVariableDataSource,
 		NewWindowsFeatureDataSource,
 		NewWindowsFileACLDataSource,
