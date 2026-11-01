@@ -159,10 +159,11 @@ type featureDataPayload struct {
 
 // installDataPayload mirrors the JSON returned by Install/Uninstall scripts.
 type installDataPayload struct {
-	Feature       *featureDataPayload `json:"feature"`
-	RestartNeeded bool                `json:"restart_needed"`
-	Success       bool                `json:"success"`
-	ExitCode      string              `json:"exit_code"`
+	Feature         *featureDataPayload `json:"feature"`
+	RestartNeeded   bool                `json:"restart_needed"`
+	Success         bool                `json:"success"`
+	ExitCode        string              `json:"exit_code"`
+	RebootScheduled bool                `json:"reboot_scheduled"`
 }
 
 func toFeatureInfo(d *featureDataPayload) *FeatureInfo {
@@ -247,7 +248,9 @@ function Run-Install([string]$Name, [bool]$IncludeSub, [bool]$IncludeMgmt, [stri
   $params = @{ Name = $Name; ErrorAction = 'Stop' }
   if ($IncludeSub)  { $params['IncludeAllSubFeature'] = $true }
   if ($IncludeMgmt) { $params['IncludeManagementTools'] = $true }
-  if ($Restart)     { $params['Restart'] = $true }
+  # NOTE (#200): never pass -Restart to the cmdlet. A synchronous reboot would
+  # land mid-call, killing the SSH session before the envelope is emitted and
+  # Terraform records state. The reboot is deferred below instead.
   if (-not [string]::IsNullOrEmpty($Source)) { $params['Source'] = $Source }
   try {
     $r = Install-WindowsFeature @params
@@ -257,15 +260,31 @@ function Run-Install([string]$Name, [bool]$IncludeSub, [bool]$IncludeMgmt, [stri
     return
   }
   $restartNeeded = $false
+  $rebootScheduled = $false
   $exitCode = ''
   $success = $true
   if ($r) {
-    if ($r.PSObject.Properties['RestartNeeded']) { $restartNeeded = ([string]$r.RestartNeeded -eq 'Yes' -or [bool]$r.RestartNeeded) }
+    if ($r.PSObject.Properties['RestartNeeded']) { $restartNeeded = ($r.RestartNeeded -eq 'Yes' -or $r.RestartNeeded -eq $true -or $r.RestartNeeded -eq 1) }
     if ($r.PSObject.Properties['ExitCode'])      { $exitCode = [string]$r.ExitCode }
     if ($r.PSObject.Properties['Success'])       { $success = [bool]$r.Success }
   }
   $f = Get-WindowsFeature -Name $Name -ErrorAction Stop
   $pending = Test-PendingReboot -or $restartNeeded
+  # Deferred reboot (#200): when the caller opted in ($Restart), the cmdlet
+  # result above reports RestartNeeded, and the operation succeeded ($success),
+  # schedule a detached reboot 60s out so it lands after this resource's
+  # session teardown and state write. The window is per-resource: enabling
+  # restart=true on more than one resource in the same apply can still drop a
+  # later in-flight SSH session on the same host, so opt in on at most one
+  # resource per apply (or apply reboot-requiring features last/separately).
+  # Best-effort: native shutdown.exe exit codes do not throw, so $LASTEXITCODE
+  # is checked explicitly and a scheduling failure must not fail the
+  # already-successful operation (restart_pending in state still lets the
+  # operator reboot manually). Shutdown output is swallowed so the Emit-OK
+  # envelope stays the last stdout line.
+  if ($Restart -and $restartNeeded -and $success) {
+    try { & shutdown.exe /r /t 60 /c "Terraform windows_feature: reboot after install ($Name)" /d p:4:1 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $rebootScheduled = $true } } catch { $rebootScheduled = $false }
+  }
   Emit-OK ([ordered]@{
     feature = [ordered]@{
       name = [string]$f.Name; display_name = [string]$f.DisplayName; description = [string]$f.Description
@@ -275,11 +294,16 @@ function Run-Install([string]$Name, [bool]$IncludeSub, [bool]$IncludeMgmt, [stri
     restart_needed = [bool]$restartNeeded
     success = [bool]$success
     exit_code = [string]$exitCode
+    reboot_scheduled = [bool]$rebootScheduled
   })
 }
 `
 
 // Install implements WindowsFeatureClient.Install.
+//
+// The Restart flag is forwarded to the Run-Install script only as the gate
+// for the deferred reboot (#200): the script never passes -Restart to
+// Install-WindowsFeature itself.
 func (f *FeatureClient) Install(ctx context.Context, in FeatureInput) (*FeatureInfo, *InstallResult, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, nil, NewFeatureError(FeatureErrorInvalidParameter, "feature name is empty", nil, nil)
@@ -301,9 +325,10 @@ func (f *FeatureClient) Install(ctx context.Context, in FeatureInput) (*FeatureI
 		return nil, nil, NewFeatureError(FeatureErrorUnknown, "failed to parse install payload", jerr, map[string]string{"name": in.Name})
 	}
 	return toFeatureInfo(payload.Feature), &InstallResult{
-		RestartNeeded: payload.RestartNeeded,
-		Success:       payload.Success,
-		ExitCode:      payload.ExitCode,
+		RestartNeeded:   payload.RestartNeeded,
+		Success:         payload.Success,
+		ExitCode:        payload.ExitCode,
+		RebootScheduled: payload.RebootScheduled,
 	}, nil
 }
 
@@ -323,12 +348,15 @@ function Run-Uninstall([string]$Name, [bool]$IncludeMgmt, [bool]$Restart) {
       restart_needed = $false
       success = $true
       exit_code = 'NoChangeNeeded'
+      reboot_scheduled = $false
     })
     return
   }
   $params = @{ Name = $Name; ErrorAction = 'Stop' }
   if ($IncludeMgmt) { $params['IncludeManagementTools'] = $true }
-  if ($Restart)     { $params['Restart'] = $true }
+  # NOTE (#200): never pass -Restart to the cmdlet. A synchronous reboot would
+  # land mid-call, killing the SSH session before the envelope is emitted and
+  # Terraform records state. The reboot is deferred below instead.
   try {
     $r = Uninstall-WindowsFeature @params
   } catch {
@@ -337,10 +365,11 @@ function Run-Uninstall([string]$Name, [bool]$IncludeMgmt, [bool]$Restart) {
     return
   }
   $restartNeeded = $false
+  $rebootScheduled = $false
   $exitCode = ''
   $success = $true
   if ($r) {
-    if ($r.PSObject.Properties['RestartNeeded']) { $restartNeeded = ([string]$r.RestartNeeded -eq 'Yes' -or [bool]$r.RestartNeeded) }
+    if ($r.PSObject.Properties['RestartNeeded']) { $restartNeeded = ($r.RestartNeeded -eq 'Yes' -or $r.RestartNeeded -eq $true -or $r.RestartNeeded -eq 1) }
     if ($r.PSObject.Properties['ExitCode'])      { $exitCode = [string]$r.ExitCode }
     if ($r.PSObject.Properties['Success'])       { $success = [bool]$r.Success }
   }
@@ -354,16 +383,36 @@ function Run-Uninstall([string]$Name, [bool]$IncludeMgmt, [bool]$Restart) {
       restart_pending = [bool]$pending
     }
   }
+  # Deferred reboot (#200): when the caller opted in ($Restart), the cmdlet
+  # result above reports RestartNeeded, and the operation succeeded ($success),
+  # schedule a detached reboot 60s out so it lands after this resource's
+  # session teardown and state removal. The window is per-resource: enabling
+  # restart=true on more than one resource in the same apply can still drop a
+  # later in-flight SSH session on the same host, so opt in on at most one
+  # resource per apply (or apply reboot-requiring features last/separately).
+  # Best-effort: native shutdown.exe exit codes do not throw, so $LASTEXITCODE
+  # is checked explicitly and a scheduling failure must not fail the
+  # already-successful operation (restart_pending in state still lets the
+  # operator reboot manually). Shutdown output is swallowed so the Emit-OK
+  # envelope stays the last stdout line.
+  if ($Restart -and $restartNeeded -and $success) {
+    try { & shutdown.exe /r /t 60 /c "Terraform windows_feature: reboot after uninstall ($Name)" /d p:4:1 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $rebootScheduled = $true } } catch { $rebootScheduled = $false }
+  }
   Emit-OK ([ordered]@{
     feature = $payload
     restart_needed = [bool]$restartNeeded
     success = [bool]$success
     exit_code = [string]$exitCode
+    reboot_scheduled = [bool]$rebootScheduled
   })
 }
 `
 
 // Uninstall implements WindowsFeatureClient.Uninstall.
+//
+// The Restart flag is forwarded to the Run-Uninstall script only as the gate
+// for the deferred reboot (#200): the script never passes -Restart to
+// Uninstall-WindowsFeature itself.
 func (f *FeatureClient) Uninstall(ctx context.Context, in FeatureInput) (*FeatureInfo, *InstallResult, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, nil, NewFeatureError(FeatureErrorInvalidParameter, "feature name is empty", nil, nil)
@@ -383,9 +432,10 @@ func (f *FeatureClient) Uninstall(ctx context.Context, in FeatureInput) (*Featur
 		return nil, nil, NewFeatureError(FeatureErrorUnknown, "failed to parse uninstall payload", jerr, map[string]string{"name": in.Name})
 	}
 	return toFeatureInfo(payload.Feature), &InstallResult{
-		RestartNeeded: payload.RestartNeeded,
-		Success:       payload.Success,
-		ExitCode:      payload.ExitCode,
+		RestartNeeded:   payload.RestartNeeded,
+		Success:         payload.Success,
+		ExitCode:        payload.ExitCode,
+		RebootScheduled: payload.RebootScheduled,
 	}, nil
 }
 
