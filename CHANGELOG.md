@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Resources
+
+- New `windows_smb_share` resource: manages a single SMB share on the target
+  host (`New-SmbShare` / `Set-SmbShare` / `Remove-SmbShare`) plus its
+  share-level access entries (`Grant-` / `Block-` / `Revoke-SmbShareAccess`).
+  `name` and `path` are ForceNew; the shared directory must already exist
+  (manage it with `windows_directory`). When all four of `full_access`,
+  `change_access`, `read_access` and `no_access` are omitted the host access
+  list is unmanaged, otherwise all four are authoritative (empty revokes the
+  level, out-of-band entries — including the `Everyone:Read` default — are
+  revoked as stale, a principal may belong to at most one set, grants apply
+  before stale revokes). Special (administrative) shares are reported but
+  cannot be imported. `encrypt_data` defaults to `false`; enabling it is
+  recommended for sensitive data (#221).
+
+### Data Sources
+
+- New `windows_smb_share` data source: read-only lookup of an existing share
+  by `name`, exposing the observed properties, the four access lists and the
+  `special` flag without managing the share. Reuses the sibling resource's
+  `winclient.SmbShareClient.Read` (no new winclient code) and the sibling
+  resource default for `timeouts.read` (#221).
+
 ## [0.2.0] - 2026-11-01
 
 ### Fixed

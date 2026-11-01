@@ -60,11 +60,11 @@ func TestProvider_Schema(t *testing.T) {
 
 func TestProvider_ResourcesAndDataSources(t *testing.T) {
 	p := &windowsProvider{}
-	if got := len(p.Resources(context.Background())); got != 15 {
-		t.Errorf("Resources len = %d, want 15 (directory + service + feature + hostname + local_group + local_group_member + local_user + registry_value + environment_variable + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl)", got)
+	if got := len(p.Resources(context.Background())); got != 16 {
+		t.Errorf("Resources len = %d, want 16 (directory + service + smb_share + feature + hostname + local_group + local_group_member + local_user + registry_value + environment_variable + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl)", got)
 	}
-	if got := len(p.DataSources(context.Background())); got != 15 {
-		t.Errorf("DataSources len = %d, want 15 (directory + feature + file + file_acl + hostname + legacy_package + local_group + local_group_member + local_user + registry_value + service + environment_variable + scheduled_task + firewall_rule + winget_package)", got)
+	if got := len(p.DataSources(context.Background())); got != 16 {
+		t.Errorf("DataSources len = %d, want 16 (directory + feature + file + file_acl + hostname + legacy_package + local_group + local_group_member + local_user + registry_value + service + smb_share + environment_variable + scheduled_task + firewall_rule + winget_package)", got)
 	}
 }
 
