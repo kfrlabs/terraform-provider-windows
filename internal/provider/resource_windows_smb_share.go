@@ -320,6 +320,15 @@ func (v smbShareConfigValidator) ValidateResource(ctx context.Context, req resou
 		return
 	}
 
+	// A known set can still carry unknown elements (e.g.
+	// change_access=[windows_local_group.x.name]): validation must wait
+	// until they resolve instead of failing on a value that is undecided.
+	for _, s := range []types.Set{cfg.FullAccess, cfg.ChangeAccess, cfg.ReadAccess, cfg.NoAccess} {
+		if smbShareSetHasUnknownElements(s) {
+			return
+		}
+	}
+
 	settings, ok := smbShareSettingsFromModel(ctx, &cfg, &resp.Diagnostics)
 	if !ok {
 		return
@@ -436,11 +445,13 @@ func addSmbShareDiag(diags *diag.Diagnostics, op string, err error) {
 }
 
 // smbShareSettingsFromModel builds the winclient settings from a plan or
-// config model. ManageAccess is derived from the sets' null-ness: all four
-// null means unmanaged, any configured set (even empty) means authoritative.
-// An unknown set cannot be decided yet: the handler aborts with a diagnostic
-// so the run is deferred instead of silently skipping (or forcing) the access
-// sync on a value that is not resolved.
+// config model. ManageAccess is derived via smbShareSetConfigured: all four
+// null (or unknown/undecided) means unmanaged, any configured set (even
+// empty) means authoritative. A wholly unknown set — or a known set with
+// unknown elements (e.g. a group name that is not decided until apply) —
+// cannot be decided yet: the handler aborts with a diagnostic so the run is
+// deferred instead of silently skipping (or forcing) the access sync on a
+// value that is not resolved.
 func smbShareSettingsFromModel(ctx context.Context, m *windowsSmbShareModel, diags *diag.Diagnostics) (winclient.SmbShareSettings, bool) {
 	if m.FullAccess.IsUnknown() || m.ChangeAccess.IsUnknown() || m.ReadAccess.IsUnknown() || m.NoAccess.IsUnknown() {
 		diags.AddError(
@@ -453,6 +464,17 @@ func smbShareSettingsFromModel(ctx context.Context, m *windowsSmbShareModel, dia
 	decode := func(s types.Set) ([]string, bool) {
 		if s.IsNull() || s.IsUnknown() {
 			return nil, true
+		}
+		// A known set with unknown elements (e.g. a group name that is not
+		// decided until apply) cannot be decoded yet: defer the run instead
+		// of surfacing a framework Value Conversion Error.
+		if smbShareSetHasUnknownElements(s) {
+			diags.AddError(
+				"Unknown SMB share access set",
+				"One or more of full_access, change_access, read_access, no_access is unknown. "+
+					"Retry the apply once the referenced values are known instead of converging the access list on a guess.",
+			)
+			return nil, false
 		}
 		var out []string
 		diags.Append(s.ElementsAs(ctx, &out, false)...)
@@ -498,22 +520,49 @@ func smbShareSettingsFromModel(ctx context.Context, m *windowsSmbShareModel, dia
 		ChangeAccess:          change,
 		ReadAccess:            read,
 		NoAccess:              no,
-		ManageAccess: (!m.FullAccess.IsNull() && !m.FullAccess.IsUnknown()) ||
-			(!m.ChangeAccess.IsNull() && !m.ChangeAccess.IsUnknown()) ||
-			(!m.ReadAccess.IsNull() && !m.ReadAccess.IsUnknown()) ||
-			(!m.NoAccess.IsNull() && !m.NoAccess.IsUnknown()),
+		ManageAccess: smbShareSetConfigured(m.FullAccess) ||
+			smbShareSetConfigured(m.ChangeAccess) ||
+			smbShareSetConfigured(m.ReadAccess) ||
+			smbShareSetConfigured(m.NoAccess),
 	}, true
+}
+
+// smbShareSetHasUnknownElements reports whether a set carries at least one
+// unknown element. A known set with unknown elements is undecided: callers
+// defer instead of validating, decoding or reconciling a value that has not
+// resolved yet.
+func smbShareSetHasUnknownElements(s types.Set) bool {
+	if s.IsNull() || s.IsUnknown() {
+		return false
+	}
+	for _, e := range s.Elements() {
+		if e.IsUnknown() {
+			return true
+		}
+	}
+	return false
 }
 
 // smbShareAccessManaged reports whether the model manages the host access
 // list: true when at least one access set is configured, false when all four
-// are null (unmanaged). Unknown sets are never managed: an undecided value
-// must not flip the access list into authoritative mode.
+// are null (unmanaged). Unknown sets are never managed, and neither is a
+// known set with unknown elements: an undecided value must not flip the
+// access list into authoritative mode (or surface its drift) until it
+// resolves.
 func smbShareAccessManaged(m *windowsSmbShareModel) bool {
-	return (!m.FullAccess.IsNull() && !m.FullAccess.IsUnknown()) ||
-		(!m.ChangeAccess.IsNull() && !m.ChangeAccess.IsUnknown()) ||
-		(!m.ReadAccess.IsNull() && !m.ReadAccess.IsUnknown()) ||
-		(!m.NoAccess.IsNull() && !m.NoAccess.IsUnknown())
+	return smbShareSetConfigured(m.FullAccess) ||
+		smbShareSetConfigured(m.ChangeAccess) ||
+		smbShareSetConfigured(m.ReadAccess) ||
+		smbShareSetConfigured(m.NoAccess)
+}
+
+// smbShareSetConfigured reports whether a single access set counts as
+// configured: non-null, known, and with no unknown elements.
+func smbShareSetConfigured(s types.Set) bool {
+	if s.IsNull() || s.IsUnknown() || smbShareSetHasUnknownElements(s) {
+		return false
+	}
+	return true
 }
 
 // smbShareIdentityMatches compares a declared trustee against an observed one.
@@ -557,8 +606,9 @@ func smbShareBareName(name string) string {
 // as a whole is managed (managed=true), in which case a null set is
 // authoritative-empty: observed names are returned as a non-null set so the
 // plan shows the revoke, while an empty observed list keeps null (nothing to
-// revoke, and a null plan already converges). An unknown declared set is
-// returned unchanged: its value cannot be reconciled yet.
+// revoke, and a null plan already converges). An unknown declared set — or a
+// known set with unknown elements — is returned unchanged: its value cannot
+// be reconciled yet.
 func reconcileSmbShareSet(ctx context.Context, declared types.Set, observed []winclient.SmbShareTrustee, managed bool, diags *diag.Diagnostics) types.Set {
 	if declared.IsUnknown() {
 		return declared
@@ -586,6 +636,11 @@ func reconcileSmbShareSet(ctx context.Context, declared types.Set, observed []wi
 		return set
 	}
 	var elems []string
+	// A known set with unknown elements cannot be reconciled yet: keep it
+	// unchanged instead of failing the decode on an undecided value.
+	if smbShareSetHasUnknownElements(declared) {
+		return declared
+	}
 	diags.Append(declared.ElementsAs(ctx, &elems, false)...)
 	if diags.HasError() {
 		return declared

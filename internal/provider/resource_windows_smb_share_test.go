@@ -647,6 +647,91 @@ func TestSmbShareAccessManaged_UnknownIsNotManaged(t *testing.T) {
 	}
 }
 
+func TestSmbShareConfigValidator_UnknownElementDefers(t *testing.T) {
+	// A known set with an unknown element (e.g.
+	// change_access=[windows_local_group.x.name]) cannot be validated yet:
+	// the validator defers with no diagnostics instead of failing.
+	unknownElem := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	diags := smbValidatorDiags(t, map[string]tftypes.Value{
+		"change_access": tftypes.NewValue(smbSetType(), []tftypes.Value{unknownElem}),
+	})
+	if gotErr, gotWarn := smbDiagCounts(diags); gotErr != 0 || gotWarn != 0 {
+		t.Errorf("unknown element should defer without diagnostics, got errors=%d warnings=%d: %v",
+			gotErr, gotWarn, smbDiagSummaries(diags))
+	}
+	// A mixed known + unknown element set (e.g. ["Admin", unknown]) is
+	// still undecided: the helper reports it and the validator defers.
+	mixed, d := types.SetValue(types.StringType, []attr.Value{types.StringValue("Admin"), types.StringUnknown()})
+	if d.HasError() {
+		t.Fatalf("SetValue: %v", d)
+	}
+	if !smbShareSetHasUnknownElements(mixed) {
+		t.Error("mixed known+unknown elements must count as having unknown elements")
+	}
+	knownElem := tftypes.NewValue(tftypes.String, "Admin")
+	mixedDiags := smbValidatorDiags(t, map[string]tftypes.Value{
+		"change_access": tftypes.NewValue(smbSetType(), []tftypes.Value{knownElem, unknownElem}),
+	})
+	if gotErr, gotWarn := smbDiagCounts(mixedDiags); gotErr != 0 || gotWarn != 0 {
+		t.Errorf("mixed known+unknown elements should defer without diagnostics, got errors=%d warnings=%d: %v",
+			gotErr, gotWarn, smbDiagSummaries(mixedDiags))
+	}
+}
+
+func TestSmbShareSettingsFromModel_UnknownElementDefers(t *testing.T) {
+	ctx := context.Background()
+	change, d := types.SetValue(types.StringType, []attr.Value{types.StringUnknown()})
+	if d.HasError() {
+		t.Fatalf("SetValue: %v", d)
+	}
+	m := &windowsSmbShareModel{
+		FullAccess: types.SetNull(types.StringType), ChangeAccess: change,
+		ReadAccess: types.SetNull(types.StringType), NoAccess: types.SetNull(types.StringType),
+	}
+	var diags diag.Diagnostics
+	settings, ok := smbShareSettingsFromModel(ctx, m, &diags)
+	if ok {
+		t.Error("a known set with unknown elements must abort settings")
+	}
+	if !diags.HasError() {
+		t.Error("expected a deferring diagnostic for unknown access-set elements")
+	}
+	if settings.ManageAccess {
+		t.Error("aborted settings on unknown elements must leave ManageAccess unset/false")
+	}
+}
+
+func TestSmbShareAccessManaged_UnknownElementIsNotManaged(t *testing.T) {
+	change, d := types.SetValue(types.StringType, []attr.Value{types.StringUnknown()})
+	if d.HasError() {
+		t.Fatalf("SetValue: %v", d)
+	}
+	m := &windowsSmbShareModel{
+		FullAccess: types.SetNull(types.StringType), ChangeAccess: change,
+		ReadAccess: types.SetNull(types.StringType), NoAccess: types.SetNull(types.StringType),
+	}
+	if smbShareAccessManaged(m) {
+		t.Error("a known set with unknown elements must not flip the access list into managed mode")
+	}
+}
+
+func TestReconcileSmbShareSet_UnknownElementPassthrough(t *testing.T) {
+	ctx := context.Background()
+	declared, d := types.SetValue(types.StringType, []attr.Value{types.StringUnknown()})
+	if d.HasError() {
+		t.Fatalf("SetValue: %v", d)
+	}
+	var diags diag.Diagnostics
+	got := reconcileSmbShareSet(ctx, declared,
+		[]winclient.SmbShareTrustee{{Name: "Everyone", SID: "S-1-1-1"}}, true, &diags)
+	if diags.HasError() {
+		t.Errorf("unknown elements must pass through without error, got %v", smbDiagSummaries(diags))
+	}
+	if !got.Equal(declared) {
+		t.Error("a known set with unknown elements must be returned unchanged")
+	}
+}
+
 func TestWindowsSmbShareResource_Read_NotFound_RemovesResource(t *testing.T) {
 	fc := &fakeSmbShareClient{readOut: nil}
 	r := &windowsSmbShareResource{client: fc}
