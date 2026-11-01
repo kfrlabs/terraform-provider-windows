@@ -89,6 +89,7 @@ func providerConfigObjectType() tftypes.Object {
 		"known_hosts_path":         tftypes.String,
 		"host_key":                 tftypes.String,
 		"insecure_ignore_host_key": tftypes.Bool,
+		"max_sessions":             tftypes.Number,
 	}}
 }
 
@@ -106,6 +107,7 @@ type providerCfgOptions struct {
 	knownHostsPath        *string
 	hostKey               *string
 	insecureIgnoreHostKey *bool
+	maxSessions           *int64
 }
 
 func providerCfgValue(o providerCfgOptions) tftypes.Value {
@@ -121,6 +123,12 @@ func providerCfgValue(o providerCfgOptions) tftypes.Value {
 		}
 		return tftypes.NewValue(tftypes.Bool, *p)
 	}
+	n := func(p *int64) tftypes.Value {
+		if p == nil {
+			return tftypes.NewValue(tftypes.Number, nil)
+		}
+		return tftypes.NewValue(tftypes.Number, *p)
+	}
 	return tftypes.NewValue(providerConfigObjectType(), map[string]tftypes.Value{
 		"host":                     s(o.host),
 		"port":                     tftypes.NewValue(tftypes.Number, nil),
@@ -134,6 +142,7 @@ func providerCfgValue(o providerCfgOptions) tftypes.Value {
 		"known_hosts_path":         s(o.knownHostsPath),
 		"host_key":                 s(o.hostKey),
 		"insecure_ignore_host_key": b(o.insecureIgnoreHostKey),
+		"max_sessions":             n(o.maxSessions),
 	})
 }
 
@@ -146,6 +155,7 @@ func clearProviderEnv(t *testing.T) {
 		winclient.EnvPrivateKey, winclient.EnvPrivateKeyPath, winclient.EnvPrivateKeyPassphrase,
 		winclient.EnvUseAgent, winclient.EnvKnownHosts, winclient.EnvHostKey,
 		winclient.EnvInsecureIgnoreHostKey, winclient.EnvTimeout,
+		winclient.EnvMaxSessions,
 	} {
 		t.Setenv(k, "")
 	}
@@ -181,6 +191,7 @@ func configureProvider(t *testing.T, o providerCfgOptions) *provider.ConfigureRe
 
 func strPtr(s string) *string { return &s }
 func boolPtr(b bool) *bool    { return &b }
+func int64Ptr(v int64) *int64 { return &v }
 
 // TestProvider_Configure_HappyPath covers the full success path: credentials
 // plus a pinned host key; the response gets a non-nil ResourceData (our
@@ -395,5 +406,92 @@ func TestProvider_Configure_MalformedTimeoutEnvFallsBackToDefault(t *testing.T) 
 	}
 	if got := c.Config().Timeout; got != 30*time.Second {
 		t.Errorf("dial timeout = %v, want default 30s", got)
+	}
+}
+
+// Without max_sessions or WINDOWS_MAX_SESSIONS the pool defaults to 4
+// (issue #180).
+func TestProvider_Configure_MaxSessionsDefaultsToFour(t *testing.T) {
+	clearProviderEnv(t)
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:     strPtr("10.0.0.1"),
+		username: strPtr("admin"),
+		password: strPtr("secret"),
+		hostKey:  strPtr(testHostKey(t)),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
+	}
+	c, ok := resp.ResourceData.(*winclient.Client)
+	if !ok {
+		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+	}
+	if got := c.Config().MaxSessions; got != winclient.DefaultMaxSessions {
+		t.Errorf("MaxSessions = %d, want default %d", got, winclient.DefaultMaxSessions)
+	}
+}
+
+// WINDOWS_MAX_SESSIONS must bound the pool when the attribute is unset.
+func TestProvider_Configure_MaxSessionsFromEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvMaxSessions, "2")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:     strPtr("10.0.0.1"),
+		username: strPtr("admin"),
+		password: strPtr("secret"),
+		hostKey:  strPtr(testHostKey(t)),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
+	}
+	c, ok := resp.ResourceData.(*winclient.Client)
+	if !ok {
+		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+	}
+	if got := c.Config().MaxSessions; got != 2 {
+		t.Errorf("MaxSessions = %d, want 2 from WINDOWS_MAX_SESSIONS", got)
+	}
+}
+
+// An explicit max_sessions attribute wins over WINDOWS_MAX_SESSIONS.
+func TestProvider_Configure_MaxSessionsAttributeWinsOverEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvMaxSessions, "2")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:        strPtr("10.0.0.1"),
+		username:    strPtr("admin"),
+		password:    strPtr("secret"),
+		hostKey:     strPtr(testHostKey(t)),
+		maxSessions: int64Ptr(6),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
+	}
+	c, ok := resp.ResourceData.(*winclient.Client)
+	if !ok {
+		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+	}
+	if got := c.Config().MaxSessions; got != 6 {
+		t.Errorf("MaxSessions = %d, want explicit 6", got)
+	}
+}
+
+// An out-of-range max_sessions must fail Configure rather than build a
+// pool sshd cannot serve.
+func TestProvider_Configure_InvalidMaxSessions(t *testing.T) {
+	clearProviderEnv(t)
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:        strPtr("10.0.0.1"),
+		username:    strPtr("admin"),
+		password:    strPtr("secret"),
+		hostKey:     strPtr(testHostKey(t)),
+		maxSessions: int64Ptr(-1),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag for negative max_sessions")
 	}
 }

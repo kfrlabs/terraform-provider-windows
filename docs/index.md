@@ -73,7 +73,7 @@ Every connection attribute has an environment fallback (`WINDOWS_HOST`,
 `WINDOWS_PORT`, `WINDOWS_USERNAME`, `WINDOWS_PASSWORD`, `WINDOWS_PRIVATE_KEY`,
 `WINDOWS_PRIVATE_KEY_PATH`, `WINDOWS_PRIVATE_KEY_PASSPHRASE`,
 `WINDOWS_USE_AGENT`, `WINDOWS_KNOWN_HOSTS`, `WINDOWS_HOST_KEY`,
-`WINDOWS_INSECURE_IGNORE_HOST_KEY`), which keeps secrets out of `.tf` files and
+`WINDOWS_INSECURE_IGNORE_HOST_KEY`, `WINDOWS_MAX_SESSIONS`), which keeps secrets out of `.tf` files and
 out of Terraform state.
 
 ## Host key verification
@@ -110,6 +110,7 @@ a trusted network.
 - `host_key` (String) The server's expected public key in authorized_keys form (e.g. 'ssh-ed25519 AAAAC3Nz...'), pinned directly instead of consulting a known_hosts file. Useful in CI or Terraform Cloud, where no known_hosts exists. Mutually exclusive with known_hosts_path. May also be set via WINDOWS_HOST_KEY.
 - `insecure_ignore_host_key` (Boolean) Disable host key verification entirely. This exposes every connection to man-in-the-middle interception and should only be used against disposable hosts on a trusted network. Defaults to false. May also be set via WINDOWS_INSECURE_IGNORE_HOST_KEY.
 - `known_hosts_path` (String) OpenSSH known_hosts file used to verify the server's host key. Defaults to ~/.ssh/known_hosts. Mutually exclusive with host_key. May also be set via WINDOWS_KNOWN_HOSTS.
+- `max_sessions` (Number) Maximum number of concurrent SSH/PowerShell sessions against the target host. Terraform's parallelism is otherwise serialised to 1 by the single-session transport: a slow operation blocks every other resource. Defaults to 4, which stays under the OpenSSH default MaxSessions 10. May also be set via WINDOWS_MAX_SESSIONS.
 - `password` (String, Sensitive) SSH password. May also be set via WINDOWS_PASSWORD. Prefer key-based authentication where possible.
 - `port` (Number) SSH port. Defaults to 22. May also be set via WINDOWS_PORT.
 - `private_key` (String, Sensitive) PEM-encoded SSH private key used for public-key authentication. Mutually exclusive with private_key_path. May also be set via WINDOWS_PRIVATE_KEY.

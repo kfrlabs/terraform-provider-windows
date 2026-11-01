@@ -164,6 +164,18 @@ All notable changes to this project will be documented in this file.
   run on every PR without needing a Windows host or credentials (#134,
   #136).
 
+### Performance
+
+- The SSH transport no longer serialises every call onto a single
+  PowerShell session: the client keeps a small bounded pool (new
+  `max_sessions` provider attribute, `WINDOWS_MAX_SESSIONS` fallback,
+  default 4, cap 32) and serves up to that many calls concurrently against
+  one host. The same bound covers the one-shot `powershell.exe` fallback
+  (hosts without `pwsh.exe`), so a plan can no longer turn into an
+  unbounded dial storm. `max_sessions = 1` reproduces the previous
+  behaviour. Stays under sshd's default `MaxSessions 10` out of the box
+  (#180).
+
 ### Changed
 
 - The `docs` workflow drift gate is now blocking: `go generate ./...`

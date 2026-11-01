@@ -47,6 +47,7 @@ type providerModel struct {
 	KnownHostsPath        types.String `tfsdk:"known_hosts_path"`
 	HostKey               types.String `tfsdk:"host_key"`
 	InsecureIgnoreHostKey types.Bool   `tfsdk:"insecure_ignore_host_key"`
+	MaxSessions           types.Int64  `tfsdk:"max_sessions"`
 }
 
 // Metadata sets the provider type name and version.
@@ -133,6 +134,13 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 					"WINDOWS_INSECURE_IGNORE_HOST_KEY.",
 				Optional: true,
 			},
+			"max_sessions": schema.Int64Attribute{
+				Description: "Maximum number of concurrent SSH/PowerShell sessions against the target host. " +
+					"Terraform's parallelism is otherwise serialised to 1 by the single-session transport: " +
+					"a slow operation blocks every other resource. Defaults to 4, which stays under the " +
+					"OpenSSH default MaxSessions 10. May also be set via WINDOWS_MAX_SESSIONS.",
+				Optional: true,
+			},
 		},
 	}
 }
@@ -174,6 +182,7 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		"known_hosts_path":         data.KnownHostsPath,
 		"port":                     data.Port,
 		"timeout":                  data.Timeout,
+		"max_sessions":             data.MaxSessions,
 		"use_agent":                data.UseAgent,
 		"insecure_ignore_host_key": data.InsecureIgnoreHostKey,
 	} {
@@ -209,6 +218,13 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		KnownHostsPath:        data.KnownHostsPath.ValueString(),
 		HostKey:               data.HostKey.ValueString(),
 		InsecureIgnoreHostKey: data.InsecureIgnoreHostKey.ValueBool(),
+	}
+
+	// An unset max_sessions stays 0 so ResolveFromEnv can apply
+	// WINDOWS_MAX_SESSIONS; New defaults to DefaultMaxSessions when
+	// neither is set.
+	if !data.MaxSessions.IsNull() {
+		cfg.MaxSessions = int(data.MaxSessions.ValueInt64())
 	}
 
 	winclient.ResolveFromEnv(&cfg)

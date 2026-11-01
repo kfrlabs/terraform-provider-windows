@@ -502,8 +502,10 @@ func TestTransportReusesSessionAcrossCalls(t *testing.T) {
 	}
 }
 
-// Concurrent callers must be serialised onto the single persistent session
-// rather than corrupting each other's request/response framing.
+// Concurrent callers with MaxSessions 1 are serialised onto the single
+// persistent session rather than corrupting each other's request/response
+// framing (acceptance criterion 2 of issue #180: max_sessions = 1 reproduces
+// the pre-pool behaviour).
 func TestTransportConcurrentCallsAreSerialised(t *testing.T) {
 	noAgent(t)
 	keyPEM, pub, _ := newClientKeypair(t)
@@ -512,6 +514,7 @@ func TestTransportConcurrentCallsAreSerialised(t *testing.T) {
 	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
 		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+		MaxSessions: 1,
 	})
 
 	const n = 20
