@@ -83,6 +83,11 @@ type testServerOptions struct {
 	// PowerShell 7 (Windows PowerShell 5.1 only). The client's persistent
 	// session handshake then fails and it must fall back to one-shot.
 	refusePwsh bool
+
+	// responseDelay, when > 0, pauses before serving each canned response
+	// while the request counts as in-flight, so concurrent callers overlap
+	// deterministically — for pool-concurrency tests (issue #180).
+	responseDelay time.Duration
 }
 
 // testRequest is one decoded REPL request the server received.
@@ -105,6 +110,12 @@ type testServer struct {
 	requests     []testRequest
 	connections  int
 	authAttempts []string
+	// active counts requests currently being served across every
+	// connection; maxActive is the high-water mark. For pool-concurrency
+	// tests (issue #180): the REPL is sequential per connection, so active
+	// is the number of pooled sessions in use at that instant.
+	active    int
+	maxActive int
 }
 
 // startTestServer boots a server on 127.0.0.1 and tears it down with the test.
@@ -267,6 +278,18 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 				scriptB64: strings.TrimRight(scriptLine, "\r\n"),
 				secretB64: strings.TrimRight(secretLine, "\r\n"),
 			})
+			s.active++
+			if s.active > s.maxActive {
+				s.maxActive = s.active
+			}
+			s.mu.Unlock()
+
+			if opts.responseDelay > 0 {
+				time.Sleep(opts.responseDelay)
+			}
+
+			s.mu.Lock()
+			s.active--
 			s.mu.Unlock()
 
 			if opts.dropAfterCalls > 0 && calls > opts.dropAfterCalls {
@@ -312,6 +335,18 @@ func (s *testServer) serveOneShot(ch ssh.Channel, opts testServerOptions) {
 		scriptB64: strings.TrimRight(scriptLine, "\r\n"),
 		secretB64: string(remainder),
 	})
+	s.active++
+	if s.active > s.maxActive {
+		s.maxActive = s.active
+	}
+	s.mu.Unlock()
+
+	if opts.responseDelay > 0 {
+		time.Sleep(opts.responseDelay)
+	}
+
+	s.mu.Lock()
+	s.active--
 	s.mu.Unlock()
 
 	if opts.oneShotStreamDelay > 0 {
@@ -360,6 +395,15 @@ func (s *testServer) Connections() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.connections
+}
+
+// MaxActive returns the high-water mark of requests served concurrently
+// across every connection — the number of pooled sessions in use at the
+// busiest instant (issue #180).
+func (s *testServer) MaxActive() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxActive
 }
 
 // AuthAttempts returns the authentication methods the client offered, in order.

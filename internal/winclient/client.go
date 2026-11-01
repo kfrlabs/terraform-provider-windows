@@ -26,12 +26,12 @@ import (
 // scripts against the configured Windows host (via its OpenSSH Server,
 // with PowerShell as the invoked command).
 //
-// A Client keeps at most one persistent PowerShell session open at a time
-// (issue #81): the first RunPowerShell/RunPowerShellWithInput call dials and
-// starts it, later calls reuse it, and a broken session is transparently
-// re-established. Calls are serialised by mu — the SSH session's stdin/
-// stdout/stderr are a single shared, ordered stream, so two calls cannot
-// safely interleave on it.
+// A Client keeps up to MaxSessions persistent PowerShell sessions open at
+// a time (issue #180): calls borrow an idle session or dial a new one up
+// to the limit, and wait otherwise (honouring ctx). A broken session is
+// discarded, never shared. Calls no longer hold a global lock while they
+// run — the lock only guards the idle list — so up to MaxSessions calls
+// proceed concurrently against one host.
 //
 // The persistent session requires PowerShell 7 (`pwsh.exe`): repeated stdin
 // writes to a reused `powershell.exe` (5.1) session stall server-side in
@@ -40,16 +40,24 @@ import (
 // no EOF (see ADR-0010). When no `pwsh.exe` is available the client falls
 // back, permanently for its lifetime, to one `powershell.exe` process per
 // call (the pre-#81 transport): slower (cold module import per call) but
-// sound, since a single stdin write always lands.
+// sound, since a single stdin write always lands. The one-shot path borrows
+// the same pool slot, so it is bounded by MaxSessions too (option A).
 type Client struct {
 	cfg     Config
 	sshCfg  *ssh.ClientConfig
 	address string
 
-	mu      sync.Mutex
-	session *persistentSession
+	// sem bounds concurrent calls to MaxSessions (issue #180). Both the
+	// persistent and the one-shot paths hold one slot while they run.
+	sem chan struct{}
+	// mu guards idle, oneShot and closed only — never held while a call
+	// runs. Each borrowed *persistentSession is used by exactly one
+	// caller at a time, which is what makes concurrent sessions safe.
+	mu     sync.Mutex
+	idle   []*persistentSession
+	closed bool
 	// oneShot, once true, pins this client to one powershell.exe process
-	// per call (see above). Set when establishing the persistent session
+	// per call (see above). Set when establishing a persistent session
 	// fails; only touched with mu held.
 	oneShot bool
 }
@@ -68,6 +76,12 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
+	}
+	if cfg.MaxSessions == 0 {
+		cfg.MaxSessions = DefaultMaxSessions
+	}
+	if cfg.MaxSessions < 1 || cfg.MaxSessions > MaxMaxSessions {
+		return nil, fmt.Errorf("winclient: max_sessions must be between 1 and %d, got %d", MaxMaxSessions, cfg.MaxSessions)
 	}
 
 	auth, err := buildAuthMethods(cfg)
@@ -90,6 +104,7 @@ func New(cfg Config) (*Client, error) {
 		cfg:     cfg,
 		sshCfg:  sshCfg,
 		address: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+		sem:     make(chan struct{}, cfg.MaxSessions),
 	}, nil
 }
 
@@ -97,18 +112,22 @@ func New(cfg Config) (*Client, error) {
 // included — callers must not log it).
 func (c *Client) Config() Config { return c.cfg }
 
-// Close tears down the persistent PowerShell session, if one is open. Safe
-// to call on a Client that never ran a command, and safe to call more than
-// once.
+// Close tears down every idle pooled session and marks the pool closed, so
+// sessions still borrowed are closed on return instead of being re-pooled.
+// Safe to call on a Client that never ran a command, and safe to call more
+// than once.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.session == nil {
-		return nil
+	c.closed = true
+	var errs []error
+	for _, ps := range c.idle {
+		if err := ps.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	err := c.session.Close()
-	c.session = nil
-	return err
+	c.idle = nil
+	return errors.Join(errs...)
 }
 
 // RunPowerShell executes the given PowerShell script on the remote host and
@@ -159,15 +178,21 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 		return "", "", fmt.Errorf("winclient: nil client")
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Bound concurrent calls to MaxSessions (issue #180, option A): the
+	// same slot covers the persistent and the one-shot paths.
+	if err := c.acquire(ctx); err != nil {
+		return "", "", err
+	}
+	defer c.release()
 
-	if c.oneShot {
+	if c.inOneShot() {
 		return c.runOneShot(ctx, script, secret)
 	}
 
-	if c.session == nil {
-		sess, err := newPersistentSession(ctx, c)
+	ps := c.borrow()
+	if ps == nil {
+		var err error
+		ps, err = newPersistentSession(ctx, c)
 		if err != nil {
 			// Fall back to one-shot only when the failure positively
 			// indicates that pwsh.exe is unavailable: the SSH connection
@@ -181,7 +206,7 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 			// it (instead of whatever the fallback then reports).
 			var hsErr *replHandshakeError
 			if ctx.Err() == nil && errors.As(err, &hsErr) {
-				c.oneShot = true
+				c.pinOneShot()
 				tflog.Warn(ctx, "Persistent PowerShell session unavailable, falling back to one-shot transport", map[string]interface{}{
 					"reason": hsErr.Error(),
 				})
@@ -189,18 +214,17 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 			}
 			return "", "", err
 		}
-		c.session = sess
 	}
 
-	stdout, stderr, err := c.session.run(ctx, script, secret)
+	stdout, stderr, err := ps.run(ctx, script, secret)
 	if !isSessionBroken(err) {
+		c.park(ps)
 		return stdout, stderr, err
 	}
 
-	// Transport failure or cancellation: the session is unusable, tear it
-	// down so the next call starts fresh.
-	_ = c.session.Close()
-	c.session = nil
+	// Transport failure or cancellation: the session is unusable, drop it
+	// so the next borrower starts fresh.
+	_ = ps.Close()
 
 	// A cancelled/expired context is returned directly without redialing
 	// (#171): a redial with an already-done context can never succeed and
@@ -227,8 +251,71 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 	if dialErr != nil {
 		return stdout, stderr, fmt.Errorf("winclient: session dropped and could not be re-established: %w (original error: %v)", dialErr, err)
 	}
-	c.session = sess
-	return c.session.run(ctx, script, secret)
+	stdout2, stderr2, err2 := sess.run(ctx, script, secret)
+	if isSessionBroken(err2) {
+		_ = sess.Close()
+		return stdout2, stderr2, err2
+	}
+	c.park(sess)
+	return stdout2, stderr2, err2
+}
+
+// acquire holds one pool slot, honouring ctx: beyond MaxSessions callers
+// wait here instead of dialling into sshd's MaxStartups throttle.
+func (c *Client) acquire(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case c.sem <- struct{}{}:
+		return nil
+	}
+}
+
+// release frees one pool slot.
+func (c *Client) release() { <-c.sem }
+
+// borrow pops an idle session, or reports none. The caller owns the
+// returned session until park or Close.
+func (c *Client) borrow() *persistentSession {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.oneShot || len(c.idle) == 0 {
+		return nil
+	}
+	ps := c.idle[len(c.idle)-1]
+	c.idle = c.idle[:len(c.idle)-1]
+	return ps
+}
+
+// park returns a healthy session to the pool. Sessions returning to a
+// closed or one-shot-pinned pool are torn down instead.
+func (c *Client) park(ps *persistentSession) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.oneShot {
+		_ = ps.Close()
+		return
+	}
+	c.idle = append(c.idle, ps)
+}
+
+// pinOneShot permanently switches the client to the fallback transport and
+// drains idle sessions; borrowed ones are torn down on return.
+func (c *Client) pinOneShot() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.oneShot = true
+	for _, ps := range c.idle {
+		_ = ps.Close()
+	}
+	c.idle = nil
+}
+
+// inOneShot reports whether the client is pinned to the fallback transport.
+func (c *Client) inOneShot() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.oneShot
 }
 
 // oneShotBootstrap is the constant script for the fallback transport: one
@@ -474,8 +561,8 @@ func (e *replHandshakeError) Error() string {
 func (e *replHandshakeError) Unwrap() error { return e.err }
 
 // persistentSession wraps one SSH connection running the REPL bootstrap. It
-// is not safe for concurrent use; Client.mu is what makes that safe in
-// practice.
+// is not safe for concurrent use; the pool hands each session to exactly one
+// borrower at a time, which is what makes that safe in practice.
 type persistentSession struct {
 	sshClient *ssh.Client
 	session   *ssh.Session

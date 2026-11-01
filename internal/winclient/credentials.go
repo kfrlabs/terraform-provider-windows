@@ -50,6 +50,11 @@ type Config struct {
 	// exposes every connection to man-in-the-middle interception and exists
 	// only as an explicit, deliberate opt-out.
 	InsecureIgnoreHostKey bool
+	// MaxSessions bounds how many SSH/PowerShell sessions the client keeps
+	// open concurrently (issue #180). Each call borrows a slot; beyond the
+	// limit callers wait until a slot frees or ctx is done. Zero means
+	// DefaultMaxSessions (applied by New and ResolveFromEnv callers).
+	MaxSessions int
 }
 
 // Environment variable names used as fallback when provider attributes are
@@ -69,7 +74,19 @@ const (
 	// EnvTimeout bounds the SSH connection establishment (TCP dial plus
 	// handshake) as a Go duration string (e.g. "45s", "2m").
 	EnvTimeout = "WINDOWS_TIMEOUT"
+	// EnvMaxSessions bounds the client session pool (issue #180) as a
+	// positive integer string (e.g. "4").
+	EnvMaxSessions = "WINDOWS_MAX_SESSIONS"
 )
+
+// DefaultMaxSessions is the pool size used when neither the provider
+// attribute nor WINDOWS_MAX_SESSIONS sets one. It stays well under sshd's
+// default MaxSessions 10 so a cold-start dial storm never throttles.
+const DefaultMaxSessions = 4
+
+// MaxMaxSessions caps the pool so an extreme value cannot turn every plan
+// into a dial storm against sshd's MaxStartups throttle.
+const MaxMaxSessions = 32
 
 // ResolveFromEnv fills any empty field in cfg with the corresponding
 // environment variable value, if set. It never logs secret values.
@@ -121,6 +138,14 @@ func ResolveFromEnv(cfg *Config) {
 	if cfg.Timeout == 0 {
 		if v, err := time.ParseDuration(os.Getenv(EnvTimeout)); err == nil && v > 0 {
 			cfg.Timeout = v
+		}
+	}
+	// A malformed or non-positive WINDOWS_MAX_SESSIONS is left for New to
+	// default to DefaultMaxSessions rather than serialising the pool or
+	// failing Configure on a typo — the same stance as WINDOWS_PORT above.
+	if cfg.MaxSessions == 0 {
+		if v, err := strconv.Atoi(os.Getenv(EnvMaxSessions)); err == nil && v > 0 {
+			cfg.MaxSessions = v
 		}
 	}
 }

@@ -519,6 +519,40 @@ func TestResolveFromEnvTimeout(t *testing.T) {
 	}
 }
 
+// WINDOWS_MAX_SESSIONS fills in only when no pool size was configured, and
+// a value that is not a positive integer is ignored in favour of New's
+// default.
+func TestResolveFromEnvMaxSessions(t *testing.T) {
+	t.Run("fills empty pool size", func(t *testing.T) {
+		t.Setenv(EnvMaxSessions, "2")
+		var cfg Config
+		ResolveFromEnv(&cfg)
+		if cfg.MaxSessions != 2 {
+			t.Errorf("MaxSessions = %d, want 2", cfg.MaxSessions)
+		}
+	})
+
+	t.Run("explicit pool size wins", func(t *testing.T) {
+		t.Setenv(EnvMaxSessions, "2")
+		cfg := Config{MaxSessions: 6}
+		ResolveFromEnv(&cfg)
+		if cfg.MaxSessions != 6 {
+			t.Errorf("MaxSessions = %d, want the explicit 6", cfg.MaxSessions)
+		}
+	})
+
+	for _, bad := range []string{"", "many", "0", "-1", "4.5"} {
+		t.Run("ignores "+bad, func(t *testing.T) {
+			t.Setenv(EnvMaxSessions, bad)
+			var cfg Config
+			ResolveFromEnv(&cfg)
+			if cfg.MaxSessions != 0 {
+				t.Errorf("WINDOWS_MAX_SESSIONS=%q should leave MaxSessions unset for New to default, got %d", bad, cfg.MaxSessions)
+			}
+		})
+	}
+}
+
 // An unparseable WINDOWS_USE_AGENT must not silently read as false.
 func TestResolveFromEnvIgnoresMalformedBools(t *testing.T) {
 	t.Setenv(EnvUseAgent, "yes-please")
