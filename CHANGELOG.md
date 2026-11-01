@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-01
+
 ### Fixed
 
 - `windows_service`: `service_password_wo` rotation never triggered — the
