@@ -104,6 +104,9 @@ type InstallResult struct {
 	Success bool
 	// ExitCode is the cmdlet ExitCode (often "Success", "NoChangeNeeded", "SuccessRestartRequired").
 	ExitCode string
+	// RebootScheduled is true when the host-side script successfully
+	// scheduled the deferred reboot (shutdown.exe exit code 0).
+	RebootScheduled bool
 }
 
 // FeatureInput carries the desired configuration for Install/Uninstall.

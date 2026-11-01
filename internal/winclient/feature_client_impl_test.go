@@ -86,10 +86,11 @@ func fakeFeatureData(name, state string) map[string]any {
 
 func fakeInstallData(name, state string, restart bool, exitCode string) map[string]any {
 	return map[string]any{
-		"feature":        fakeFeatureData(name, state),
-		"restart_needed": restart,
-		"success":        true,
-		"exit_code":      exitCode,
+		"feature":          fakeFeatureData(name, state),
+		"restart_needed":   restart,
+		"success":          true,
+		"exit_code":        exitCode,
+		"reboot_scheduled": false,
 	}
 }
 
@@ -572,6 +573,221 @@ func TestFeatureUninstall_BadPayload(t *testing.T) {
 	_, _, err := f.Uninstall(context.Background(), FeatureInput{Name: "Web-Server"})
 	if !IsFeatureError(err, FeatureErrorUnknown) {
 		t.Errorf("expected unknown for bad payload, got %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Deferred reboot (#200)
+// -----------------------------------------------------------------------------
+//
+// Install/Uninstall-WindowsFeature must never receive -Restart: a synchronous
+// reboot lands mid-call, kills the SSH session before the envelope is emitted
+// and surfaces as a transport error with nothing recorded in state. The
+// scripts schedule a detached reboot (shutdown.exe /r /t 60) only when the
+// caller opted in ($Restart) AND the cmdlet result reports RestartNeeded,
+// with the Emit-OK envelope as the last stdout line.
+
+func TestFeatureInstall_NoSynchronousRestart_DeferredReboot(t *testing.T) {
+	var captured string
+	restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+		captured = script
+		return featOK(t, fakeInstallData("AD-Domain-Services", "Installed", true, "SuccessRestartRequired")), "", nil
+	})
+	defer restore()
+
+	f := NewFeatureClient(newFeatTestClient(t))
+	info, result, err := f.Install(context.Background(), FeatureInput{
+		Name:    "AD-Domain-Services",
+		Restart: true,
+	})
+	if err != nil {
+		t.Fatalf("Install err: %v", err)
+	}
+	if info == nil || result == nil || !result.RestartNeeded {
+		t.Fatalf("expected parsed install result, got info=%+v result=%+v", info, result)
+	}
+	if strings.Contains(captured, "$params['Restart']") {
+		t.Error("script must not pass -Restart to Install-WindowsFeature (synchronous mid-call reboot, #200)")
+	}
+	if !strings.Contains(captured, "if ($Restart -and $restartNeeded -and $success)") {
+		t.Error("script must gate the deferred reboot on $Restart -and $restartNeeded -and $success")
+	}
+	if !strings.Contains(captured, "shutdown.exe /r /t 60") {
+		t.Error("script must schedule a detached reboot via shutdown.exe /r /t 60")
+	}
+	shutdownIdx := strings.Index(captured, "shutdown.exe")
+	emitIdx := strings.LastIndex(captured, "Emit-OK")
+	if shutdownIdx < 0 || emitIdx < 0 || emitIdx < shutdownIdx {
+		t.Errorf("Emit-OK envelope must be the last stdout line, after the shutdown schedule (shutdown=%d emit=%d)", shutdownIdx, emitIdx)
+	}
+	if !strings.Contains(captured, "$LASTEXITCODE -eq 0") {
+		t.Error("script must check $LASTEXITCODE after shutdown.exe (native-exe failure does not throw, #200)")
+	}
+	if !strings.Contains(captured, "reboot_scheduled") {
+		t.Error("script must report reboot_scheduled in the Emit-OK payload")
+	}
+	if !strings.Contains(captured, "$r.RestartNeeded -eq $true -or $r.RestartNeeded -eq 1") {
+		t.Error("script must use explicit RestartNeeded coercion (-eq 'Yes'/$true/1, not [bool] cast)")
+	}
+	if !strings.Contains(captured, "-Restart:$true") {
+		t.Error("Go call must still forward the Restart opt-in to the Run-Install gate")
+	}
+}
+
+func TestFeatureUninstall_NoSynchronousRestart_DeferredReboot(t *testing.T) {
+	var captured string
+	restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+		captured = script
+		return featOK(t, fakeInstallData("AD-Domain-Services", "Available", true, "SuccessRestartRequired")), "", nil
+	})
+	defer restore()
+
+	f := NewFeatureClient(newFeatTestClient(t))
+	_, result, err := f.Uninstall(context.Background(), FeatureInput{
+		Name:    "AD-Domain-Services",
+		Restart: true,
+	})
+	if err != nil {
+		t.Fatalf("Uninstall err: %v", err)
+	}
+	if result == nil || !result.RestartNeeded {
+		t.Fatalf("expected parsed uninstall result, got %+v", result)
+	}
+	if strings.Contains(captured, "$params['Restart']") {
+		t.Error("script must not pass -Restart to Uninstall-WindowsFeature (synchronous mid-call reboot, #200)")
+	}
+	if !strings.Contains(captured, "if ($Restart -and $restartNeeded -and $success)") {
+		t.Error("script must gate the deferred reboot on $Restart -and $restartNeeded -and $success")
+	}
+	if !strings.Contains(captured, "shutdown.exe /r /t 60") {
+		t.Error("script must schedule a detached reboot via shutdown.exe /r /t 60")
+	}
+	shutdownIdx := strings.Index(captured, "shutdown.exe")
+	emitIdx := strings.LastIndex(captured, "Emit-OK")
+	if shutdownIdx < 0 || emitIdx < 0 || emitIdx < shutdownIdx {
+		t.Errorf("Emit-OK envelope must be the last stdout line, after the shutdown schedule (shutdown=%d emit=%d)", shutdownIdx, emitIdx)
+	}
+	if !strings.Contains(captured, "$LASTEXITCODE -eq 0") {
+		t.Error("script must check $LASTEXITCODE after shutdown.exe (native-exe failure does not throw, #200)")
+	}
+	if !strings.Contains(captured, "reboot_scheduled") {
+		t.Error("script must report reboot_scheduled in the Emit-OK payload")
+	}
+	if !strings.Contains(captured, "$r.RestartNeeded -eq $true -or $r.RestartNeeded -eq 1") {
+		t.Error("script must use explicit RestartNeeded coercion (-eq 'Yes'/$true/1, not [bool] cast)")
+	}
+	if !strings.Contains(captured, "-Restart:$true") {
+		t.Error("Go call must still forward the Restart opt-in to the Run-Uninstall gate")
+	}
+}
+
+// The Restart opt-in flag must reach the uninstall script gate in both states
+// so the host-side gate covers all four combos (L4: uninstall $false case).
+func TestFeatureUninstall_RestartFlagForwarded(t *testing.T) {
+	for _, restart := range []bool{true, false} {
+		var captured string
+		restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+			captured = script
+			return featOK(t, fakeInstallData("Web-Server", "Available", false, "Success")), "", nil
+		})
+		func() {
+			defer restore()
+			f := NewFeatureClient(newFeatTestClient(t))
+			if _, _, err := f.Uninstall(context.Background(), FeatureInput{Name: "Web-Server", Restart: restart}); err != nil {
+				t.Fatalf("Restart=%v: Uninstall err: %v", restart, err)
+			}
+		}()
+		want := "-Restart:$false"
+		if restart {
+			want = "-Restart:$true"
+		}
+		if !strings.Contains(captured, want) {
+			t.Errorf("Restart=%v: uninstall script should contain %q", restart, want)
+		}
+	}
+}
+
+// reboot_scheduled must round-trip through the envelope into InstallResult
+// for both Install and Uninstall (M2: schedule-failure warning source).
+func TestFeatureInstallUninstall_RebootScheduledParsed(t *testing.T) {
+	for _, op := range []string{"install", "uninstall"} {
+		data := fakeInstallData("Web-Server", "Installed", true, "SuccessRestartRequired")
+		data["reboot_scheduled"] = true
+		restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+			return featOK(t, data), "", nil
+		})
+		func() {
+			defer restore()
+			f := NewFeatureClient(newFeatTestClient(t))
+			var result *InstallResult
+			var err error
+			if op == "install" {
+				_, result, err = f.Install(context.Background(), FeatureInput{Name: "Web-Server", Restart: true})
+			} else {
+				_, result, err = f.Uninstall(context.Background(), FeatureInput{Name: "Web-Server", Restart: true})
+			}
+			if err != nil {
+				t.Fatalf("%s: err: %v", op, err)
+			}
+			if result == nil || !result.RebootScheduled {
+				t.Errorf("%s: expected RebootScheduled=true, got %+v", op, result)
+			}
+		}()
+	}
+}
+
+// The Restart opt-in flag must reach the script gate in both states so the
+// host-side ($Restart -and $restartNeeded) condition covers all four combos.
+func TestFeatureInstall_RestartFlagForwarded(t *testing.T) {
+	for _, restart := range []bool{true, false} {
+		var captured string
+		restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+			captured = script
+			return featOK(t, fakeInstallData("Web-Server", "Installed", false, "Success")), "", nil
+		})
+		func() {
+			defer restore()
+			f := NewFeatureClient(newFeatTestClient(t))
+			if _, _, err := f.Install(context.Background(), FeatureInput{Name: "Web-Server", Restart: restart}); err != nil {
+				t.Fatalf("Restart=%v: Install err: %v", restart, err)
+			}
+		}()
+		want := "-Restart:$false"
+		if restart {
+			want = "-Restart:$true"
+		}
+		if !strings.Contains(captured, want) {
+			t.Errorf("Restart=%v: script should contain %q", restart, want)
+		}
+	}
+}
+
+// Invariant guard: a transport failure after the remote write (the exact
+// symptom of the pre-#200 mid-call reboot) maps to FeatureErrorUnknown and is
+// reported once — no retry at this layer that could mask or duplicate it.
+func TestFeatureInstallUninstall_TransportError_UnknownNoRetry(t *testing.T) {
+	for _, op := range []string{"install", "uninstall"} {
+		calls := 0
+		restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
+			calls++
+			return "stdout-junk", "stderr-junk", errors.New("winclient: powershell run: wait: remote command exited without exit status or exit signal")
+		})
+		func() {
+			defer restore()
+			f := NewFeatureClient(newFeatTestClient(t))
+			var err error
+			if op == "install" {
+				_, _, err = f.Install(context.Background(), FeatureInput{Name: "AD-Domain-Services", Restart: true})
+			} else {
+				_, _, err = f.Uninstall(context.Background(), FeatureInput{Name: "AD-Domain-Services", Restart: true})
+			}
+			if !IsFeatureError(err, FeatureErrorUnknown) {
+				t.Errorf("%s: transport error must map to unknown, got %v", op, err)
+			}
+		}()
+		if calls != 1 {
+			t.Errorf("%s: expected exactly 1 attempt (no retry), got %d", op, calls)
+		}
 	}
 }
 

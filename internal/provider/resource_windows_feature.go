@@ -145,7 +145,7 @@ func windowsFeatureSchemaDefinition(ctx context.Context) schema.Schema {
 			"restart": schema.BoolAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Allow Install/Uninstall-WindowsFeature to reboot the host automatically when needed (-Restart). Default false.",
+				Description: "When true and the install/uninstall operation reports RestartNeeded, schedule a detached host reboot ~60s after the operation completes (shutdown.exe /r /t 60), so the reboot lands after this resource records state. No reboot is scheduled when the operation does not require one. The reboot is scheduled per-resource: enable restart=true on at most one resource per apply (or apply reboot-requiring features last/separately), since a later in-flight SSH session on the same host can still be dropped by the reboot. When false and a reboot is required, restart_pending is set and the host must be rebooted out-of-band. Default false.",
 				Default:     booldefault.StaticBool(false),
 			},
 			"restart_pending": schema.BoolAttribute{
@@ -347,11 +347,24 @@ func (r *windowsFeatureResource) Delete(ctx context.Context, req resource.Delete
 		addFeatureDiag(&resp.Diagnostics, "Delete windows_feature failed", err)
 		return
 	}
-	if result != nil && result.RestartNeeded && !state.Restart.ValueBool() {
-		resp.Diagnostics.AddWarning(
-			"Reboot required after uninstall",
-			fmt.Sprintf("Uninstall-WindowsFeature reported RestartNeeded for feature %q. Reboot the target host to complete removal, or set restart=true.", name),
-		)
+	if result != nil && result.RestartNeeded {
+		switch {
+		case !state.Restart.ValueBool():
+			resp.Diagnostics.AddWarning(
+				"Reboot required after uninstall",
+				fmt.Sprintf("Uninstall-WindowsFeature reported RestartNeeded for feature %q. Reboot the target host to complete removal, or set restart=true.", name),
+			)
+		case result.RebootScheduled:
+			resp.Diagnostics.AddWarning(
+				"Deferred reboot scheduled",
+				fmt.Sprintf("Uninstall-WindowsFeature reported RestartNeeded for feature %q. A detached host reboot was scheduled in ~60s (shutdown.exe /r /t 60).", name),
+			)
+		default:
+			resp.Diagnostics.AddWarning(
+				"Deferred reboot not scheduled",
+				fmt.Sprintf("Uninstall-WindowsFeature reported RestartNeeded for feature %q but the deferred reboot could not be scheduled (shutdown.exe reported failure). Reboot the target host out-of-band.", name),
+			)
+		}
 	}
 }
 
@@ -391,7 +404,8 @@ func modelFromFeature(info *winclient.FeatureInfo, prior windowsFeatureModel) wi
 }
 
 // applyInstallResult overwrites RestartPending from the install result and
-// emits a warning when a reboot is required but `restart` is disabled.
+// emits a warning when a reboot is required: manual reboot (restart=false),
+// deferred reboot scheduled (restart=true), or schedule failure.
 func applyInstallResult(diags *diag.Diagnostics, m *windowsFeatureModel, plan windowsFeatureModel, result *winclient.InstallResult) {
 	if result == nil {
 		return
@@ -402,7 +416,24 @@ func applyInstallResult(diags *diag.Diagnostics, m *windowsFeatureModel, plan wi
 			diags.AddWarning(
 				"Reboot required",
 				fmt.Sprintf("Install/Uninstall-WindowsFeature reported RestartNeeded for feature %q (ExitCode=%s). "+
-					"Set restart=true to let the cmdlet reboot automatically, or reboot the target host out-of-band.",
+					"Set restart=true to schedule a deferred reboot after the operation, or reboot the target host out-of-band.",
+					m.Name.ValueString(), result.ExitCode),
+			)
+		} else if result.RebootScheduled {
+			diags.AddWarning(
+				"Deferred reboot scheduled",
+				fmt.Sprintf("Install/Uninstall-WindowsFeature reported RestartNeeded for feature %q (ExitCode=%s). "+
+					"A detached host reboot was scheduled in ~60s (shutdown.exe /r /t 60). The reboot is per-resource: "+
+					"a later in-flight SSH session on the same host can still be dropped when several reboot-requiring "+
+					"resources apply together.",
+					m.Name.ValueString(), result.ExitCode),
+			)
+		} else {
+			diags.AddWarning(
+				"Deferred reboot not scheduled",
+				fmt.Sprintf("Install/Uninstall-WindowsFeature reported RestartNeeded for feature %q (ExitCode=%s) "+
+					"but the deferred reboot could not be scheduled (shutdown.exe reported failure). "+
+					"Reboot the target host out-of-band; restart_pending records the requirement.",
 					m.Name.ValueString(), result.ExitCode),
 			)
 		}

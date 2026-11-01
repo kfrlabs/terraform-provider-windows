@@ -251,14 +251,45 @@ func TestApplyInstallResult_RestartWarning_EC4(t *testing.T) {
 	}
 }
 
-func TestApplyInstallResult_NoWarningWhenRestartTrue(t *testing.T) {
+func TestApplyInstallResult_RestartTrueScheduled_Warns(t *testing.T) {
 	d := &diag.Diagnostics{}
 	m := &windowsFeatureModel{Name: types.StringValue("X")}
 	plan := windowsFeatureModel{Restart: types.BoolValue(true)}
-	r := &winclient.InstallResult{RestartNeeded: true, ExitCode: "SuccessRestartRequired"}
+	r := &winclient.InstallResult{RestartNeeded: true, ExitCode: "SuccessRestartRequired", RebootScheduled: true}
 	applyInstallResult(d, m, plan, r)
-	if d.WarningsCount() != 0 {
-		t.Errorf("no warning expected when restart=true; got %d", d.WarningsCount())
+	if !m.RestartPending.ValueBool() {
+		t.Error("RestartPending should be set true")
+	}
+	if d.WarningsCount() != 1 {
+		t.Fatalf("expected one deferred-reboot warning when restart=true and scheduled; got %d", d.WarningsCount())
+	}
+	if got := (*d)[0].Summary() + " / " + (*d)[0].Detail(); !strings.Contains(strings.ToLower(got), "60s") && !strings.Contains(strings.ToLower(got), "60 s") {
+		t.Errorf("scheduled warning should mention the ~60s window, got: %q", got)
+	}
+}
+
+func TestApplyInstallResult_RestartTrueScheduleFailure_Warns(t *testing.T) {
+	d := &diag.Diagnostics{}
+	m := &windowsFeatureModel{Name: types.StringValue("X")}
+	plan := windowsFeatureModel{Restart: types.BoolValue(true)}
+	r := &winclient.InstallResult{RestartNeeded: true, ExitCode: "SuccessRestartRequired", RebootScheduled: false}
+	applyInstallResult(d, m, plan, r)
+	if !m.RestartPending.ValueBool() {
+		t.Error("RestartPending should be set true even when scheduling failed")
+	}
+	if d.WarningsCount() != 1 {
+		t.Fatalf("expected one schedule-failure warning when reboot_scheduled=false; got %d", d.WarningsCount())
+	}
+}
+
+func TestApplyInstallResult_NoRebootNeeded_NoWarning(t *testing.T) {
+	d := &diag.Diagnostics{}
+	m := &windowsFeatureModel{Name: types.StringValue("X")}
+	plan := windowsFeatureModel{Restart: types.BoolValue(true)}
+	r := &winclient.InstallResult{RestartNeeded: false, ExitCode: "Success", RebootScheduled: false}
+	applyInstallResult(d, m, plan, r)
+	if d.WarningsCount() != 0 || d.HasError() {
+		t.Errorf("no warning expected when no reboot is needed; got %v", d)
 	}
 }
 
@@ -268,6 +299,41 @@ func TestApplyInstallResult_NilResult(t *testing.T) {
 	applyInstallResult(d, m, windowsFeatureModel{}, nil)
 	if d.HasError() || d.WarningsCount() != 0 {
 		t.Error("nil result must be a no-op")
+	}
+}
+
+// #200: restart=true with RestartNeeded records restart_pending and warns
+// about the incoming deferred reboot (~60s out, per-resource window).
+func TestApplyInstallResult_RestartTrue_SetsPendingWarns(t *testing.T) {
+	d := &diag.Diagnostics{}
+	m := &windowsFeatureModel{
+		Name:           types.StringValue("AD-Domain-Services"),
+		RestartPending: types.BoolValue(false),
+	}
+	plan := windowsFeatureModel{Restart: types.BoolValue(true)}
+	r := &winclient.InstallResult{RestartNeeded: true, ExitCode: "SuccessRestartRequired", RebootScheduled: true}
+	applyInstallResult(d, m, plan, r)
+	if !m.RestartPending.ValueBool() {
+		t.Error("RestartPending should be set true when RestartNeeded, even with restart=true")
+	}
+	if d.HasError() || d.WarningsCount() != 1 {
+		t.Errorf("one deferred-reboot warning expected when restart=true and scheduled; got %v", d)
+	}
+}
+
+// #200: the restart description must document the deferred-reboot contract
+// (detached shutdown ~60s after state is recorded, only when required).
+func TestFeatureSchema_RestartDeferredReboot(t *testing.T) {
+	s := windowsFeatureSchemaDefinition(context.Background())
+	attr, ok := s.Attributes["restart"].(rschema.BoolAttribute)
+	if !ok {
+		t.Fatalf("restart attr type = %T", s.Attributes["restart"])
+	}
+	desc := attr.Description
+	for _, want := range []string{"60", "shutdown", "restart_pending", "at most one", "per-resource", "separately"} {
+		if !strings.Contains(strings.ToLower(desc), strings.ToLower(want)) {
+			t.Errorf("restart description should mention %q, got: %q", want, desc)
+		}
 	}
 }
 
@@ -783,6 +849,34 @@ func TestFeatureDelete_Handler_RestartWarning(t *testing.T) {
 	}
 	if resp.Diagnostics.WarningsCount() == 0 {
 		t.Error("expected a reboot warning when uninstall reports RestartNeeded && restart=false")
+	}
+}
+
+func TestFeatureDelete_Handler_RestartTrueScheduled_Warns(t *testing.T) {
+	for _, scheduled := range []bool{true, false} {
+		fake := &fakeFeatureClient{
+			uninstRes: &winclient.InstallResult{Success: true, RestartNeeded: true, ExitCode: "SuccessRestartRequired", RebootScheduled: scheduled},
+		}
+		r := &windowsFeatureResource{feat: fake}
+		schemaDef := windowsFeatureSchemaDefinition(context.Background())
+		prior := tfsdk.State{
+			Schema: schemaDef,
+			Raw: featObj(map[string]tftypes.Value{
+				"id":      tftypes.NewValue(tftypes.String, "Web-Server"),
+				"name":    tftypes.NewValue(tftypes.String, "Web-Server"),
+				"restart": tftypes.NewValue(tftypes.Bool, true),
+			}),
+		}
+		resp := &resource.DeleteResponse{
+			State: tfsdk.State{Schema: schemaDef, Raw: prior.Raw.Copy()},
+		}
+		r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("scheduled=%v: unexpected error: %v", scheduled, resp.Diagnostics)
+		}
+		if resp.Diagnostics.WarningsCount() != 1 {
+			t.Errorf("scheduled=%v: expected one warning on the restart=true uninstall path, got %d", scheduled, resp.Diagnostics.WarningsCount())
+		}
 	}
 }
 

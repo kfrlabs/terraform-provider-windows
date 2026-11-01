@@ -34,7 +34,11 @@ resource "windows_feature" "iis" {
 }
 
 # Advanced example: install AD DS with all sub-features and management tools,
-# allowing the cmdlet to reboot automatically when needed.
+# scheduling a detached host reboot ~60s after the operation when a reboot is
+# required (restart = true only takes effect when RestartNeeded is reported).
+# The reboot is per-resource: enable restart=true on at most one resource per
+# apply (or apply reboot-requiring features last/separately), since a later
+# in-flight SSH session on the same host can still be dropped by the reboot.
 resource "windows_feature" "ad_ds" {
   name                     = "AD-Domain-Services"
   include_sub_features     = true
@@ -61,7 +65,7 @@ resource "windows_feature" "netfx3" {
 
 - `include_management_tools` (Boolean) Install management tools (-IncludeManagementTools). Default false. ForceNew.
 - `include_sub_features` (Boolean) Install all sub-features (-IncludeAllSubFeature). Default false. ForceNew.
-- `restart` (Boolean) Allow Install/Uninstall-WindowsFeature to reboot the host automatically when needed (-Restart). Default false.
+- `restart` (Boolean) When true and the install/uninstall operation reports RestartNeeded, schedule a detached host reboot ~60s after the operation completes (shutdown.exe /r /t 60), so the reboot lands after this resource records state. No reboot is scheduled when the operation does not require one. The reboot is scheduled per-resource: enable restart=true on at most one resource per apply (or apply reboot-requiring features last/separately), since a later in-flight SSH session on the same host can still be dropped by the reboot. When false and a reboot is required, restart_pending is set and the host must be rebooted out-of-band. Default false.
 - `source` (String) Optional SxS / WIM source path used when feature payload has been removed (-Source). Required when current install_state=Removed.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 

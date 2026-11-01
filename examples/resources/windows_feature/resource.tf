@@ -19,7 +19,11 @@ resource "windows_feature" "iis" {
 }
 
 # Advanced example: install AD DS with all sub-features and management tools,
-# allowing the cmdlet to reboot automatically when needed.
+# scheduling a detached host reboot ~60s after the operation when a reboot is
+# required (restart = true only takes effect when RestartNeeded is reported).
+# The reboot is per-resource: enable restart=true on at most one resource per
+# apply (or apply reboot-requiring features last/separately), since a later
+# in-flight SSH session on the same host can still be dropped by the reboot.
 resource "windows_feature" "ad_ds" {
   name                     = "AD-Domain-Services"
   include_sub_features     = true

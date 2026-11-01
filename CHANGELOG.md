@@ -123,6 +123,23 @@ All notable changes to this project will be documented in this file.
   PowerShell/SSH session surfaces a timeout diagnostic instead of blocking
   plan forever. Omitting the block keeps the previous behavior bounded by
   the default (#197).
+- `windows_feature` with `restart = true` no longer reboots the host
+  mid-apply: `-Restart` is no longer passed to
+  `Install/Uninstall-WindowsFeature`, whose synchronous reboot killed the SSH
+  session before the result envelope was emitted — surfacing as `Create
+  windows_feature failed / SSH transport error during "install" / winclient:
+  powershell run: wait: remote command exited without exit status or exit
+  signal` with nothing recorded in state. When the operation reports
+  `RestartNeeded` and `restart` is true, the script now schedules a detached
+  reboot ~60s out (`shutdown.exe /r /t 60`) after that resource's session
+  teardown and state write (state removal on the Delete path). The window is
+  per-resource: enable `restart = true` on at most one resource per apply (or
+  apply reboot-requiring features last/separately), since a later in-flight
+  SSH session on the same host can still be dropped by the reboot; scheduling
+  is best-effort and never fails the already-successful operation
+  (`restart_pending` still records the requirement so the operator can reboot
+  manually, and a scheduling failure surfaces a warning). No reboot is
+  scheduled when the operation does not require one (#200).
 - `windows_file` downloads are integrity-gated at plan time, mirroring the
   `windows_legacy_package` posture (#175): an `http://` `source_url`
   without `source_url_sha256` now fails planning regardless of
