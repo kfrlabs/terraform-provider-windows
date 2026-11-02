@@ -109,6 +109,24 @@ All notable changes to this project will be documented in this file.
   cannot be imported. `encrypt_data` defaults to `false`; enabling it is
   recommended for sensitive data (#221).
 
+- New `windows_dns_client` resource: manages the DNS client settings of one
+  network interface on the target host (`Set-DnsClientServerAddress` /
+  `Set-DnsClient`). `interface_alias` is Required + ForceNew (exact,
+  case-insensitive match; the id is the canonical alias). `ipv4_server_addresses`
+  and `ipv6_server_addresses` are Optional + Computed lists in query order:
+  `null` leaves the family unmanaged, `[]` resets it to automatic (DHCP) and a
+  list replaces the static servers (pure-Go `net/netip` validators: family,
+  uniqueness, no unspecified/multicast/broadcast/zone-ID, loopback allowed,
+  IPv6 canonicalised with order preserved). `connection_specific_suffix` is
+  Optional + Computed with DNS name rules, plus Optional + Computed
+  `register_this_connection_address` / `use_suffix_when_registering` flags.
+  `reset_on_destroy` (default `false`) resets the managed families to automatic
+  and clears the suffix only when set. Static servers are read from the
+  `Tcpip`/`Tcpip6` registry; computed `effective_ipv4` / `effective_ipv6` are
+  DHCP-inclusive. Create and Update share one idempotent path (Update only
+  re-sends configured changes); Read drops the resource when the interface is
+  gone. Import by alias adopts both families (automatic imports as `[]`) (#229).
+
 ### Data Sources
 
 - New `windows_certificate` data source: read-only lookup of an existing
@@ -150,6 +168,14 @@ All notable changes to this project will be documented in this file.
   `special` flag without managing the share. Reuses the sibling resource's
   `winclient.SmbShareClient.Read` (no new winclient code) and the sibling
   resource default for `timeouts.read` (#221).
+
+- New `windows_dns_client` data source: read-only lookup of one interface's
+  DNS client settings by `interface_alias`, exposing the static server lists
+  (automatic families report `[]`), the DHCP-inclusive `effective_ipv4` /
+  `effective_ipv6` lists, the suffix, the registration flags and the interface
+  index/GUID without managing them. Reuses the sibling resource's
+  `winclient.DnsClientClient.Read` and the sibling resource default for
+  `timeouts.read` (#229).
 
 ## [0.2.0] - 2026-11-01
 
