@@ -6,6 +6,26 @@ All notable changes to this project will be documented in this file.
 
 ### Resources
 
+- New `windows_domain_membership` resource: joins the target host to an
+  Active Directory domain (`Add-Computer`) and optionally unjoins it on
+  destroy (`Remove-Computer`). The resource ID is the lower-cased domain DNS
+  name; the join credential (`join_credential.username` plus exactly one of
+  the state-persisted `password` or the WriteOnly `password_wo`) travels on
+  stdin and never reaches the script body or logs. The create pre-flight
+  refuses already-joined hosts (`already_joined` suggests import,
+  `joined_to_other_domain` otherwise). `Add-Computer` runs without
+  `-Restart`; when `restart` (default `false`) is set and a reboot is
+  pending, a detached reboot is scheduled ~60s after the operation (deferred
+  gate mirroring `windows_feature`). `ou_path` is create-only (warns on
+  change, never read back); `server`, `restart` and the `unjoin_*` destroy
+  behaviour update state-only with no remote action. Destroy is a no-op by
+  default; `unjoin_on_destroy` (default `false`) unjoins into
+  `unjoin_workgroup_name` (default `WORKGROUP`) and requires the
+  state-persisted password because `password_wo` is unavailable at destroy
+  time. Read drops the resource from state when the host left the domain
+  out-of-band and tolerates a domain mismatch while a reboot is pending.
+  Import adopts the domain DNS name and verifies the live join (#225).
+
 - New `windows_certificate` resource: imports one X.509 certificate into a
   Windows certificate store on the target host (`Cert:\<location>\<store>`
   via `X509Certificate2` / `X509Certificate2Collection` + `X509Store.Add`).
