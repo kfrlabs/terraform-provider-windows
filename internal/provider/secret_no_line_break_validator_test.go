@@ -1,12 +1,13 @@
 // Package provider — regression tests for issue #195.
 //
-// Secrets on windows_local_user, windows_service, windows_scheduled_task
-// and windows_certificate are streamed over stdin and consumed with
+// Secrets on windows_local_user, windows_service,
+// windows_scheduled_task, windows_certificate and windows_domain_membership
+// are streamed over stdin and consumed with
 // [Console]::In.ReadLine(). A
 // value containing \r or \n would be silently truncated at the first line
 // break, so every secret attribute carries secretNoLineBreakValidator at
 // plan time. These tests assert the validator behaviour directly and that
-// each of the seven secret attributes wires it into its schema.
+// each of the nine secret attributes wires it into its schema.
 package provider
 
 import (

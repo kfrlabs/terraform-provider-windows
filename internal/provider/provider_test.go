@@ -60,8 +60,8 @@ func TestProvider_Schema(t *testing.T) {
 
 func TestProvider_ResourcesAndDataSources(t *testing.T) {
 	p := &windowsProvider{}
-	if got := len(p.Resources(context.Background())); got != 20 {
-		t.Errorf("Resources len = %d, want 20 (certificate + directory + service + smb_share + feature + firewall_profile + hostname + local_group + local_group_member + local_user + registry_value + environment_variable + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl + net_ip_address + net_route)", got)
+	if got := len(p.Resources(context.Background())); got != 21 {
+		t.Errorf("Resources len = %d, want 21 (certificate + directory + domain_membership + service + smb_share + feature + firewall_profile + hostname + local_group + local_group_member + local_user + registry_value + environment_variable + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl + net_ip_address + net_route)", got)
 	}
 	if got := len(p.DataSources(context.Background())); got != 20 {
 		t.Errorf("DataSources len = %d, want 20 (certificate + directory + feature + file + file_acl + firewall_profile + hostname + legacy_package + local_group + local_group_member + local_user + registry_value + service + smb_share + environment_variable + scheduled_task + firewall_rule + winget_package + net_ip_address + net_route)", got)
