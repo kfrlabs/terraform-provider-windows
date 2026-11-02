@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Resources
 
+- New `windows_firewall_profile` resource: tunes a Windows Defender Firewall
+  profile (`Domain`, `Private` or `Public`) on the target host
+  (`Get-NetFirewallProfile` / `Set-NetFirewallProfile -PolicyStore
+  PersistentStore`). A profile always exists, so Create and Update share one
+  operation that writes only the configured attributes; Delete makes no remote
+  change by default, and with `restore_on_destroy` re-applies the pre-existing
+  values captured into private state at creation (or import) time. An SSH
+  lockout guard runs fail-closed inside every Apply: tightening the profile
+  that carries the provider's own SSH session without an enabled inbound Allow
+  TCP rule for the provider port is refused before anything is written.
+  Group Policy owns the `ActiveStore` view (divergence documented), and
+  GPO-managed `NotConfigured` tri-states are observed as unset rather than
+  exposed (#223).
+
 - New `windows_smb_share` resource: manages a single SMB share on the target
   host (`New-SmbShare` / `Set-SmbShare` / `Remove-SmbShare`) plus its
   share-level access entries (`Grant-` / `Block-` / `Revoke-SmbShareAccess`).
@@ -20,6 +34,13 @@ All notable changes to this project will be documented in this file.
   recommended for sensitive data (#221).
 
 ### Data Sources
+
+- New `windows_firewall_profile` data source: read-only lookup of an existing
+  firewall profile by `name`, exposing the observed settings (including
+  GPO-managed `NotConfigured` tri-states as unset) without managing the
+  profile. Reuses the sibling resource's `winclient.FirewallProfileClient.Read`
+  (no new winclient code) and the sibling resource default for
+  `timeouts.read` (#223).
 
 - New `windows_smb_share` data source: read-only lookup of an existing share
   by `name`, exposing the observed properties, the four access lists and the
