@@ -186,9 +186,15 @@ func TestManagementPathWouldHijack(t *testing.T) {
 	if !mp.WouldHijack(RouteCandidate{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.1", InterfaceIndex: 9}, current) {
 		t.Error("moving the management route to another interface must hijack")
 	}
-	// Candidate no longer covering the client: hijack.
-	if !mp.WouldHijack(RouteCandidate{DestinationPrefix: "192.0.2.0/24", NextHop: "172.18.122.1", InterfaceIndex: 4}, current) {
-		t.Error("a candidate that no longer covers the client must hijack")
+	// A candidate that does not cover the client cannot win selection:
+	// no hijack (additive semantics; replacement of the management prefix
+	// itself is refused by the exact-match check).
+	if mp.WouldHijack(RouteCandidate{DestinationPrefix: "192.0.2.0/24", NextHop: "172.18.122.1", InterfaceIndex: 4}, current) {
+		t.Error("a candidate that does not cover the client must not hijack")
+	}
+	// Cross-family candidates never hijack (Contains across families is false).
+	if mp.WouldHijack(RouteCandidate{DestinationPrefix: "2001:db8::/32", NextHop: "fe80::2", InterfaceIndex: 4}, current) {
+		t.Error("a cross-family candidate must not hijack")
 	}
 	// Current route unrelated to the client: no hijack whatever the candidate.
 	unrelated := RouteInfo{DestinationPrefix: "192.0.2.0/24", NextHop: "172.18.122.1", InterfaceIndex: 4}
@@ -199,6 +205,70 @@ func TestManagementPathWouldHijack(t *testing.T) {
 	var nilPath *ManagementPath
 	if nilPath.WouldHijack(RouteCandidate{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.99", InterfaceIndex: 4}, current) {
 		t.Error("nil path must not hijack")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WouldHijack — metric-aware selection (windows_net_route, issue #231)
+// ---------------------------------------------------------------------------
+
+func TestManagementPathWouldHijackMetricAware(t *testing.T) {
+	mp := testManagementPath()
+	mgmt := RouteInfo{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.1", InterfaceIndex: 4, EffectiveMetric: 100}
+
+	// A more specific covering route hijacks even with a worse metric:
+	// longest-prefix wins regardless of metric.
+	if !mp.WouldHijack(RouteCandidate{DestinationPrefix: "172.31.248.0/24", NextHop: "172.18.122.99", InterfaceIndex: 9, EffectiveMetric: 5000}, mgmt) {
+		t.Error("a more specific covering route via a different next hop must hijack regardless of metric")
+	}
+	// Same prefix length, lower effective metric via a different next hop:
+	// hijack (the candidate wins the selection).
+	if !mp.WouldHijack(RouteCandidate{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.99", InterfaceIndex: 4, EffectiveMetric: 50}, mgmt) {
+		t.Error("same prefix with a lower effective metric via a different next hop must hijack")
+	}
+	// Same prefix length, tied effective metric: hijack (fail closed —
+	// Windows tie-breaking is not stable across builds).
+	if !mp.WouldHijack(RouteCandidate{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.99", InterfaceIndex: 4, EffectiveMetric: 100}, mgmt) {
+		t.Error("same prefix with a tied effective metric must hijack (tie fails closed)")
+	}
+	// Same prefix length, higher effective metric (the supported backup
+	// gateway pattern): allowed.
+	if mp.WouldHijack(RouteCandidate{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.99", InterfaceIndex: 9, EffectiveMetric: 500}, mgmt) {
+		t.Error("same prefix with a higher effective metric must not hijack (backup gateway pattern)")
+	}
+	// A less specific candidate never hijacks: it cannot win the
+	// longest-prefix selection. (Covered with a /0 current best via a
+	// narrower current route.)
+	narrowMgmt := RouteInfo{DestinationPrefix: "172.31.0.0/16", NextHop: "172.18.122.1", InterfaceIndex: 4, EffectiveMetric: 100}
+	if mp.WouldHijack(RouteCandidate{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.99", InterfaceIndex: 9, EffectiveMetric: 1}, narrowMgmt) {
+		t.Error("a less specific candidate must not hijack even with the best metric")
+	}
+	// The identical route re-applied never hijacks, even on a metric tie.
+	if mp.WouldHijack(RouteCandidate{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.1", InterfaceIndex: 4, EffectiveMetric: 100}, mgmt) {
+		t.Error("re-applying the identical route must not hijack")
+	}
+	// A more specific route via the SAME next hop and interface does not
+	// divert the traffic.
+	if mp.WouldHijack(RouteCandidate{DestinationPrefix: "172.31.248.0/24", NextHop: "172.18.122.1", InterfaceIndex: 4, EffectiveMetric: 5000}, mgmt) {
+		t.Error("a more specific route via the same next hop and interface must not hijack")
+	}
+	// Unknown current metric compares as a tie: the create path passes the
+	// candidate metric for both sides when the probe fails.
+	tied := mgmt
+	tied.EffectiveMetric = 50
+	if !mp.WouldHijack(RouteCandidate{DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.99", InterfaceIndex: 4, EffectiveMetric: 50}, tied) {
+		t.Error("an unknown current metric must compare as a tie (fail closed)")
+	}
+	// IPv6: a covering route for this client's prefix hijacks; a route for
+	// another family never does.
+	mp6 := testManagementPath()
+	mp6.ClientIP = netip.MustParseAddr("2001:db8:1::99")
+	v6Mgmt := RouteInfo{DestinationPrefix: "2001:db8::/32", NextHop: "fe80::1", InterfaceIndex: 4, EffectiveMetric: 100}
+	if !mp6.WouldHijack(RouteCandidate{DestinationPrefix: "2001:db8:1::/48", NextHop: "fe80::2", InterfaceIndex: 9, EffectiveMetric: 5000}, v6Mgmt) {
+		t.Error("a more specific IPv6 covering route must hijack")
+	}
+	if mp.WouldHijack(RouteCandidate{DestinationPrefix: "2001:db8::/32", NextHop: "fe80::2", InterfaceIndex: 4, EffectiveMetric: 1}, v6Mgmt) {
+		t.Error("a candidate covering another client's prefix must not hijack this session")
 	}
 }
 
@@ -288,6 +358,8 @@ func TestParseManagementPath_FailClosed(t *testing.T) {
 		{"zero ports", map[string]any{"client_ip": "10.0.0.1", "client_port": 0, "server_ip": "10.0.0.2", "server_port": 22, "interface_index": 4, "interface_alias": "Ethernet", "route_destination_prefix": "0.0.0.0/0", "source": "ssh_connection"}},
 		{"no interface", map[string]any{"client_ip": "10.0.0.1", "client_port": 1, "server_ip": "10.0.0.2", "server_port": 22, "interface_index": 0, "interface_alias": "", "route_destination_prefix": "0.0.0.0/0", "source": "ssh_connection"}},
 		{"no route", map[string]any{"client_ip": "10.0.0.1", "client_port": 1, "server_ip": "10.0.0.2", "server_port": 22, "interface_index": 4, "interface_alias": "Ethernet", "route_destination_prefix": "", "source": "ssh_connection"}},
+		{"unparsable route destination prefix", map[string]any{"client_ip": "10.0.0.1", "client_port": 1, "server_ip": "10.0.0.2", "server_port": 22, "interface_index": 4, "interface_alias": "Ethernet", "route_destination_prefix": "not-a-prefix", "route_next_hop": "10.0.0.254", "route_interface_index": 4, "source": "ssh_connection"}},
+		{"unparsable route next hop", map[string]any{"client_ip": "10.0.0.1", "client_port": 1, "server_ip": "10.0.0.2", "server_port": 22, "interface_index": 4, "interface_alias": "Ethernet", "route_destination_prefix": "0.0.0.0/0", "route_next_hop": "not-an-ip", "route_interface_index": 4, "source": "ssh_connection"}},
 		{"unknown source", map[string]any{"client_ip": "10.0.0.1", "client_port": 1, "server_ip": "10.0.0.2", "server_port": 22, "interface_index": 4, "interface_alias": "Ethernet", "route_destination_prefix": "0.0.0.0/0", "source": "carrier_pigeon"}},
 	}
 	for _, tc := range bad {
