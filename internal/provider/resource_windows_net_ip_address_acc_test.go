@@ -19,6 +19,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"regexp"
 	"strings"
@@ -126,8 +127,14 @@ func TestAccWindowsNetIPAddress_Basic(t *testing.T) {
 }
 
 // TestAccWindowsNetIPAddress_GuardRefusesManagementAddress asserts the guard
-// refuses to delete the management IP without touching it: the apply fails
+// refuses to manage the management IP without touching it: the apply fails
 // with management_path_at_risk before any mutation.
+//
+// On a self-target runner (WINDOWS_HOST=127.0.0.1) the management address is
+// loopback, which the plan-time validators reject before the guard is ever
+// consulted; the test skips there with a clear reason instead of asserting
+// the wrong diagnostic. Guard wiring stays covered by unit
+// TestWindowsNetIPAddressResource_Create_GuardRefusal.
 func TestAccWindowsNetIPAddress_GuardRefusesManagementAddress(t *testing.T) {
 	testAccNetIPAddressPreCheck(t)
 
@@ -150,13 +157,33 @@ func TestAccWindowsNetIPAddress_GuardRefusesManagementAddress(t *testing.T) {
 		t.Fatalf("unexpected management path source %q", mp.Source)
 	}
 
+	// Sanity: the probe must guard its own server IP.
+	if !mp.TouchesAddress(mp.ServerIP) {
+		t.Fatalf("management path does not guard its own server IP %s", mp.ServerIP)
+	}
+
+	// A create-refusal assertion is only meaningful when the management
+	// address passes plan-time validation; loopback/unspecified/multicast/
+	// broadcast addresses are rejected by the schema validators before the
+	// guard runs (notably 127.0.0.1 on a self-target runner).
+	srv := mp.ServerIP.Unmap()
+	if !srv.IsValid() || srv.IsUnspecified() || srv.IsLoopback() || srv.IsMulticast() ||
+		(srv.Is4() && srv == netip.AddrFrom4([4]byte{255, 255, 255, 255})) {
+		t.Skipf("management address %s is not usable for a create-refusal assertion (plan validators reject it before the guard); skipping", mp.ServerIP)
+	}
+
+	prefixLength := 24
+	if srv.Is6() {
+		prefixLength = 64
+	}
+
 	config := fmt.Sprintf(`
 resource "windows_net_ip_address" "mgmt" {
   interface_alias = %[1]q
   ip_address      = %[2]q
-  prefix_length   = 24
+  prefix_length   = %[3]d
 }
-`, mp.InterfaceAlias, mp.ServerIP.String())
+`, mp.InterfaceAlias, mp.ServerIP.String(), prefixLength)
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
