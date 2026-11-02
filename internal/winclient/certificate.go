@@ -259,7 +259,7 @@ function ConvertTo-CertificateJson([object]$C, [string]$Loc, [string]$Name) {
     foreach ($ext in $C.Extensions) {
       if ($ext.Oid.Value -eq '2.5.29.17') {
         $asn = New-Object Security.Cryptography.AsnEncodedData($ext.Oid, $ext.RawData)
-        foreach ($line in ($asn.Format($false) -split "["` + "`r`n" + `",]+")) {
+        foreach ($line in ($asn.Format($false) -split '[,\r\n]+')) {
           $t = $line.Trim()
           if ($t -match '^(?i)DNS Name=(.+)$') { $dns += $Matches[1].Trim() }
         }
