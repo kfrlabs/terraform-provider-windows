@@ -282,6 +282,7 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 // The list is empty at bootstrap and filled in by follow-up KDust tasks.
 func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		NewWindowsCertificateResource,
 		NewWindowsDirectoryResource,
 		NewWindowsEnvironmentVariableResource,
 		NewWindowsFeatureResource,
@@ -307,6 +308,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 // DataSources returns the set of data sources implemented by this provider.
 func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
+		NewWindowsCertificateDataSource,
 		NewWindowsDirectoryDataSource,
 		NewWindowsEnvironmentVariableDataSource,
 		NewWindowsFeatureDataSource,
