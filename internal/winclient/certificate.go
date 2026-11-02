@@ -334,10 +334,10 @@ func certificateKeyFlags(location string, exportable bool) string {
 // Script builders (every user value via psQuote; payloads via stdin only)
 // ---------------------------------------------------------------------------
 
-// buildCertificateCreatePEM Streams base64(DER) on stdin. The single-element
-// array wrapper @(,$der) stops PowerShell unrolling the byte array into the
-// -ArgumentList slots; the ” password binds the (byte[], string, flags)
-// constructor overload unambiguously.
+// buildCertificateCreatePEM Streams base64(DER) on stdin. A single-element
+// X509Certificate2Collection import avoids the ambiguous New-Object
+// (byte[], string, flags) overload that resolves to the file-path ctor and
+// fails with "cannot find the file specified" for public certificates.
 func buildCertificateCreatePEM(location, store, friendlyName string) string {
 	return psCertificateHeader + fmt.Sprintf(`
 $storeLocation = %s
@@ -349,10 +349,16 @@ $friendlyName = %s
     return
   }
   $flags = %s
-  try { $cert = New-Object Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList @(,$der), '', $flags } catch {
+  $coll = New-Object Security.Cryptography.X509Certificates.X509Certificate2Collection
+  try { $coll.Import($der) } catch {
     Emit-Err (Classify-Certificate $_) ([string]$_.Exception.Message) @{ store_location = $storeLocation; store_name = $storeName; step = 'decode' }
     return
   }
+  if ($coll.Count -eq 0) {
+    Emit-Err 'corrupt_certificate' 'The PEM payload contained no certificates.' @{ store_location = $storeLocation; store_name = $storeName; step = 'decode' }
+    return
+  }
+  $cert = $coll[0]
   $store = New-Object Security.Cryptography.X509Certificates.X509Store($storeName, $storeLocation)
   try { $store.Open('ReadWrite') } catch {
     Emit-Err (Classify-Certificate $_) ([string]$_.Exception.Message) @{ store_location = $storeLocation; store_name = $storeName; step = 'open' }

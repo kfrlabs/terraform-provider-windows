@@ -49,7 +49,7 @@ data "windows_certificate" "by_subject" {
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("data.windows_certificate.by_thumbprint", "subject", minted.Subject),
 					resource.TestCheckResourceAttr("data.windows_certificate.by_thumbprint", "thumbprint", minted.Thumbprint),
-					resource.TestCheckResourceAttr("data.windows_certificate.by_thumbprint", "has_private_key", "false"),
+					resource.TestCheckResourceAttr("data.windows_certificate.by_thumbprint", "has_private_key", "true"),
 					resource.TestCheckResourceAttr("data.windows_certificate.by_thumbprint", "dns_names.0", minted.DNSName),
 					resource.TestCheckResourceAttr("data.windows_certificate.by_subject", "thumbprint", minted.Thumbprint),
 					resource.TestCheckResourceAttr("data.windows_certificate.by_subject", "subject", minted.Subject),
