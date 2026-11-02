@@ -81,19 +81,24 @@ type ManagementPath struct {
 }
 
 // RouteCandidate describes a route about to be created or applied, for the
-// WouldHijack decision. Kept minimal for reuse by windows_net_route.
+// WouldHijack decision. EffectiveMetric is the candidate's effective metric
+// (route metric + interface metric); a zero value means unknown and compares
+// as the most preferred, so an unknown metric fails closed towards hijack.
 type RouteCandidate struct {
 	DestinationPrefix string
 	NextHop           string
 	InterfaceIndex    int
+	EffectiveMetric   int
 }
 
 // RouteInfo describes the currently observed route being replaced, for the
-// WouldHijack decision. Kept minimal for reuse by windows_net_route.
+// WouldHijack decision. EffectiveMetric is the observed route's effective
+// metric (route metric + interface metric); zero means unknown.
 type RouteInfo struct {
 	DestinationPrefix string
 	NextHop           string
 	InterfaceIndex    int
+	EffectiveMetric   int
 }
 
 // TouchesAddress reports whether ip is the management address itself, i.e.
@@ -135,13 +140,21 @@ func (p *ManagementPath) TouchesRoute(prefix netip.Prefix, nextHop netip.Addr, i
 	return true
 }
 
-// WouldHijack reports whether replacing the currently observed route
-// (current) with cand would hijack the SSH session's traffic. It returns
-// true when current carries the session (its destination prefix covers the
-// management ClientIP) and cand would deliver that traffic differently: a
-// different next hop or outgoing interface, or a destination prefix that no
-// longer covers the client. A nil path never hijacks: callers fail closed
-// on an unknown path before consulting this.
+// WouldHijack reports whether adding cand alongside the currently observed
+// route (current) would hijack the SSH session's traffic. It returns true
+// when current carries the session (its destination prefix covers the
+// management ClientIP) and cand would deliver that traffic differently:
+// a more specific covering prefix always wins; at the same prefix length the
+// lower effective metric wins, with a tie treated as a hijack risk because
+// Windows tie-breaking is not stable across builds. A candidate that does
+// not cover the client cannot win the longest-prefix selection (this
+// includes cross-family candidates, where Contains across families is
+// false), so it never hijacks; replacing the management prefix itself is
+// refused separately by the exact-match check. An identical route (same
+// prefix, next hop and interface) is a no-op re-apply and never hijacks,
+// even on a metric tie: exact-metric changes to the management route itself
+// are refused separately by the exact-match check. A nil path never
+// hijacks: callers fail closed on an unknown path before consulting this.
 func (p *ManagementPath) WouldHijack(cand RouteCandidate, current RouteInfo) bool {
 	if p == nil || !p.ClientIP.IsValid() {
 		return false
@@ -152,12 +165,34 @@ func (p *ManagementPath) WouldHijack(cand RouteCandidate, current RouteInfo) boo
 	}
 	candPrefix, err := netip.ParsePrefix(cand.DestinationPrefix)
 	if err != nil || !candPrefix.Contains(p.ClientIP) {
-		return true
+		// Additive semantics: a candidate that does not cover the client
+		// cannot win route selection, so it cannot hijack (cross-family
+		// Contains is false, hence not a hijack either).
+		return false
 	}
 	if !sameRouteHop(cand.NextHop, current.NextHop) {
+		// A different next hop only diverts the traffic when the candidate
+		// can actually win the longest-prefix / lowest-metric selection.
+		// A less specific prefix never does; at the same length only an
+		// equal-or-better (lower-or-tied) effective metric does.
+		if candPrefix.Bits() < curPrefix.Bits() {
+			return false
+		}
+		if candPrefix.Bits() == curPrefix.Bits() && cand.EffectiveMetric > current.EffectiveMetric {
+			return false
+		}
 		return true
 	}
-	return cand.InterfaceIndex != current.InterfaceIndex
+	if cand.InterfaceIndex != current.InterfaceIndex {
+		if candPrefix.Bits() < curPrefix.Bits() {
+			return false
+		}
+		if candPrefix.Bits() == curPrefix.Bits() && cand.EffectiveMetric > current.EffectiveMetric {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // sameRouteHop compares two next-hop spellings, tolerating IPv4-mapped IPv6
@@ -494,6 +529,12 @@ func parseManagementPath(resp *Envelope, baseContext map[string]string) (*Manage
 	}
 	if strings.TrimSpace(j.RouteDestinationPrefix) == "" {
 		return fail("cannot determine the management path: probe returned no route towards the SSH client IP", nil)
+	}
+	if _, err := netip.ParsePrefix(strings.TrimSpace(j.RouteDestinationPrefix)); err != nil {
+		return fail(fmt.Sprintf("cannot determine the management path: unparsable route destination prefix %q", j.RouteDestinationPrefix), nil)
+	}
+	if _, err := netip.ParseAddr(strings.TrimSpace(j.RouteNextHop)); err != nil {
+		return fail(fmt.Sprintf("cannot determine the management path: unparsable route next hop %q", j.RouteNextHop), nil)
 	}
 	if j.Source != ManagementPathSourceSSH && j.Source != ManagementPathSourceTCP {
 		return fail(fmt.Sprintf("cannot determine the management path: probe returned unknown source %q", j.Source), nil)

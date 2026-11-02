@@ -6,6 +6,28 @@ All notable changes to this project will be documented in this file.
 
 ### Resources
 
+- New `windows_net_route` resource: manages one persistent IP route on one
+  network interface of the target host (`New-NetRoute` / `Set-NetRoute` /
+  `Remove-NetRoute -PolicyStore PersistentStore`). Static routes to remote
+  networks, on-link routes (next hop `0.0.0.0` / `::`) and manually managed
+  default gateways. `interface_alias`, `destination_prefix` and `next_hop`
+  are ForceNew (the prefix must be canonical masked CIDR, e.g. `10.0.0.5/24`
+  is a plan-time error naming `10.0.0.0/24`; the next hop must share the
+  prefix family, multicast/loopback rejected); only `route_metric`
+  (0-9999, default 256) updates in place. Every mutating operation runs the
+  management-path guard (`internal/winclient/mgmtpath.go`): deleting,
+  replacing or re-metricing the exact management route is refused
+  fail-closed with `management_path_at_risk`, as is a candidate that would
+  hijack the SSH return path (more specific covering prefix, or the same
+  prefix length with an equal-or-better effective metric via a different
+  next hop or interface — ties fail closed); an undeterminable path fails
+  closed with `management_path_unknown` unless
+  `unsafe_skip_management_check` is set. Pre-flight refuses triplets owned
+  by other protocols (`route_owned_by_other_protocol`) and suggests import
+  for existing `NetMgmt` triplets (`already_exists`). Import adopts
+  `<interface_alias>|<destination_prefix>|<next_hop>` for NetMgmt routes
+  only (#231).
+
 - New `windows_net_ip_address` resource: manages one static IP address on one
   network interface of the target host (`New-NetIPAddress` /
   `Set-NetIPAddress` / `Remove-NetIPAddress`). Several resources may target
@@ -51,6 +73,15 @@ All notable changes to this project will be documented in this file.
   recommended for sensitive data (#221).
 
 ### Data Sources
+
+- New `windows_net_route` data source: read-only lookup of an existing
+  persistent route by `destination_prefix`, optionally narrowed by
+  `interface_alias` and `next_hop`, exposing the observed interface, next
+  hop, metrics, family and protocol. Several matches resolve to the lowest
+  `effective_metric` winner with `match_count` telling how many matched;
+  zero matches is an error. Reuses the sibling resource's
+  `winclient.NetRouteClient.Lookup` (no new winclient code) and the sibling
+  resource default for `timeouts.read` (#231).
 
 - New `windows_net_ip_address` data source: read-only lookup of an existing
   static address by `ip_address` alone or together with `interface_alias`,
