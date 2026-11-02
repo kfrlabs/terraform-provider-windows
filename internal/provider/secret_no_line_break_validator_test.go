@@ -1,11 +1,12 @@
 // Package provider — regression tests for issue #195.
 //
-// Secrets on windows_local_user, windows_service and windows_scheduled_task
-// are streamed over stdin and consumed with [Console]::In.ReadLine(). A
+// Secrets on windows_local_user, windows_service, windows_scheduled_task
+// and windows_certificate are streamed over stdin and consumed with
+// [Console]::In.ReadLine(). A
 // value containing \r or \n would be silently truncated at the first line
 // break, so every secret attribute carries secretNoLineBreakValidator at
 // plan time. These tests assert the validator behaviour directly and that
-// each of the six secret attributes wires it into its schema.
+// each of the seven secret attributes wires it into its schema.
 package provider
 
 import (
@@ -218,4 +219,9 @@ func TestScheduledTaskPrincipalPasswordWo_NoLineBreak(t *testing.T) {
 	assertSecretAttrGuarded(t,
 		path.Root("principal").AtName("password_wo"),
 		scheduledTaskPrincipalValidators(t, "password_wo"))
+}
+
+func TestCertificatePfxPasswordWo_NoLineBreak(t *testing.T) {
+	s := windowsCertificateSchemaDefinition(context.Background())
+	assertSecretAttrGuarded(t, path.Root("pfx_password_wo"), secretAttrValidators(t, s, "pfx_password_wo"))
 }

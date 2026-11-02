@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Resources
 
+- New `windows_certificate` resource: imports one X.509 certificate into a
+  Windows certificate store on the target host (`Cert:\<location>\<store>`
+  via `X509Certificate2` / `X509Certificate2Collection` + `X509Store.Add`).
+  Exactly one payload: `certificate_pem` (stored in state in normalised
+  form) or the WriteOnly `pfx_base64_wo` bundle plus `pfx_password_wo` and
+  the `pfx_wo_version` rotation counter (changing only the bundle without
+  bumping the version is a no-op). Payload and password travel on stdin and
+  never reach state or logs. `store_location` (default `LocalMachine`) and
+  `store_name` (default `My`), the payload and `exportable` (PFX only,
+  default `false`) are ForceNew; only `friendly_name` updates in place and
+  `delete_private_key` (default `true`) deletes the key on destroy. `Root`
+  / `AuthRoot` stores warn (trust anchors), `CurrentUser` trusted roots are
+  refused. Already-present thumbprints suggest import instead of failing
+  opaquely; import adopts `<store_location>/<store_name>/<thumbprint>`
+  (keyed certificates import with `pfx_wo_version = 1`, keyless ones with
+  their normalised PEM) (#222).
+
 - New `windows_net_route` resource: manages one persistent IP route on one
   network interface of the target host (`New-NetRoute` / `Set-NetRoute` /
   `Remove-NetRoute -PolicyStore PersistentStore`). Static routes to remote
@@ -73,6 +90,16 @@ All notable changes to this project will be documented in this file.
   recommended for sensitive data (#221).
 
 ### Data Sources
+
+- New `windows_certificate` data source: read-only lookup of an existing
+  certificate by `thumbprint` or `subject` (exactly one), optionally
+  narrowed by `store_location` / `store_name`, exposing the observed
+  thumbprints, names, validity window, DNS names, key presence and friendly
+  name without managing the entry. A subject lookup matching several
+  certificates resolves to the most recently issued one when `most_recent`
+  is true (the default); zero matches is an error. Reuses the sibling
+  resource's `winclient.CertificateClient` (no new winclient code) and the
+  sibling resource default for `timeouts.read` (#222).
 
 - New `windows_net_route` data source: read-only lookup of an existing
   persistent route by `destination_prefix`, optionally narrowed by
