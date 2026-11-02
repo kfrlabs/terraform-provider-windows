@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Resources
 
+- New `windows_net_ip_address` resource: manages one static IP address on one
+  network interface of the target host (`New-NetIPAddress` /
+  `Set-NetIPAddress` / `Remove-NetIPAddress`). Several resources may target
+  the same interface, one per address. `interface_alias` and `ip_address` are
+  ForceNew (the address is stored canonically via `netip`); `prefix_length`
+  and `skip_as_source` update in place. An IPv4 interface with DHCP still
+  enabled needs `disable_dhcp` (tracked in private state, restorable on
+  destroy with `restore_dhcp_on_destroy`); duplicate address detection rolls
+  the address back. Every mutating operation consults the new shared
+  management-path guard (`internal/winclient/mgmtpath.go`: `SSH_CONNECTION`
+  primary plus `Get-NetTCPConnection` fallback, computed per risky operation
+  and never cached), which refuses fail-closed with `management_path_at_risk`
+  / `management_path_unknown` unless `unsafe_skip_management_check` is set.
+  The default gateway is deliberately not managed (see `windows_net_route`).
+  Import adopts `<interface_alias>|<ip_address>` for Manual-origin addresses
+  only (#230).
+
 - New `windows_firewall_profile` resource: tunes a Windows Defender Firewall
   profile (`Domain`, `Private` or `Public`) on the target host
   (`Get-NetFirewallProfile` / `Set-NetFirewallProfile -PolicyStore
@@ -34,6 +51,14 @@ All notable changes to this project will be documented in this file.
   recommended for sensitive data (#221).
 
 ### Data Sources
+
+- New `windows_net_ip_address` data source: read-only lookup of an existing
+  static address by `ip_address` alone or together with `interface_alias`,
+  exposing the observed interface, prefix length, origin, state, family and
+  skip-as-source flag. Zero or several matches is an error listing the
+  candidates. Reuses the sibling resource's
+  `winclient.NetIPAddressClient.Lookup` (no new winclient code) and the
+  sibling resource default for `timeouts.read` (#230).
 
 - New `windows_firewall_profile` data source: read-only lookup of an existing
   firewall profile by `name`, exposing the observed settings (including
