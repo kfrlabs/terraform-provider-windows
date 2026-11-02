@@ -50,8 +50,8 @@ type Client struct {
 	// sem bounds concurrent calls to MaxSessions (issue #180). Both the
 	// persistent and the one-shot paths hold one slot while they run.
 	sem chan struct{}
-	// mu guards idle, oneShot and closed only — never held while a call
-	// runs. Each borrowed *persistentSession is used by exactly one
+	// mu guards idle, oneShot and closed only — never held while
+	// a call runs. Each borrowed *persistentSession is used by exactly one
 	// caller at a time, which is what makes concurrent sessions safe.
 	mu     sync.Mutex
 	idle   []*persistentSession
@@ -216,7 +216,7 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 		}
 	}
 
-	stdout, stderr, err := ps.run(ctx, script, secret)
+	stdout, stderr, err := ps.run(ctx, substituteSessionPort(script, sessionSourcePort(ps.localAddr)), secret)
 	if !isSessionBroken(err) {
 		c.park(ps)
 		return stdout, stderr, err
@@ -251,7 +251,7 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 	if dialErr != nil {
 		return stdout, stderr, fmt.Errorf("winclient: session dropped and could not be re-established: %w (original error: %v)", dialErr, err)
 	}
-	stdout2, stderr2, err2 := sess.run(ctx, script, secret)
+	stdout2, stderr2, err2 := sess.run(ctx, substituteSessionPort(script, sessionSourcePort(sess.localAddr)), secret)
 	if isSessionBroken(err2) {
 		_ = sess.Close()
 		return stdout2, stderr2, err2
@@ -273,6 +273,35 @@ func (c *Client) acquire(ctx context.Context) error {
 
 // release frees one pool slot.
 func (c *Client) release() { <-c.sem }
+
+// sessionSourcePort returns the TCP source port of the given local address,
+// or 0 when it carries none. Each persistent session records its own dial
+// address (see persistentSession.localAddr); the management-path probe is
+// rendered with the executing session's port at execution time, never from a
+// shared snapshot, so concurrent probes cannot observe each other's ports and
+// the first probe on a fresh client still has a real port (issue #230).
+func sessionSourcePort(a net.Addr) int {
+	if a == nil {
+		return 0
+	}
+	_, port, err := net.SplitHostPort(a.String())
+	if err != nil {
+		return 0
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil || p <= 0 || p > 65535 {
+		return 0
+	}
+	return p
+}
+
+// substituteSessionPort renders the management-path local-port placeholder
+// (mgmtPathLocalPortPlaceholder, emitted by buildMgmtPathScript) with the
+// source port of the session executing this call. Scripts without the
+// placeholder are returned unchanged.
+func substituteSessionPort(script string, port int) string {
+	return strings.ReplaceAll(script, mgmtPathLocalPortPlaceholder, strconv.Itoa(port))
+}
 
 // borrow pops an idle session, or reports none. The caller owns the
 // returned session until park or Close.
@@ -388,11 +417,15 @@ func composeOneShotStdin(script, input string) io.Reader {
 // returns its stdout/stderr. Used when no pwsh.exe is available for the
 // persistent session.
 func (c *Client) runOneShot(ctx context.Context, script, secret string) (string, string, error) {
-	client, err := c.dial(ctx)
+	client, localAddr, err := c.dial(ctx)
 	if err != nil {
 		return "", "", err
 	}
 	defer func() { _ = client.Close() }()
+	// Render the management-path placeholder with this connection's own
+	// source port: the probe executes on this connection while it is still
+	// established, so the TCP fallback matches the in-flight session.
+	script = substituteSessionPort(script, sessionSourcePort(localAddr))
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -470,10 +503,14 @@ func (e *replTransportError) Error() string {
 
 func (e *replTransportError) Unwrap() error { return e.err }
 
-// dial opens a new SSH connection to the configured host. The whole connect
-// phase (TCP dial plus SSH handshake and auth) is bounded by the earlier of
-// the configured timeout and the context deadline, and cancelling ctx aborts
-// a stalled handshake promptly.
+// dial opens a new SSH connection to the configured host. It returns the
+// client alongside the connection's local address so callers can bind
+// per-session state (e.g. the persistent session's source port for the
+// management-path TCP fallback) to the connection that actually executes a
+// probe, instead of a client-global snapshot. The whole connect phase
+// (TCP dial plus SSH handshake and auth) is bounded by the earlier of the
+// configured timeout and the context deadline, and cancelling ctx aborts a
+// stalled handshake promptly.
 //
 // ssh.ClientConfig.Timeout is only honoured by ssh.Dial, not by the
 // NewClientConn used here, and ctx is not consulted after the TCP connect —
@@ -481,12 +518,16 @@ func (e *replTransportError) Unwrap() error { return e.err }
 // key exchange/auth (overloaded sshd, half-open middlebox, wrong service on
 // the port, MaxStartups throttling) would hang until the per-resource
 // timeouts fire, or forever on code paths that dial before racing ctx.
-func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
+func (c *Client) dial(ctx context.Context) (*ssh.Client, net.Addr, error) {
 	d := net.Dialer{Timeout: c.cfg.Timeout}
 	conn, err := d.DialContext(ctx, "tcp", c.address)
 	if err != nil {
-		return nil, fmt.Errorf("winclient: dial: %w", err)
+		return nil, nil, fmt.Errorf("winclient: dial: %w", err)
 	}
+	// Capture the local address for the caller: the management-path probe
+	// matches it against the server-side TCP table. LocalAddr stays valid
+	// after Close, so the net.Addr value (not the conn) is sufficient.
+	localAddr := conn.LocalAddr()
 	// Bound every handshake byte by the earlier of the configured timeout
 	// and the context deadline.
 	handshakeDeadline := time.Now().Add(c.cfg.Timeout)
@@ -495,7 +536,7 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 	}
 	if err := conn.SetDeadline(handshakeDeadline); err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("winclient: set handshake deadline: %w", err)
+		return nil, nil, fmt.Errorf("winclient: set handshake deadline: %w", err)
 	}
 	// NewClientConn does not watch ctx, so close the connection from a
 	// goroutine while the handshake runs; the blocked handshake then fails
@@ -518,18 +559,18 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 			// Surface the context error so callers can match on
 			// context.Canceled/DeadlineExceeded; the handshake failure is
 			// attached for diagnosis.
-			return nil, fmt.Errorf("winclient: ssh handshake aborted (%v): %w", err, ctxErr)
+			return nil, nil, fmt.Errorf("winclient: ssh handshake aborted (%v): %w", err, ctxErr)
 		}
-		return nil, fmt.Errorf("winclient: ssh handshake: %w", err)
+		return nil, nil, fmt.Errorf("winclient: ssh handshake: %w", err)
 	}
 	// The handshake completed: lift the connect-phase deadline so later I/O
 	// on the connection is governed by ctx and the per-call logic again,
 	// not by the dial budget.
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("winclient: clear handshake deadline: %w", err)
+		return nil, nil, fmt.Errorf("winclient: clear handshake deadline: %w", err)
 	}
-	return ssh.NewClient(sshConn, chans, reqs), nil
+	return ssh.NewClient(sshConn, chans, reqs), localAddr, nil
 }
 
 // replScriptError reports an uncaught PowerShell error from a healthy
@@ -570,12 +611,16 @@ type persistentSession struct {
 	stdout    *bufio.Reader
 	stderr    *bufio.Reader
 	marker    string
+	// localAddr is the connection's local address at dial time, used to
+	// render the management-path TCP fallback with the executing
+	// session's own source port (see substituteSessionPort).
+	localAddr net.Addr
 }
 
 // newPersistentSession dials, starts the REPL bootstrap and waits for its
 // ready handshake before handing the session back.
 func newPersistentSession(ctx context.Context, c *Client) (*persistentSession, error) {
-	sshClient, err := c.dial(ctx)
+	sshClient, localAddr, err := c.dial(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -617,6 +662,7 @@ func newPersistentSession(ctx context.Context, c *Client) (*persistentSession, e
 		stdin:     stdin,
 		stdout:    bufio.NewReader(stdoutPipe),
 		stderr:    bufio.NewReader(stderrPipe),
+		localAddr: localAddr,
 	}
 
 	type readyResult struct {

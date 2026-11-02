@@ -1178,7 +1178,7 @@ func TestDialStalledHandshakeBoundedByTimeout(t *testing.T) {
 	})
 
 	start := time.Now()
-	_, err := c.dial(context.Background())
+	_, _, err := c.dial(context.Background())
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected an error dialling a server that never speaks SSH")
@@ -1212,7 +1212,7 @@ func TestDialStalledHandshakeAbortedByContextCancel(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	_, err := c.dial(ctx)
+	_, _, err := c.dial(ctx)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected an error after cancelling the context mid-handshake")
