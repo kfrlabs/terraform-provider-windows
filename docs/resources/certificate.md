@@ -94,14 +94,12 @@ output "web_thumbprint" {
 
 ### Optional
 
-> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
-
 - `certificate_pem` (String) PEM-encoded certificate (the CERTIFICATE block; surrounding text such as a chain or private key is ignored, only the first certificate is imported). Exactly one of `certificate_pem` and `pfx_base64_wo` must be set. Stored in state in normalised form. Changing it replaces the certificate.
 - `delete_private_key` (Boolean) Whether destroy also deletes the private key from the key store. Defaults to `true`. Only affects destroy.
 - `exportable` (Boolean) Marks the imported private key exportable. PFX bundles only; rejected with `certificate_pem`. Immutable after creation (ForceNew). Defaults to `false`.
 - `friendly_name` (String) Display name of the certificate. The only attribute updated in place; setting it to `""` clears the display name.
-- `pfx_base64_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only base64-encoded PFX/PKCS#12 bundle (TPF v1.14+ WriteOnly). Exactly one of `certificate_pem` and `pfx_base64_wo` must be set. The plaintext is never persisted in state; rotation is driven exclusively by `pfx_wo_version`. Changing only the bundle without bumping the version is a no-op.
-- `pfx_password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only password decrypting the PFX bundle (TPF v1.14+ WriteOnly). Omit for an unprotected bundle. The value must not contain carriage return or line feed characters (rejected at plan time): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.
+- `pfx_base64_wo` (String, Sensitive) Write-only base64-encoded PFX/PKCS#12 bundle (TPF v1.14+ WriteOnly). Exactly one of `certificate_pem` and `pfx_base64_wo` must be set. The plaintext is never persisted in state; rotation is driven exclusively by `pfx_wo_version`. Changing only the bundle without bumping the version is a no-op.
+- `pfx_password_wo` (String, Sensitive) Write-only password decrypting the PFX bundle (TPF v1.14+ WriteOnly). Omit for an unprotected bundle. The value must not contain carriage return or line feed characters (rejected at plan time): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.
 - `pfx_wo_version` (Number) Version counter for `pfx_base64_wo` rotation. Change this value to replace the certificate with a new bundle: when it changes, the provider re-imports the configured bundle. Conventionally starts at 1. Changing only the bundle without changing this version leaves the stored certificate untouched.
 - `store_location` (String) Certificate store location: `LocalMachine` (default) or `CurrentUser`. Immutable after creation (ForceNew).
 - `store_name` (String) Certificate store name (e.g. `My`, the default). Immutable after creation (ForceNew). Must not contain `/` or `\`.
