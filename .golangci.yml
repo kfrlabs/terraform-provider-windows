@@ -20,6 +20,7 @@ linters:
     - staticcheck
     - unconvert
     - unused
+    - usetesting
   settings:
     gosec:
       excludes:
