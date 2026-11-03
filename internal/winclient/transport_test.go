@@ -188,12 +188,8 @@ func TestTransportAgentAuth(t *testing.T) {
 
 	// A keyring served over a unix socket: a real agent protocol exchange,
 	// with no ssh-agent binary and no key on disk. Keep the socket path short,
-	// since sun_path is capped around 104 bytes.
-	dir, err := os.MkdirTemp("", "ag")
-	if err != nil {
-		t.Fatalf("temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	// since sun_path is capped around 104 bytes (t.TempDir stays well under).
+	dir := t.TempDir()
 
 	sockPath := filepath.Join(dir, "s")
 	ln, err := net.Listen("unix", sockPath)
