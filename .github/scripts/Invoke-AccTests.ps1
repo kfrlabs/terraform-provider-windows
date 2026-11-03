@@ -26,6 +26,7 @@ param(
     # Overrides -Lanes: a single lane running this `-run` regexp, no skip.
     [string]$RunFilter = '',
     [string]$GroupsFile = (Join-Path $PSScriptRoot '..\testacc-groups.json'),
+    [string]$AllowedSkipsFile = (Join-Path $PSScriptRoot '..\testacc-allowed-skips.json'),
     [string]$WorkingDirectory = (Get-Location).Path,
     [string]$Timeout = '30m',
     [string]$LogDirectory = (Join-Path ([IO.Path]::GetTempPath()) 'testacc-logs'),
@@ -69,6 +70,24 @@ if (-not $plan) { throw 'no lanes to run: pass -Lanes or -RunFilter' }
 $Binary = (Resolve-Path $Binary).Path
 New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
 
+# Fail fast: the skip gate only sees what the logs say, so a missing or
+# malformed gate file must fail in seconds here, not after 30-50 min of lanes.
+# Never silently pass every skip.
+if (-not (Test-Path -LiteralPath $AllowedSkipsFile)) {
+    throw "allowed-skips file not found: $AllowedSkipsFile (pass -AllowedSkipsFile or add .github/testacc-allowed-skips.json)"
+}
+try {
+    $allowedSkips = @((Get-Content -Raw -Path $AllowedSkipsFile | ConvertFrom-Json).allowed)
+} catch {
+    throw "could not parse allowed-skips file '$AllowedSkipsFile': $_"
+}
+for ($n = 0; $n -lt $allowedSkips.Count; $n++) {
+    $entry = $allowedSkips[$n]
+    if (-not $entry.pattern) { throw "allowed-skips entry ${n} has no non-empty 'pattern'" }
+    if (($null -ne $entry.reasons) -and ($entry.reasons -isnot [Array])) { throw "allowed-skips entry ${n} 'reasons' must be an array" }
+    try { $null = [regex]::new($entry.pattern) } catch { throw "allowed-skips entry ${n}: invalid regex pattern '$($entry.pattern)': $_" }
+}
+
 $running = foreach ($lane in $plan) {
     $base = Join-Path $LogDirectory ($lane.Name -replace '[^\w.-]', '_')
     $argv = @('-test.v', '-test.timeout', $Timeout, '-test.run', $lane.Run)
@@ -97,7 +116,9 @@ while ($true) {
 }
 
 $failed = $false
+$allSkips = @()
 $summary = @('| lane | result | duration | pass | fail | skip | slowest |', '|---|---|---|---|---|---|---|')
+
 foreach ($r in $running) {
     $r.Proc.WaitForExit()
     $code = $r.Proc.ExitCode
@@ -108,6 +129,52 @@ foreach ($r in $running) {
         })
     $count = { param($s) @($results | Where-Object Status -EQ $s).Count }
     $slowest = (($results | Sort-Object Seconds -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) $([math]::Round($_.Seconds))s" }) -join ', ')
+
+    # Skips with their reasons: go test prints a skipped test's
+    # `file.go:N: message` lines BEFORE its `--- SKIP:` result line, so
+    # scan backward over the indented block above each top-level SKIP.
+    $skips = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        # Top-level '--- SKIP:' lines only, same as the counts regex; indented subtest skips are out of scope.
+        if ($lines[$i] -match '^--- SKIP: (\S+) \(([\d.]+)s\)') {
+            $skipName = $Matches[1]
+            $block = @()
+            for ($j = $i - 1; $j -ge 0 -and $lines[$j] -match '^\s+'; $j--) {
+                $block = ,$lines[$j] + $block
+            }
+            $parts = @()
+            foreach ($b in $block) {
+                if ($b -match '^\s+\S+\.go:\d+: (.*)$') {
+                    $parts += $Matches[1]
+                }
+            }
+            $skips += [pscustomobject]@{ Name = $skipName; Reason = (($parts -join ' // ').Trim()) }
+        }
+    }
+    foreach ($s in $skips) {
+        $allowed = $false
+        foreach ($entry in $allowedSkips) {
+            if ($entry.pattern -and ($s.Name -match $entry.pattern)) {
+                if ($null -eq $entry.reasons -or @($entry.reasons).Count -eq 0) {
+                    $allowed = $true
+                    break
+                }
+                foreach ($needle in @($entry.reasons)) {
+                    if ($s.Reason.Contains($needle)) {
+                        $allowed = $true
+                        break
+                    }
+                }
+                if ($allowed) { break }
+            }
+        }
+        $allSkips += [pscustomobject]@{ Lane = $r.Lane.Name; Name = $s.Name; Reason = $s.Reason; Allowed = $allowed }
+        if (-not $allowed) {
+            # go test exits 0 on skips, so this explicit failure is the gate.
+            $failed = $true
+            Write-Host ("::error title=unlisted acceptance skip in lane " + $r.Lane.Name + "::unlisted acceptance skip: " + $s.Name + " - " + $s.Reason + " (add to testacc-allowed-skips.json or fix the test)")
+        }
+    }
 
     Write-Host ("::group::lane {0}: exit {1} in {2:mm\:ss}" -f $r.Lane.Name, $code, $dur)
     $lines | Write-Host
@@ -123,9 +190,23 @@ foreach ($r in $running) {
     $summary += ('| {0} | {1} | {2:mm\:ss} | {3} | {4} | {5} | {6} |' -f $r.Lane.Name, $(if ($code -eq 0) { 'ok' } else { "exit $code" }), $dur, (& $count 'PASS'), (& $count 'FAIL'), (& $count 'SKIP'), $slowest)
 }
 
-$summary | Write-Host
+$skipSection = @('', '### Skipped tests', '')
+if ($allSkips) {
+    $skipSection += '| lane | test | reason | allowed |'
+    $skipSection += '|---|---|---|---|'
+    foreach ($rec in $allSkips) {
+        $allowedText = 'no'
+        if ($rec.Allowed) { $allowedText = 'yes' }
+        $skipSection += '| ' + $rec.Lane + ' | ' + $rec.Name + ' | ' + ($rec.Reason -replace '\|', '/') + ' | ' + $allowedText + ' |'
+    }
+} else {
+    $skipSection += 'No skipped tests.'
+}
+$skipSection += ''
+
+($summary + $skipSection) | Write-Host
 if ($env:GITHUB_STEP_SUMMARY) {
-    (@("### $Title", '') + $summary + '') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+    (@("### $Title", '') + $summary + $skipSection) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 }
 # Explicit in both cases: callers read $LASTEXITCODE, which a script that
 # just falls off the end leaves at whatever the previous command set.
