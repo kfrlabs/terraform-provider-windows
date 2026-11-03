@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -65,9 +66,21 @@ func stubLGSequence(triples ...[3]any) func() {
 		}
 		var e error
 		if tr[2] != nil {
-			e = tr[2].(error)
+			var ok bool
+			e, ok = tr[2].(error)
+			if !ok {
+				panic(fmt.Sprintf("stubLGSequence: expected error, got %T", tr[2]))
+			}
 		}
-		return tr[0].(string), tr[1].(string), e
+		stdout, ok := tr[0].(string)
+		if !ok {
+			panic(fmt.Sprintf("stubLGSequence: expected string stdout, got %T", tr[0]))
+		}
+		stderr, ok := tr[1].(string)
+		if !ok {
+			panic(fmt.Sprintf("stubLGSequence: expected string stderr, got %T", tr[1]))
+		}
+		return stdout, stderr, e
 	})
 }
 

@@ -238,7 +238,10 @@ func TestWindowsNetRouteResource_Schema(t *testing.T) {
 
 	// Identity attributes: Required + ForceNew.
 	for _, name := range []string{"interface_alias", "destination_prefix", "next_hop"} {
-		a := get(name).(schema.StringAttribute)
+		a, ok := get(name).(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("expected schema.StringAttribute, got %T", a)
+		}
 		if !a.Required || a.Computed || a.Optional {
 			t.Errorf("%s must be Required-only", name)
 		}
@@ -247,7 +250,10 @@ func TestWindowsNetRouteResource_Schema(t *testing.T) {
 		}
 	}
 	// route_metric: Optional+Computed with the Windows default.
-	a := get("route_metric").(schema.Int64Attribute)
+	a, ok := get("route_metric").(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("expected schema.Int64Attribute, got %T", a)
+	}
 	if !a.Optional || !a.Computed {
 		t.Error("route_metric must be Optional+Computed")
 	}
@@ -255,7 +261,10 @@ func TestWindowsNetRouteResource_Schema(t *testing.T) {
 		t.Error("route_metric must carry a default (256)")
 	}
 	// unsafe_skip_management_check: Optional+Computed with false default.
-	b := get("unsafe_skip_management_check").(schema.BoolAttribute)
+	b, ok := get("unsafe_skip_management_check").(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("expected schema.BoolAttribute, got %T", b)
+	}
 	if !b.Optional || !b.Computed || b.Default == nil {
 		t.Error("unsafe_skip_management_check must be Optional+Computed with a default")
 	}

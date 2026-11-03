@@ -118,6 +118,17 @@ type testServer struct {
 	maxActive int
 }
 
+// tcpAddr asserts a listener address is TCP (always true for 127.0.0.1:0
+// listeners) and fails the test otherwise instead of panicking.
+func tcpAddr(t *testing.T, ln net.Listener) *net.TCPAddr {
+	t.Helper()
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("expected *net.TCPAddr, got %T", addr)
+	}
+	return addr
+}
+
 // startTestServer boots a server on 127.0.0.1 and tears it down with the test.
 func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 	t.Helper()
@@ -142,7 +153,7 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 
 	s := &testServer{
 		Addr:     ln.Addr().String(),
-		Port:     ln.Addr().(*net.TCPAddr).Port,
+		Port:     tcpAddr(t, ln).Port,
 		HostKey:  hostPubKey,
 		listener: ln,
 	}

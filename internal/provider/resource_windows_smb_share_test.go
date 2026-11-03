@@ -240,7 +240,10 @@ func TestWindowsSmbShareSchemaDefinition(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"name", "path"} {
-		a := s.Attributes[name].(schema.StringAttribute)
+		a, ok := s.Attributes[name].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("expected schema.StringAttribute, got %T", a)
+		}
 		if !a.Required {
 			t.Errorf("%s must be Required", name)
 		}
@@ -250,17 +253,26 @@ func TestWindowsSmbShareSchemaDefinition(t *testing.T) {
 	}
 	// Access sets are Optional (null = unmanaged), never Computed.
 	for _, name := range []string{"full_access", "change_access", "read_access", "no_access"} {
-		a := s.Attributes[name].(schema.SetAttribute)
+		a, ok := s.Attributes[name].(schema.SetAttribute)
+		if !ok {
+			t.Fatalf("expected schema.SetAttribute, got %T", a)
+		}
 		if !a.Optional || a.Computed {
 			t.Errorf("%s must be Optional-only (null means unmanaged)", name)
 		}
 	}
 	// Observed-only attributes must never be writable.
-	idAttr := s.Attributes["id"].(schema.StringAttribute)
+	idAttr, ok := s.Attributes["id"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected schema.StringAttribute, got %T", idAttr)
+	}
 	if !idAttr.Computed || idAttr.Optional || idAttr.Required {
 		t.Error("id must be computed only")
 	}
-	specialAttr := s.Attributes["special"].(schema.BoolAttribute)
+	specialAttr, ok := s.Attributes["special"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("expected schema.BoolAttribute, got %T", specialAttr)
+	}
 	if !specialAttr.Computed || specialAttr.Optional || specialAttr.Required {
 		t.Error("special must be computed only")
 	}
@@ -311,7 +323,10 @@ func TestSmbShareNameValidator(t *testing.T) {
 
 func smbValidatorDiags(t *testing.T, overrides map[string]tftypes.Value) diag.Diagnostics {
 	t.Helper()
-	r := NewWindowsSmbShareResource().(*windowsSmbShareResource)
+	r, ok := NewWindowsSmbShareResource().(*windowsSmbShareResource)
+	if !ok {
+		t.Fatalf("expected *windowsSmbShareResource, got %T", r)
+	}
 	var v smbShareConfigValidator
 	for _, cv := range r.ConfigValidators(context.Background()) {
 		if sv, ok := cv.(smbShareConfigValidator); ok {
@@ -390,7 +405,11 @@ func TestSmbShareConfigValidator_BroadGrantWarns(t *testing.T) {
 }
 
 func TestWindowsSmbShareResource_ConfigValidatorsPresent(t *testing.T) {
-	v := NewWindowsSmbShareResource().(*windowsSmbShareResource).ConfigValidators(context.Background())
+	smbRes, ok := NewWindowsSmbShareResource().(*windowsSmbShareResource)
+	if !ok {
+		t.Fatalf("expected *windowsSmbShareResource, got %T", smbRes)
+	}
+	v := smbRes.ConfigValidators(context.Background())
 	if len(v) == 0 {
 		t.Fatal("expected at least one config validator")
 	}

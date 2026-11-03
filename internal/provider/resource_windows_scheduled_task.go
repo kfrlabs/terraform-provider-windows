@@ -1476,6 +1476,12 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 		wi = types.Int64Null()
 	}
 
+	dowsList, ok := dows.(types.List)
+	if !ok {
+		diags.Append(diag.NewErrorDiagnostic("Unexpected days-of-week value", fmt.Sprintf("Expected days-of-week to be a list of strings, got %T.", dows)))
+		return types.ObjectNull(scheduledTaskTriggerAttrTypes), diags
+	}
+
 	tm := windowsScheduledTaskTriggerModel{
 		Type:               types.StringValue(t.Type),
 		Enabled:            types.BoolValue(t.Enabled),
@@ -1484,7 +1490,7 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 		ExecutionTimeLimit: strOrNull(t.ExecutionTimeLimit),
 		Delay:              strOrNull(t.Delay),
 		DaysInterval:       di,
-		DaysOfWeek:         dows.(types.List),
+		DaysOfWeek:         dowsList,
 		WeeksInterval:      wi,
 		UserID:             strOrNull(t.UserID),
 		Subscription:       subscriptionXMLValueOrNull(t.Subscription),

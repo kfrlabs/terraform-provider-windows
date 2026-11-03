@@ -266,6 +266,12 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 		} else {
 			dows = types.ListValueMust(types.StringType, []attr.Value{})
 		}
+		daysOfWeek, ok := dows.(types.List)
+		if !ok {
+			allDiags.AddError("Unexpected days-of-week value", fmt.Sprintf("Expected days-of-week to be a list of strings, got %T.", dows))
+			trigElems[i] = types.ObjectNull(scheduledTaskTriggerAttrTypes)
+			continue
+		}
 		obj, d2 := types.ObjectValueFrom(ctx, scheduledTaskTriggerAttrTypes, windowsScheduledTaskTriggerModel{
 			Type:               types.StringValue(t.Type),
 			Enabled:            types.BoolValue(t.Enabled),
@@ -274,7 +280,7 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 			ExecutionTimeLimit: strOrNull(t.ExecutionTimeLimit),
 			Delay:              strOrNull(t.Delay),
 			DaysInterval:       types.Int64Value(t.DaysInterval),
-			DaysOfWeek:         dows.(types.List),
+			DaysOfWeek:         daysOfWeek,
 			WeeksInterval:      types.Int64Value(t.WeeksInterval),
 			UserID:             types.StringValue(t.UserID),
 			Subscription:       subscriptionXMLValueOf(t.Subscription),

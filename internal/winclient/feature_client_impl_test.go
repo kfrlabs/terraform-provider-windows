@@ -405,7 +405,10 @@ func TestFeatureInstall_HappyPath(t *testing.T) {
 func TestFeatureInstall_RestartNeeded_EC4(t *testing.T) {
 	restore := stubFeatRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		d := fakeInstallData("Web-Server", "Installed", true, "SuccessRestartRequired")
-		feat := d["feature"].(map[string]any)
+		feat, ok := d["feature"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected feature map, got %T", d["feature"])
+		}
 		feat["restart_pending"] = true
 		return featOK(t, d), "", nil
 	})

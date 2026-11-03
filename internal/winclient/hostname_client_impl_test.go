@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -64,9 +65,21 @@ func stubHnSequence(triples ...[3]any) func() {
 		}
 		var e error
 		if t[2] != nil {
-			e = t[2].(error)
+			var ok bool
+			e, ok = t[2].(error)
+			if !ok {
+				panic(fmt.Sprintf("stubHnSequence: expected error, got %T", t[2]))
+			}
 		}
-		return t[0].(string), t[1].(string), e
+		stdout, ok := t[0].(string)
+		if !ok {
+			panic(fmt.Sprintf("stubHnSequence: expected string stdout, got %T", t[0]))
+		}
+		stderr, ok := t[1].(string)
+		if !ok {
+			panic(fmt.Sprintf("stubHnSequence: expected string stderr, got %T", t[1]))
+		}
+		return stdout, stderr, e
 	})
 }
 

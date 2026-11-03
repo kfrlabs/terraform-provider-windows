@@ -263,7 +263,10 @@ func TestWindowsNetIPAddressResource_Schema(t *testing.T) {
 
 	// interface_alias / ip_address: Required + ForceNew.
 	for _, name := range []string{"interface_alias", "ip_address"} {
-		a := get(name).(schema.StringAttribute)
+		a, ok := get(name).(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("expected schema.StringAttribute, got %T", a)
+		}
 		if !a.Required || a.Computed || a.Optional {
 			t.Errorf("%s must be Required-only", name)
 		}
@@ -272,12 +275,19 @@ func TestWindowsNetIPAddressResource_Schema(t *testing.T) {
 		}
 	}
 	// prefix_length: Required.
-	if a := get("prefix_length").(schema.Int64Attribute); !a.Required {
+	prefixAttr, ok := get("prefix_length").(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("expected schema.Int64Attribute, got %T", prefixAttr)
+	}
+	if !prefixAttr.Required {
 		t.Error("prefix_length must be Required")
 	}
 	// Flags: Optional+Computed with false defaults.
 	for _, name := range []string{"skip_as_source", "disable_dhcp", "restore_dhcp_on_destroy", "unsafe_skip_management_check"} {
-		a := get(name).(schema.BoolAttribute)
+		a, ok := get(name).(schema.BoolAttribute)
+		if !ok {
+			t.Fatalf("expected schema.BoolAttribute, got %T", a)
+		}
 		if !a.Optional || !a.Computed {
 			t.Errorf("%s must be Optional+Computed", name)
 		}
