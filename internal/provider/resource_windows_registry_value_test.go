@@ -140,25 +140,16 @@ func rvConfig(t *testing.T, overrides map[string]tftypes.Value) tfsdk.Config {
 	return tfsdk.Config{Raw: rvObj(overrides), Schema: s}
 }
 
-// okRVState returns a minimal RegistryValueState for mocking Set/Read returns.
-func okRVState(kind winclient.RegistryValueKind) *winclient.RegistryValueState {
-	s := &winclient.RegistryValueState{
-		Hive: "HKLM",
-		Path: `SOFTWARE\MyApp`,
-		Name: "Version",
-		Kind: kind,
+// okRVState returns a minimal REG_SZ RegistryValueState for mocking Set/Read returns.
+func okRVState() *winclient.RegistryValueState {
+	v := "1.0.0"
+	return &winclient.RegistryValueState{
+		Hive:        "HKLM",
+		Path:        `SOFTWARE\MyApp`,
+		Name:        "Version",
+		Kind:        winclient.RegistryValueKindString,
+		ValueString: &v,
 	}
-	switch kind {
-	case winclient.RegistryValueKindMultiString:
-		s.ValueStrings = []string{"hello", "world"}
-	case winclient.RegistryValueKindBinary, winclient.RegistryValueKindNone:
-		empty := "deadbeef"
-		s.ValueBinary = &empty
-	default:
-		v := "1.0.0"
-		s.ValueString = &v
-	}
-	return s
 }
 
 // rvDiagSummaries extracts diagnostic summaries for assertion helpers.
@@ -1321,7 +1312,7 @@ func TestImportState_EC13_EmptyPath(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistryValueCreate_HappyPath_REG_SZ(t *testing.T) {
-	fake := &fakeRegistryValueClient{setOut: okRVState(winclient.RegistryValueKindString)}
+	fake := &fakeRegistryValueClient{setOut: okRVState()}
 	r := &windowsRegistryValueResource{client: fake}
 	s := windowsRegistryValueSchemaDefinition(context.Background())
 
@@ -1395,7 +1386,7 @@ func TestRegistryValueCreate_NilStateReturned(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistryValueRead_HappyPath(t *testing.T) {
-	fake := &fakeRegistryValueClient{readOut: okRVState(winclient.RegistryValueKindString)}
+	fake := &fakeRegistryValueClient{readOut: okRVState()}
 	r := &windowsRegistryValueResource{client: fake}
 	s := windowsRegistryValueSchemaDefinition(context.Background())
 
@@ -1460,7 +1451,7 @@ func TestRegistryValueRead_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistryValueUpdate_HappyPath(t *testing.T) {
-	fake := &fakeRegistryValueClient{setOut: okRVState(winclient.RegistryValueKindString)}
+	fake := &fakeRegistryValueClient{setOut: okRVState()}
 	r := &windowsRegistryValueResource{client: fake}
 	s := windowsRegistryValueSchemaDefinition(context.Background())
 
@@ -1626,7 +1617,7 @@ func TestRegistryValueDelete_StalledTransportIsBounded(t *testing.T) {
 }
 
 func TestRegistryValueCreate_PreservesTimeouts(t *testing.T) {
-	fake := &fakeRegistryValueClient{setOut: okRVState(winclient.RegistryValueKindString)}
+	fake := &fakeRegistryValueClient{setOut: okRVState()}
 	r := &windowsRegistryValueResource{client: fake}
 	s := windowsRegistryValueSchemaDefinition(context.Background())
 

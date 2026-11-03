@@ -530,10 +530,7 @@ func TestFirewallStateToModel_Full(t *testing.T) {
 		InterfaceType:       "Wired",
 	}
 
-	m, diags := firewallStateToModel(s)
-	if diags.HasError() {
-		t.Fatalf("unexpected diags: %v", diags)
-	}
+	m := firewallStateToModel(s)
 
 	if m.ID.ValueString() != "MY-RULE" {
 		t.Errorf("ID = %q", m.ID.ValueString())
@@ -601,10 +598,7 @@ func TestFirewallStateToModel_EmptyListsNormalised(t *testing.T) {
 		Service:       "Any",
 		InterfaceType: "Any",
 	}
-	m, diags := firewallStateToModel(s)
-	if diags.HasError() {
-		t.Fatalf("unexpected diags: %v", diags)
-	}
+	m := firewallStateToModel(s)
 	if len(m.Profile.Elements()) != 1 {
 		t.Errorf("Profile elements = %d, want 1 ([Any])", len(m.Profile.Elements()))
 	}

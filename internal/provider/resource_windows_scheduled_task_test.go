@@ -507,16 +507,16 @@ func TestValidateScheduledTaskPrincipalCredentials(t *testing.T) {
 // Create / Read / Update / Delete / Import — with fake client
 // ---------------------------------------------------------------------------
 
-func testSTResourceWithFake(t *testing.T, fake *fakeSTClient) *windowsScheduledTaskResource {
+func testSTResourceWithFake(t *testing.T, fake *fakeSTClient) {
 	t.Helper()
-	return &windowsScheduledTaskResource{stClient: fake}
+	_ = &windowsScheduledTaskResource{stClient: fake}
 }
 
 func TestSTResource_Create_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	state := minimalSTState("MyTask", `\`)
 	fake := &fakeSTClient{createOut: state}
-	r := testSTResourceWithFake(t, fake)
+	testSTResourceWithFake(t, fake)
 
 	tfState, diags := stateToModel(ctx, state, nil)
 	if diags.HasError() {
@@ -530,7 +530,6 @@ func TestSTResource_Create_HappyPath(t *testing.T) {
 	if tfState.ID.ValueString() != `\MyTask` {
 		t.Errorf("ID = %q, want \\MyTask", tfState.ID.ValueString())
 	}
-	_ = r // fake client wire-up verified
 }
 
 func TestSTResource_Create_ClientError(t *testing.T) {
@@ -538,8 +537,7 @@ func TestSTResource_Create_ClientError(t *testing.T) {
 	fake := &fakeSTClient{
 		createErr: winclient.NewScheduledTaskError(winclient.ScheduledTaskErrorPermissionDenied, "denied", nil, nil),
 	}
-	r := testSTResourceWithFake(t, fake)
-	_ = r
+	testSTResourceWithFake(t, fake)
 	_ = ctx
 	// Verify the error kind maps correctly
 	diags := scheduledTaskErrDiag("Create", fake.createErr)
@@ -552,8 +550,7 @@ func TestSTResource_Read_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	state := minimalSTState("T", `\`)
 	fake := &fakeSTClient{readOut: state}
-	r := testSTResourceWithFake(t, fake)
-	_ = r
+	testSTResourceWithFake(t, fake)
 
 	tfState, diags := stateToModel(ctx, state, nil)
 	if diags.HasError() {
@@ -670,8 +667,7 @@ func TestSTResource_Update_HappyPath(t *testing.T) {
 	state := minimalSTState("MyTask", `\`)
 	state.Description = "new description"
 	fake := &fakeSTClient{updateOut: state}
-	r := testSTResourceWithFake(t, fake)
-	_ = r
+	testSTResourceWithFake(t, fake)
 
 	tfState, diags := stateToModel(ctx, state, nil)
 	if diags.HasError() {
@@ -714,8 +710,7 @@ func TestSTResource_ImportState_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	state := minimalSTState("MyTask", `\`)
 	fake := &fakeSTClient{importOut: state}
-	r := testSTResourceWithFake(t, fake)
-	_ = r
+	testSTResourceWithFake(t, fake)
 
 	tfState, diags := stateToModel(ctx, state, nil)
 	if diags.HasError() {

@@ -387,11 +387,7 @@ func (r *windowsFirewallRuleResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
-	m, diags := firewallStateToModel(state)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	m := firewallStateToModel(state)
 	// Preserve the user-configured per-operation timeouts: the projection
 	// covers only Win32-observed fields, and Set overwrites the full state.
 	m.Timeouts = plan.Timeouts
@@ -442,11 +438,7 @@ func (r *windowsFirewallRuleResource) Read(ctx context.Context, req resource.Rea
 		return
 	}
 
-	m, diags := firewallStateToModel(fwState)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	m := firewallStateToModel(fwState)
 	m.Timeouts = state.Timeouts
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
@@ -492,11 +484,7 @@ func (r *windowsFirewallRuleResource) Update(ctx context.Context, req resource.U
 		return
 	}
 
-	m, diags := firewallStateToModel(fwState)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	m := firewallStateToModel(fwState)
 	m.Timeouts = plan.Timeouts
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
@@ -579,11 +567,7 @@ func (r *windowsFirewallRuleResource) ImportState(ctx context.Context, req resou
 		return
 	}
 
-	m, diags := firewallStateToModel(fwState)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	m := firewallStateToModel(fwState)
 	// Import starts from no prior state, so there are no user-configured
 	// timeouts to preserve. The zero timeouts.Value carries no attribute
 	// types and is rejected by State.Set — use a typed null instead (the
@@ -679,9 +663,7 @@ func fwNullTimeouts() timeouts.Value {
 }
 
 // firewallStateToModel converts a FirewallRuleState to a Terraform model.
-func firewallStateToModel(s *winclient.FirewallRuleState) (windowsFirewallRuleModel, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
+func firewallStateToModel(s *winclient.FirewallRuleState) windowsFirewallRuleModel {
 	profile := listFromStrings(s.Profile)
 	localPort := listFromStrings(s.LocalPort)
 	remotePort := listFromStrings(s.RemotePort)
@@ -709,7 +691,7 @@ func firewallStateToModel(s *winclient.FirewallRuleState) (windowsFirewallRuleMo
 		Service:             types.StringValue(s.Service),
 		InterfaceType:       types.StringValue(s.InterfaceType),
 	}
-	return m, diags
+	return m
 }
 
 // ---------------------------------------------------------------------------
