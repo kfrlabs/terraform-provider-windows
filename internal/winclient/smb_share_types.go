@@ -108,7 +108,10 @@ func SmbShareValidFolderEnumerationModes() []string {
 
 // SmbShareMaxConcurrentUserLimit mirrors the Windows UInt32 range for
 // New-SmbShare/Set-SmbShare -ConcurrentUserLimit (0 means no limit).
-const SmbShareMaxConcurrentUserLimit = 4294967295
+// Typed int64 (not untyped): passing the 4294967295 value as an
+// untyped constant to fmt.Sprintf defaults to int and overflows on
+// 32-bit targets (386/arm) built by GoReleaser.
+const SmbShareMaxConcurrentUserLimit int64 = 4294967295
 
 // SmbShareMaxDescriptionLength mirrors the schema cap (≤256 characters).
 const SmbShareMaxDescriptionLength = 256
