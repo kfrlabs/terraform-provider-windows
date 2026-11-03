@@ -1,0 +1,63 @@
+# PR-time validation of the GoReleaser release configuration.
+#
+# The tag release (release.yml) only runs on v* tags: a broken
+# .goreleaser.yml would otherwise be discovered at the worst moment.
+# This workflow runs `goreleaser check` (fails on deprecations such as
+# the singular archives.format) and a full cross-compile snapshot
+# (`release --snapshot --clean --skip=sign`, no GPG key needed) on PRs
+# touching the release inputs.
+
+name: release-check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".goreleaser.yml"
+      - "main.go"
+      - "go.mod"
+      - "go.sum"
+      - "terraform-registry-manifest.json"
+      - ".github/workflows/release-check.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".goreleaser.yml"
+      - "main.go"
+      - "go.mod"
+      - "go.sum"
+      - "terraform-registry-manifest.json"
+      - ".github/workflows/release-check.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  goreleaser-check:
+    name: goreleaser check + snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7
+        with:
+          version: v2
+          args: check
+
+      - name: snapshot release (no sign)
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7
+        with:
+          version: v2
+          args: release --snapshot --clean --skip=sign
