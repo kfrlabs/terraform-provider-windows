@@ -9,6 +9,10 @@ description: |-
 
 The windows provider manages Windows resources over SSH (the target host's OpenSSH Server, invoking PowerShell). It supports public-key, ssh-agent and password authentication, and verifies the server's host key by default.
 
+## Requirements
+
+Terraform >= 1.11 is required (Write-only arguments require Terraform 1.11 and later).
+
 ## Example Usage
 
 ```terraform

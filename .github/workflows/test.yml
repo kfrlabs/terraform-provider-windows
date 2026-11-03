@@ -236,3 +236,93 @@ jobs:
             rm -rf "$d"
           done
           exit $fail
+
+  min-terraform:
+    # Minimum-supported Terraform CLI gate (#239): WriteOnly attributes
+    # require Terraform 1.11+, so the provider must init + validate cleanly
+    # on the oldest supported CLI — both for a plain resource and for one
+    # using a *_wo argument. Offline: init -backend=false + validate only,
+    # no apply, no Windows host.
+    name: min Terraform ${{ matrix.terraform }} offline check
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # setup-terraform resolves a partial version to the latest 1.11.x patch.
+        terraform: ["1.11"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build provider (linux_amd64 dev build)
+        run: go build -trimpath -o ${{ runner.temp }}/plugins/terraform-provider-windows .
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+
+      - name: init + validate minimal fixtures (plain and WriteOnly)
+        env:
+          TF_CLI_CONFIG_FILE: ${{ runner.temp }}/terraformrc
+        run: |
+          printf 'provider_installation {\n  dev_overrides {\n    "kfrlabs/windows" = "%s/plugins"\n  }\n  direct {}\n}\n' '${{ runner.temp }}' > "$TF_CLI_CONFIG_FILE"
+          base=$(mktemp -d)
+          # Fixture 1: no WriteOnly argument (windows_directory).
+          mkdir -p "$base/plain"
+          cat > "$base/plain/main.tf" <<'EOF'
+          terraform {
+            required_version = ">= 1.11"
+
+            required_providers {
+              windows = {
+                source = "kfrlabs/windows"
+              }
+            }
+          }
+
+          provider "windows" {
+            host                     = "example.invalid"
+            username                 = "tfacc"
+            insecure_ignore_host_key = true
+          }
+
+          resource "windows_directory" "min" {
+            path = "C:\\ProgramData\\min-terraform"
+          }
+          EOF
+          # Fixture 2: WriteOnly argument (windows_file content_wo).
+          mkdir -p "$base/writeonly"
+          cat > "$base/writeonly/main.tf" <<'EOF'
+          terraform {
+            required_version = ">= 1.11"
+
+            required_providers {
+              windows = {
+                source = "kfrlabs/windows"
+              }
+            }
+          }
+
+          provider "windows" {
+            host                     = "example.invalid"
+            username                 = "tfacc"
+            insecure_ignore_host_key = true
+          }
+
+          resource "windows_file" "min_wo" {
+            path               = "C:\\ProgramData\\min-terraform\\secret.txt"
+            content_wo         = "min-terraform fixture secret"
+            content_wo_version = "1"
+            create_parents     = true
+          }
+          EOF
+          terraform -chdir="$base/plain" init -input=false -backend=false
+          terraform -chdir="$base/plain" validate
+          terraform -chdir="$base/writeonly" init -input=false -backend=false
+          terraform -chdir="$base/writeonly" validate
