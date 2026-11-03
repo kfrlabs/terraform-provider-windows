@@ -28,8 +28,8 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// newRVTestClient creates a *Client and *RegistryValueClientImpl for tests.
-func newRVTestClient(t *testing.T) (*Client, *RegistryValueClientImpl) {
+// newRVTestClient creates a *RegistryValueClientImpl for tests.
+func newRVTestClient(t *testing.T) *RegistryValueClientImpl {
 	t.Helper()
 	c, err := New(Config{
 		Host:                  "winrv01",
@@ -41,7 +41,7 @@ func newRVTestClient(t *testing.T) (*Client, *RegistryValueClientImpl) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewRegistryValueClient(c)
+	return NewRegistryValueClient(c)
 }
 
 // stubRVRun replaces runRegistryValuePowerShell for the duration of a test.
@@ -575,7 +575,7 @@ func TestParseMultiStringPayload_Malformed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParseDataPayload_NotFound(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(map[string]any{"found": false})
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\MyApp`, "Version")
 	if err != nil {
@@ -587,7 +587,7 @@ func TestParseDataPayload_NotFound(t *testing.T) {
 }
 
 func TestParseDataPayload_NullRaw(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	state, err := rv.parseDataPayload(nil, "HKLM", `SOFTWARE\MyApp`, "Version")
 	if err != nil {
 		t.Fatalf("unexpected error for nil raw: %v", err)
@@ -598,7 +598,7 @@ func TestParseDataPayload_NullRaw(t *testing.T) {
 }
 
 func TestParseDataPayload_REG_SZ(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(rvFoundData("REG_SZ", "hello"))
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\MyApp`, "Version")
 	if err != nil {
@@ -619,7 +619,7 @@ func TestParseDataPayload_REG_SZ(t *testing.T) {
 }
 
 func TestParseDataPayload_REG_EXPAND_SZ(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(rvFoundData("REG_EXPAND_SZ", `%SystemRoot%\system32`))
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\Test`, "Path")
 	if err != nil {
@@ -634,7 +634,7 @@ func TestParseDataPayload_REG_EXPAND_SZ(t *testing.T) {
 }
 
 func TestParseDataPayload_REG_DWORD(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(rvFoundData("REG_DWORD", "12345"))
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\Test`, "Count")
 	if err != nil {
@@ -649,7 +649,7 @@ func TestParseDataPayload_REG_DWORD(t *testing.T) {
 }
 
 func TestParseDataPayload_REG_QWORD(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(rvFoundData("REG_QWORD", "9876543210987654321"))
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\Test`, "Big")
 	if err != nil {
@@ -664,7 +664,7 @@ func TestParseDataPayload_REG_QWORD(t *testing.T) {
 }
 
 func TestParseDataPayload_REG_MULTI_SZ(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(rvFoundMulti([]string{"a", "b", "c"}))
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\Test`, "Multi")
 	if err != nil {
@@ -679,7 +679,7 @@ func TestParseDataPayload_REG_MULTI_SZ(t *testing.T) {
 }
 
 func TestParseDataPayload_REG_MULTI_SZ_Empty(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(rvFoundMulti([]string{}))
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\Test`, "Empty")
 	if err != nil {
@@ -692,7 +692,7 @@ func TestParseDataPayload_REG_MULTI_SZ_Empty(t *testing.T) {
 
 func TestParseDataPayload_REG_MULTI_SZ_PSScalarQuirk(t *testing.T) {
 	// PS serialises single-element [string[]] as a JSON scalar string
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(map[string]any{
 		"found":         true,
 		"kind":          "REG_MULTI_SZ",
@@ -710,7 +710,7 @@ func TestParseDataPayload_REG_MULTI_SZ_PSScalarQuirk(t *testing.T) {
 }
 
 func TestParseDataPayload_REG_BINARY(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(rvFoundBinary("REG_BINARY", "deadbeef"))
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\Test`, "Bin")
 	if err != nil {
@@ -725,7 +725,7 @@ func TestParseDataPayload_REG_BINARY(t *testing.T) {
 }
 
 func TestParseDataPayload_REG_NONE(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(rvFoundBinary("REG_NONE", ""))
 	state, err := rv.parseDataPayload(json.RawMessage(raw), "HKLM", `SOFTWARE\Test`, "None")
 	if err != nil {
@@ -741,7 +741,7 @@ func TestParseDataPayload_REG_NONE(t *testing.T) {
 
 func TestParseDataPayload_REG_NONE_NilValueBinary(t *testing.T) {
 	// PS returns null for value_binary when REG_NONE has no data
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	raw, _ := json.Marshal(map[string]any{
 		"found":         true,
 		"kind":          "REG_NONE",
@@ -759,7 +759,7 @@ func TestParseDataPayload_REG_NONE_NilValueBinary(t *testing.T) {
 }
 
 func TestParseDataPayload_Malformed(t *testing.T) {
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.parseDataPayload(json.RawMessage(`{bad-json}`), "HKLM", `SOFTWARE\Test`, "V")
 	if err == nil {
 		t.Error("expected error for malformed JSON payload")
@@ -777,7 +777,7 @@ func TestRegistryValueSet_HappyPath_REG_SZ(t *testing.T) {
 		return rvOKEnvelope(t, rvFoundData("REG_SZ", "1.0.0")), "", nil
 	})()
 
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	state, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive:        "HKLM",
 		Path:        `SOFTWARE\MyApp`,
@@ -809,7 +809,7 @@ func TestRegistryValueSet_HappyPath_REG_MULTI_SZ(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvOKEnvelope(t, rvFoundMulti([]string{"a", "b"})), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	state, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive:         "HKLM",
 		Path:         `SOFTWARE\Test`,
@@ -829,7 +829,7 @@ func TestRegistryValueSet_HappyPath_REG_BINARY(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvOKEnvelope(t, rvFoundBinary("REG_BINARY", "deadbeef")), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	state, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive:        "HKLM",
 		Path:        `SOFTWARE\Test`,
@@ -854,7 +854,7 @@ func TestRegistryValueSet_HappyPath_DefaultValue(t *testing.T) {
 		}
 		return rvOKEnvelope(t, rvFoundData("REG_SZ", "default")), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	state, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive:        "HKLM",
 		Path:        `SOFTWARE\Test`,
@@ -877,7 +877,7 @@ func TestRegistryValueSet_ExpandTrue_ScriptContainsTrueFlag(t *testing.T) {
 		}
 		return rvOKEnvelope(t, rvFoundData("REG_EXPAND_SZ", "%PATH%")), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive:                       "HKLM",
 		Path:                       `SOFTWARE\Test`,
@@ -899,7 +899,7 @@ func TestRegistryValueSet_EC3_TypeConflict(t *testing.T) {
 			map[string]string{"existing_type": "REG_SZ", "declared_type": "REG_DWORD"},
 		), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive:        "HKLM",
 		Path:        `SOFTWARE\Test`,
@@ -919,7 +919,7 @@ func TestRegistryValueSet_PermissionDenied(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive: "HKLM", Path: `SOFTWARE\Test`, Name: "V",
 		Kind: RegistryValueKindString, ValueString: rvPtr("x"),
@@ -936,7 +936,7 @@ func TestRegistryValueSet_TransportError(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "connection refused", fmt.Errorf("transport error")
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive: "HKLM", Path: `SOFTWARE\Test`, Name: "V",
 		Kind: RegistryValueKindString, ValueString: rvPtr("x"),
@@ -953,7 +953,7 @@ func TestRegistryValueSet_MissingEnvelope(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "Warning: some PS warning\nno json line here\n", "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive: "HKLM", Path: `SOFTWARE\Test`, Name: "V",
 		Kind: RegistryValueKindString, ValueString: rvPtr("x"),
@@ -967,7 +967,7 @@ func TestRegistryValueSet_MalformedJSON(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "{malformed}\n", "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive: "HKLM", Path: `SOFTWARE\Test`, Name: "V",
 		Kind: RegistryValueKindString, ValueString: rvPtr("x"),
@@ -985,7 +985,7 @@ func TestRegistryValueSet_ContextCancelled(t *testing.T) {
 		return "", "", fmt.Errorf("cancelled")
 	})()
 
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Set(ctx, RegistryValueInput{
 		Hive: "HKLM", Path: `SOFTWARE\Test`, Name: "V",
 		Kind: RegistryValueKindString, ValueString: rvPtr("x"),
@@ -1004,7 +1004,7 @@ func TestRegistryValueSet_ContextCancelled(t *testing.T) {
 
 func TestRegistryValueSet_InvalidInput_BuildExprFails(t *testing.T) {
 	// buildPSValueExpr fails before runScript is reached
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive: "HKLM", Path: `SOFTWARE\Test`, Name: "V",
 		Kind: RegistryValueKindDWord, // Missing ValueString
@@ -1025,7 +1025,7 @@ func TestRegistryValueRead_HappyPath(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvOKEnvelope(t, rvFoundData("REG_SZ", "hello")), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	state, err := rv.Read(context.Background(), "HKLM", `SOFTWARE\Test`, "V", false)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
@@ -1043,7 +1043,7 @@ func TestRegistryValueRead_EC4_NotFound_FoundFalse(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvOKEnvelope(t, map[string]any{"found": false}), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	state, err := rv.Read(context.Background(), "HKLM", `SOFTWARE\Test`, "V", false)
 	if err != nil {
 		t.Fatalf("Read not_found: %v", err)
@@ -1058,7 +1058,7 @@ func TestRegistryValueRead_EC4_NotFound_ErrorKind(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "not_found", "value absent", nil), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	state, err := rv.Read(context.Background(), "HKLM", `SOFTWARE\Test`, "V", false)
 	if err != nil {
 		t.Fatalf("Read not_found error kind: %v", err)
@@ -1072,7 +1072,7 @@ func TestRegistryValueRead_PermissionDenied(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Read(context.Background(), "HKLM", `SOFTWARE\Test`, "V", false)
 	if err == nil {
 		t.Fatal("expected permission error")
@@ -1088,7 +1088,7 @@ func TestRegistryValueRead_ScriptContainsExpandTrueFlag(t *testing.T) {
 		script = s
 		return rvOKEnvelope(t, rvFoundData("REG_EXPAND_SZ", "%PATH%")), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, _ = rv.Read(context.Background(), "HKLM", `SOFTWARE\Test`, "Env", true)
 	if !strings.Contains(script, "$true") {
 		end := rvMax(0, len(script)-200)
@@ -1100,7 +1100,7 @@ func TestRegistryValueRead_MissingEnvelope(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "no json here\n", "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Read(context.Background(), "HKLM", `SOFTWARE\Test`, "V", false)
 	if err == nil {
 		t.Fatal("expected error for missing JSON envelope")
@@ -1111,7 +1111,7 @@ func TestRegistryValueRead_TransportError(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("connection refused")
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_, err := rv.Read(context.Background(), "HKLM", `SOFTWARE\Test`, "V", false)
 	if err == nil {
 		t.Fatal("expected error for transport failure")
@@ -1126,7 +1126,7 @@ func TestRegistryValueDelete_HappyPath(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvOKEnvelope(t, map[string]any{"deleted": true}), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	err := rv.Delete(context.Background(), "HKLM", `SOFTWARE\Test`, "V")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -1138,7 +1138,7 @@ func TestRegistryValueDelete_EC12_Idempotent(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "not_found", "value does not exist", nil), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	err := rv.Delete(context.Background(), "HKLM", `SOFTWARE\Test`, "V")
 	if err != nil {
 		t.Fatalf("EC-12: idempotent Delete should return nil, got: %v", err)
@@ -1150,7 +1150,7 @@ func TestRegistryValueDelete_KeyNotFound_OKResponse(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvOKEnvelope(t, map[string]any{"deleted": false, "reason": "key_not_found"}), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	err := rv.Delete(context.Background(), "HKLM", `SOFTWARE\Ghost`, "V")
 	if err != nil {
 		t.Fatalf("Delete key_not_found: %v", err)
@@ -1161,7 +1161,7 @@ func TestRegistryValueDelete_PermissionDenied(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	err := rv.Delete(context.Background(), "HKLM", `SOFTWARE\Test`, "V")
 	if err == nil {
 		t.Fatal("expected permission error")
@@ -1175,7 +1175,7 @@ func TestRegistryValueDelete_TransportError(t *testing.T) {
 	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("connection refused")
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	err := rv.Delete(context.Background(), "HKLM", `SOFTWARE\Test`, "V")
 	if err == nil {
 		t.Fatal("expected transport error")
@@ -1188,7 +1188,7 @@ func TestRegistryValueDelete_ScriptContainsExpectedLiterals(t *testing.T) {
 		capturedScript = script
 		return rvOKEnvelope(t, map[string]any{"deleted": true}), "", nil
 	})()
-	_, rv := newRVTestClient(t)
+	rv := newRVTestClient(t)
 	_ = rv.Delete(context.Background(), "HKCU", `Software\Test`, "MyVal")
 	for _, want := range []string{"'HKCU'", `'Software\Test'`, "'MyVal'"} {
 		if !strings.Contains(capturedScript, want) {

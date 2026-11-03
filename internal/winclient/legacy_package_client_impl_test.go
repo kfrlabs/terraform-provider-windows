@@ -18,13 +18,13 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-func lpNewClient(t *testing.T) (*Client, *LegacyPackageClientImpl) {
+func lpNewClient(t *testing.T) *LegacyPackageClientImpl {
 	t.Helper()
 	c, err := New(Config{Host: "winlp01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewLegacyPackageClient(c)
+	return NewLegacyPackageClient(c)
 }
 
 func TestLegacyPackageMSIProductCodeUsesPowerShellCOMMethods(t *testing.T) {
@@ -216,7 +216,7 @@ func TestLPParseState_MalformedJSON(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLPRunEnvelope_TransportError(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "", "ssh: connection refused", errors.New("dial tcp: refused")
 	})()
@@ -231,7 +231,7 @@ func TestLPRunEnvelope_TransportError(t *testing.T) {
 }
 
 func TestLPRunEnvelope_CtxCancelled(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(ctx context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "", "", ctx.Err()
 	})()
@@ -245,7 +245,7 @@ func TestLPRunEnvelope_CtxCancelled(t *testing.T) {
 }
 
 func TestLPRunEnvelope_NoEnvelope(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "no json here\n", "", nil
 	})()
@@ -260,7 +260,7 @@ func TestLPRunEnvelope_NoEnvelope(t *testing.T) {
 }
 
 func TestLPRunEnvelope_MalformedJSON(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return `{not valid json` + "\n", "", nil
 	})()
@@ -272,7 +272,7 @@ func TestLPRunEnvelope_MalformedJSON(t *testing.T) {
 }
 
 func TestLPRunEnvelope_EmitErr(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return lpErr(t, "checksum_mismatch", "hash differs"), "", nil
 	})()
@@ -297,7 +297,7 @@ func TestLPRunEnvelope_EmitErr(t *testing.T) {
 }
 
 func TestLPRunEnvelope_Happy(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
 		// Sanity: header must be prepended and stdin must be valid JSON.
 		if !strings.Contains(script, "Emit-OK") {
@@ -321,7 +321,7 @@ func TestLPRunEnvelope_Happy(t *testing.T) {
 
 // Marshal-error path: channels are unsupported by encoding/json.
 func TestLPRunEnvelope_MarshalError(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	type bad struct {
 		C chan int `json:"c"`
 	}
@@ -336,7 +336,7 @@ func TestLPRunEnvelope_MarshalError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLPCreate_Happy(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return lpOK(t, lpStateMap("{ABC}", "1.0.0")), "", nil
 	})()
@@ -353,7 +353,7 @@ func TestLPCreate_Happy(t *testing.T) {
 }
 
 func TestLPCreate_Transport(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "", "", errors.New("connection reset")
 	})()
@@ -365,7 +365,7 @@ func TestLPCreate_Transport(t *testing.T) {
 }
 
 func TestLPRead_Happy(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, stdin string) (string, string, error) {
 		if !strings.Contains(stdin, `"id":"{ABC}"`) {
 			t.Errorf("stdin missing id: %q", stdin)
@@ -383,7 +383,7 @@ func TestLPRead_Happy(t *testing.T) {
 }
 
 func TestLPRead_Absent(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return lpOKNull(), "", nil
 	})()
@@ -398,7 +398,7 @@ func TestLPRead_Absent(t *testing.T) {
 }
 
 func TestLPRead_EmitErr(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return lpErr(t, "permission_denied", "registry locked"), "", nil
 	})()
@@ -410,7 +410,7 @@ func TestLPRead_EmitErr(t *testing.T) {
 }
 
 func TestLPUpdate_DelegatesToRead(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	calls := 0
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		calls++
@@ -430,7 +430,7 @@ func TestLPUpdate_DelegatesToRead(t *testing.T) {
 }
 
 func TestLPUpdate_PropagatesError(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return lpErr(t, "unknown", "boom"), "", nil
 	})()
@@ -442,7 +442,7 @@ func TestLPUpdate_PropagatesError(t *testing.T) {
 }
 
 func TestLPDelete_Happy(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, stdin string) (string, string, error) {
 		if !strings.Contains(stdin, `"id":"{ABC}"`) {
 			t.Errorf("stdin missing id: %q", stdin)
@@ -456,7 +456,7 @@ func TestLPDelete_Happy(t *testing.T) {
 }
 
 func TestLPDelete_EmitErr(t *testing.T) {
-	_, lp := lpNewClient(t)
+	lp := lpNewClient(t)
 	defer stubLPInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return lpErr(t, "exit_code_invalid", "1603"), "", nil
 	})()

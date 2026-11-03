@@ -32,14 +32,14 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// nrNewClient returns a *Client + *NetRouteClientImpl pair for tests.
-func nrNewClient(t *testing.T) (*Client, *NetRouteClientImpl) {
+// nrNewClient returns a *NetRouteClientImpl for tests.
+func nrNewClient(t *testing.T) *NetRouteClientImpl {
 	t.Helper()
 	c, err := New(Config{Host: "winroute01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewNetRouteClient(c)
+	return NewNetRouteClient(c)
 }
 
 // nrOK returns a JSON ok-envelope whose data field is the supplied value.
@@ -113,10 +113,10 @@ func testNetRouteJSON() map[string]any {
 	}
 }
 
-// nrResolveOK is the resolve-only probe response for the given index/metric.
-func nrResolveOK(t *testing.T, index, ifMetric int) string {
+// nrResolveOK is the resolve-only probe response for the given index.
+func nrResolveOK(t *testing.T, index int) string {
 	t.Helper()
-	return nrOK(t, map[string]any{"interface_index": index, "interface_alias": "Ethernet 2", "interface_metric": ifMetric})
+	return nrOK(t, map[string]any{"interface_index": index, "interface_alias": "Ethernet 2", "interface_metric": 25})
 }
 
 // nrMgmtMetricOK is the management-route metric probe response.
@@ -387,7 +387,7 @@ func TestNetRouteEnvelope_TransportMapsUnreachable(t *testing.T) {
 	restore := nrStubSequence([]frResponse{{stdout: "", stderr: "boom", err: errors.New("ssh dial failed")}})
 	defer restore()
 	defer nrStubManagementPath(nrUnrelatedPath(), nil, nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	_, err := c.Create(context.Background(), NetRouteInput{
 		InterfaceAlias: "Ethernet 2", DestinationPrefix: "198.51.100.0/24", NextHop: "192.0.2.1", RouteMetric: 10,
 	})
@@ -409,7 +409,7 @@ func TestNetRouteEnvelope_RemoteKinds(t *testing.T) {
 	for kind, want := range cases {
 		restore := nrStubSequence([]frResponse{{stdout: nrErr(t, kind, "host says no"), stderr: "", err: nil}})
 		defer restore()
-		_, c := nrNewClient(t)
+		c := nrNewClient(t)
 		// Lookup propagates every remote kind (Read maps not_found and
 		// interface_not_found to a state drop instead).
 		_, err := c.Lookup(context.Background(), "198.51.100.0/24", "", "")
@@ -472,14 +472,14 @@ func TestParseNetRouteInfo(t *testing.T) {
 
 func TestNetRouteCreate_HappyPath(t *testing.T) {
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrMgmtMetricOK(t, 256, 25), err: nil},
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil},
 	})
 	defer restore()
 	var mgmtCalls int
 	defer nrStubManagementPath(nrUnrelatedPath(), nil, &mgmtCalls)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	info, err := c.Create(context.Background(), NetRouteInput{
 		InterfaceAlias: "Ethernet 2", DestinationPrefix: "198.51.100.0/24", NextHop: "192.0.2.1", RouteMetric: 10,
 	})
@@ -503,13 +503,13 @@ func TestNetRouteCreate_Preflights(t *testing.T) {
 		{"route_owned_by_other_protocol", NetRouteErrorOwnedByOtherProtocol},
 	} {
 		restore := nrStubSequence([]frResponse{
-			{stdout: nrResolveOK(t, 7, 25), err: nil},
+			{stdout: nrResolveOK(t, 7), err: nil},
 			{stdout: nrMgmtMetricOK(t, 256, 25), err: nil},
 			{stdout: nrErr(t, tc.kind, "preflight hit"), err: nil},
 		})
 		defer restore()
 		defer nrStubManagementPath(nrUnrelatedPath(), nil, nil)()
-		_, c := nrNewClient(t)
+		c := nrNewClient(t)
 		_, err := c.Create(context.Background(), NetRouteInput{
 			InterfaceAlias: "Ethernet 2", DestinationPrefix: "198.51.100.0/24", NextHop: "192.0.2.1", RouteMetric: 10,
 		})
@@ -519,13 +519,13 @@ func TestNetRouteCreate_Preflights(t *testing.T) {
 	}
 	// already_exists must suggest import.
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrMgmtMetricOK(t, 256, 25), err: nil},
 		{stdout: nrErr(t, "already_exists", "Route 198.51.100.0/24 via 192.0.2.1 already exists. Import it with terraform import"), err: nil},
 	})
 	defer restore()
 	defer nrStubManagementPath(nrUnrelatedPath(), nil, nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	_, err := c.Create(context.Background(), NetRouteInput{
 		InterfaceAlias: "Ethernet 2", DestinationPrefix: "198.51.100.0/24", NextHop: "192.0.2.1", RouteMetric: 10,
 	})
@@ -540,12 +540,12 @@ func TestNetRouteCreate_GuardExactManagementRoute(t *testing.T) {
 	runs := 0
 	restore := nrStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		runs++
-		return nrResolveOK(t, 4, 25), "", nil
+		return nrResolveOK(t, 4), "", nil
 	})
 	defer restore()
 	var mgmtCalls int
 	defer nrStubManagementPath(testManagementPath(), nil, &mgmtCalls)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	_, err := c.Create(context.Background(), NetRouteInput{
 		InterfaceAlias: "Ethernet", DestinationPrefix: "0.0.0.0/0", NextHop: "172.18.122.1", RouteMetric: 10,
 	})
@@ -571,11 +571,11 @@ func TestNetRouteCreate_GuardHijack(t *testing.T) {
 		if strings.Contains(script, "$wantIfIndex") {
 			return nrMgmtMetricOK(t, 256, 25), "", nil
 		}
-		return nrResolveOK(t, 7, 25), "", nil
+		return nrResolveOK(t, 7), "", nil
 	})
 	defer restore()
 	defer nrStubManagementPath(testManagementPath(), nil, nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	_, err := c.Create(context.Background(), NetRouteInput{
 		InterfaceAlias: "Ethernet 2", DestinationPrefix: "172.31.248.0/24", NextHop: "192.0.2.1", RouteMetric: 10,
 	})
@@ -589,11 +589,11 @@ func TestNetRouteCreate_GuardHijack(t *testing.T) {
 
 func TestNetRouteCreate_GuardUnknownFailClosed(t *testing.T) {
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 	})
 	defer restore()
 	defer nrStubManagementPath(nil, NewManagementPathError(ManagementPathErrorUnknown, "no SSH_CONNECTION", nil, nil), nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	_, err := c.Create(context.Background(), NetRouteInput{
 		InterfaceAlias: "Ethernet 2", DestinationPrefix: "198.51.100.0/24", NextHop: "192.0.2.1", RouteMetric: 10,
 	})
@@ -604,13 +604,13 @@ func TestNetRouteCreate_GuardUnknownFailClosed(t *testing.T) {
 
 func TestNetRouteCreate_UnsafeSkipBypassesGuard(t *testing.T) {
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil},
 	})
 	defer restore()
 	var mgmtCalls int
 	defer nrStubManagementPath(nil, errors.New("must not be called"), &mgmtCalls)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	info, err := c.Create(context.Background(), NetRouteInput{
 		InterfaceAlias: "Ethernet 2", DestinationPrefix: "198.51.100.0/24", NextHop: "192.0.2.1", RouteMetric: 10,
 		UnsafeSkipManagementCheck: true,
@@ -627,14 +627,14 @@ func TestNetRouteCreate_BackupGatewayAllowed(t *testing.T) {
 	// Same prefix length but a HIGHER effective metric than the management
 	// route: the backup-gateway pattern is allowed.
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrMgmtMetricOK(t, 10, 15), err: nil}, // management eff 25
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil},
 	})
 	defer restore()
 	mp := testManagementPath()
 	defer nrStubManagementPath(mp, nil, nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	_, err := c.Create(context.Background(), NetRouteInput{
 		InterfaceAlias: "Ethernet 2", DestinationPrefix: "0.0.0.0/0", NextHop: "192.0.2.254", RouteMetric: 500,
 	})
@@ -644,7 +644,7 @@ func TestNetRouteCreate_BackupGatewayAllowed(t *testing.T) {
 }
 
 func TestNetRouteCreate_InvalidInput(t *testing.T) {
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	for _, in := range []NetRouteInput{
 		{InterfaceAlias: "Ethernet 2", DestinationPrefix: "198.51.100.7/24", NextHop: "192.0.2.1", RouteMetric: 10},
 		{InterfaceAlias: "Ethernet 2", DestinationPrefix: "198.51.100.0/24", NextHop: "fe80::1", RouteMetric: 10},
@@ -665,7 +665,7 @@ func TestNetRouteRead_HappyAndMissing(t *testing.T) {
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil},
 	})
 	defer restore()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	info, err := c.Read(context.Background(), "Ethernet 2", "198.51.100.0/24", "192.0.2.1")
 	if err != nil || info == nil {
 		t.Fatalf("Read: %v", err)
@@ -690,7 +690,7 @@ func TestNetRouteLookup(t *testing.T) {
 		{stdout: nrOK(t, payload), err: nil},
 	})
 	defer restore()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	routes, err := c.Lookup(context.Background(), "198.51.100.0/24", "", "")
 	if err != nil || len(routes) != 2 {
 		t.Fatalf("Lookup: %v (%d routes)", err, len(routes))
@@ -718,7 +718,7 @@ func TestNetRouteUpdate_HappyPath(t *testing.T) {
 	updated["route_metric"] = 99
 	updated["effective_metric"] = 124
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil}, // update preflight
 		{stdout: nrMgmtMetricOK(t, 256, 25), err: nil},
 		{stdout: nrOK(t, updated), err: nil},
@@ -726,7 +726,7 @@ func TestNetRouteUpdate_HappyPath(t *testing.T) {
 	defer restore()
 	var mgmtCalls int
 	defer nrStubManagementPath(nrUnrelatedPath(), nil, &mgmtCalls)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	info, err := c.Update(context.Background(), "Ethernet 2", "198.51.100.0/24", "192.0.2.1", 99, false)
 	if err != nil {
 		t.Fatalf("Update: %v", err)
@@ -741,12 +741,12 @@ func TestNetRouteUpdate_HappyPath(t *testing.T) {
 
 func TestNetRouteUpdate_GuardExactManagementRoute(t *testing.T) {
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 4, 25), err: nil},
+		{stdout: nrResolveOK(t, 4), err: nil},
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil}, // update preflight
 	})
 	defer restore()
 	defer nrStubManagementPath(testManagementPath(), nil, nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	// Re-metricing the exact management route is refused.
 	_, err := c.Update(context.Background(), "Ethernet", "0.0.0.0/0", "172.18.122.1", 5, false)
 	if !IsNetRouteError(err, NetRouteErrorMgmtAtRisk) {
@@ -758,13 +758,13 @@ func TestNetRouteUpdate_GuardHijackOnLowerMetric(t *testing.T) {
 	// Same prefix, different next hop, new metric beating the management
 	// route's effective metric: hijack.
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil}, // update preflight
 		{stdout: nrMgmtMetricOK(t, 256, 25), err: nil},  // management eff 281
 	})
 	defer restore()
 	defer nrStubManagementPath(testManagementPath(), nil, nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	_, err := c.Update(context.Background(), "Ethernet 2", "0.0.0.0/0", "192.0.2.254", 5, false)
 	if !IsNetRouteError(err, NetRouteErrorMgmtAtRisk) {
 		t.Fatalf("expected management_path_at_risk for winning metric, got %v", err)
@@ -773,14 +773,14 @@ func TestNetRouteUpdate_GuardHijackOnLowerMetric(t *testing.T) {
 
 func TestNetRouteDelete_HappyAndIdempotent(t *testing.T) {
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil}, // delete preflight
 		{stdout: nrOK(t, map[string]any{"removed": true}), err: nil},
 	})
 	defer restore()
 	var mgmtCalls int
 	defer nrStubManagementPath(nrUnrelatedPath(), nil, &mgmtCalls)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	if err := c.Delete(context.Background(), "Ethernet 2", "198.51.100.0/24", "192.0.2.1", false); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -789,7 +789,7 @@ func TestNetRouteDelete_HappyAndIdempotent(t *testing.T) {
 	}
 	// Missing route is a no-op.
 	restore2 := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrErr(t, "not_found", "no route"), err: nil},
 	})
 	defer restore2()
@@ -803,13 +803,13 @@ func TestNetRouteDelete_GuardExactManagementRoute(t *testing.T) {
 	restore := nrStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		runs++
 		if runs == 1 {
-			return nrResolveOK(t, 4, 25), "", nil
+			return nrResolveOK(t, 4), "", nil
 		}
 		return nrOK(t, testNetRouteJSON()), "", nil
 	})
 	defer restore()
 	defer nrStubManagementPath(testManagementPath(), nil, nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	err := c.Delete(context.Background(), "Ethernet", "0.0.0.0/0", "172.18.122.1", false)
 	if !IsNetRouteError(err, NetRouteErrorMgmtAtRisk) {
 		t.Fatalf("expected management_path_at_risk, got %v", err)
@@ -821,12 +821,12 @@ func TestNetRouteDelete_GuardExactManagementRoute(t *testing.T) {
 
 func TestNetRouteDelete_UnknownPathFailClosed(t *testing.T) {
 	restore := nrStubSequence([]frResponse{
-		{stdout: nrResolveOK(t, 7, 25), err: nil},
+		{stdout: nrResolveOK(t, 7), err: nil},
 		{stdout: nrOK(t, testNetRouteJSON()), err: nil},
 	})
 	defer restore()
 	defer nrStubManagementPath(nil, NewManagementPathError(ManagementPathErrorUnknown, "no path", nil, nil), nil)()
-	_, c := nrNewClient(t)
+	c := nrNewClient(t)
 	err := c.Delete(context.Background(), "Ethernet 2", "198.51.100.0/24", "192.0.2.1", false)
 	if !IsNetRouteError(err, NetRouteErrorMgmtUnknown) {
 		t.Fatalf("expected management_path_unknown, got %v", err)

@@ -35,7 +35,7 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-func newSTTestClient(t *testing.T) (*Client, *ScheduledTaskClientImpl) {
+func newSTTestClient(t *testing.T) *ScheduledTaskClientImpl {
 	t.Helper()
 	c, err := New(Config{
 		Host:                  "winhost",
@@ -47,7 +47,7 @@ func newSTTestClient(t *testing.T) (*Client, *ScheduledTaskClientImpl) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewScheduledTaskClient(c)
+	return NewScheduledTaskClient(c)
 }
 
 // stubSTRun replaces runSTPS for the duration of a test. Caller must defer
@@ -670,7 +670,7 @@ func TestSTRead_SettingsDurationVerbatim(t *testing.T) {
 	cases := []string{"PT72H", "PT4H", "PT0S", "P3D", "PT1440M", "P1DT2H"}
 	for _, etl := range cases {
 		t.Run(etl, func(t *testing.T) {
-			_, impl := newSTTestClient(t)
+			impl := newSTTestClient(t)
 			payload := map[string]any{
 				"name": "T", "path": `\`, "description": "", "enabled": true,
 				"state": "Ready", "last_run_time": "", "last_task_result": int64(0),
@@ -846,7 +846,7 @@ func TestIsScheduledTaskError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRunSTEnvelope_ContextCanceled(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -862,7 +862,7 @@ func TestRunSTEnvelope_ContextCanceled(t *testing.T) {
 }
 
 func TestRunSTEnvelope_TransportError(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "connection refused", errors.New("dial tcp: connection refused")
 	})()
@@ -873,7 +873,7 @@ func TestRunSTEnvelope_TransportError(t *testing.T) {
 }
 
 func TestRunSTEnvelope_NoJSONOutput(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "no json here\n", "", nil
 	})()
@@ -884,7 +884,7 @@ func TestRunSTEnvelope_NoJSONOutput(t *testing.T) {
 }
 
 func TestRunSTEnvelope_BadJSON(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "{not valid json}\n", "", nil
 	})()
@@ -895,7 +895,7 @@ func TestRunSTEnvelope_BadJSON(t *testing.T) {
 }
 
 func TestRunSTEnvelope_ErrorEnvelope_PermissionDenied(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return stErrEnvelope(t, "permission_denied", "Access is denied"), "", nil
 	})()
@@ -910,7 +910,7 @@ func TestRunSTEnvelope_ErrorEnvelope_PermissionDenied(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSTRead_HappyPath(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "MyTask", `\`), "", nil
 	})()
@@ -928,7 +928,7 @@ func TestSTRead_HappyPath(t *testing.T) {
 
 func TestSTRead_NotFound_ReturnsNil(t *testing.T) {
 	// EC-9: task deleted out-of-band → (nil, nil)
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":true,"data":null}` + "\n", "", nil
 	})()
@@ -943,7 +943,7 @@ func TestSTRead_NotFound_ReturnsNil(t *testing.T) {
 
 func TestSTRead_PermissionDenied(t *testing.T) {
 	// EC-13: non-admin session → permission_denied
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return stErrEnvelope(t, "permission_denied", "Access is denied"), "", nil
 	})()
@@ -954,7 +954,7 @@ func TestSTRead_PermissionDenied(t *testing.T) {
 }
 
 func TestSTRead_MalformedPayload(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		// ok=true but data is not a valid task object
 		return `{"ok":true,"data":"not-an-object"}` + "\n", "", nil
@@ -967,7 +967,7 @@ func TestSTRead_MalformedPayload(t *testing.T) {
 
 func TestSTRead_SubFolderTask(t *testing.T) {
 	// EC-2: task in sub-folder
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "MyTask", `\Custom\`), "", nil
 	})()
@@ -982,7 +982,7 @@ func TestSTRead_SubFolderTask(t *testing.T) {
 
 func TestSTRead_SentinelTimes(t *testing.T) {
 	// EC-10: sentinel last_run_time/next_run_time should be empty string
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	payload := map[string]any{
 		"name": "T", "path": `\`, "description": "", "enabled": true,
 		"state": "Ready", "last_run_time": "", "last_task_result": int64(0),
@@ -1004,7 +1004,7 @@ func TestSTRead_SentinelTimes(t *testing.T) {
 
 func TestSTRead_DriftDetection_Disabled(t *testing.T) {
 	// EC-8: task disabled out-of-band → enabled=false, state=Disabled
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	payload := map[string]any{
 		"name": "DisabledTask", "path": `\`, "description": "",
 		"enabled": false, "state": "Disabled",
@@ -1034,7 +1034,7 @@ func TestSTRead_DriftDetection_Disabled(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSTCreate_HappyPath(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "NewTask", `\`), "", nil
 	})()
@@ -1058,7 +1058,7 @@ func TestSTCreate_HappyPath(t *testing.T) {
 
 func TestSTCreate_AlreadyExists(t *testing.T) {
 	// EC-1
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return stErrEnvelope(t, "already_exists", "Task already exists"), "", nil
 	})()
@@ -1075,7 +1075,7 @@ func TestSTCreate_AlreadyExists(t *testing.T) {
 
 func TestSTCreate_BuiltinPathGuard(t *testing.T) {
 	// EC-13: protected \Microsoft\Windows\ path rejected client-side
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	input := ScheduledTaskInput{
 		Name: "BadTask", Path: `\Microsoft\Windows\`,
 		Actions:  []ScheduledTaskActionInput{{Execute: "cmd.exe"}},
@@ -1089,7 +1089,7 @@ func TestSTCreate_BuiltinPathGuard(t *testing.T) {
 
 func TestSTCreate_SYSTEMPrincipal_NoPassword(t *testing.T) {
 	// EC-3: SYSTEM principal — no password in script
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	var capturedScript string
 	defer stubSTRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
 		capturedScript = script
@@ -1113,7 +1113,7 @@ func TestSTCreate_SYSTEMPrincipal_NoPassword(t *testing.T) {
 
 func TestSTCreate_MultipleActions(t *testing.T) {
 	// EC-6: multiple sequential actions
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "MultiAction", `\`), "", nil
 	})()
@@ -1136,7 +1136,7 @@ func TestSTCreate_MultipleActions(t *testing.T) {
 
 func TestSTCreate_OnEventTrigger(t *testing.T) {
 	// EC-12 / ADR-ST-5: OnEvent triggers use XML injection
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "EventTask", `\`), "", nil
 	})()
@@ -1155,7 +1155,7 @@ func TestSTCreate_OnEventTrigger(t *testing.T) {
 
 func TestSTCreate_PasswordSensitive_NotInErrorContext(t *testing.T) {
 	// EC-4: password must never appear in error context
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	pw := "s3cr3tP@ssword"
 	// Create-with-password takes the stdin path → stub both transports.
 	defer stubSTBoth(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -1197,7 +1197,7 @@ func TestSTCreate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	const secret = "S3cr3t#Pwd!ForSchedTask"
 	var capturedScript, capturedStdin string
 
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	// Stub ONLY the stdin transport — Create-with-password must use it.
 	defer stubSTRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
 		capturedScript = script
@@ -1247,7 +1247,7 @@ func TestSTUpdate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	const secret = "Rotat3d!ForSchedTask#42"
 	var capturedScript, capturedStdin string
 
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
 		capturedScript = script
 		capturedStdin = stdin
@@ -1303,7 +1303,7 @@ func TestSTCreate_PasswordEmptyStdinGuard(t *testing.T) {
 	const secret = "S3cr3t#Pwd!ForSchedTask"
 	var capturedScript string
 
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRunInput(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		capturedScript = script
 		return buildMinimalPayloadJSON(t, "PwTask", `\`), "", nil
@@ -1349,7 +1349,7 @@ func TestSTUpdate_PasswordEmptyStdinGuard(t *testing.T) {
 	const secret = "Rotat3d!ForSchedTask#42"
 	var capturedScript string
 
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRunInput(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		capturedScript = script
 		return buildMinimalPayloadJSON(t, "PwTask", `\`), "", nil
@@ -1394,7 +1394,7 @@ func TestSTUpdate_PasswordEmptyStdinGuard(t *testing.T) {
 // register phase, and carries no password material (ADR-ST-3).
 func TestSTCreate_PasswordEmptyStdinDiagnostic(t *testing.T) {
 	const secret = "S3cr3t#Pwd!ForSchedTask"
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRunInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return `{"ok":false,"kind":"invalid_input","message":"Scheduled task password was empty on stdin while a Password principal was requested.","context":{"phase":"register"}}` + "\n", "", nil
 	})()
@@ -1434,7 +1434,7 @@ func TestSTCreate_PasswordEmptyStdinDiagnostic(t *testing.T) {
 
 func TestSTCreate_RecursiveFolderCreation(t *testing.T) {
 	// EC-2: sub-folder created via Ensure-TaskFolder call in script
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	var capturedScript string
 	defer stubSTRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
 		capturedScript = script
@@ -1473,7 +1473,7 @@ func TestSTCreate_RecursiveFolderCreation(t *testing.T) {
 
 func TestSTCreate_RootPath_NoDoubleBackslash(t *testing.T) {
 	// EC-1: root path (\) — no double-backslash issues
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "RootTask", `\`), "", nil
 	})()
@@ -1493,7 +1493,7 @@ func TestSTCreate_RootPath_NoDoubleBackslash(t *testing.T) {
 
 func TestSTCreate_NullDataAfterCreate_Error(t *testing.T) {
 	// Task not found after create → error
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":true,"data":null}` + "\n", "", nil
 	})()
@@ -1516,7 +1516,7 @@ func TestSTCreate_NullDataAfterCreate_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSTUpdate_HappyPath(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "MyTask", `\`), "", nil
 	})()
@@ -1538,7 +1538,7 @@ func TestSTUpdate_HappyPath(t *testing.T) {
 }
 
 func TestSTUpdate_NullDataAfterUpdate_Error(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":true,"data":null}` + "\n", "", nil
 	})()
@@ -1555,7 +1555,7 @@ func TestSTUpdate_NullDataAfterUpdate_Error(t *testing.T) {
 
 func TestSTUpdate_DescriptionOnly_UsesSetScheduledTask(t *testing.T) {
 	// EC-7: description-only update must use Set-ScheduledTask (in-place)
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	var capturedScript string
 	defer stubSTRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
 		capturedScript = script
@@ -1600,7 +1600,7 @@ func TestSTUpdate_DescriptionOnly_UsesSetScheduledTask(t *testing.T) {
 // description write is unconditional rather than guarded on a non-empty value
 // the way Register-ScheduledTask's is.
 func TestSTUpdate_EmptyDescription_StillCleared(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	var capturedScript string
 	defer stubSTRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
 		capturedScript = script
@@ -1625,7 +1625,7 @@ func TestSTUpdate_EmptyDescription_StillCleared(t *testing.T) {
 
 func TestSTUpdate_PermissionDenied(t *testing.T) {
 	// EC-13: non-admin access denied during update
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return stErrEnvelope(t, "permission_denied", "Access is denied"), "", nil
 	})()
@@ -1645,7 +1645,7 @@ func TestSTUpdate_PermissionDenied(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSTDelete_HappyPath(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":true,"data":"deleted"}` + "\n", "", nil
 	})()
@@ -1657,7 +1657,7 @@ func TestSTDelete_HappyPath(t *testing.T) {
 
 func TestSTDelete_BuiltinPathGuard(t *testing.T) {
 	// EC-13: protected path rejected client-side
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	err := impl.Delete(context.Background(), `\Microsoft\Windows\SomeTask`)
 	if !IsScheduledTaskError(err, ScheduledTaskErrorBuiltinTask) {
 		t.Errorf("expected builtin_task error, got: %v", err)
@@ -1666,7 +1666,7 @@ func TestSTDelete_BuiltinPathGuard(t *testing.T) {
 
 func TestSTDelete_AlreadyAbsent_Idempotent(t *testing.T) {
 	// Idempotent: task missing → OK
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":true,"data":"not_found"}` + "\n", "", nil
 	})()
@@ -1677,7 +1677,7 @@ func TestSTDelete_AlreadyAbsent_Idempotent(t *testing.T) {
 }
 
 func TestSTDelete_PermissionDenied(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return stErrEnvelope(t, "permission_denied", "Access is denied"), "", nil
 	})()
@@ -1689,7 +1689,7 @@ func TestSTDelete_PermissionDenied(t *testing.T) {
 
 func TestSTDelete_UppercasePath(t *testing.T) {
 	// Builtin guard is case-insensitive
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	err := impl.Delete(context.Background(), `\MICROSOFT\WINDOWS\SomeTask`)
 	if !IsScheduledTaskError(err, ScheduledTaskErrorBuiltinTask) {
 		t.Errorf("expected builtin_task error for uppercase path, got: %v", err)
@@ -1701,7 +1701,7 @@ func TestSTDelete_UppercasePath(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSTImportByID_HappyPath(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "MyTask", `\`), "", nil
 	})()
@@ -1716,7 +1716,7 @@ func TestSTImportByID_HappyPath(t *testing.T) {
 
 func TestSTImportByID_NotFound(t *testing.T) {
 	// EC-11: import of non-existent task → ScheduledTaskErrorNotFound
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return stErrEnvelope(t, "not_found", "Task not found for import"), "", nil
 	})()
@@ -1728,7 +1728,7 @@ func TestSTImportByID_NotFound(t *testing.T) {
 
 func TestSTImportByID_NullData(t *testing.T) {
 	// ok=true but data=null → not_found
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":true,"data":null}` + "\n", "", nil
 	})()
@@ -1739,7 +1739,7 @@ func TestSTImportByID_NullData(t *testing.T) {
 }
 
 func TestSTImportByID_SubFolder(t *testing.T) {
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	defer stubSTRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return buildMinimalPayloadJSON(t, "SubTask", `\Folder\`), "", nil
 	})()
@@ -1764,7 +1764,7 @@ func TestSTPsQuoteUnicode_CreateAndImport(t *testing.T) {
 	const taskPath = `\`
 	id := taskPath + evilName
 
-	_, impl := newSTTestClient(t)
+	impl := newSTTestClient(t)
 	var captured string
 	defer stubSTBoth(func(_ context.Context, _ *Client, script string) (string, string, error) {
 		captured = script

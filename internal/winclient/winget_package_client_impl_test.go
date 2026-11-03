@@ -28,14 +28,14 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// wpNewClient returns a *Client + *WingetPackageClientImpl pair.
-func wpNewClient(t *testing.T) (*Client, *WingetPackageClientImpl) {
+// wpNewClient returns a *WingetPackageClientImpl.
+func wpNewClient(t *testing.T) *WingetPackageClientImpl {
 	t.Helper()
 	c, err := New(Config{Host: "winpkg01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewWingetPackageClient(c)
+	return NewWingetPackageClient(c)
 }
 
 // wpOK returns a JSON ok-envelope with the supplied data value.
@@ -424,7 +424,7 @@ func TestParseWPState_InvalidJSON(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWPRunEnvelope_TransportError(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "connection refused", errors.New("dial error")
 	})()
@@ -439,7 +439,7 @@ func TestWPRunEnvelope_TransportError(t *testing.T) {
 }
 
 func TestWPRunEnvelope_ContextCancelled(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
 
@@ -457,7 +457,7 @@ func TestWPRunEnvelope_ContextCancelled(t *testing.T) {
 }
 
 func TestWPRunEnvelope_NoJSONInOutput(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "no json here\n", "", nil
 	})()
@@ -472,7 +472,7 @@ func TestWPRunEnvelope_NoJSONInOutput(t *testing.T) {
 }
 
 func TestWPRunEnvelope_InvalidJSONEnvelope(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{not valid json}` + "\n", "", nil
 	})()
@@ -487,7 +487,7 @@ func TestWPRunEnvelope_InvalidJSONEnvelope(t *testing.T) {
 }
 
 func TestWPRunEnvelope_EmitErrResponse(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":false,"kind":"module_missing","message":"module not available","context":{}}` + "\n", "", nil
 	})()
@@ -502,7 +502,7 @@ func TestWPRunEnvelope_EmitErrResponse(t *testing.T) {
 }
 
 func TestWPRunEnvelope_EmitOK_ReturnsResp(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":true,"data":null}` + "\n", "", nil
 	})()
@@ -524,7 +524,7 @@ func TestWPRunEnvelope_EmitOK_ReturnsResp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWPInstall_HappyPath(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateData("Microsoft.VisualStudioCode", "winget", "1.85.2", "Visual Studio Code")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -548,7 +548,7 @@ func TestWPInstall_HappyPath(t *testing.T) {
 }
 
 func TestWPInstall_HappyPath_LatestVersion(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateData("7zip.7zip", "winget", "24.8.0", "7-Zip")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -569,7 +569,7 @@ func TestWPInstall_HappyPath_LatestVersion(t *testing.T) {
 }
 
 func TestWPInstall_WithOverride(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateData("Notepad++.Notepad++", "winget", "8.6.0", "Notepad++")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -587,7 +587,7 @@ func TestWPInstall_WithOverride(t *testing.T) {
 }
 
 func TestWPInstall_RebootRequired(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateDataReboot("Some.Pkg", "winget", "1.0", "Some Package")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -607,7 +607,7 @@ func TestWPInstall_RebootRequired(t *testing.T) {
 }
 
 func TestWPInstall_AlreadyInstalled(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"already_installed","message":"already installed","context":{}}` + "\n"},
 	})()
@@ -625,7 +625,7 @@ func TestWPInstall_AlreadyInstalled(t *testing.T) {
 }
 
 func TestWPInstall_ModuleMissing(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"module_missing","message":"module not found","context":{}}` + "\n"},
 	})()
@@ -643,7 +643,7 @@ func TestWPInstall_ModuleMissing(t *testing.T) {
 }
 
 func TestWPInstall_VersionNotAvailable(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"version_not_available","message":"no installer for this version","context":{}}` + "\n"},
 	})()
@@ -662,7 +662,7 @@ func TestWPInstall_VersionNotAvailable(t *testing.T) {
 }
 
 func TestWPInstall_BlockedByPolicy(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"blocked_by_policy","message":"policy blocked","context":{}}` + "\n"},
 	})()
@@ -680,7 +680,7 @@ func TestWPInstall_BlockedByPolicy(t *testing.T) {
 }
 
 func TestWPInstall_PermissionDenied(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"permission_denied","message":"requires elevation","context":{}}` + "\n"},
 	})()
@@ -698,7 +698,7 @@ func TestWPInstall_PermissionDenied(t *testing.T) {
 }
 
 func TestWPInstall_UnknownStatus(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"unknown","message":"unexpected status","context":{}}` + "\n"},
 	})()
@@ -716,7 +716,7 @@ func TestWPInstall_UnknownStatus(t *testing.T) {
 }
 
 func TestWPInstall_TransportError(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", errors.New("ssh dial")
 	})()
@@ -734,7 +734,7 @@ func TestWPInstall_TransportError(t *testing.T) {
 }
 
 func TestWPInstall_MsStoreSource(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateData("9NBLGGH4NNS1", "msstore", "1.0.0", "Store App")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -755,7 +755,7 @@ func TestWPInstall_MsStoreSource(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWPRead_HappyPath(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateData("Microsoft.VisualStudioCode", "winget", "1.85.2", "Visual Studio Code")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -775,7 +775,7 @@ func TestWPRead_HappyPath(t *testing.T) {
 }
 
 func TestWPRead_NotFound_NullData(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{{stdout: wpOKNull()}})()
 
 	st, err := wp.Read(context.Background(), "Nonexistent.Package", "winget")
@@ -788,7 +788,7 @@ func TestWPRead_NotFound_NullData(t *testing.T) {
 }
 
 func TestWPRead_ModuleMissing(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"module_missing","message":"module not found","context":{}}` + "\n"},
 	})()
@@ -803,7 +803,7 @@ func TestWPRead_ModuleMissing(t *testing.T) {
 }
 
 func TestWPRead_TransportError(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", errors.New("transport")
 	})()
@@ -815,7 +815,7 @@ func TestWPRead_TransportError(t *testing.T) {
 }
 
 func TestWPRead_MsStoreSource(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateData("9NBLGGH4NNS1", "msstore", "1.0.0", "Store App")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -832,7 +832,7 @@ func TestWPRead_MsStoreSource(t *testing.T) {
 }
 
 func TestWPRead_PermissionDenied(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"permission_denied","message":"elevation","context":{}}` + "\n"},
 	})()
@@ -851,7 +851,7 @@ func TestWPRead_PermissionDenied(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWPUpdate_HappyPath(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateData("Microsoft.VisualStudioCode", "winget", "1.86.0", "Visual Studio Code")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -872,7 +872,7 @@ func TestWPUpdate_HappyPath(t *testing.T) {
 }
 
 func TestWPUpdate_LatestVersion(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateData("Foo.Bar", "winget", "3.0.0", "Foo Bar")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -890,7 +890,7 @@ func TestWPUpdate_LatestVersion(t *testing.T) {
 }
 
 func TestWPUpdate_RebootRequired(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := wpStateDataReboot("Foo.Bar", "winget", "2.0", "Foo Bar")
 	defer wpStubSequence([]wpResponse{{stdout: wpOK(t, data)}})()
 
@@ -908,7 +908,7 @@ func TestWPUpdate_RebootRequired(t *testing.T) {
 }
 
 func TestWPUpdate_VersionNotAvailable(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"version_not_available","message":"no installer","context":{}}` + "\n"},
 	})()
@@ -927,7 +927,7 @@ func TestWPUpdate_VersionNotAvailable(t *testing.T) {
 }
 
 func TestWPUpdate_CatalogError(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"catalog_error","message":"package renamed","context":{}}` + "\n"},
 	})()
@@ -945,7 +945,7 @@ func TestWPUpdate_CatalogError(t *testing.T) {
 }
 
 func TestWPUpdate_BlockedByPolicy(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"blocked_by_policy","message":"policy","context":{}}` + "\n"},
 	})()
@@ -963,7 +963,7 @@ func TestWPUpdate_BlockedByPolicy(t *testing.T) {
 }
 
 func TestWPUpdate_TransportError(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", errors.New("ssh dial")
 	})()
@@ -978,7 +978,7 @@ func TestWPUpdate_TransportError(t *testing.T) {
 }
 
 func TestWPUpdate_SourceUnreachable_ContextTimeout(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
 
@@ -1001,7 +1001,7 @@ func TestWPUpdate_SourceUnreachable_ContextTimeout(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWPUninstall_HappyPath(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := map[string]any{
 		"package_id": "Microsoft.VisualStudioCode", "source": "winget",
 		"installed_version": "", "name": "", "reboot_required": false,
@@ -1021,7 +1021,7 @@ func TestWPUninstall_HappyPath(t *testing.T) {
 }
 
 func TestWPUninstall_RebootRequired(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := map[string]any{
 		"package_id": "Foo.Bar", "source": "winget",
 		"installed_version": "", "name": "", "reboot_required": true,
@@ -1039,7 +1039,7 @@ func TestWPUninstall_RebootRequired(t *testing.T) {
 
 func TestWPUninstall_PackageNotInstalled(t *testing.T) {
 	// The PS script treats PackageNotInstalled as success (Emit-OK with empty state).
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	data := map[string]any{
 		"package_id": "Foo.Bar", "source": "winget",
 		"installed_version": "", "name": "", "reboot_required": false,
@@ -1085,7 +1085,7 @@ func TestWPInstallBody_TreatsNoUpdateNeededAsSuccess(t *testing.T) {
 
 func TestWPRunRetryable_CatalogErrorNotRetried(t *testing.T) {
 	// catalog_error (e.g. unknown id) is deterministic: no retry, surfaced as-is.
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	callCount := 0
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		callCount++
@@ -1105,7 +1105,7 @@ func TestWPRunRetryable_CatalogErrorNotRetried(t *testing.T) {
 }
 
 func TestWPUninstall_ResourceInUse_ContextCancel(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
 
@@ -1120,7 +1120,7 @@ func TestWPUninstall_ResourceInUse_ContextCancel(t *testing.T) {
 }
 
 func TestWPUninstall_TransportError(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", errors.New("transport")
 	})()
@@ -1132,7 +1132,7 @@ func TestWPUninstall_TransportError(t *testing.T) {
 }
 
 func TestWPUninstall_ModuleMissing(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	defer wpStubSequence([]wpResponse{
 		{stdout: `{"ok":false,"kind":"module_missing","message":"no module","context":{}}` + "\n"},
 	})()
@@ -1147,7 +1147,7 @@ func TestWPUninstall_ModuleMissing(t *testing.T) {
 }
 
 func TestWPUninstall_SourceUnreachable_ContextTimeout(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
 
@@ -1166,7 +1166,7 @@ func TestWPUninstall_SourceUnreachable_ContextTimeout(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWPRunRetryable_ImmediateNonRetryableError(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	callCount := 0
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		callCount++
@@ -1186,7 +1186,7 @@ func TestWPRunRetryable_ImmediateNonRetryableError(t *testing.T) {
 }
 
 func TestWPRunRetryable_ResourceInUse_ContextCancelDuringWait(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	callCount := 0
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
@@ -1207,7 +1207,7 @@ func TestWPRunRetryable_ResourceInUse_ContextCancelDuringWait(t *testing.T) {
 }
 
 func TestWPRunRetryable_SourceUnreachable_ContextCancelDuringWait(t *testing.T) {
-	_, wp := wpNewClient(t)
+	wp := wpNewClient(t)
 	callCount := 0
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()

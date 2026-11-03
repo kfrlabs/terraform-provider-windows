@@ -861,7 +861,7 @@ func (n *NetIPAddressClientImpl) restoreDHCPAfterFailure(ctx context.Context, al
 // non-duplicate state returns the read-back info.
 func (n *NetIPAddressClientImpl) pollAddressState(ctx context.Context, alias, canonical string, isV6 bool, created *NetIPAddressInfo, dhcpDisabled bool) (*NetIPAddressInfo, bool, error) {
 	if created.AddressState == "Duplicate" {
-		return nil, dhcpDisabled, n.rollbackDuplicate(ctx, alias, canonical, isV6, dhcpDisabled)
+		return nil, dhcpDisabled, n.rollbackDuplicate(ctx, alias, canonical, isV6)
 	}
 	if created.AddressState == "Preferred" || created.AddressState == "Deprecated" {
 		return created, dhcpDisabled, nil
@@ -885,7 +885,7 @@ func (n *NetIPAddressClientImpl) pollAddressState(ctx context.Context, alias, ca
 		}
 		current = info
 		if info.AddressState == "Duplicate" {
-			return nil, dhcpDisabled, n.rollbackDuplicate(ctx, alias, canonical, isV6, dhcpDisabled)
+			return nil, dhcpDisabled, n.rollbackDuplicate(ctx, alias, canonical, isV6)
 		}
 		if info.AddressState == "Preferred" || info.AddressState == "Deprecated" {
 			return info, dhcpDisabled, nil
@@ -898,7 +898,7 @@ func (n *NetIPAddressClientImpl) pollAddressState(ctx context.Context, alias, ca
 
 // rollbackDuplicate removes a Duplicate address again and reports the
 // duplicate_address failure. A failed rollback is recorded in the context.
-func (n *NetIPAddressClientImpl) rollbackDuplicate(ctx context.Context, alias, canonical string, isV6 bool, dhcpDisabled bool) error {
+func (n *NetIPAddressClientImpl) rollbackDuplicate(ctx context.Context, alias, canonical string, isV6 bool) error {
 	resp, rerr := n.runNetIPAddressEnvelope(ctx, "rollback",
 		buildNetIPAddressRemoveScript(alias, canonical, isV6),
 		map[string]string{"interface_alias": alias, "ip_address": canonical})

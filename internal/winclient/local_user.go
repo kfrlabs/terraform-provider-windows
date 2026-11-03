@@ -272,10 +272,10 @@ func (lc *LocalUserClientImpl) runLUEnvelopeWithInput(ctx context.Context, op, k
 // Retained as a unit-test seam (see local_user_client_impl_test.go); the
 // production Create/Read/Update/Delete paths parse through the shared
 // runEnvelope helper via runLUEnvelope/runLUEnvelopeWithInput above.
-func (lc *LocalUserClientImpl) parseLUEnvelope(op, key, stdout, stderr string) (*psResponse, error) {
+func (lc *LocalUserClientImpl) parseLUEnvelope(op, key, stdout, stderr string) error {
 	line := extractLastJSONLine(stdout)
 	if line == "" {
-		return nil, NewLocalUserError(LocalUserErrorUnknown,
+		return NewLocalUserError(LocalUserErrorUnknown,
 			fmt.Sprintf("no JSON envelope returned from %q", op), nil,
 			map[string]string{
 				"operation": op, "key": key, "host": lc.c.cfg.Host,
@@ -286,7 +286,7 @@ func (lc *LocalUserClientImpl) parseLUEnvelope(op, key, stdout, stderr string) (
 
 	var resp psResponse
 	if jerr := json.Unmarshal([]byte(line), &resp); jerr != nil {
-		return nil, NewLocalUserError(LocalUserErrorUnknown,
+		return NewLocalUserError(LocalUserErrorUnknown,
 			fmt.Sprintf("invalid JSON envelope from %q", op), jerr,
 			map[string]string{
 				"operation": op, "key": key, "host": lc.c.cfg.Host,
@@ -303,9 +303,9 @@ func (lc *LocalUserClientImpl) parseLUEnvelope(op, key, stdout, stderr string) (
 		ctxMap["operation"] = op
 		ctxMap["key"] = key
 		ctxMap["host"] = lc.c.cfg.Host
-		return &resp, NewLocalUserError(kind, resp.Message, nil, ctxMap)
+		return NewLocalUserError(kind, resp.Message, nil, ctxMap)
 	}
-	return &resp, nil
+	return nil
 }
 
 // ---------------------------------------------------------------------------
