@@ -106,6 +106,41 @@ jobs:
           version: v2.15.0
           # .golangci.yml at the repo root drives the rule set (incl. run.timeout).
 
+  sync-agent-ports:
+    # The `.claude/agents` and `.opencode/agents` ports must stay
+    # byte-identical (see .claude/README.md and .opencode/README.md
+    # canonical-and-sync rule), as must the `/windows-resource`
+    # orchestrator pair. A one-sided edit silently breaks the other client.
+    name: agent ports in sync
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: agent ports in sync
+        run: |
+          shopt -s nullglob globstar
+          fail=0
+          for f in .claude/agents/**/*.md; do
+            rel=${f#.claude/agents/}
+            if ! cmp -s "$f" ".opencode/agents/$rel"; then
+              echo "::error file=$f::diverges from .opencode/agents/$rel (ports must stay byte-identical)"
+              fail=1
+            fi
+          done
+          if ! cmp -s .claude/commands/windows-resource.md .opencode/commands/windows-resource.md; then
+            echo "::error file=.claude/commands/windows-resource.md::diverges from .opencode/commands/windows-resource.md (must stay byte-identical)"
+            fail=1
+          fi
+          for f in .opencode/agents/**/*.md; do
+            rel=${f#.opencode/agents/}
+            if [ ! -e ".claude/agents/$rel" ]; then
+              echo "::error file=$f::exists only under .opencode/agents (ports must match both ways)"
+              fail=1
+            fi
+          done
+          exit $fail
+
   govulncheck:
     # Reachability-aware vulnerability scan (see #205). Blocking: unlike
     # Dependabot version updates, it fails the PR when a CVE is reachable
