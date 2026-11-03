@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The minimum supported Terraform version is now documented as >= 1.11:
+  WriteOnly attributes (e.g. `password_wo`, `content_wo`) require
+  Terraform 1.11 and later (#239).
+
 ## [0.3.0] - 2026-11-03
 
 ### Resources
