@@ -199,11 +199,11 @@ func extractLastJSONLine(stdout string) string {
 	return ""
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max] + "...[truncated]"
+	return s[:maxLen] + "...[truncated]"
 }
 
 // envelopeContext builds a fresh diagnostic map: base entries first, then

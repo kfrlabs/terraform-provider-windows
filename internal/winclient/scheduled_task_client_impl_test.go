@@ -1807,17 +1807,6 @@ func TestSTPsQuoteUnicode_CreateAndImport(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func TestNormalizeDT(t *testing.T) {
 	cases := []struct {
 		in, want string
