@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-03
+
 ### Resources
 
 - New `windows_domain_membership` resource: joins the target host to an
