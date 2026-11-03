@@ -7,6 +7,13 @@ windows_username = "tfacc"
 
 test_suffix = "cli"
 
-enable_network_tests = false
-enable_feature_test  = false
-enable_hostname_test = false
+enable_firewall_tests         = false
+enable_network_tests          = false
+enable_feature_test           = false
+enable_hostname_test          = false
+enable_network_config_tests   = false
+enable_smb_tests              = false
+enable_certificate_tests      = false
+enable_domain_membership_test = false
+# domain_join_username = "joiner@corp.example.com"
+# Supply TF_VAR_domain_join_password via the environment for the domain test.
