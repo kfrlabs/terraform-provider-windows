@@ -15,6 +15,7 @@ linters:
     - ineffassign
     - makezero
     - misspell
+    - predeclared
     - staticcheck
     - unconvert
     - unused

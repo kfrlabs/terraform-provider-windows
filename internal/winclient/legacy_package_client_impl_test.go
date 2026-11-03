@@ -303,8 +303,8 @@ func TestLPRunEnvelope_Happy(t *testing.T) {
 		if !strings.Contains(script, "Emit-OK") {
 			t.Errorf("header not prepended (first 64 chars): %s", safeHead(script, 64))
 		}
-		var any map[string]any
-		if jerr := json.Unmarshal([]byte(stdin), &any); jerr != nil {
+		var decoded map[string]any
+		if jerr := json.Unmarshal([]byte(stdin), &decoded); jerr != nil {
 			t.Errorf("stdin not JSON: %v (%q)", jerr, stdin)
 		}
 		return lpOK(t, lpStateMap("{XYZ}", "9.9.9")), "", nil
