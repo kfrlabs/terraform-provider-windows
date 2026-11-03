@@ -1160,7 +1160,7 @@ func startSilentListener(t *testing.T) (string, int) {
 			}()
 		}
 	}()
-	addr := ln.Addr().(*net.TCPAddr)
+	addr := tcpAddr(t, ln)
 	return addr.IP.String(), addr.Port
 }
 
@@ -1235,7 +1235,7 @@ func closedPort(t *testing.T) int {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	port := tcpAddr(t, ln).Port
 	if err := ln.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}

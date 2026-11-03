@@ -745,7 +745,11 @@ func rvModelToInput(m *windowsRegistryValueModel) (winclient.RegistryValueInput,
 			elems := m.ValueStrings.Elements()
 			strs := make([]string, len(elems))
 			for i, v := range elems {
-				strs[i] = v.(types.String).ValueString()
+				s, ok := v.(types.String)
+				if !ok {
+					return input, fmt.Errorf("expected value_strings element %d to be a string, got %T", i, v)
+				}
+				strs[i] = s.ValueString()
 			}
 			input.ValueStrings = strs
 		} else {

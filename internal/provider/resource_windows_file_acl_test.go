@@ -30,7 +30,11 @@ import (
 func fileACLSchema(t *testing.T) schema.Schema {
 	t.Helper()
 	resp := &resource.SchemaResponse{}
-	NewWindowsFileACLResource().(*windowsFileACLResource).Schema(context.Background(), resource.SchemaRequest{}, resp)
+	aclRes, ok := NewWindowsFileACLResource().(*windowsFileACLResource)
+	if !ok {
+		t.Fatalf("expected *windowsFileACLResource, got %T", aclRes)
+	}
+	aclRes.Schema(context.Background(), resource.SchemaRequest{}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("schema diagnostics: %v", resp.Diagnostics)
 	}
@@ -95,7 +99,10 @@ func TestWindowsFileACLResource_SchemaShape(t *testing.T) {
 
 	// Observed-only attributes must never be writable.
 	for _, k := range []string{"target_type", "owner_sid", "sddl"} {
-		a := s.Attributes[k].(schema.StringAttribute)
+		a, ok := s.Attributes[k].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("expected schema.StringAttribute, got %T", a)
+		}
 		if !a.Computed || a.Optional || a.Required {
 			t.Errorf("%s must be computed only", k)
 		}
@@ -135,7 +142,11 @@ func TestWindowsFileACLResource_BlockHasNoComputedAttribute(t *testing.T) {
 }
 
 func TestWindowsFileACLResource_ConfigValidatorsPresent(t *testing.T) {
-	v := NewWindowsFileACLResource().(*windowsFileACLResource).ConfigValidators(context.Background())
+	aclRes, ok := NewWindowsFileACLResource().(*windowsFileACLResource)
+	if !ok {
+		t.Fatalf("expected *windowsFileACLResource, got %T", aclRes)
+	}
+	v := aclRes.ConfigValidators(context.Background())
 	if len(v) == 0 {
 		t.Fatal("expected at least one config validator")
 	}

@@ -472,7 +472,10 @@ func TestFirewallProfileDSRead_InvalidName(t *testing.T) {
 	d := &windowsFirewallProfileDataSource{
 		fp: &fakeFirewallProfileClientDS{readOut: fpDSState()},
 	}
-	fake := d.fp.(*fakeFirewallProfileClientDS)
+	fake, ok := d.fp.(*fakeFirewallProfileClientDS)
+	if !ok {
+		t.Fatalf("expected *fakeFirewallProfileClientDS, got %T", fake)
+	}
 	cfg := fpDSConfig("Bogus")
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 

@@ -341,33 +341,59 @@ func TestWindowsCertificateResource_Schema(t *testing.T) {
 		t.Error("friendly_name must NOT have RequiresReplace (in-place update)")
 	}
 	// Defaults.
-	if d := get("store_location").(schema.StringAttribute).Default; d == nil {
+	storeLocationAttr, ok := get("store_location").(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected schema.StringAttribute, got %T", storeLocationAttr)
+	}
+	if d := storeLocationAttr.Default; d == nil {
 		t.Error("store_location must default to LocalMachine")
 	}
-	if d := get("store_name").(schema.StringAttribute).Default; d == nil {
+	storeNameAttr, ok := get("store_name").(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected schema.StringAttribute, got %T", storeNameAttr)
+	}
+	if d := storeNameAttr.Default; d == nil {
 		t.Error("store_name must default to My")
 	}
-	if d := get("exportable").(schema.BoolAttribute).Default; d == nil {
+	exportableAttr, ok := get("exportable").(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("expected schema.BoolAttribute, got %T", exportableAttr)
+	}
+	if d := exportableAttr.Default; d == nil {
 		t.Error("exportable must default to false")
 	}
-	if d := get("delete_private_key").(schema.BoolAttribute).Default; d == nil {
+	deleteKeyAttr, ok := get("delete_private_key").(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("expected schema.BoolAttribute, got %T", deleteKeyAttr)
+	}
+	if d := deleteKeyAttr.Default; d == nil {
 		t.Error("delete_private_key must default to true")
 	}
 	// WriteOnly + Sensitive PFX material.
 	for _, name := range []string{"pfx_base64_wo", "pfx_password_wo"} {
-		a := get(name).(schema.StringAttribute)
+		a, ok := get(name).(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("expected schema.StringAttribute, got %T", a)
+		}
 		if !a.WriteOnly || !a.Sensitive || !a.Optional {
 			t.Errorf("%s must be Optional+Sensitive+WriteOnly", name)
 		}
 	}
 	// Computed-only observed attributes.
 	for _, name := range []string{"id", "thumbprint", "thumbprint_sha256", "subject", "issuer", "serial_number", "not_before", "not_after"} {
-		a := get(name).(schema.StringAttribute)
+		a, ok := get(name).(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("expected schema.StringAttribute, got %T", a)
+		}
 		if !a.Computed || a.Required || a.Optional {
 			t.Errorf("%s must be Computed-only", name)
 		}
 	}
-	if a := get("has_private_key").(schema.BoolAttribute); !a.Computed || a.Required || a.Optional {
+	hasKeyAttr, ok := get("has_private_key").(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("expected schema.BoolAttribute, got %T", hasKeyAttr)
+	}
+	if !hasKeyAttr.Computed || hasKeyAttr.Required || hasKeyAttr.Optional {
 		t.Error("has_private_key must be Computed-only")
 	}
 	if _, ok := s.Attributes["timeouts"]; !ok {

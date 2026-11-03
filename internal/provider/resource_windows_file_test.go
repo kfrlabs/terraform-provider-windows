@@ -26,7 +26,11 @@ import (
 func fileSchema(t *testing.T) schema.Schema {
 	t.Helper()
 	resp := &resource.SchemaResponse{}
-	NewWindowsFileResource().(*windowsFileResource).Schema(context.Background(), resource.SchemaRequest{}, resp)
+	fileRes, ok := NewWindowsFileResource().(*windowsFileResource)
+	if !ok {
+		t.Fatalf("expected *windowsFileResource, got %T", fileRes)
+	}
+	fileRes.Schema(context.Background(), resource.SchemaRequest{}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("schema diagnostics: %v", resp.Diagnostics)
 	}
@@ -88,7 +92,10 @@ func TestWindowsFileResource_SchemaShape(t *testing.T) {
 }
 
 func TestWindowsFileResource_ConfigValidatorsPresent(t *testing.T) {
-	r := NewWindowsFileResource().(*windowsFileResource)
+	r, ok := NewWindowsFileResource().(*windowsFileResource)
+	if !ok {
+		t.Fatalf("expected *windowsFileResource, got %T", r)
+	}
 	// CV-1, the four encoding conflicts and the cross-field validator live at
 	// resource level; CV-2 and CV-5 are attribute-level AlsoRequires.
 	if got := len(r.ConfigValidators(context.Background())); got < 6 {
@@ -99,7 +106,10 @@ func TestWindowsFileResource_ConfigValidatorsPresent(t *testing.T) {
 	// token, but the version token must not force both write-only variants.
 	s := fileSchema(t)
 	for _, k := range []string{"content_wo", "content_base64_wo"} {
-		a := s.Attributes[k].(schema.StringAttribute)
+		a, ok := s.Attributes[k].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("expected schema.StringAttribute, got %T", a)
+		}
 		if len(a.Validators) == 0 {
 			t.Errorf("%s must require content_wo_version", k)
 		}
@@ -305,7 +315,10 @@ func fileSourceTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, sou
 
 func fileSourceValidatorDiags(t *testing.T, sourceURL, sha256, downloadOn string, insecure bool) diag.Diagnostics {
 	t.Helper()
-	r := NewWindowsFileResource().(*windowsFileResource)
+	r, ok := NewWindowsFileResource().(*windowsFileResource)
+	if !ok {
+		t.Fatalf("expected *windowsFileResource, got %T", r)
+	}
 	schemaResp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
 	var validator fileCrossFieldValidator
@@ -434,7 +447,10 @@ func TestFileSourceValidator_UnknownSourceURL(t *testing.T) {
 // unknown source_url (sha256 null unless given, download_on null).
 func fileSourceValidatorDiagsUnknownURL(t *testing.T, sha256 string, insecure bool) diag.Diagnostics {
 	t.Helper()
-	r := NewWindowsFileResource().(*windowsFileResource)
+	r, ok := NewWindowsFileResource().(*windowsFileResource)
+	if !ok {
+		t.Fatalf("expected *windowsFileResource, got %T", r)
+	}
 	schemaResp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
 	var v fileCrossFieldValidator

@@ -258,7 +258,10 @@ func TestWindowsFirewallProfileResource_Schema(t *testing.T) {
 		}
 	}
 	// name is Required + ForceNew.
-	nameAttr := s.Attributes["name"].(schema.StringAttribute)
+	nameAttr, ok := s.Attributes["name"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected schema.StringAttribute, got %T", nameAttr)
+	}
 	if !nameAttr.Required {
 		t.Error("name must be Required")
 	}
@@ -275,15 +278,24 @@ func TestWindowsFirewallProfileResource_Schema(t *testing.T) {
 			t.Errorf("%s must be Optional+Computed (partial management)", n)
 		}
 	}
-	setAttr := s.Attributes["disabled_interface_aliases"].(schema.SetAttribute)
+	setAttr, ok := s.Attributes["disabled_interface_aliases"].(schema.SetAttribute)
+	if !ok {
+		t.Fatalf("expected schema.SetAttribute, got %T", setAttr)
+	}
 	if !setAttr.Optional || !setAttr.Computed {
 		t.Error("disabled_interface_aliases must be Optional+Computed")
 	}
-	restoreAttr := s.Attributes["restore_on_destroy"].(schema.BoolAttribute)
+	restoreAttr, ok := s.Attributes["restore_on_destroy"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("expected schema.BoolAttribute, got %T", restoreAttr)
+	}
 	if !restoreAttr.Optional || !restoreAttr.Computed {
 		t.Error("restore_on_destroy must be Optional+Computed (default false)")
 	}
-	idAttr := s.Attributes["id"].(schema.StringAttribute)
+	idAttr, ok := s.Attributes["id"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected schema.StringAttribute, got %T", idAttr)
+	}
 	if !idAttr.Computed || idAttr.Optional || idAttr.Required {
 		t.Error("id must be computed only")
 	}
@@ -303,7 +315,10 @@ func isOptionalComputedAttr(a any) bool {
 
 func TestFirewallProfileNameValidator(t *testing.T) {
 	s := windowsFirewallProfileSchemaDefinition(context.Background())
-	nameAttr := s.Attributes["name"].(schema.StringAttribute)
+	nameAttr, ok := s.Attributes["name"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected schema.StringAttribute, got %T", nameAttr)
+	}
 	if len(nameAttr.Validators) == 0 {
 		t.Fatal("name must carry a OneOf validator")
 	}
@@ -332,7 +347,10 @@ func TestFirewallProfileNameValidator(t *testing.T) {
 func TestFirewallProfileActionValidators(t *testing.T) {
 	s := windowsFirewallProfileSchemaDefinition(context.Background())
 	for _, n := range []string{"default_inbound_action", "default_outbound_action"} {
-		a := s.Attributes[n].(schema.StringAttribute)
+		a, ok := s.Attributes[n].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("expected schema.StringAttribute, got %T", a)
+		}
 		if len(a.Validators) == 0 {
 			t.Fatalf("%s must carry a OneOf validator", n)
 		}
@@ -359,7 +377,10 @@ func TestFirewallProfileActionValidators(t *testing.T) {
 
 func TestFirewallProfileLogSizeValidator(t *testing.T) {
 	s := windowsFirewallProfileSchemaDefinition(context.Background())
-	sizeAttr := s.Attributes["log_max_size_kilobytes"].(schema.Int64Attribute)
+	sizeAttr, ok := s.Attributes["log_max_size_kilobytes"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("expected schema.Int64Attribute, got %T", sizeAttr)
+	}
 	if len(sizeAttr.Validators) == 0 {
 		t.Fatal("log_max_size_kilobytes must carry a range validator")
 	}
@@ -435,7 +456,10 @@ func TestFirewallProfileLogPathValidator(t *testing.T) {
 }
 
 func TestFirewallProfileEnabledValidator(t *testing.T) {
-	r := NewWindowsFirewallProfileResource().(*windowsFirewallProfileResource)
+	r, ok := NewWindowsFirewallProfileResource().(*windowsFirewallProfileResource)
+	if !ok {
+		t.Fatalf("expected *windowsFirewallProfileResource, got %T", r)
+	}
 	var v firewallProfileEnabledValidator
 	for _, cv := range r.ConfigValidators(context.Background()) {
 		if ev, ok := cv.(firewallProfileEnabledValidator); ok {
