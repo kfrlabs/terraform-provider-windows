@@ -127,17 +127,13 @@ Common development tasks are exposed through the `GNUmakefile`:
 an in-process server on loopback (`internal/winclient/transport_test.go`), so
 authentication and host key verification are covered without a remote target.
 
-## Generated via KDust pipeline
+## Documentation
 
-This provider is produced by a multi-agent KDust pipeline. The bootstrap
-step (this scaffold) is followed by per-resource generation agents:
+Provider documentation is published on the [Terraform Registry](https://registry.terraform.io/providers/kfrlabs/windows/latest).
 
-- `bootstrap-provider` — scaffolds module layout, provider block, SSH client
-- `provider-orchestrator` — coordinates resource generation agents
-- `resource-codegen` — emits one Terraform resource (schema, CRUD, tests)
-- `powershell-author` — produces idempotent PowerShell for each CRUD op
-- `acc-tests` — generates acceptance tests and fixtures
-- `docs-gen` — runs `tfplugindocs` and curates `docs/`
+The source pages live in `docs/` and are generated via `tfplugindocs` — do not edit by hand (`make docs`).
+
+Agent and contributor workflow context lives in `CLAUDE.md`.
 
 ## License
 
