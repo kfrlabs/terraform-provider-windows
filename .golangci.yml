@@ -16,6 +16,7 @@ linters:
     - makezero
     - misspell
     - staticcheck
+    - unconvert
     - unused
   settings:
     gosec:
