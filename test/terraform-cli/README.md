@@ -1,34 +1,52 @@
 # terraform-cli — full resource + data source coverage via the Terraform CLI
 
-Exercises via **Terraform only** (no `go test`): all 15 resources and all 11
-data sources, with data sources cross-checked against resource state and
-`check` blocks failing the `apply` on divergence. Validated end-to-end on
-2026-10-04 against the `tfacc-win` lab container (Server 2025,
+Exercises via **Terraform only** (no `go test`): every resource and every
+data source, with data sources cross-checked against resource state and
+`check` blocks failing the `apply` on divergence. Last full end-to-end
+validation: 2026-10-04 against the `tfacc-win` lab container (Server 2025,
 PowerShell 5.1 only, no `pwsh`): **19/19 resources applied, 5/5 cross-checks
-PASS, second plan empty, destroy clean.**
+PASS, second plan empty, destroy clean** (historical record — the provider
+had 19 resources at that time; the suite now covers every resource and every
+data source).
 
 ## Coverage
 
 | File | Content |
 | --- | --- |
 | `01-identity.tf` | `windows_local_group`, `windows_local_user`, `windows_local_group_member` |
-| `02-storage.tf` | `windows_directory` (x3), `windows_file` (x2), `windows_file_acl` |
+| `02-storage.tf` | `windows_directory` (x4), `windows_file` (x2), `windows_file_acl`, `windows_smb_share` (gated) |
 | `03-registry-env.tf` | `windows_registry_value` (REG_SZ, EXPAND_SZ, MULTI_SZ, DWORD, QWORD, BINARY), `windows_environment_variable` (machine + user) |
-| `04-network.tf` | `windows_firewall_rule` (inbound allow + outbound block, gated) |
+| `04-network.tf` | `windows_firewall_rule` (inbound allow + outbound block + SSH allow, gated), `windows_firewall_profile` (gated), `windows_dns_client`, `windows_net_ip_address`, `windows_net_route` (gated) |
 | `05-scheduling-service.tf` | `windows_scheduled_task` (SYSTEM principal, `settings` + trigger duration), `windows_service` |
 | `06-packages-feature-hostname.tf` | `windows_legacy_package`, `windows_winget_package`, `windows_feature`, `windows_hostname` (all gated) |
-| `07-datasources.tf` | All 11 data sources (gated ones with `count`, like the resources) |
-| `08-outputs-checks.tf` | Outputs + 4 `check` resource-vs-data blocks that fail the `apply` |
+| `07-datasources.tf` | Every data source (gated ones with `count`, like the resources) |
+| `08-outputs-checks.tf` | Outputs + `check` resource-vs-data blocks that fail the `apply` |
+| `09-certificate.tf` | `windows_certificate` (gated, throwaway self-signed `test-cert.pem`) |
+| `10-domain.tf` | `windows_domain_membership` (gated, never enable by default) |
 | `mock.tftest.hcl` | `terraform test` with mocked provider, 100% offline |
 
-`windows_file` / `windows_file_acl` / `windows_directory` /
-`windows_legacy_package` have no data source in the provider — nothing to
-cross-check for them.
+`windows_domain_membership` is the only resource without a data source in
+the provider — nothing to cross-check for it (its state is surfaced through
+the `domain_pending_reboot` output instead).
 
 ## Flags (`variables.tf`)
 
-- `enable_firewall_tests` (default `false`) — firewall rules + data source.
-  Off in containers (see limitation L1). Enable on a full Windows host/VM.
+- `enable_firewall_tests` (default `false`) — firewall rules (+ data source)
+  and `windows_firewall_profile` (+ data source). Off in containers (see
+  limitation L1). Enable on a full Windows host/VM.
+- `enable_network_config_tests` (default `false`) — `windows_dns_client` /
+  `windows_net_ip_address` / `windows_net_route` (+ data sources). Targets
+  the secondary NIC `Ethernet 2` (absent in containers) and reconfigures host
+  networking: dedicated throwaway host only.
+- `enable_smb_tests` (default `false`) — `windows_smb_share` (+ data
+  source). Creates a network-visible share: keep off on shared hosts.
+- `enable_certificate_tests` (default `false`) — `windows_certificate` (+
+  data source). Imports the throwaway self-signed `test-cert.pem` into the
+  machine store (removed on destroy).
+- `enable_domain_membership_test` (default `false`) — NEVER enable by
+  default. `windows_domain_membership` joins an AD domain (machine identity
+  change, reboot-pending): dedicated throwaway domain-lab host only, with
+  `domain_join_username` / `TF_VAR_domain_join_password` set.
 - `enable_network_tests` (default `false`) — `windows_legacy_package`
   (URL download) + `windows_winget_package` (+ data source). Needs container
   internet + App Installer in the image (absent from bare

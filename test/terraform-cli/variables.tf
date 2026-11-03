@@ -36,7 +36,44 @@ variable "svc_password" {
 variable "enable_firewall_tests" {
   type        = bool
   default     = false
-  description = "Enable windows_firewall_rule (+ data source). Off in containers: WFAS is unavailable there (endpoint mapper error). Enable against a full Windows host/VM."
+  description = "Enable windows_firewall_rule (+ data source) and windows_firewall_profile (+ data source). Off in containers: WFAS is unavailable there (endpoint mapper error). Enable against a full Windows host/VM."
+}
+
+variable "enable_network_config_tests" {
+  type        = bool
+  default     = false
+  description = "Enable windows_dns_client / windows_net_ip_address / windows_net_route (+ data sources). Targets the secondary NIC 'Ethernet 2' (absent in containers) and reconfigures host networking - dedicated throwaway host only."
+}
+
+variable "enable_smb_tests" {
+  type        = bool
+  default     = false
+  description = "Enable windows_smb_share (+ data source). Creates a network-visible share - keep off on shared hosts."
+}
+
+variable "enable_certificate_tests" {
+  type        = bool
+  default     = false
+  description = "Enable windows_certificate (+ data source). Imports a throwaway self-signed test certificate into the machine store (removed on destroy)."
+}
+
+variable "enable_domain_membership_test" {
+  type        = bool
+  default     = false
+  description = "Enable windows_domain_membership. NEVER enable by default: joining an AD domain changes the machine identity and leaves the host reboot-pending. Dedicated throwaway domain-lab host only."
+}
+
+variable "domain_join_username" {
+  type        = string
+  default     = "joiner@corp.example.com"
+  description = "Domain account (UPN) used for the join. Only used when enable_domain_membership_test is true."
+}
+
+variable "domain_join_password" {
+  type        = string
+  sensitive   = true
+  default     = ""
+  description = "Write-only domain password for the join. Supply through TF_VAR_domain_join_password; never commit it. Only used when enable_domain_membership_test is true."
 }
 
 variable "enable_network_tests" {

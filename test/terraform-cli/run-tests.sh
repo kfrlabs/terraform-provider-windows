@@ -71,15 +71,30 @@ import json, sys
 out = json.load(open('/tmp/opencode/cli-outputs.json'))
 def val(name):
     return out[name]['value']
-checks = [
-    ('check_registry_value', val('check_registry_value')['resource'], val('check_registry_value')['data']),
-    ('check_registry_dword', val('check_registry_dword')['resource'], val('check_registry_dword')['data']),
-    ('check_local_user_sid', val('check_local_user_sid')['resource'], val('check_local_user_sid')['data']),
-    ('check_group_member_sid', val('check_group_member_sid')['resource'], val('check_group_member_sid')['data']),
-    ('check_env_var', val('check_env_var')['resource'], val('check_env_var')['data']),
+names = [
+    'check_registry_value',
+    'check_registry_dword',
+    'check_local_user_sid',
+    'check_group_member_sid',
+    'check_env_var',
+    'check_directory',
+    'check_file',
+    'check_file_acl',
+    'check_firewall_profile',
+    'check_dns',
+    'check_net_ip',
+    'check_net_route',
+    'check_smb_share',
+    'check_certificate',
+    'check_legacy_package',
 ]
 failed = False
-for name, resource, data in checks:
+for name in names:
+    v = val(name)
+    if v is None:
+        print(f'SKIP: {name} (gate off)')
+        continue
+    resource, data = v['resource'], v['data']
     status = 'PASS' if resource == data else 'FAIL'
     if status == 'FAIL':
         failed = True

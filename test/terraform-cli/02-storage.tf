@@ -55,3 +55,32 @@ resource "windows_file_acl" "app_config" {
     rights   = ["Read"]
   }
 }
+
+# Backing directory for the SMB share below. The share manages sharing, not
+# the directory itself (never created by windows_smb_share). Created only
+# when SMB tests are enabled.
+resource "windows_directory" "share" {
+  count = var.enable_smb_tests ? 1 : 0
+
+  path = "C:\\ProgramData\\cli-test-${var.test_suffix}\\share"
+}
+
+# Fixture share with all four access sets omitted: the host access list is
+# left untouched and never diffed (see the finance example for the managed
+# variant). Gated: a share is network-visible, so it stays off on shared
+# hosts along with the backing directory above.
+resource "windows_smb_share" "fixture" {
+  count = var.enable_smb_tests ? 1 : 0
+
+  name = "CliTest-${var.test_suffix}"
+  path = windows_directory.share[0].path
+
+  # CLI-level coverage for the timeouts block: parsed by validate and the
+  # mocked suite on every PR (offline CI job), honoured on --apply runs.
+  # Written with `=` (not a block): like every other SingleNestedAttribute
+  # in this provider, `timeouts` only accepts the assignment form.
+  timeouts = {
+    create = "10m"
+    delete = "10m"
+  }
+}
