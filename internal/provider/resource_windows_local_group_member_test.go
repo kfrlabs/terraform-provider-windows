@@ -159,7 +159,8 @@ func lgmObj(overrides map[string]tftypes.Value) tftypes.Value {
 }
 
 // lgmState builds a populated tfsdk.State for the local_group_member schema.
-func lgmState(groupSID, memberSID, group, member string) tfsdk.State {
+func lgmState(groupSID, group, member string) tfsdk.State {
+	const memberSID = "S-1-5-21-100-200-300-500"
 	schemaDef := windowsLocalGroupMemberSchemaDefinition(context.Background())
 	return tfsdk.State{
 		Schema: schemaDef,
@@ -668,7 +669,7 @@ func TestLocalGroupMemberRead_HappyPath(t *testing.T) {
 		},
 	}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	prior := lgmState("S-1-5-32-544", "S-1-5-21-100-200-300-500", "Administrators", "DOMAIN\\alice")
+	prior := lgmState("S-1-5-32-544", "Administrators", "DOMAIN\\alice")
 	resp := &resource.ReadResponse{State: prior}
 
 	r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
@@ -694,7 +695,7 @@ func TestLocalGroupMemberRead_MemberAbsent_EC4(t *testing.T) {
 	// EC-4: membership removed out-of-band → RemoveResource.
 	fake := &fakeLocalGroupMemberClient{getOut: nil, getErr: nil}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	prior := lgmState("S-1-5-32-544", "S-1-5-21-100-200-300-500", "Administrators", "DOMAIN\\alice")
+	prior := lgmState("S-1-5-32-544", "Administrators", "DOMAIN\\alice")
 	resp := &resource.ReadResponse{State: prior}
 
 	r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
@@ -716,7 +717,7 @@ func TestLocalGroupMemberRead_GroupNotFound_EC5(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	prior := lgmState("S-1-5-32-9999", "S-1-5-21-100-200-300-500", "DeletedGroup", "DOMAIN\\alice")
+	prior := lgmState("S-1-5-32-9999", "DeletedGroup", "DOMAIN\\alice")
 	resp := &resource.ReadResponse{State: prior}
 
 	r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
@@ -737,7 +738,7 @@ func TestLocalGroupMemberRead_Error(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	prior := lgmState("S-1-5-32-544", "S-1-5-21-100-200-300-500", "Administrators", "DOMAIN\\alice")
+	prior := lgmState("S-1-5-32-544", "Administrators", "DOMAIN\\alice")
 	resp := &resource.ReadResponse{State: prior}
 
 	r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
@@ -798,7 +799,7 @@ func TestLocalGroupMemberRead_GetCalledWithCorrectSIDs(t *testing.T) {
 		},
 	}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	prior := lgmState("S-1-5-32-544", "S-1-5-21-100-200-300-500", "Administrators", "DOMAIN\\alice")
+	prior := lgmState("S-1-5-32-544", "Administrators", "DOMAIN\\alice")
 	resp := &resource.ReadResponse{State: prior}
 
 	r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
@@ -818,7 +819,7 @@ func TestLocalGroupMemberRead_GetCalledWithCorrectSIDs(t *testing.T) {
 func TestLocalGroupMemberDelete_Success(t *testing.T) {
 	fake := &fakeLocalGroupMemberClient{removeErr: nil}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	prior := lgmState("S-1-5-32-544", "S-1-5-21-100-200-300-500", "Administrators", "DOMAIN\\alice")
+	prior := lgmState("S-1-5-32-544", "Administrators", "DOMAIN\\alice")
 	resp := &resource.DeleteResponse{}
 
 	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
@@ -831,7 +832,7 @@ func TestLocalGroupMemberDelete_UsesMemberSID_ADR_LGM2(t *testing.T) {
 	// ADR-LGM-2: Delete must use the member SID (not display name).
 	fake := &fakeLocalGroupMemberClient{removeErr: nil}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	prior := lgmState("S-1-5-32-544", "S-1-5-21-100-200-300-500", "Administrators", "DOMAIN\\alice")
+	prior := lgmState("S-1-5-32-544", "Administrators", "DOMAIN\\alice")
 	resp := &resource.DeleteResponse{}
 
 	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)
@@ -853,7 +854,7 @@ func TestLocalGroupMemberDelete_Error(t *testing.T) {
 		),
 	}
 	r := &windowsLocalGroupMemberResource{member: fake}
-	prior := lgmState("S-1-5-32-544", "S-1-5-21-100-200-300-500", "Administrators", "DOMAIN\\alice")
+	prior := lgmState("S-1-5-32-544", "Administrators", "DOMAIN\\alice")
 	resp := &resource.DeleteResponse{}
 
 	r.Delete(context.Background(), resource.DeleteRequest{State: prior}, resp)

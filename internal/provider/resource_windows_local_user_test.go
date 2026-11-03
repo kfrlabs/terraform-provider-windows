@@ -190,10 +190,10 @@ func luObj(overrides map[string]tftypes.Value) tftypes.Value {
 	return tftypes.NewValue(localUserObjectType(), base)
 }
 
-func okUserState(name, sid string) *winclient.UserState {
+func okUserState(name string) *winclient.UserState {
 	return &winclient.UserState{
 		Name:                     name,
-		SID:                      sid,
+		SID:                      "S-1-5-21-111-222-333-1001",
 		FullName:                 "",
 		Description:              "",
 		Enabled:                  true,
@@ -808,8 +808,8 @@ func TestLocalUserResource_Configure_WrongType(t *testing.T) {
 
 func TestLocalUserCreate_HappyPath(t *testing.T) {
 	fake := &fakeLocalUserClient{
-		createOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
-		readOut:   okUserState("alice", "S-1-5-21-111-222-333-1001"),
+		createOut: okUserState("alice"),
+		readOut:   okUserState("alice"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	s := windowsLocalUserSchemaDefinition(context.Background())
@@ -911,7 +911,7 @@ func TestLocalUserRead_EC3_UserDisappeared(t *testing.T) {
 
 func TestLocalUserRead_EC4_CaseFoldName(t *testing.T) {
 	fake := &fakeLocalUserClient{
-		readOut: okUserState("ALICE", "S-1-5-21-111-222-333-1001"), // Windows uppercase
+		readOut: okUserState("ALICE"), // Windows uppercase
 	}
 	r := &windowsLocalUserResource{user: fake}
 	s := windowsLocalUserSchemaDefinition(context.Background())
@@ -967,7 +967,7 @@ func TestLocalUserRead_Error(t *testing.T) {
 func TestLocalUserUpdate_Rename(t *testing.T) {
 	fake := &fakeLocalUserClient{
 		renameErr: nil,
-		readOut:   okUserState("alice-new", "S-1-5-21-111-222-333-1001"),
+		readOut:   okUserState("alice-new"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	s := windowsLocalUserSchemaDefinition(context.Background())
@@ -1000,7 +1000,7 @@ func TestLocalUserUpdate_Rename(t *testing.T) {
 
 func TestLocalUserUpdate_PasswordRotation(t *testing.T) {
 	fake := &fakeLocalUserClient{
-		readOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+		readOut: okUserState("alice"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	s := windowsLocalUserSchemaDefinition(context.Background())
@@ -1035,7 +1035,7 @@ func TestLocalUserUpdate_PasswordRotation(t *testing.T) {
 
 func TestLocalUserUpdate_Enable(t *testing.T) {
 	fake := &fakeLocalUserClient{
-		readOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+		readOut: okUserState("alice"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	s := windowsLocalUserSchemaDefinition(context.Background())
@@ -1069,7 +1069,7 @@ func TestLocalUserUpdate_Enable(t *testing.T) {
 
 func TestLocalUserUpdate_Disable(t *testing.T) {
 	fake := &fakeLocalUserClient{
-		readOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+		readOut: okUserState("alice"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	s := windowsLocalUserSchemaDefinition(context.Background())
@@ -1271,7 +1271,7 @@ func TestLocalUserDelete_EC2_BuiltinAccount(t *testing.T) {
 
 func TestLocalUserImportState_BySID(t *testing.T) {
 	fake := &fakeLocalUserClient{
-		importBySIDOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+		importBySIDOut: okUserState("alice"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	s := windowsLocalUserSchemaDefinition(context.Background())
@@ -1297,7 +1297,7 @@ func TestLocalUserImportState_BySID(t *testing.T) {
 
 func TestLocalUserImportState_ByName(t *testing.T) {
 	fake := &fakeLocalUserClient{
-		importByNameOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+		importByNameOut: okUserState("alice"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	s := windowsLocalUserSchemaDefinition(context.Background())
@@ -1406,7 +1406,7 @@ func TestLocalUserDelete_StalledTransportIsBounded(t *testing.T) {
 
 func TestLocalUserCreate_PreservesTimeouts(t *testing.T) {
 	fake := &fakeLocalUserClient{
-		createOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+		createOut: okUserState("alice"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	schemaDef := windowsLocalUserSchemaDefinition(context.Background())
@@ -1441,7 +1441,7 @@ func TestLocalUserImportState_SetsTypedNullTimeouts(t *testing.T) {
 	// with error diagnostics unless luNullTimeouts() carries the schema's
 	// types.
 	fake := &fakeLocalUserClient{
-		importBySIDOut: okUserState("alice", "S-1-5-21-111-222-333-1001"),
+		importBySIDOut: okUserState("alice"),
 	}
 	r := &windowsLocalUserResource{user: fake}
 	schemaDef := windowsLocalUserSchemaDefinition(context.Background())

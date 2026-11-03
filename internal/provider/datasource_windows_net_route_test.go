@@ -149,15 +149,15 @@ func TestWindowsNetRouteDataSource_Configure(t *testing.T) {
 // Read
 // ---------------------------------------------------------------------------
 
-func nrDSRoute(alias string, metric, ifMetric int) *winclient.NetRouteInfo {
+func nrDSRoute(alias string, metric int) *winclient.NetRouteInfo {
 	return &winclient.NetRouteInfo{
 		InterfaceAlias:    alias,
 		InterfaceIndex:    7,
 		DestinationPrefix: "0.0.0.0/0",
 		NextHop:           "192.0.2.1",
 		RouteMetric:       metric,
-		InterfaceMetric:   ifMetric,
-		EffectiveMetric:   metric + ifMetric,
+		InterfaceMetric:   25,
+		EffectiveMetric:   metric + 25,
 		AddressFamily:     "IPv4",
 		Protocol:          "NetMgmt",
 	}
@@ -165,8 +165,8 @@ func nrDSRoute(alias string, metric, ifMetric int) *winclient.NetRouteInfo {
 
 func TestNetRouteDSRead_PicksLowestEffectiveMetric(t *testing.T) {
 	fc := &fakeNetRouteClientDS{lookupOut: []*winclient.NetRouteInfo{
-		nrDSRoute("Ethernet 3", 500, 25),
-		nrDSRoute("Ethernet 2", 10, 25),
+		nrDSRoute("Ethernet 3", 500),
+		nrDSRoute("Ethernet 2", 10),
 	}}
 	d := &windowsNetRouteDataSource{routes: fc}
 	req := datasource.ReadRequest{Config: nrDSConfig("0.0.0.0/0", "", "")}
@@ -203,7 +203,7 @@ func TestNetRouteDSRead_PicksLowestEffectiveMetric(t *testing.T) {
 }
 
 func TestNetRouteDSRead_NarrowedLookup(t *testing.T) {
-	fc := &fakeNetRouteClientDS{lookupOut: []*winclient.NetRouteInfo{nrDSRoute("Ethernet 2", 10, 25)}}
+	fc := &fakeNetRouteClientDS{lookupOut: []*winclient.NetRouteInfo{nrDSRoute("Ethernet 2", 10)}}
 	d := &windowsNetRouteDataSource{routes: fc}
 	req := datasource.ReadRequest{Config: nrDSConfig("0.0.0.0/0", "Ethernet 2", "192.0.2.1")}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: req.Config.Schema}}
@@ -240,7 +240,7 @@ func TestNetRouteDSRead_NotFound(t *testing.T) {
 }
 
 func TestNetRouteDSRead_BlankAliasRejected(t *testing.T) {
-	fc := &fakeNetRouteClientDS{lookupOut: []*winclient.NetRouteInfo{nrDSRoute("Ethernet 2", 10, 25)}}
+	fc := &fakeNetRouteClientDS{lookupOut: []*winclient.NetRouteInfo{nrDSRoute("Ethernet 2", 10)}}
 	d := &windowsNetRouteDataSource{routes: fc}
 	req := datasource.ReadRequest{Config: nrDSConfig("0.0.0.0/0", "   ", "")}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: req.Config.Schema}}
@@ -255,8 +255,8 @@ func TestNetRouteDSRead_BlankAliasRejected(t *testing.T) {
 }
 
 func TestPickLowestEffectiveMetric_DeterministicTie(t *testing.T) {
-	a := nrDSRoute("Ethernet 3", 10, 25)
-	b := nrDSRoute("Ethernet 2", 10, 25)
+	a := nrDSRoute("Ethernet 3", 10)
+	b := nrDSRoute("Ethernet 2", 10)
 	if pickLowestEffectiveMetric([]*winclient.NetRouteInfo{a, b}) != b {
 		t.Error("tied effective metrics must break deterministically by alias")
 	}

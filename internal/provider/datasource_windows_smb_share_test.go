@@ -74,7 +74,7 @@ func smbShareDSObjType() tftypes.Object {
 	}}
 }
 
-func smbShareDSConfig(name string) tfsdk.Config {
+func smbShareDSConfig() tfsdk.Config {
 	d := &windowsSmbShareDataSource{}
 	sr := datasource.SchemaResponse{}
 	d.Schema(context.Background(), datasource.SchemaRequest{}, &sr)
@@ -82,7 +82,7 @@ func smbShareDSConfig(name string) tfsdk.Config {
 		Schema: sr.Schema,
 		Raw: tftypes.NewValue(smbShareDSObjType(), map[string]tftypes.Value{
 			"id":                      tftypes.NewValue(tftypes.String, nil),
-			"name":                    tftypes.NewValue(tftypes.String, name),
+			"name":                    tftypes.NewValue(tftypes.String, "Finance"),
 			"path":                    tftypes.NewValue(tftypes.String, nil),
 			"description":             tftypes.NewValue(tftypes.String, nil),
 			"folder_enumeration_mode": tftypes.NewValue(tftypes.String, nil),
@@ -238,7 +238,7 @@ func TestSmbShareDSRead_HappyPath(t *testing.T) {
 	d := &windowsSmbShareDataSource{
 		client: &fakeSmbShareClientDS{readOut: smbShareDSState()},
 	}
-	cfg := smbShareDSConfig("Finance")
+	cfg := smbShareDSConfig()
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 
@@ -296,7 +296,7 @@ func TestSmbShareDSRead_BoundedByTimeouts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeSmbShareClientDS{readOut: smbShareDSState()}
 			d := &windowsSmbShareDataSource{client: fake}
-			cfg := smbShareDSConfig("Finance")
+			cfg := smbShareDSConfig()
 			if tc.customRead != "" {
 				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
 			}
@@ -372,7 +372,7 @@ func TestSmbShareDSRead_TypedNotFound(t *testing.T) {
 			readErr: &winclient.SmbShareError{Kind: winclient.SmbShareErrorNotFound, Message: "share not found"},
 		},
 	}
-	cfg := smbShareDSConfig("Finance")
+	cfg := smbShareDSConfig()
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 
@@ -390,7 +390,7 @@ func TestSmbShareDSRead_NilResult(t *testing.T) {
 	d := &windowsSmbShareDataSource{
 		client: &fakeSmbShareClientDS{readOut: nil, readErr: nil},
 	}
-	cfg := smbShareDSConfig("Finance")
+	cfg := smbShareDSConfig()
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 
@@ -422,7 +422,7 @@ func TestSmbShareDSRead_NotFoundDetailSingleLine(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &windowsSmbShareDataSource{client: tc.client}
-			cfg := smbShareDSConfig("Finance")
+			cfg := smbShareDSConfig()
 			resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 
 			d.Read(context.Background(), datasource.ReadRequest{Config: cfg}, resp)
@@ -447,7 +447,7 @@ func TestSmbShareDSRead_TypedError(t *testing.T) {
 			readErr: &winclient.SmbShareError{Kind: winclient.SmbShareErrorAccessDenied, Message: "denied"},
 		},
 	}
-	cfg := smbShareDSConfig("Finance")
+	cfg := smbShareDSConfig()
 	// A typed client error surfaces through the shared addSmbShareDiag helper,
 	// mirroring the resource Read path.
 	req := datasource.ReadRequest{Config: cfg}
@@ -469,7 +469,7 @@ func TestSmbShareDSRead_GenericError(t *testing.T) {
 			readErr: errors.New("transport failure"),
 		},
 	}
-	cfg := smbShareDSConfig("Finance")
+	cfg := smbShareDSConfig()
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 

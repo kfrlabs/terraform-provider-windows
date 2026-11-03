@@ -141,8 +141,8 @@ func lgObj(overrides map[string]tftypes.Value) tftypes.Value {
 	return tftypes.NewValue(localGroupObjectType(), base)
 }
 
-func okGroupState(name, desc, sid string) *winclient.GroupState {
-	return &winclient.GroupState{Name: name, Description: desc, SID: sid}
+func okGroupState(name, desc string) *winclient.GroupState {
+	return &winclient.GroupState{Name: name, Description: desc, SID: "S-1-5-21-111-222-333-1001"}
 }
 
 // lgDiagDetails extracts Summary + " / " + Detail from each diagnostic.
@@ -542,7 +542,7 @@ func TestNewWindowsLocalGroupResource_NotNil(t *testing.T) {
 
 func TestLocalGroupCreate_HappyPath_Handler(t *testing.T) {
 	fake := &fakeLocalGroupClient{
-		createOut: okGroupState("AppAdmins", "Application admins", "S-1-5-21-111-222-333-1001"),
+		createOut: okGroupState("AppAdmins", "Application admins"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -637,7 +637,7 @@ func TestLocalGroupCreate_PermissionDenied_EC8(t *testing.T) {
 
 func TestLocalGroupRead_HappyPath_Handler(t *testing.T) {
 	fake := &fakeLocalGroupClient{
-		readOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
+		readOut: okGroupState("AppAdmins", "desc"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -718,7 +718,7 @@ func TestLocalGroupRead_CaseInsensitiveNameNormalisation_EC4(t *testing.T) {
 	// EC-4 / ADR-LG-4: Windows returns "AppAdmins"; prior state has "appadmins".
 	// Read should keep the prior state name to avoid permanent plan diff.
 	fake := &fakeLocalGroupClient{
-		readOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
+		readOut: okGroupState("AppAdmins", "desc"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -749,7 +749,7 @@ func TestLocalGroupRead_CaseInsensitiveNameNormalisation_EC4(t *testing.T) {
 func TestLocalGroupRead_FallbackToIDWhenSIDEmpty(t *testing.T) {
 	// When SID is empty/null in state, read falls back to ID.
 	fake := &fakeLocalGroupClient{
-		readOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
+		readOut: okGroupState("AppAdmins", "desc"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -777,7 +777,7 @@ func TestLocalGroupRead_FallbackToIDWhenSIDEmpty(t *testing.T) {
 
 func TestLocalGroupUpdate_HappyPath_Handler(t *testing.T) {
 	fake := &fakeLocalGroupClient{
-		updateOut: okGroupState("NewName", "New desc", "S-1-5-21-111-222-333-1001"),
+		updateOut: okGroupState("NewName", "New desc"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -858,7 +858,7 @@ func TestLocalGroupUpdate_CaseInsensitiveKeepsPlanName_EC4(t *testing.T) {
 	// EC-4 / ADR-LG-4: Windows returns "AppAdmins" but plan says "appadmins".
 	// Update should store the plan name in state (not Windows casing).
 	fake := &fakeLocalGroupClient{
-		updateOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
+		updateOut: okGroupState("AppAdmins", "desc"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -981,7 +981,7 @@ func TestLocalGroupDelete_PermissionDenied_EC8(t *testing.T) {
 func TestLocalGroupImportState_ByName_EC10(t *testing.T) {
 	// EC-10: import ID does NOT start with "S-" → name-based path.
 	fake := &fakeLocalGroupClient{
-		importByNameOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
+		importByNameOut: okGroupState("AppAdmins", "desc"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -1008,7 +1008,7 @@ func TestLocalGroupImportState_ByName_EC10(t *testing.T) {
 func TestLocalGroupImportState_BySID_EC10(t *testing.T) {
 	// EC-10: import ID starts with "S-" → SID-based path.
 	fake := &fakeLocalGroupClient{
-		importBySIDOut: okGroupState("AppAdmins", "desc", "S-1-5-21-111-222-333-1001"),
+		importBySIDOut: okGroupState("AppAdmins", "desc"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -1139,7 +1139,7 @@ func TestLocalGroupDelete_StalledTransportIsBounded(t *testing.T) {
 
 func TestLocalGroupCreate_PreservesTimeouts(t *testing.T) {
 	fake := &fakeLocalGroupClient{
-		createOut: okGroupState("AppAdmins", "Application admins", "S-1-5-21-111-222-333-1001"),
+		createOut: okGroupState("AppAdmins", "Application admins"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())
@@ -1179,7 +1179,7 @@ func TestLocalGroupImportState_SetsTypedNullTimeouts(t *testing.T) {
 	// with error diagnostics unless lgNullTimeouts() carries the schema's
 	// types.
 	fake := &fakeLocalGroupClient{
-		importBySIDOut: okGroupState("AppAdmins", "Application admins", "S-1-5-21-111-222-333-1001"),
+		importBySIDOut: okGroupState("AppAdmins", "Application admins"),
 	}
 	r := &windowsLocalGroupResource{grp: fake}
 	schemaDef := windowsLocalGroupSchemaDefinition(context.Background())

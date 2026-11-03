@@ -61,7 +61,7 @@ func regValueDSObjType() tftypes.Object {
 	}}
 }
 
-func regValueDSConfig(hive, path, name string) tfsdk.Config {
+func regValueDSConfig(path, name string) tfsdk.Config {
 	d := &windowsRegistryValueDataSource{}
 	sr := datasource.SchemaResponse{}
 	d.Schema(context.Background(), datasource.SchemaRequest{}, &sr)
@@ -69,7 +69,7 @@ func regValueDSConfig(hive, path, name string) tfsdk.Config {
 		Schema: sr.Schema,
 		Raw: tftypes.NewValue(regValueDSObjType(), map[string]tftypes.Value{
 			"id":                           tftypes.NewValue(tftypes.String, nil),
-			"hive":                         tftypes.NewValue(tftypes.String, hive),
+			"hive":                         tftypes.NewValue(tftypes.String, "HKLM"),
 			"path":                         tftypes.NewValue(tftypes.String, path),
 			"name":                         tftypes.NewValue(tftypes.String, name),
 			"expand_environment_variables": tftypes.NewValue(tftypes.Bool, nil),
@@ -213,7 +213,7 @@ func TestRegistryValueDSRead_REGSZ(t *testing.T) {
 			},
 		},
 	}
-	cfg := regValueDSConfig("HKLM", "SOFTWARE\\MyApp", "InstallDir")
+	cfg := regValueDSConfig("SOFTWARE\\MyApp", "InstallDir")
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 	d.Read(context.Background(), req, resp)
@@ -250,7 +250,7 @@ func TestRegistryValueDSRead_REGMULTISZ(t *testing.T) {
 			},
 		},
 	}
-	cfg := regValueDSConfig("HKLM", "SOFTWARE\\MyApp", "MultiVal")
+	cfg := regValueDSConfig("SOFTWARE\\MyApp", "MultiVal")
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 	d.Read(context.Background(), req, resp)
@@ -285,7 +285,7 @@ func TestRegistryValueDSRead_REGBINARY(t *testing.T) {
 			},
 		},
 	}
-	cfg := regValueDSConfig("HKLM", "SOFTWARE\\MyApp", "BinVal")
+	cfg := regValueDSConfig("SOFTWARE\\MyApp", "BinVal")
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 	d.Read(context.Background(), req, resp)
@@ -307,7 +307,7 @@ func TestRegistryValueDSRead_NotFound(t *testing.T) {
 			readErr: winclient.NewRegistryValueError(winclient.RegistryValueErrorNotFound, "not found", nil, nil),
 		},
 	}
-	cfg := regValueDSConfig("HKLM", "SOFTWARE\\Missing", "Val")
+	cfg := regValueDSConfig("SOFTWARE\\Missing", "Val")
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 	d.Read(context.Background(), req, resp)
@@ -324,7 +324,7 @@ func TestRegistryValueDSRead_NilResult(t *testing.T) {
 	d := &windowsRegistryValueDataSource{
 		client: &fakeRegistryValueClientDS{readOut: nil, readErr: nil},
 	}
-	cfg := regValueDSConfig("HKLM", "SOFTWARE\\Ghost", "Val")
+	cfg := regValueDSConfig("SOFTWARE\\Ghost", "Val")
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 	d.Read(context.Background(), req, resp)
@@ -341,7 +341,7 @@ func TestRegistryValueDSRead_GenericError(t *testing.T) {
 	d := &windowsRegistryValueDataSource{
 		client: &fakeRegistryValueClientDS{readErr: errors.New("transport error")},
 	}
-	cfg := regValueDSConfig("HKLM", "SOFTWARE\\MyApp", "Val")
+	cfg := regValueDSConfig("SOFTWARE\\MyApp", "Val")
 	req := datasource.ReadRequest{Config: cfg}
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 	d.Read(context.Background(), req, resp)
@@ -382,7 +382,7 @@ func TestRegistryValueDSRead_BoundedByTimeouts(t *testing.T) {
 				},
 			}
 			d := &windowsRegistryValueDataSource{client: fake}
-			cfg := regValueDSConfig("HKLM", "SOFTWARE\\MyApp", "InstallDir")
+			cfg := regValueDSConfig("SOFTWARE\\MyApp", "InstallDir")
 			if tc.customRead != "" {
 				cfg = dsConfigWithReadTimeout(t, cfg, tc.customRead)
 			}

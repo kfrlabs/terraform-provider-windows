@@ -387,7 +387,7 @@ func (r *windowsFirewallRuleResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
-	m, diags := firewallStateToModel(ctx, state)
+	m, diags := firewallStateToModel(state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -442,7 +442,7 @@ func (r *windowsFirewallRuleResource) Read(ctx context.Context, req resource.Rea
 		return
 	}
 
-	m, diags := firewallStateToModel(ctx, fwState)
+	m, diags := firewallStateToModel(fwState)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -492,7 +492,7 @@ func (r *windowsFirewallRuleResource) Update(ctx context.Context, req resource.U
 		return
 	}
 
-	m, diags := firewallStateToModel(ctx, fwState)
+	m, diags := firewallStateToModel(fwState)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -579,7 +579,7 @@ func (r *windowsFirewallRuleResource) ImportState(ctx context.Context, req resou
 		return
 	}
 
-	m, diags := firewallStateToModel(ctx, fwState)
+	m, diags := firewallStateToModel(fwState)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -679,7 +679,7 @@ func fwNullTimeouts() timeouts.Value {
 }
 
 // firewallStateToModel converts a FirewallRuleState to a Terraform model.
-func firewallStateToModel(ctx context.Context, s *winclient.FirewallRuleState) (windowsFirewallRuleModel, diag.Diagnostics) {
+func firewallStateToModel(s *winclient.FirewallRuleState) (windowsFirewallRuleModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	profile := listFromStrings(s.Profile)
