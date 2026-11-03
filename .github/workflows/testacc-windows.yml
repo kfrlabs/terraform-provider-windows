@@ -51,6 +51,7 @@ on:
       - ".github/workflows/testacc-windows.yml"
       - ".github/scripts/Invoke-AccTests.ps1"
       - ".github/testacc-groups.json"
+      - ".github/testacc-allowed-skips.json"
 
 permissions:
   contents: read
@@ -249,5 +250,6 @@ jobs:
             -RunFilter "$env:RUN_FILTER" `
             -LogDirectory (Join-Path $env:RUNNER_TEMP 'testacc-logs') `
             -Timeout 30m `
+            -AllowedSkipsFile (Join-Path $env:GITHUB_WORKSPACE '.github\testacc-allowed-skips.json') `
             -Title 'acceptance (${{ matrix.auth }}, ${{ matrix.name }})'
           exit $LASTEXITCODE

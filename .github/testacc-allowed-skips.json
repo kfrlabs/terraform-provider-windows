@@ -1,0 +1,70 @@
+{
+  "$comment": "Acceptance skips expected under CI (TF_ACC=1, WINDOWS_HOST set, but WITHOUT optional opt-in vars: WINDOWS_TEST_INTERFACE, WINDOWS_TEST_DOMAIN, WINDOWS_HOSTNAME_ALLOW_RENAME, WINDOWS_LP_MSI_URL/SHA256, WINDOWS_LP_EXE_URL/PATTERN, TF_ACC_TASK_USER/PASSWORD). Consumed by .github/scripts/Invoke-AccTests.ps1 (-AllowedSkipsFile): any SKIP whose test name matches no entry, or whose reason matches none of the entry's reason substrings, fails the lane. An entry with no 'reasons' key matches any reason for that test name. The list is global (no per-lane or per-workflow axis): both testacc-windows.yml and testacc-lab-container.yml enforce the same file. Future tightening: scope entries per lane/workflow once the suite grows skips that legitimately differ between the self-target runner and the lab container.",
+  "allowed": [
+    {
+      "pattern": "^TestAccWindowsDomainMembership_(Basic|DriftDetection|UnjoinOnDestroy|DeleteIsNoOp)$",
+      "reasons": ["WINDOWS_TEST_DOMAIN not set", "SKELETON"],
+      "comment": "Joining a domain is destructive and no test domain exists in CI, so skipUnlessTestDomain fires first; the SKELETON reason documents the second gate if a disposable domain were ever provided."
+    },
+    {
+      "pattern": "^TestAccWindowsHostname_(Basic|UpdateInPlace|DriftDetection|DeleteIsNoOp)$",
+      "reasons": ["WINDOWS_HOSTNAME_ALLOW_RENAME", "SKELETON"],
+      "comment": "Renaming the host is destructive and WINDOWS_HOSTNAME_ALLOW_RENAME is unset in CI, so the rename gate fires first; the SKELETON reason documents the second gate if renames were ever allowed."
+    },
+    {
+      "pattern": "^TestAccWindowsDNSClient",
+      "reasons": ["WINDOWS_TEST_INTERFACE is not set"],
+      "comment": "DNS tests only touch an explicit secondary interface and refuse to run without WINDOWS_TEST_INTERFACE, which CI does not provide (covers TestAccWindowsDNSClient_Basic, _ResetOnDestroy and TestAccWindowsDNSClientDataSource_Basic, which has no underscore after Client)."
+    },
+    {
+      "pattern": "^TestAccWindowsNetIPAddress_GuardRefusesManagementAddress$",
+      "reasons": ["not usable for a create-refusal assertion"],
+      "comment": "On a self-target runner (WINDOWS_HOST=127.0.0.1) the management address is loopback, which the plan validators reject before the guard runs, so the test skips instead of asserting the wrong diagnostic."
+    },
+    {
+      "pattern": "^TestAccWindowsNetRoute_GuardRefusesManagementRoute$",
+      "reasons": ["not usable for a refusal assertion"],
+      "comment": "Same self-target situation as the address guard: a loopback management next hop is rejected by the schema validators before the guard runs."
+    },
+    {
+      "pattern": "^TestAccWindowsWingetPackage_",
+      "reasons": ["SKELETON"],
+      "comment": "windows_winget_package resource suite is unimplemented (all nine TestAccWindowsWingetPackage_* tests skip immediately)."
+    },
+    {
+      "pattern": "^TestAccWindowsWingetPackageDataSource_",
+      "reasons": ["SKELETON"],
+      "comment": "windows_winget_package data source suite is unimplemented (Basic, BasicDefaultSource, NotFound)."
+    },
+    {
+      "pattern": "^TestAccWindowsEnvironmentVariableDataSource_",
+      "reasons": ["SKELETON"],
+      "comment": "windows_environment_variable data source suite is unimplemented (Machine, User, ExpandTrue, NotFound)."
+    },
+    {
+      "pattern": "^TestAccWindowsLegacyPackage_Basic$",
+      "reasons": ["WINDOWS_LP_MSI_URL / WINDOWS_LP_MSI_SHA256 not set", "SKELETON"],
+      "comment": "The MSI fixture gate fires first in CI (no package URL configured); the SKELETON reason documents the second gate if fixture vars were ever provided."
+    },
+    {
+      "pattern": "^TestAccWindowsLegacyPackage_(UpdateInPlace|ForceNew|Import|DriftDetection)$",
+      "reasons": ["SKELETON"],
+      "comment": "windows_legacy_package lifecycle skeletons skip unconditionally (they have no env gate of their own)."
+    },
+    {
+      "pattern": "^TestAccWindowsLegacyPackage_EXEByDisplayName$",
+      "reasons": ["WINDOWS_LP_EXE_URL / WINDOWS_LP_EXE_PATTERN not set", "SKELETON"],
+      "comment": "The EXE fixture gate fires first in CI; the SKELETON reason documents the second gate if fixture vars were ever provided."
+    },
+    {
+      "pattern": "^TestAccWindowsLegacyPackageDataSource_Basic$",
+      "reasons": ["WINDOWS_LP_MSI_URL / WINDOWS_LP_MSI_SHA256 not set"],
+      "comment": "Implemented data source test, but its throwaway-MSI fixture needs WINDOWS_LP_MSI_URL/SHA256, which CI does not provide."
+    },
+    {
+      "pattern": "^TestAccWindowsScheduledTask_PasswordSensitive$",
+      "reasons": ["TF_ACC_TASK_USER / TF_ACC_TASK_PASSWORD not set"],
+      "comment": "Needs a dedicated service account that CI does not provision."
+    }
+  ]
+}
