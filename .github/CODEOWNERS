@@ -1,0 +1,4 @@
+* @k9fr4n
+/.github/workflows/ @k9fr4n
+/.goreleaser.yml @k9fr4n
+/internal/winclient/auth.go @k9fr4n

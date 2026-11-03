@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/kfrlabs/terraform-provider-windows/security/advisories/new
+    about: Do not open a public issue. Vulnerabilities are reported privately via the GitHub Security tab ("Report a vulnerability"). See the security policy for details.

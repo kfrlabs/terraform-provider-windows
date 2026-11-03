@@ -114,6 +114,8 @@ Vault, HashiCorp Vault, AWS SSM, CI/CD secret store).
 
 Common development tasks are exposed through the `GNUmakefile`:
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor workflow.
+
 | Target      | Purpose                                    |
 | ----------- | ------------------------------------------ |
 | `build`     | `go install` the provider                  |
