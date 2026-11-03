@@ -30,6 +30,14 @@
       "run": "^TestAcc(WindowsWingetPackage|WindowsLegacyPackage)(DataSource)?_"
     },
     {
+      "name": "network",
+      "run": "^TestAcc(WindowsDNSClient|WindowsNetIPAddress|WindowsNetRoute|WindowsFirewallProfile)(DataSource)?_"
+    },
+    {
+      "name": "security-sharing",
+      "run": "^TestAcc(WindowsCertificate|WindowsSmbShare|WindowsDomainMembership)(DataSource)?_"
+    },
+    {
       "name": "rest",
       "run": "^TestAcc",
       "catchAll": true

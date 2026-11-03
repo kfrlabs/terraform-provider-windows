@@ -74,10 +74,10 @@ jobs:
           - { auth: password, name: feature-import, lanes: feature-import }
           - { auth: password, name: storage, lanes: storage }
           - { auth: password, name: identity-net, lanes: identity-net }
-          - { auth: password, name: misc, lanes: scheduling+feature-datasource+packages+rest, filter: true }
+          - { auth: password, name: misc, lanes: scheduling+feature-datasource+packages+network+security-sharing+rest, filter: true }
           - { auth: publickey, name: storage, lanes: storage }
           - { auth: publickey, name: identity-net, lanes: identity-net }
-          - { auth: publickey, name: misc, lanes: scheduling+feature-datasource+packages+rest, filter: true }
+          - { auth: publickey, name: misc, lanes: scheduling+feature-datasource+packages+network+security-sharing+rest, filter: true }
     defaults:
       run:
         shell: pwsh
