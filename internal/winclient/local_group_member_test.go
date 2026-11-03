@@ -484,7 +484,7 @@ func TestLGMGet_MemberAbsent_EC4(t *testing.T) {
 	// EC-4: membership removed out-of-band → Get returns (nil, nil).
 	restore := stubLGRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return lgOK(t, lgmListRespData("primary", []map[string]any{
-			lgmMemberEntry("S-1-5-21-100-200-300-502", "DOMAIN\\other", "ActiveDirectory"),
+			lgmMemberEntry("S-1-5-21-100-200-300-502", "DOMAIN\\second", "ActiveDirectory"),
 		})), "", nil
 	})
 	defer restore()
