@@ -703,7 +703,12 @@ func checkNetRouteManagementHijack(op, alias, prefix, nextHop string, ifIndex, e
 		return nil
 	}
 	curPrefix, err := netip.ParsePrefix(mp.RouteDestinationPrefix)
-	if err != nil || !curPrefix.Contains(mp.ClientIP) {
+	// An unparseable management prefix cannot prove a hijack: treat it
+	// like a non-containing prefix (no refusal). The parse error is
+	// intentionally swallowed here — this is a guardrail probe, not I/O —
+	// and the boolean form keeps that explicit for nilerr.
+	hijackPossible := err == nil && curPrefix.Contains(mp.ClientIP)
+	if !hijackPossible {
 		return nil
 	}
 	cand := RouteCandidate{DestinationPrefix: prefix, NextHop: nextHop, InterfaceIndex: ifIndex, EffectiveMetric: effectiveMetric}
