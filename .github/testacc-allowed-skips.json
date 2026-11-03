@@ -27,6 +27,21 @@
       "comment": "Same self-target situation as the address guard: a loopback management next hop is rejected by the schema validators before the guard runs."
     },
     {
+      "pattern": "^TestAccWindowsNetIPAddress(_Basic|DataSource_Read)$",
+      "reasons": ["is the management interface; refusing to run address tests"],
+      "comment": "Self-target only: on testacc-windows (WINDOWS_HOST=127.0.0.1) the default test interface 'Loopback Pseudo-Interface 1' IS the management interface, so the suite refuses to touch it. The needle names this exact refusal; a skip with a different interface or reason still fails the gate (on the lab container these tests are expected to run)."
+    },
+    {
+      "pattern": "^TestAccWindowsNetRoute(_Basic|DataSource_Read)$",
+      "reasons": ["is the management interface; refusing to run route tests"],
+      "comment": "Self-target only, same as the address tests: loopback is the management interface on testacc-windows."
+    },
+    {
+      "pattern": "^TestAccWindowsFirewallProfile_(Basic|UpdateInPlace|GuardRefusesLockout|Import|RestoreOnDestroy)$",
+      "reasons": ["No MSFT_NetConnectionProfile objects found"],
+      "comment": "Self-target only: on testacc-windows the SSH session arrives over loopback, which has no NetConnectionProfile, so the firewall tests cannot determine the session profile and skip. The needle names this exact loopback condition; on the lab container (real NIC) these tests run, and any skip there still fails the gate."
+    },
+    {
       "pattern": "^TestAccWindowsWingetPackage_",
       "reasons": ["SKELETON"],
       "comment": "windows_winget_package resource suite is unimplemented (all nine TestAccWindowsWingetPackage_* tests skip immediately)."
