@@ -130,25 +130,25 @@ foreach ($r in $running) {
     $count = { param($s) @($results | Where-Object Status -EQ $s).Count }
     $slowest = (($results | Sort-Object Seconds -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) $([math]::Round($_.Seconds))s" }) -join ', ')
 
-    # Skips with their reasons: the `--- SKIP:` line carries the test name
-    # and each immediately following `file.go:N: message` line its reason
-    # (plus up to 2 further indented continuation lines).
+    # Skips with their reasons: go test prints a skipped test's
+    # `file.go:N: message` lines BEFORE its `--- SKIP:` result line, so
+    # scan backward over the indented block above each top-level SKIP.
     $skips = @()
     for ($i = 0; $i -lt $lines.Count; $i++) {
         # Top-level '--- SKIP:' lines only, same as the counts regex; indented subtest skips are out of scope.
         if ($lines[$i] -match '^--- SKIP: (\S+) \(([\d.]+)s\)') {
             $skipName = $Matches[1]
+            $block = @()
+            for ($j = $i - 1; $j -ge 0 -and $lines[$j] -match '^\s+'; $j--) {
+                $block = ,$lines[$j] + $block
+            }
             $parts = @()
-            for ($j = $i + 1; $j -lt $lines.Count -and $parts.Count -lt 3; $j++) {
-                if ($lines[$j] -match '^\s+\S+\.go:\d+: (.*)$') {
+            foreach ($b in $block) {
+                if ($b -match '^\s+\S+\.go:\d+: (.*)$') {
                     $parts += $Matches[1]
-                } elseif ($parts.Count -gt 0 -and $lines[$j] -match '^\s+(\S.*)$') {
-                    $parts += $Matches[1]
-                } else {
-                    break
                 }
             }
-            $skips += [pscustomobject]@{ Name = $skipName; Reason = (($parts -join ' ').Trim()) }
+            $skips += [pscustomobject]@{ Name = $skipName; Reason = (($parts -join ' // ').Trim()) }
         }
     }
     foreach ($s in $skips) {
