@@ -2,8 +2,8 @@
 #
 #   - Go modules: weekly, grouped to avoid PR spam. Patch + minor only.
 #     Major bumps require human review (Plugin Framework breaking changes).
-#   - GitHub Actions: weekly, pin to SHA recommended downstream but kept
-#     on tags here for readability; Dependabot updates them in lockstep.
+#   - GitHub Actions: weekly, pinned to SHAs with tag comments;
+#     Dependabot updates SHAs in lockstep.
 #
 #   - Security updates are enabled separately at the repository level
 #     (Settings -> Code security -> Dependabot security updates); this file
