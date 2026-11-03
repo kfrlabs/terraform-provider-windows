@@ -162,7 +162,7 @@ Optional:
 - `password` (String, Sensitive) Domain password. Sensitive on the wire but persisted in `terraform.tfstate`. Required (instead of `password_wo`) when `unjoin_on_destroy` is `true`, because the WriteOnly value is unavailable at destroy time. **ForceNew.**
 
 The value must not contain carriage return or line feed characters (rejected at plan time): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.
-- `password_wo` (String, Sensitive) Write-only domain password (TPF v1.14+ WriteOnly). The plaintext is never persisted in `terraform.tfstate` — the framework drops it from state automatically. Cannot be combined with `unjoin_on_destroy` (the WriteOnly value is unavailable at destroy time). **ForceNew.**
+- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only domain password (TPF v1.14+ WriteOnly). The plaintext is never persisted in `terraform.tfstate` — the framework drops it from state automatically. Cannot be combined with `unjoin_on_destroy` (the WriteOnly value is unavailable at destroy time). **ForceNew.**
 
 The value must not contain carriage return or line feed characters (rejected at plan time against the configured value): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.
 
