@@ -29,14 +29,14 @@ import (
 // Firewall-specific test helpers
 // ---------------------------------------------------------------------------
 
-// frNewClient returns a *Client + *FirewallRuleClient pair for tests.
-func frNewClient(t *testing.T) (*Client, *FirewallRuleClient) {
+// frNewClient returns a *FirewallRuleClient for tests.
+func frNewClient(t *testing.T) *FirewallRuleClient {
 	t.Helper()
 	c, err := New(Config{Host: "winfw01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewFirewallRuleClient(c)
+	return NewFirewallRuleClient(c)
 }
 
 // frOK returns a JSON ok-envelope whose data field is the supplied value.
@@ -573,7 +573,7 @@ func TestParseFirewallRuleState_FallbackPolicyStore(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRunFirewallEnvelope_TransportError(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "SSH error", errors.New("connection refused")
 	})()
@@ -588,7 +588,7 @@ func TestRunFirewallEnvelope_TransportError(t *testing.T) {
 }
 
 func TestRunFirewallEnvelope_CtxCancelled(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -606,7 +606,7 @@ func TestRunFirewallEnvelope_CtxCancelled(t *testing.T) {
 }
 
 func TestRunFirewallEnvelope_MissingJSON(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "no json here\n", "", nil
 	})()
@@ -621,7 +621,7 @@ func TestRunFirewallEnvelope_MissingJSON(t *testing.T) {
 }
 
 func TestRunFirewallEnvelope_BadJSON(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "{not valid json}\n", "", nil
 	})()
@@ -636,7 +636,7 @@ func TestRunFirewallEnvelope_BadJSON(t *testing.T) {
 }
 
 func TestRunFirewallEnvelope_ErrorResponse(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frErr(t, "permission_denied", "access denied"), "", nil
 	})()
@@ -655,7 +655,7 @@ func TestRunFirewallEnvelope_ErrorResponse(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFirewallCreate_HappyPath(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 
 	stateJSON := frOK(t, testFRStateData)
 	defer frStubSequence([]frResponse{
@@ -686,7 +686,7 @@ func TestFirewallCreate_HappyPath(t *testing.T) {
 }
 
 func TestFirewallCreate_AlreadyExists(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frErr(t, "already_exists", "rule already exists"), "", nil
 	})()
@@ -708,7 +708,7 @@ func TestFirewallCreate_AlreadyExists(t *testing.T) {
 }
 
 func TestFirewallCreate_ReadOnlyStore_GroupPolicy(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	called := false
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		called = true
@@ -735,7 +735,7 @@ func TestFirewallCreate_ReadOnlyStore_GroupPolicy(t *testing.T) {
 }
 
 func TestFirewallCreate_RSOP_ReadOnly(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	input := FirewallRuleInput{
 		Name:        "R",
 		DisplayName: "R",
@@ -750,7 +750,7 @@ func TestFirewallCreate_RSOP_ReadOnly(t *testing.T) {
 }
 
 func TestFirewallCreate_TransportError(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", errors.New("connection lost")
 	})()
@@ -772,7 +772,7 @@ func TestFirewallCreate_TransportError(t *testing.T) {
 }
 
 func TestFirewallCreate_InvalidInput(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frErr(t, "invalid_input", "invalid argument"), "", nil
 	})()
@@ -795,7 +795,7 @@ func TestFirewallCreate_InvalidInput(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFirewallRead_HappyPath(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frOK(t, testFRStateData), "", nil
 	})()
@@ -819,7 +819,7 @@ func TestFirewallRead_HappyPath(t *testing.T) {
 }
 
 func TestFirewallRead_NotFound_NullData(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frOKNull(), "", nil
 	})()
@@ -834,7 +834,7 @@ func TestFirewallRead_NotFound_NullData(t *testing.T) {
 }
 
 func TestFirewallRead_PermissionDenied(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frErr(t, "permission_denied", "access denied"), "", nil
 	})()
@@ -849,7 +849,7 @@ func TestFirewallRead_PermissionDenied(t *testing.T) {
 }
 
 func TestFirewallRead_TransportError(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", errors.New("network timeout")
 	})()
@@ -864,7 +864,7 @@ func TestFirewallRead_TransportError(t *testing.T) {
 }
 
 func TestFirewallRead_MalformedStateJSON(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return `{"ok":true,"data":{invalid}}` + "\n", "", nil
 	})()
@@ -880,7 +880,7 @@ func TestFirewallRead_MalformedStateJSON(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFirewallUpdate_HappyPath(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 
 	updatedState := map[string]any{
 		"name":                  "TEST-RULE-01",
@@ -928,7 +928,7 @@ func TestFirewallUpdate_HappyPath(t *testing.T) {
 }
 
 func TestFirewallUpdate_NotFound(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frErr(t, "not_found", "rule not found"), "", nil
 	})()
@@ -950,7 +950,7 @@ func TestFirewallUpdate_NotFound(t *testing.T) {
 }
 
 func TestFirewallUpdate_ReadOnlyStore(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	called := false
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		called = true
@@ -981,7 +981,7 @@ func TestFirewallUpdate_ReadOnlyStore(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFirewallDelete_HappyPath(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frOK(t, nil), "", nil
 	})()
@@ -994,7 +994,7 @@ func TestFirewallDelete_HappyPath(t *testing.T) {
 
 func TestFirewallDelete_Idempotent_NotFound(t *testing.T) {
 	// The PS script handles not_found inside frDeleteBody by emitting Emit-OK $null.
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frOK(t, nil), "", nil
 	})()
@@ -1006,7 +1006,7 @@ func TestFirewallDelete_Idempotent_NotFound(t *testing.T) {
 }
 
 func TestFirewallDelete_ReadOnlyStore(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	called := false
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		called = true
@@ -1026,7 +1026,7 @@ func TestFirewallDelete_ReadOnlyStore(t *testing.T) {
 }
 
 func TestFirewallDelete_TransportError(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", errors.New("connection reset")
 	})()
@@ -1041,7 +1041,7 @@ func TestFirewallDelete_TransportError(t *testing.T) {
 }
 
 func TestFirewallDelete_PermissionDenied(t *testing.T) {
-	_, fw := frNewClient(t)
+	fw := frNewClient(t)
 	defer stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return frErr(t, "permission_denied", "access denied"), "", nil
 	})()

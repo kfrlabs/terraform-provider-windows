@@ -33,14 +33,14 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// fpNewClient returns a *Client + *FirewallProfileClient pair for tests.
-func fpNewClient(t *testing.T) (*Client, *FirewallProfileClient) {
+// fpNewClient returns a *FirewallProfileClient for tests.
+func fpNewClient(t *testing.T) *FirewallProfileClient {
 	t.Helper()
 	c, err := New(Config{Host: "winfp01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewFirewallProfileClient(c)
+	return NewFirewallProfileClient(c)
 }
 
 // fpOK returns a JSON ok-envelope whose data field is the supplied value.
@@ -179,7 +179,7 @@ func TestFirewallProfileRead_InvalidNameShortCircuits(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	if _, err := c.Read(context.Background(), "Bogus"); !IsFirewallProfileError(err, FirewallProfileErrorInvalidProfile) {
 		t.Errorf("expected invalid_profile, got %v", err)
 	}
@@ -365,7 +365,7 @@ func TestFirewallProfileApply_GuardCoversAnyProtocol(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	block := "Block"
 	f := false
 	if _, err := c.Apply(context.Background(), "Public", FirewallProfileSettings{
@@ -498,7 +498,7 @@ func TestRunFirewallProfileEnvelope_Timeout(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	_, err := c.Read(ctx, "Public")
 	if !IsFirewallProfileError(err, FirewallProfileErrorUnknown) {
 		t.Errorf("expected unknown (timeout) kind, got %v", err)
@@ -516,7 +516,7 @@ func TestRunFirewallProfileEnvelope_TransportError(t *testing.T) {
 	restore := fpStubSequence([]frResponse{{stdout: "", stderr: "boom", err: errors.New("ssh dial failed")}})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	_, err := c.Read(context.Background(), "Public")
 	if !IsFirewallProfileError(err, FirewallProfileErrorUnknown) {
 		t.Errorf("expected unknown kind, got %v", err)
@@ -527,7 +527,7 @@ func TestRunFirewallProfileEnvelope_NoEnvelope(t *testing.T) {
 	restore := fpStubSequence([]frResponse{{stdout: "not json at all", stderr: "", err: nil}})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	_, err := c.Read(context.Background(), "Public")
 	if !IsFirewallProfileError(err, FirewallProfileErrorUnknown) {
 		t.Errorf("expected unknown kind, got %v", err)
@@ -538,7 +538,7 @@ func TestRunFirewallProfileEnvelope_BadJSON(t *testing.T) {
 	restore := fpStubSequence([]frResponse{{stdout: "{not valid json}", stderr: "", err: nil}})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	_, err := c.Read(context.Background(), "Public")
 	if !IsFirewallProfileError(err, FirewallProfileErrorUnknown) {
 		t.Errorf("expected unknown kind, got %v", err)
@@ -564,7 +564,7 @@ func TestFirewallProfileRemoteKinds(t *testing.T) {
 			restore := fpStubSequence([]frResponse{{stdout: fpErr(t, tc.remote, "boom "+tc.remote), stderr: "", err: nil}})
 			defer restore()
 
-			_, c := fpNewClient(t)
+			c := fpNewClient(t)
 			_, err := c.Read(context.Background(), "Public")
 			if !IsFirewallProfileError(err, tc.want) {
 				t.Errorf("remote kind %q should map to %q, got %v", tc.remote, tc.want, err)
@@ -587,7 +587,7 @@ func TestClassifyFirewallProfile_ScriptContent(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	if _, err := c.Read(context.Background(), "Public"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -620,7 +620,7 @@ func TestFirewallProfileSSHProfile_HappyPath(t *testing.T) {
 	restore := fpStubSequence([]frResponse{{stdout: fpOK(t, "Public"), stderr: "", err: nil}})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	got, err := c.SSHProfile(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -636,7 +636,7 @@ func TestFirewallProfileSSHProfile_FailClosed(t *testing.T) {
 	restore := fpStubSequence([]frResponse{{stdout: fpErr(t, "unknown", "SSH_CONNECTION is not set"), stderr: "", err: nil}})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	if _, err := c.SSHProfile(context.Background()); !IsFirewallProfileError(err, FirewallProfileErrorUnknown) {
 		t.Errorf("expected unknown, got %v", err)
 	}
@@ -646,7 +646,7 @@ func TestFirewallProfileSSHProfile_RejectsUnknownProfile(t *testing.T) {
 	restore := fpStubSequence([]frResponse{{stdout: fpOK(t, "Bogus"), stderr: "", err: nil}})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	if _, err := c.SSHProfile(context.Background()); !IsFirewallProfileError(err, FirewallProfileErrorUnknown) {
 		t.Errorf("expected unknown for a non-profile answer, got %v", err)
 	}
@@ -660,7 +660,7 @@ func TestFirewallProfileRead_HappyPath(t *testing.T) {
 	restore := fpStubSequence([]frResponse{{stdout: fpOK(t, testFirewallProfileState()), stderr: "", err: nil}})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	st, err := c.Read(context.Background(), "public")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -686,7 +686,7 @@ func TestFirewallProfileApply_HappyPath(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	tr := true
 	st, err := c.Apply(context.Background(), "Public", FirewallProfileSettings{LogBlocked: &tr})
 	if err != nil {
@@ -720,7 +720,7 @@ func TestFirewallProfileApply_ShipsGuard(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	block := "Block"
 	f := false
 	// Risky change: Block + disabled inbound rules. The unit seam cannot run
@@ -784,7 +784,7 @@ func TestFirewallProfileApply_NoOpWithoutSettings(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	if _, err := c.Apply(context.Background(), "Public", FirewallProfileSettings{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -798,7 +798,7 @@ func TestFirewallProfileApply_WouldLockOut(t *testing.T) {
 	restore := fpStubSequence([]frResponse{{stdout: fpErr(t, "would_lock_out", "Refusing to tighten firewall profile Public"), stderr: "", err: nil}})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	block := "Block"
 	f := false
 	_, err := c.Apply(context.Background(), "Public", FirewallProfileSettings{
@@ -817,7 +817,7 @@ func TestFirewallProfileApply_InvalidNameShortCircuits(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	if _, err := c.Apply(context.Background(), "Bogus", FirewallProfileSettings{}); !IsFirewallProfileError(err, FirewallProfileErrorInvalidProfile) {
 		t.Errorf("expected invalid_profile, got %v", err)
 	}
@@ -839,7 +839,7 @@ func TestFirewallProfileRestore_HappyPath(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	snap := FirewallProfileState{
 		Name: "Public", Enabled: true,
 		DefaultInboundAction: "Allow", DefaultOutboundAction: "Allow",
@@ -859,7 +859,7 @@ func TestFirewallProfileRestore_HappyPath(t *testing.T) {
 }
 
 func TestFirewallProfileRestore_InvalidName(t *testing.T) {
-	_, c := fpNewClient(t)
+	c := fpNewClient(t)
 	if _, err := c.Restore(context.Background(), FirewallProfileState{Name: "Bogus"}); !IsFirewallProfileError(err, FirewallProfileErrorInvalidProfile) {
 		t.Errorf("expected invalid_profile, got %v", err)
 	}

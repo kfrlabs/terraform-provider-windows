@@ -447,7 +447,7 @@ func (r *windowsDomainMembershipResource) Create(ctx context.Context, req resour
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	password, attrPath := effectiveDomainPassword(ctx, plan, config, cred)
+	password, attrPath := effectiveDomainPassword(ctx, config, cred)
 	if password == "" {
 		resp.Diagnostics.AddAttributeError(
 			attrPath,
@@ -794,12 +794,11 @@ func domainMembershipCredentialFromModel(ctx context.Context, plan *windowsDomai
 // Create along with the schema path holding it (used for targeted
 // diagnostics). WriteOnly values are null in the plan handed to
 // ApplyResourceChange, so the password_wo candidate must come from config
-// (windows_file content_wo precedent). The plan value is still consulted as
-// a fallback for callers that bypass Config (unit tests driving Plan only).
+// (windows_file content_wo precedent).
 //
 // Returns ("", path.Root("join_credential").AtName("password")) when neither
 // attribute is set.
-func effectiveDomainPassword(ctx context.Context, plan, config windowsDomainMembershipModel, cred windowsDomainMembershipCredentialModel) (string, path.Path) {
+func effectiveDomainPassword(ctx context.Context, config windowsDomainMembershipModel, cred windowsDomainMembershipCredentialModel) (string, path.Path) {
 	woPath := path.Root("join_credential").AtName("password_wo")
 	pwPath := path.Root("join_credential").AtName("password")
 	var cfgCred windowsDomainMembershipCredentialModel

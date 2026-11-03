@@ -49,8 +49,8 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// newEVTestClient creates a *Client and *EnvVarClientImpl for tests.
-func newEVTestClient(t *testing.T) (*Client, *EnvVarClientImpl) {
+// newEVTestClient creates an *EnvVarClientImpl for tests.
+func newEVTestClient(t *testing.T) *EnvVarClientImpl {
 	t.Helper()
 	c, err := New(Config{
 		Host:                  "winev01",
@@ -62,7 +62,7 @@ func newEVTestClient(t *testing.T) (*Client, *EnvVarClientImpl) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewEnvVarClient(c)
+	return NewEnvVarClient(c)
 }
 
 // stubEVRun replaces runEnvVarPowerShell for the duration of a test.
@@ -310,7 +310,7 @@ func TestEnvVarSet_HappyPath_Machine_REG_SZ(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, setOKData("C:\\java", false, "")), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	state, err := ev.Set(context.Background(), EnvVarInput{
 		Scope:  EnvVarScopeMachine,
 		Name:   "JAVA_HOME",
@@ -357,7 +357,7 @@ func TestEnvVarSet_HappyPath_User_REG_EXPAND_SZ(t *testing.T) {
 		}
 		return evOKEnvelope(t, setOKData("%SystemRoot%\\bin", true, "")), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	state, err := ev.Set(context.Background(), EnvVarInput{
 		Scope:  EnvVarScopeUser,
 		Name:   "MY_PATH",
@@ -379,7 +379,7 @@ func TestEnvVarSet_HappyPath_WithBroadcastWarning(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evOKEnvelope(t, setOKData("val", false, "SendMessageTimeout returned 0")), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	state, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "X", Value: "val", Expand: false,
 	})
@@ -397,7 +397,7 @@ func TestEnvVarSet_HappyPath_EmptyValue(t *testing.T) {
 		_ = script
 		return evOKEnvelope(t, setOKData("", false, "")), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	state, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeUser, Name: "EMPTY_VAR", Value: "", Expand: false,
 	})
@@ -416,7 +416,7 @@ func TestEnvVarSet_HappyPath_NameWithSingleQuote(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, setOKData("x", false, "")), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeUser, Name: "IT'S_VAR", Value: "x", Expand: false,
 	})
@@ -437,7 +437,7 @@ func TestEnvVarSet_HappyPath_ValueWithSingleQuote(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, setOKData("it's fine", false, "")), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeUser, Name: "VAR", Value: "it's fine", Expand: false,
 	})
@@ -458,7 +458,7 @@ func TestEnvVarSet_EC2_InvalidInput(t *testing.T) {
 		return evErrEnvelope(t, "invalid_input",
 			"Environment registry key not found for scope machine", nil), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "x", Expand: false,
 	})
@@ -474,7 +474,7 @@ func TestEnvVarSet_PermissionDenied(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "x", Expand: false,
 	})
@@ -490,7 +490,7 @@ func TestEnvVarSet_TransportError(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "connection refused", fmt.Errorf("transport error")
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "x", Expand: false,
 	})
@@ -509,7 +509,7 @@ func TestEnvVarSet_ContextCancelled(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("cancelled")
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(ctx, EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "x", Expand: false,
 	})
@@ -529,7 +529,7 @@ func TestEnvVarSet_MissingEnvelope(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "Warning: PS warning output\nno json here\n", "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "x", Expand: false,
 	})
@@ -545,7 +545,7 @@ func TestEnvVarSet_MalformedJSON(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "{malformed json}\n", "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "x", Expand: false,
 	})
@@ -560,7 +560,7 @@ func TestEnvVarSet_UnparsableDataField(t *testing.T) {
 		b, _ := json.Marshal(map[string]any{"ok": true, "data": "not-an-object"})
 		return string(b) + "\n", "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "x", Expand: false,
 	})
@@ -571,7 +571,7 @@ func TestEnvVarSet_UnparsableDataField(t *testing.T) {
 
 func TestEnvVarSet_InvalidScope(t *testing.T) {
 	// No PS call needed — error returned before script execution
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScope("invalid"), Name: "V", Value: "x", Expand: false,
 	})
@@ -587,7 +587,7 @@ func TestEnvVarSet_UnknownPSError(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evErrEnvelope(t, "unknown", "something failed", nil), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "x", Expand: false,
 	})
@@ -607,7 +607,7 @@ func TestEnvVarRead_HappyPath_REG_SZ(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evOKEnvelope(t, readOKData("hello", false)), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	state, err := ev.Read(context.Background(), EnvVarScopeMachine, "JAVA_HOME")
 	if err != nil {
 		t.Fatalf("Read: %v", err)
@@ -633,7 +633,7 @@ func TestEnvVarRead_HappyPath_REG_EXPAND_SZ(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evOKEnvelope(t, readOKData("%SystemRoot%\\bin", true)), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	state, err := ev.Read(context.Background(), EnvVarScopeUser, "MY_PATH")
 	if err != nil {
 		t.Fatalf("Read REG_EXPAND_SZ: %v", err)
@@ -652,7 +652,7 @@ func TestEnvVarRead_EC4_NotFound_FoundFalse(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evOKEnvelope(t, readNotFoundData()), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	state, err := ev.Read(context.Background(), EnvVarScopeMachine, "MISSING_VAR")
 	if err != nil {
 		t.Fatalf("Read not_found: %v", err)
@@ -669,7 +669,7 @@ func TestEnvVarRead_ScriptContainsExpectedLiterals(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, readOKData("v", false)), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, _ = ev.Read(context.Background(), EnvVarScopeUser, "MY_VAR")
 	if !strings.Contains(capturedScript, "CurrentUser") {
 		t.Errorf("user scope read script should contain 'CurrentUser'")
@@ -687,7 +687,7 @@ func TestEnvVarRead_PermissionDenied(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Read(context.Background(), EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected permission error")
@@ -701,7 +701,7 @@ func TestEnvVarRead_TransportError(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("connection refused")
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Read(context.Background(), EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected transport error")
@@ -715,7 +715,7 @@ func TestEnvVarRead_MissingEnvelope(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "no json here\n", "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Read(context.Background(), EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected error for missing JSON envelope")
@@ -727,7 +727,7 @@ func TestEnvVarRead_UnparsableDataField(t *testing.T) {
 		b, _ := json.Marshal(map[string]any{"ok": true, "data": "not-an-object"})
 		return string(b) + "\n", "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Read(context.Background(), EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected error when data field cannot be parsed as evReadData")
@@ -735,7 +735,7 @@ func TestEnvVarRead_UnparsableDataField(t *testing.T) {
 }
 
 func TestEnvVarRead_InvalidScope(t *testing.T) {
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Read(context.Background(), EnvVarScope("nope"), "V")
 	if err == nil {
 		t.Fatal("expected error for invalid scope")
@@ -751,7 +751,7 @@ func TestEnvVarRead_UnknownPS(t *testing.T) {
 			"actual_kind": "DWord",
 		}), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Read(context.Background(), EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected error for unknown PS error")
@@ -768,7 +768,7 @@ func TestEnvVarRead_ContextCancelled(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("cancelled")
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, err := ev.Read(ctx, EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
@@ -789,7 +789,7 @@ func TestEnvVarDelete_HappyPath(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, deleteOKData(true)), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScopeMachine, "JAVA_HOME")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -807,7 +807,7 @@ func TestEnvVarDelete_EC8_Idempotent_VariableMissing(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evOKEnvelope(t, deleteOKData(false)), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScopeMachine, "MISSING")
 	if err != nil {
 		t.Fatalf("EC-8: idempotent delete (deleted=false) should return nil, got: %v", err)
@@ -819,7 +819,7 @@ func TestEnvVarDelete_EC8_KeyNotFound(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evOKEnvelope(t, deleteKeyNotFoundData()), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScopeMachine, "V")
 	if err != nil {
 		t.Fatalf("EC-8: key_not_found delete should return nil, got: %v", err)
@@ -832,7 +832,7 @@ func TestEnvVarDelete_UserScope(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, deleteOKData(true)), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScopeUser, "MY_VAR")
 	if err != nil {
 		t.Fatalf("Delete user scope: %v", err)
@@ -850,7 +850,7 @@ func TestEnvVarDelete_PermissionDenied(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected permission error")
@@ -864,7 +864,7 @@ func TestEnvVarDelete_TransportError(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("connection refused")
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected transport error")
@@ -875,7 +875,7 @@ func TestEnvVarDelete_TransportError(t *testing.T) {
 }
 
 func TestEnvVarDelete_InvalidScope(t *testing.T) {
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScope("bad"), "V")
 	if err == nil {
 		t.Fatal("expected error for invalid scope")
@@ -889,7 +889,7 @@ func TestEnvVarDelete_MissingEnvelope(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "no json here\n", "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected error for missing JSON envelope")
@@ -900,7 +900,7 @@ func TestEnvVarDelete_UnknownPS(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return evErrEnvelope(t, "unknown", "something went wrong", nil), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(context.Background(), EnvVarScopeUser, "V")
 	if err == nil {
 		t.Fatal("expected error for unknown PS error")
@@ -917,7 +917,7 @@ func TestEnvVarDelete_ContextCancelled(t *testing.T) {
 	defer stubEVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("cancelled")
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	err := ev.Delete(ctx, EnvVarScopeMachine, "V")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
@@ -938,7 +938,7 @@ func TestEnvVarSet_ScriptContainsScope_Machine(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, setOKData("v", false, "")), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, _ = ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeMachine, Name: "V", Value: "v", Expand: false,
 	})
@@ -956,7 +956,7 @@ func TestEnvVarSet_ScriptContainsScope_User(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, setOKData("v", false, "")), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, _ = ev.Set(context.Background(), EnvVarInput{
 		Scope: EnvVarScopeUser, Name: "V", Value: "v", Expand: false,
 	})
@@ -971,7 +971,7 @@ func TestEnvVarRead_ScriptContainsScope_Machine(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, readOKData("v", false)), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_, _ = ev.Read(context.Background(), EnvVarScopeMachine, "V")
 	if !strings.Contains(capturedScript, "LocalMachine") {
 		t.Errorf("machine scope read script should contain 'LocalMachine'")
@@ -984,7 +984,7 @@ func TestEnvVarDelete_ScriptContainsValueLiterals(t *testing.T) {
 		capturedScript = script
 		return evOKEnvelope(t, deleteOKData(true)), "", nil
 	})()
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	_ = ev.Delete(context.Background(), EnvVarScopeUser, "MY_TOKEN")
 	for _, want := range []string{"CurrentUser", "'MY_TOKEN'"} {
 		if !strings.Contains(capturedScript, want) {
@@ -998,7 +998,7 @@ func TestEnvVarDelete_ScriptContainsValueLiterals(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewEnvVarClient_NotNil(t *testing.T) {
-	_, ev := newEVTestClient(t)
+	ev := newEVTestClient(t)
 	if ev == nil {
 		t.Fatal("NewEnvVarClient must not return nil")
 	}

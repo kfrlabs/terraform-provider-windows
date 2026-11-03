@@ -30,14 +30,14 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// dcNewClient returns a *Client + *DnsClientClientImpl pair for tests.
-func dcNewClient(t *testing.T) (*Client, *DnsClientClientImpl) {
+// dcNewClient returns a *DnsClientClientImpl for tests.
+func dcNewClient(t *testing.T) *DnsClientClientImpl {
 	t.Helper()
 	c, err := New(Config{Host: "windns01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewDnsClientClient(c)
+	return NewDnsClientClient(c)
 }
 
 // dcOK returns a JSON ok-envelope whose data field is the supplied value.
@@ -397,7 +397,7 @@ func TestBuildDnsClientApplyScript_UnmanagedOmitsSet(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDnsClientEnvelope_TransportMapsUnreachable(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "boom", errors.New("ssh: connection refused")
 	})()
@@ -408,7 +408,7 @@ func TestDnsClientEnvelope_TransportMapsUnreachable(t *testing.T) {
 }
 
 func TestDnsClientEnvelope_TimeoutMapsUnreachable(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	defer dcStubRun(func(ctx context.Context, _ *Client, _ string) (string, string, error) {
@@ -428,7 +428,7 @@ func TestDnsClientEnvelope_RemoteKindMapping(t *testing.T) {
 		"permission_denied":   DnsClientErrorPermission,
 		"something_else":      DnsClientErrorUnknown,
 	} {
-		_, c := dcNewClient(t)
+		c := dcNewClient(t)
 		k := kind
 		defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 			// dcErr needs *testing.T; build the envelope inline.
@@ -449,7 +449,7 @@ func TestDnsClientEnvelope_RemoteKindMapping(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDnsClientRead_HappyPath(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	defer dcStubState(t, testDNSClientState())()
 	got, err := c.Read(context.Background(), "ethernet 2")
 	if err != nil {
@@ -476,7 +476,7 @@ func TestDnsClientRead_HappyPath(t *testing.T) {
 }
 
 func TestDnsClientRead_InterfaceGoneReturnsNil(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return dcErr(t, "interface_not_found", "No interface matches alias"), "", nil
 	})()
@@ -490,7 +490,7 @@ func TestDnsClientRead_InterfaceGoneReturnsNil(t *testing.T) {
 }
 
 func TestDnsClientRead_BlankAliasRejected(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	called := false
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		called = true
@@ -509,7 +509,7 @@ func TestDnsClientRead_BlankAliasRejected(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDnsClientApply_HappyPath(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	var gotScript string
 	defer dcStubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
 		gotScript = script
@@ -535,7 +535,7 @@ func TestDnsClientApply_HappyPath(t *testing.T) {
 }
 
 func TestDnsClientApply_ValidationGatesTransport(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	called := false
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		called = true
@@ -568,7 +568,7 @@ func TestDnsClientApply_ValidationGatesTransport(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDnsClientReset_HappyPath(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	var gotScript string
 	defer dcStubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
 		gotScript = script
@@ -593,7 +593,7 @@ func TestDnsClientReset_HappyPath(t *testing.T) {
 }
 
 func TestDnsClientReset_MissingInterfaceIsNoop(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return dcErr(t, "interface_not_found", "No interface matches alias"), "", nil
 	})()
@@ -607,7 +607,7 @@ func TestDnsClientReset_MissingInterfaceIsNoop(t *testing.T) {
 }
 
 func TestDnsClientReset_NothingToDoReads(t *testing.T) {
-	_, c := dcNewClient(t)
+	c := dcNewClient(t)
 	ops := 0
 	defer dcStubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
 		ops++

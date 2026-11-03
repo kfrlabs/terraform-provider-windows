@@ -530,10 +530,7 @@ func TestFirewallStateToModel_Full(t *testing.T) {
 		InterfaceType:       "Wired",
 	}
 
-	m, diags := firewallStateToModel(context.Background(), s)
-	if diags.HasError() {
-		t.Fatalf("unexpected diags: %v", diags)
-	}
+	m := firewallStateToModel(s)
 
 	if m.ID.ValueString() != "MY-RULE" {
 		t.Errorf("ID = %q", m.ID.ValueString())
@@ -601,10 +598,7 @@ func TestFirewallStateToModel_EmptyListsNormalised(t *testing.T) {
 		Service:       "Any",
 		InterfaceType: "Any",
 	}
-	m, diags := firewallStateToModel(context.Background(), s)
-	if diags.HasError() {
-		t.Fatalf("unexpected diags: %v", diags)
-	}
+	m := firewallStateToModel(s)
 	if len(m.Profile.Elements()) != 1 {
 		t.Errorf("Profile elements = %d, want 1 ([Any])", len(m.Profile.Elements()))
 	}
@@ -887,15 +881,10 @@ func fwTimeoutsWithCreate(d string) tftypes.Value {
 // fwObj builds a tftypes.Value for the firewall rule model, with nil entries
 // represented as null.
 func fwObj(overrides map[string]tftypes.Value) tftypes.Value {
-	strList := func(ss []string) tftypes.Value {
-		if ss == nil {
-			return tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil)
-		}
-		vals := make([]tftypes.Value, 0, len(ss))
-		for _, s := range ss {
-			vals = append(vals, tftypes.NewValue(tftypes.String, s))
-		}
-		return tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, vals)
+	// strList builds a null string list (all list attributes default to null;
+	// callers override entries via overrides when they need values).
+	strList := func() tftypes.Value {
+		return tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil)
 	}
 	base := map[string]tftypes.Value{
 		"id":                    tftypes.NewValue(tftypes.String, nil),
@@ -905,15 +894,15 @@ func fwObj(overrides map[string]tftypes.Value) tftypes.Value {
 		"enabled":               tftypes.NewValue(tftypes.Bool, nil),
 		"direction":             tftypes.NewValue(tftypes.String, nil),
 		"action":                tftypes.NewValue(tftypes.String, nil),
-		"profile":               strList(nil),
+		"profile":               strList(),
 		"edge_traversal_policy": tftypes.NewValue(tftypes.String, nil),
 		"group":                 tftypes.NewValue(tftypes.String, nil),
 		"policy_store":          tftypes.NewValue(tftypes.String, nil),
 		"protocol":              tftypes.NewValue(tftypes.String, nil),
-		"local_port":            strList(nil),
-		"remote_port":           strList(nil),
-		"local_address":         strList(nil),
-		"remote_address":        strList(nil),
+		"local_port":            strList(),
+		"remote_port":           strList(),
+		"local_address":         strList(),
+		"remote_address":        strList(),
 		"program":               tftypes.NewValue(tftypes.String, nil),
 		"service":               tftypes.NewValue(tftypes.String, nil),
 		"interface_type":        tftypes.NewValue(tftypes.String, nil),

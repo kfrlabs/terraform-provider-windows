@@ -155,9 +155,9 @@ func dirPlan(t *testing.T, overrides map[string]tftypes.Value) tfsdk.Plan {
 	return tfsdk.Plan{Raw: dirObj(overrides), Schema: s}
 }
 
-func okDirState(path string) *winclient.DirectoryState {
+func okDirState() *winclient.DirectoryState {
 	return &winclient.DirectoryState{
-		Path:           path,
+		Path:           `C:\app\logs`,
 		ExistsChildren: false,
 		ItemCount:      0,
 		LastWriteTime:  "2026-10-01T12:00:00Z",
@@ -241,7 +241,7 @@ func TestAddDirectoryDiag_Kinds(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWindowsDirectoryResource_Create_HappyPath(t *testing.T) {
-	fc := &fakeDirectoryClient{createOut: okDirState(`C:\app\logs`)}
+	fc := &fakeDirectoryClient{createOut: okDirState()}
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.CreateRequest{Plan: dirPlan(t, nil)}
@@ -295,7 +295,7 @@ func TestWindowsDirectoryResource_Create_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWindowsDirectoryResource_Read_HappyPath(t *testing.T) {
-	fc := &fakeDirectoryClient{readOut: okDirState(`C:\app\logs`)}
+	fc := &fakeDirectoryClient{readOut: okDirState()}
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.ReadRequest{State: dirState(t, nil)}
@@ -361,7 +361,7 @@ func TestWindowsDirectoryResource_Read_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWindowsDirectoryResource_Update_Attributes(t *testing.T) {
-	fc := &fakeDirectoryClient{updateOut: okDirState(`C:\app\logs`)}
+	fc := &fakeDirectoryClient{updateOut: okDirState()}
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.UpdateRequest{Plan: dirPlan(t, nil)}
@@ -397,7 +397,7 @@ func TestWindowsDirectoryResource_Update_EnsureToAbsent_CallsDelete(t *testing.T
 func TestWindowsDirectoryResource_Update_DriftRecreate(t *testing.T) {
 	fc := &fakeDirectoryClient{
 		updateErr: winclient.NewDirectoryError(winclient.DirectoryErrorNotFound, "gone", nil, nil),
-		createOut: okDirState(`C:\app\logs`),
+		createOut: okDirState(),
 	}
 	r := &windowsDirectoryResource{client: fc}
 
@@ -453,7 +453,7 @@ func TestWindowsDirectoryResource_Delete_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWindowsDirectoryResource_ImportState_HappyPath(t *testing.T) {
-	fc := &fakeDirectoryClient{readOut: okDirState(`C:\app\logs`)}
+	fc := &fakeDirectoryClient{readOut: okDirState()}
 	r := &windowsDirectoryResource{client: fc}
 
 	req := resource.ImportStateRequest{ID: `C:\app\logs`}
@@ -567,7 +567,7 @@ func TestWindowsDirectoryModelFromState_PreservesTimeouts(t *testing.T) {
 	// applyDirectoryState projects onto the caller's model; timeouts configured
 	// by the operator must survive the projection.
 	m := prior
-	applyDirectoryState(&m, okDirState(`C:\app\logs`), &diag.Diagnostics{})
+	applyDirectoryState(&m, okDirState(), &diag.Diagnostics{})
 	got, diags := m.Timeouts.Create(context.Background(), directoryDefaultTimeout)
 	if diags.HasError() {
 		t.Fatalf("Timeouts.Create: %v", diags)

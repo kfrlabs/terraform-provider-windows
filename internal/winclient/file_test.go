@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-func newFileTestClient(t *testing.T) (*Client, *FileClientImpl) {
+func newFileTestClient(t *testing.T) *FileClientImpl {
 	t.Helper()
 	c, err := New(Config{
 		Host:                  "winfile01",
@@ -34,7 +34,7 @@ func newFileTestClient(t *testing.T) (*Client, *FileClientImpl) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewFileClient(c)
+	return NewFileClient(c)
 }
 
 func stubFileRun(fn func(ctx context.Context, c *Client, script, stdin string) (string, string, error)) func() {
@@ -73,7 +73,7 @@ func sampleFileData() map[string]any {
 
 // T-1: the payload must be streamed on stdin, never interpolated in the script.
 func TestFileSet_ContentTravelsOnStdinOnly(t *testing.T) {
-	_, fc := newFileTestClient(t)
+	fc := newFileTestClient(t)
 
 	secret := "super-secret-connection-string"
 	payload := base64.StdEncoding.EncodeToString([]byte(secret))
@@ -109,7 +109,7 @@ func TestFileSet_ContentTravelsOnStdinOnly(t *testing.T) {
 
 // EC-14: a path containing a single quote must be escaped, not concatenated.
 func TestFileSet_PathQuotingHardening(t *testing.T) {
-	_, fc := newFileTestClient(t)
+	fc := newFileTestClient(t)
 
 	var gotScript string
 	defer stubFileRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
@@ -144,7 +144,7 @@ func TestFileSet_ErrorKinds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, fc := newFileTestClient(t)
+			fc := newFileTestClient(t)
 			defer stubFileRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 				return fileErrEnvelope(t, tc.kind, "boom"), "", nil
 			})()
@@ -158,7 +158,7 @@ func TestFileSet_ErrorKinds(t *testing.T) {
 
 // EC-4: a missing file is not an error, it is an empty state.
 func TestFileRead_MissingFileReturnsNilNil(t *testing.T) {
-	_, fc := newFileTestClient(t)
+	fc := newFileTestClient(t)
 	defer stubFileRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return fileOKEnvelope(t, map[string]any{"found": false}), "", nil
 	})()
@@ -174,7 +174,7 @@ func TestFileRead_MissingFileReturnsNilNil(t *testing.T) {
 
 // D-1: Read must not ask the host for file bytes.
 func TestFileRead_NeverTransfersContent(t *testing.T) {
-	_, fc := newFileTestClient(t)
+	fc := newFileTestClient(t)
 	var gotScript string
 	defer stubFileRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
@@ -195,7 +195,7 @@ func TestFileRead_NeverTransfersContent(t *testing.T) {
 
 // Import path (b): content is returned below the ceiling, flagged above it.
 func TestFileReadContent_TruncationCeiling(t *testing.T) {
-	_, fc := newFileTestClient(t)
+	fc := newFileTestClient(t)
 	defer stubFileRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		if !strings.Contains(script, "1048576") {
 			t.Errorf("expected the import ceiling in the script, got:\n%s", script)
@@ -217,7 +217,7 @@ func TestFileReadContent_TruncationCeiling(t *testing.T) {
 
 // EC-12: deleting an absent file is a silent success.
 func TestFileDelete_Idempotent(t *testing.T) {
-	_, fc := newFileTestClient(t)
+	fc := newFileTestClient(t)
 	defer stubFileRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return fileOKEnvelope(t, map[string]any{"deleted": false, "reason": "not_found"}), "", nil
 	})()

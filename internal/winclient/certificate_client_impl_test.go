@@ -38,14 +38,14 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// certNewClient returns a *Client + *CertificateClientImpl pair for tests.
-func certNewClient(t *testing.T) (*Client, *CertificateClientImpl) {
+// certNewClient returns a *CertificateClientImpl for tests.
+func certNewClient(t *testing.T) *CertificateClientImpl {
 	t.Helper()
 	c, err := New(Config{Host: "wincert01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewCertificateClient(c)
+	return NewCertificateClient(c)
 }
 
 // certOK returns a JSON ok-envelope whose data field is the supplied value.
@@ -571,16 +571,17 @@ func TestCertificateScripts_SecretsNeverInScript(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCertificateEnvelopeMapping(t *testing.T) {
-	_, impl := certNewClient(t)
-	run := func(outputs []frResponse) (*Envelope, error) {
+	impl := certNewClient(t)
+	run := func(outputs []frResponse) error {
 		var calls []certStubCall
 		defer certStubRun(outputs, &calls)()
-		return impl.runCertificateEnvelope(context.Background(), "op", "script", "stdin", nil)
+		_, err := impl.runCertificateEnvelope(context.Background(), "op", "script", "stdin", nil)
+		return err
 	}
-	if _, err := run([]frResponse{{stdout: "", stderr: "x", err: errors.New("dial: refused")}}); !IsCertificateError(err, CertificateErrorUnknown) {
+	if err := run([]frResponse{{stdout: "", stderr: "x", err: errors.New("dial: refused")}}); !IsCertificateError(err, CertificateErrorUnknown) {
 		t.Errorf("transport: want unknown, got %v", err)
 	}
-	if _, err := run([]frResponse{{stdout: "noise, no json\n", err: nil}}); !IsCertificateError(err, CertificateErrorUnknown) {
+	if err := run([]frResponse{{stdout: "noise, no json\n", err: nil}}); !IsCertificateError(err, CertificateErrorUnknown) {
 		t.Errorf("no envelope: want unknown, got %v", err)
 	}
 	for kind, want := range map[string]CertificateErrorKind{
@@ -593,7 +594,7 @@ func TestCertificateEnvelopeMapping(t *testing.T) {
 		"interactive_ui_required": CertificateErrorInteractiveUIRequired,
 		"weird_kind":              CertificateErrorUnknown,
 	} {
-		_, err := run([]frResponse{{stdout: certErr(t, kind, "m")}})
+		err := run([]frResponse{{stdout: certErr(t, kind, "m")}})
 		if !IsCertificateError(err, want) {
 			t.Errorf("kind %q: want %q, got %v", kind, want, err)
 		}
@@ -606,7 +607,7 @@ func TestCertificateEnvelopeMapping(t *testing.T) {
 
 func TestCertificateCreatePEM(t *testing.T) {
 	pemText, der := certMintSelfSigned(t)
-	_, impl := certNewClient(t)
+	impl := certNewClient(t)
 	var calls []certStubCall
 	defer certStubRun([]frResponse{{stdout: certOK(t, certTestJSON(der))}}, &calls)()
 
@@ -638,7 +639,7 @@ func TestCertificateCreatePEM(t *testing.T) {
 
 func TestCertificateCreatePFXStdin(t *testing.T) {
 	_, der := certMintSelfSigned(t)
-	_, impl := certNewClient(t)
+	impl := certNewClient(t)
 	bundle := base64.StdEncoding.EncodeToString([]byte("fake-pfx"))
 	var calls []certStubCall
 	defer certStubRun([]frResponse{{stdout: certOK(t, certTestJSON(der))}}, &calls)()
@@ -662,7 +663,7 @@ func TestCertificateCreatePFXStdin(t *testing.T) {
 }
 
 func TestCertificateCreateErrors(t *testing.T) {
-	_, impl := certNewClient(t)
+	impl := certNewClient(t)
 	// Client-side payload validation short-circuits before any call.
 	var calls []certStubCall
 	defer certStubRun([]frResponse{{stdout: certOK(t, map[string]any{})}}, &calls)()
@@ -689,7 +690,7 @@ func TestCertificateCreateErrors(t *testing.T) {
 func TestCertificateRead(t *testing.T) {
 	pemText, der := certMintSelfSigned(t)
 	_ = pemText
-	_, impl := certNewClient(t)
+	impl := certNewClient(t)
 	var calls []certStubCall
 	defer certStubRun([]frResponse{{stdout: certOK(t, certTestJSON(der))}}, &calls)()
 
@@ -722,7 +723,7 @@ func TestCertificateRead(t *testing.T) {
 
 func TestCertificateLookupBySubject(t *testing.T) {
 	_, der := certMintSelfSigned(t)
-	_, impl := certNewClient(t)
+	impl := certNewClient(t)
 	j1 := certTestJSON(der)
 	j2 := certTestJSON(der)
 	j2["thumbprint"] = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
@@ -748,7 +749,7 @@ func TestCertificateLookupBySubject(t *testing.T) {
 
 func TestCertificateUpdateFriendlyName(t *testing.T) {
 	_, der := certMintSelfSigned(t)
-	_, impl := certNewClient(t)
+	impl := certNewClient(t)
 	var calls []certStubCall
 	defer certStubRun([]frResponse{{stdout: certOK(t, certTestJSON(der))}}, &calls)()
 
@@ -766,7 +767,7 @@ func TestCertificateUpdateFriendlyName(t *testing.T) {
 }
 
 func TestCertificateDelete(t *testing.T) {
-	_, impl := certNewClient(t)
+	impl := certNewClient(t)
 	var calls []certStubCall
 	defer certStubRun([]frResponse{{stdout: certOK(t, map[string]any{"removed": true})}}, &calls)()
 

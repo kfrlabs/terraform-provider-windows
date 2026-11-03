@@ -105,10 +105,10 @@ func fakeUserData(name, sid string) map[string]any {
 }
 
 // newLUClient wraps newLUTestClient + NewLocalUserClient.
-func newLUClient(t *testing.T) (*Client, *LocalUserClientImpl) {
+func newLUClient(t *testing.T) *LocalUserClientImpl {
 	t.Helper()
 	c := newLUTestClient(t)
-	return c, NewLocalUserClient(c)
+	return NewLocalUserClient(c)
 }
 
 // ---------------------------------------------------------------------------
@@ -296,8 +296,8 @@ func TestParseUserData_InvalidJSON(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParseLUEnvelope_NoJSON(t *testing.T) {
-	_, lc := newLUClient(t)
-	_, err := lc.parseLUEnvelope("test_op", "key1", "no json here\n", "")
+	lc := newLUClient(t)
+	err := lc.parseLUEnvelope("test_op", "key1", "no json here\n", "")
 	if err == nil {
 		t.Fatal("expected error for missing JSON envelope")
 	}
@@ -307,8 +307,8 @@ func TestParseLUEnvelope_NoJSON(t *testing.T) {
 }
 
 func TestParseLUEnvelope_MalformedJSON(t *testing.T) {
-	_, lc := newLUClient(t)
-	_, err := lc.parseLUEnvelope("test_op", "key1", "{broken\n", "")
+	lc := newLUClient(t)
+	err := lc.parseLUEnvelope("test_op", "key1", "{broken\n", "")
 	if err == nil {
 		t.Fatal("expected error for malformed JSON")
 	}
@@ -318,12 +318,12 @@ func TestParseLUEnvelope_MalformedJSON(t *testing.T) {
 }
 
 func TestParseLUEnvelope_ErrorEnvelope(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 	b, _ := json.Marshal(map[string]any{
 		"ok": false, "kind": "permission_denied", "message": "access denied",
 		"context": map[string]string{},
 	})
-	_, err := lc.parseLUEnvelope("test_op", "key1", string(b)+"\n", "")
+	err := lc.parseLUEnvelope("test_op", "key1", string(b)+"\n", "")
 	if err == nil {
 		t.Fatal("expected error from err-envelope")
 	}
@@ -337,7 +337,7 @@ func TestParseLUEnvelope_ErrorEnvelope(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRunLUEnvelope_TransportError(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "stderr-output", errors.New("connection refused")
 	})()
@@ -352,7 +352,7 @@ func TestRunLUEnvelope_TransportError(t *testing.T) {
 }
 
 func TestRunLUEnvelope_ContextCancelled(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // immediately cancelled
 
@@ -374,7 +374,7 @@ func TestRunLUEnvelope_ContextCancelled(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRunLUEnvelopeWithInput_TransportError(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 	defer stubLUInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "", "", errors.New("stdin transport error")
 	})()
@@ -389,7 +389,7 @@ func TestRunLUEnvelopeWithInput_TransportError(t *testing.T) {
 }
 
 func TestRunLUEnvelopeWithInput_ContextCancelled(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -412,7 +412,7 @@ func TestRunLUEnvelopeWithInput_ContextCancelled(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalUserClient_Create_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("alice", "S-1-5-21-111-222-333-1001")
 	defer stubLUInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
@@ -439,7 +439,7 @@ func TestLocalUserClient_Create_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_Create_AlreadyExists(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLUInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return luErr(t, "already_exists", "user already exists"), "", nil
@@ -455,7 +455,7 @@ func TestLocalUserClient_Create_AlreadyExists(t *testing.T) {
 }
 
 func TestLocalUserClient_Create_PasswordNotInContext(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	const secret = "T0pS3cr3t!Pass"
 	defer stubLUInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
@@ -480,7 +480,7 @@ func TestLocalUserClient_Create_PasswordNotInContext(t *testing.T) {
 }
 
 func TestLocalUserClient_Create_WithAllOptions(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("svc", "S-1-5-21-1-2-3-1005")
 	defer stubLUInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
@@ -506,7 +506,7 @@ func TestLocalUserClient_Create_WithAllOptions(t *testing.T) {
 }
 
 func TestLocalUserClient_Create_WithAccountExpires(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("expiring", "S-1-5-21-1-2-3-1006")
 	userData["AccountExpires"] = "2028-12-31T23:59:59Z"
@@ -534,7 +534,7 @@ func TestLocalUserClient_Create_WithAccountExpires(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalUserClient_Read_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("alice", "S-1-5-21-111-222-333-1001")
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -554,7 +554,7 @@ func TestLocalUserClient_Read_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_Read_NotFound_ReturnsNilNil(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luErr(t, "not_found", "user was not found"), "", nil
@@ -570,7 +570,7 @@ func TestLocalUserClient_Read_NotFound_ReturnsNilNil(t *testing.T) {
 }
 
 func TestLocalUserClient_Read_TransportError(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", errors.New("connection refused")
@@ -587,7 +587,7 @@ func TestLocalUserClient_Read_TransportError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalUserClient_Update_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	updated := fakeUserData("alice", "S-1-5-21-111-222-333-1001")
 	updated["Description"] = "updated desc"
@@ -609,7 +609,7 @@ func TestLocalUserClient_Update_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_Update_AccountNeverExpires(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("alice", "S-1-5-21-111-222-333-1001")
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -627,7 +627,7 @@ func TestLocalUserClient_Update_AccountNeverExpires(t *testing.T) {
 }
 
 func TestLocalUserClient_Update_WithAccountExpires(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("alice", "S-1-5-21-111-222-333-1001")
 	userData["AccountExpires"] = "2029-06-01T00:00:00Z"
@@ -647,7 +647,7 @@ func TestLocalUserClient_Update_WithAccountExpires(t *testing.T) {
 }
 
 func TestLocalUserClient_Update_NoExpiryChange(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("alice", "S-1-5-21-111-222-333-1001")
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -666,7 +666,7 @@ func TestLocalUserClient_Update_NoExpiryChange(t *testing.T) {
 }
 
 func TestLocalUserClient_Update_PermissionDenied(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luErr(t, "permission_denied", "Access is denied"), "", nil
@@ -686,7 +686,7 @@ func TestLocalUserClient_Update_PermissionDenied(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalUserClient_Rename_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luOK(t, map[string]any{"renamed": true}), "", nil
@@ -699,7 +699,7 @@ func TestLocalUserClient_Rename_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_Rename_Conflict(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luErr(t, "rename_conflict", "name is not unique"), "", nil
@@ -719,7 +719,7 @@ func TestLocalUserClient_Rename_Conflict(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalUserClient_SetPassword_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLUInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return luOK(t, map[string]any{"password_set": true}), "", nil
@@ -732,7 +732,7 @@ func TestLocalUserClient_SetPassword_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_SetPassword_PolicyViolation(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLUInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return luErr(t, "password_policy", "does not meet the minimum length"), "", nil
@@ -748,7 +748,7 @@ func TestLocalUserClient_SetPassword_PolicyViolation(t *testing.T) {
 }
 
 func TestLocalUserClient_SetPassword_PlaintextNotInScript(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	const secret = "S3cr3tPl@ntext!"
 	defer stubLUInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
@@ -773,7 +773,7 @@ func TestLocalUserClient_SetPassword_PlaintextNotInScript(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalUserClient_Enable_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luOK(t, map[string]any{"enabled": true}), "", nil
@@ -785,7 +785,7 @@ func TestLocalUserClient_Enable_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_Disable_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luOK(t, map[string]any{"disabled": true}), "", nil
@@ -797,7 +797,7 @@ func TestLocalUserClient_Disable_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_Enable_PermissionDenied(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luErr(t, "permission_denied", "Access is denied"), "", nil
@@ -814,7 +814,7 @@ func TestLocalUserClient_Enable_PermissionDenied(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalUserClient_Delete_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luOK(t, map[string]any{"deleted": true}), "", nil
@@ -827,7 +827,7 @@ func TestLocalUserClient_Delete_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_Delete_AlreadyAbsent(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	// When not_found during delete, the script emits Emit-OK already_absent
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -841,7 +841,7 @@ func TestLocalUserClient_Delete_AlreadyAbsent(t *testing.T) {
 }
 
 func TestLocalUserClient_Delete_Builtin_RID500(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	// Stub Read called inside Delete for built-in guard name resolution
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -864,7 +864,7 @@ func TestLocalUserClient_Delete_Builtin_RID500(t *testing.T) {
 }
 
 func TestLocalUserClient_Delete_Builtin_RID501(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luOK(t, fakeUserData("Guest", "S-1-5-21-111-222-333-501")), "", nil
@@ -877,7 +877,7 @@ func TestLocalUserClient_Delete_Builtin_RID501(t *testing.T) {
 }
 
 func TestLocalUserClient_Delete_Builtin_RID503(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luOK(t, fakeUserData("DefaultAccount", "S-1-5-21-111-222-333-503")), "", nil
@@ -890,7 +890,7 @@ func TestLocalUserClient_Delete_Builtin_RID503(t *testing.T) {
 }
 
 func TestLocalUserClient_Delete_Builtin_RID504(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luOK(t, fakeUserData("WDAGUtilityAccount", "S-1-5-21-111-222-333-504")), "", nil
@@ -903,7 +903,7 @@ func TestLocalUserClient_Delete_Builtin_RID504(t *testing.T) {
 }
 
 func TestLocalUserClient_Delete_NonBuiltinRID_Proceeds(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luOK(t, map[string]any{"deleted": true}), "", nil
@@ -917,7 +917,7 @@ func TestLocalUserClient_Delete_NonBuiltinRID_Proceeds(t *testing.T) {
 }
 
 func TestLocalUserClient_Delete_InvalidName(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luErr(t, "invalid_name", "invalid.*name"), "", nil
@@ -934,7 +934,7 @@ func TestLocalUserClient_Delete_InvalidName(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLocalUserClient_ImportByName_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("alice", "S-1-5-21-111-222-333-1001")
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -951,7 +951,7 @@ func TestLocalUserClient_ImportByName_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_ImportByName_NotFound(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luErr(t, "not_found", "user was not found"), "", nil
@@ -967,7 +967,7 @@ func TestLocalUserClient_ImportByName_NotFound(t *testing.T) {
 }
 
 func TestLocalUserClient_ImportBySID_HappyPath(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	userData := fakeUserData("alice", "S-1-5-21-111-222-333-1001")
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -984,7 +984,7 @@ func TestLocalUserClient_ImportBySID_HappyPath(t *testing.T) {
 }
 
 func TestLocalUserClient_ImportBySID_NotFound(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	defer stubLURun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return luErr(t, "not_found", "SID was not found"), "", nil
@@ -1143,7 +1143,7 @@ func TestLUPsHeader_PasswordNeverExpires_NotReadFromProperty(t *testing.T) {
 // Set-LocalUser or Disable-LocalUser calls, which earlier revisions added
 // while chasing the read-side defect above.
 func TestLocalUserClient_Create_SingleNewLocalUserCall(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	var script string
 	defer stubLUInput(func(_ context.Context, _ *Client, s, _ string) (string, string, error) {
@@ -1181,7 +1181,7 @@ func TestLocalUserClient_Create_SingleNewLocalUserCall(t *testing.T) {
 // TestLocalUserClient_Create_EnabledOmitsDisabled checks the -Disabled switch
 // is only splatted in when the account should be disabled.
 func TestLocalUserClient_Create_EnabledOmitsDisabled(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	var script string
 	defer stubLUInput(func(_ context.Context, _ *Client, s, _ string) (string, string, error) {
@@ -1201,7 +1201,7 @@ func TestLocalUserClient_Create_EnabledOmitsDisabled(t *testing.T) {
 // in the same splatted Set-LocalUser invocation as the other scalars, and
 // that Update no longer pays for an extra SSH round-trip to re-read state.
 func TestLocalUserClient_Update_SingleSetLocalUserCall(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	var scripts []string
 	defer stubLURun(func(_ context.Context, _ *Client, s string) (string, string, error) {
@@ -1247,7 +1247,7 @@ func TestLocalUserClient_Update_SingleSetLocalUserCall(t *testing.T) {
 // inside double-quoted strings. The already_exists message must reference
 // the runtime $existing identity instead of the Go-side input.
 func TestLocalUserClient_Create_AlreadyExists_NoRawInterpolation(t *testing.T) {
-	_, lc := newLUClient(t)
+	lc := newLUClient(t)
 
 	var script string
 	defer stubLUInput(func(_ context.Context, _ *Client, s, _ string) (string, string, error) {

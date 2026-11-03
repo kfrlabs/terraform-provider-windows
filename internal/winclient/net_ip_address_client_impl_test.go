@@ -32,14 +32,14 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// niNewClient returns a *Client + *NetIPAddressClientImpl pair for tests.
-func niNewClient(t *testing.T) (*Client, *NetIPAddressClientImpl) {
+// niNewClient returns a *NetIPAddressClientImpl for tests.
+func niNewClient(t *testing.T) *NetIPAddressClientImpl {
 	t.Helper()
 	c, err := New(Config{Host: "winip01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, NewNetIPAddressClient(c)
+	return NewNetIPAddressClient(c)
 }
 
 // niOK returns a JSON ok-envelope whose data field is the supplied value.
@@ -328,7 +328,7 @@ func TestNetIPAddressEnvelope_TransportMapsUnreachable(t *testing.T) {
 	restore := niStubSequence([]frResponse{{stdout: "", stderr: "boom", err: errors.New("ssh dial failed")}})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, err := c.Read(context.Background(), "Ethernet 2", "192.0.2.10")
 	if !IsNetIPAddressError(err, NetIPAddressErrorUnreachable) {
 		t.Errorf("expected unreachable, got %v", err)
@@ -341,7 +341,7 @@ func TestNetIPAddressEnvelope_TimeoutMapsUnreachable(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, err := c.Read(ctx, "Ethernet 2", "192.0.2.10")
 	if !IsNetIPAddressError(err, NetIPAddressErrorUnreachable) {
 		t.Errorf("expected unreachable, got %v", err)
@@ -369,7 +369,7 @@ func TestNetIPAddressRemoteKinds(t *testing.T) {
 			restore := niStubSequence([]frResponse{{stdout: niErr(t, tc.remote, "boom "+tc.remote), stderr: "", err: nil}})
 			defer restore()
 
-			_, c := niNewClient(t)
+			c := niNewClient(t)
 			_, err := c.Lookup(context.Background(), "192.0.2.10", "")
 			if !IsNetIPAddressError(err, tc.want) {
 				t.Errorf("remote kind %q should map to %q, got %v", tc.remote, tc.want, err)
@@ -396,7 +396,7 @@ func TestNetIPAddressCreate_HappyPath(t *testing.T) {
 	defer restore()
 	defer niStubManagementPath(nonManagementPath(), nil)()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	info, dhcpDisabled, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 	})
@@ -440,7 +440,7 @@ func TestNetIPAddressCreate_Preflights(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	if _, _, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Nope", IPAddress: "192.0.2.10", PrefixLength: 24,
 	}); !IsNetIPAddressError(err, NetIPAddressErrorInterfaceNotFound) {
@@ -459,7 +459,7 @@ func TestNetIPAddressCreate_AlreadyExists(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, _, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 	})
@@ -476,7 +476,7 @@ func TestNetIPAddressCreate_DHCPEnabledHint(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, _, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 	})
@@ -503,7 +503,7 @@ func TestNetIPAddressCreate_DuplicateRollsBack(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, _, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 	})
@@ -525,7 +525,7 @@ func TestNetIPAddressCreate_GuardRefusesManagementIP(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, _, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet", IPAddress: "172.18.122.203", PrefixLength: 24,
 	})
@@ -543,7 +543,7 @@ func TestNetIPAddressCreate_GuardUnknownFailsClosed(t *testing.T) {
 	restore := niStubSequence([]frResponse{{stdout: niResolveOK(t), stderr: "", err: nil}})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, _, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 	})
@@ -560,7 +560,7 @@ func TestNetIPAddressCreate_UnsafeSkipBypassesGuard(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	info, _, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 		UnsafeSkipManagementCheck: true,
@@ -598,7 +598,7 @@ func TestNetIPAddressCreate_SingleManagementProbe(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, dhcpDisabled, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 		DisableDHCP: true,
@@ -635,7 +635,7 @@ func TestNetIPAddressCreate_FailureRestoresDHCP(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, dhcpDisabled, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 		DisableDHCP: true,
@@ -670,7 +670,7 @@ func TestNetIPAddressCreate_FailureRestoreFailsKeepsFlag(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, dhcpDisabled, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: "Ethernet 2", IPAddress: "192.0.2.10", PrefixLength: 24,
 		DisableDHCP: true,
@@ -697,7 +697,7 @@ func TestNetIPAddressCreate_TrimsAlias(t *testing.T) {
 	defer restore()
 	defer niStubManagementPath(nonManagementPath(), nil)()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	if _, _, err := c.Create(context.Background(), NetIPAddressInput{
 		InterfaceAlias: " Ethernet 2 ", IPAddress: "192.0.2.10", PrefixLength: 24,
 	}); err != nil {
@@ -757,7 +757,7 @@ func TestNetIPAddressRead_HappyPath(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	info, err := c.Read(context.Background(), "ethernet 2", "192.0.2.10")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -773,7 +773,7 @@ func TestNetIPAddressRead_MissingDropsToNil(t *testing.T) {
 			restore := niStubSequence([]frResponse{{stdout: niErr(t, kind, "gone"), stderr: "", err: nil}})
 			defer restore()
 
-			_, c := niNewClient(t)
+			c := niNewClient(t)
 			info, err := c.Read(context.Background(), "Ethernet 2", "192.0.2.10")
 			if err != nil || info != nil {
 				t.Errorf("missing must be (nil, nil), got (%+v, %v)", info, err)
@@ -787,7 +787,7 @@ func TestNetIPAddressLookup(t *testing.T) {
 	restore := niStubSequence([]frResponse{{stdout: niOK(t, testNetAddressJSON()), stderr: "", err: nil}})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	got, err := c.Lookup(context.Background(), "192.0.2.10", "")
 	if err != nil || len(got) != 1 || got[0].IPAddress != "192.0.2.10" {
 		t.Errorf("lookup = %+v, %v; want one match", got, err)
@@ -798,7 +798,7 @@ func TestNetIPAddressLookup_Errors(t *testing.T) {
 	// Zero matches.
 	restore := niStubSequence([]frResponse{{stdout: niErr(t, "not_found", "none"), stderr: "", err: nil}})
 	defer restore()
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	if _, err := c.Lookup(context.Background(), "192.0.2.99", ""); !IsNetIPAddressError(err, NetIPAddressErrorNotFound) {
 		t.Errorf("expected not_found, got %v", err)
 	}
@@ -814,7 +814,7 @@ func TestNetIPAddressLookup_BlankAliasRejected(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	if _, err := c.Lookup(context.Background(), "192.0.2.10", "   "); !IsNetIPAddressError(err, NetIPAddressErrorInterfaceNotFound) {
 		t.Errorf("expected interface_not_found, got %v", err)
 	}
@@ -839,7 +839,7 @@ func TestNetIPAddressUpdate_HappyPath(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	info, dhcpDisabled, err := c.Update(context.Background(), "Ethernet 2", "192.0.2.10", 25, true, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -861,7 +861,7 @@ func TestNetIPAddressUpdate_GuardRefusesManagementIP(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	_, _, err := c.Update(context.Background(), "Ethernet", "172.18.122.203", 24, false, false, false)
 	if !IsNetIPAddressError(err, NetIPAddressErrorMgmtAtRisk) {
 		t.Errorf("expected management_path_at_risk, got %v", err)
@@ -892,7 +892,7 @@ func TestNetIPAddressUpdate_FailureRestoresDHCP(t *testing.T) {
 		})
 		defer restore()
 
-		_, c := niNewClient(t)
+		c := niNewClient(t)
 		_, dhcpDisabled, err := c.Update(context.Background(), "Ethernet 2", "192.0.2.10", 25, true, true, false)
 		if !IsNetIPAddressError(err, NetIPAddressErrorInvalidAddress) {
 			t.Fatalf("expected the original invalid_address error, got %v", err)
@@ -923,7 +923,7 @@ func TestNetIPAddressUpdate_FailureRestoresDHCP(t *testing.T) {
 		})
 		defer restore()
 
-		_, c := niNewClient(t)
+		c := niNewClient(t)
 		_, dhcpDisabled, err := c.Update(context.Background(), "Ethernet 2", "192.0.2.10", 25, true, true, false)
 		if !IsNetIPAddressError(err, NetIPAddressErrorInvalidAddress) {
 			t.Fatalf("expected the original invalid_address error, got %v", err)
@@ -969,7 +969,7 @@ func TestNetIPAddressDelete_HappyPath(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	if err := c.Delete(context.Background(), "Ethernet 2", "192.0.2.10", false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -990,7 +990,7 @@ func TestNetIPAddressDelete_Idempotent(t *testing.T) {
 		})
 		defer restore()
 
-		_, c := niNewClient(t)
+		c := niNewClient(t)
 		if err := c.Delete(context.Background(), "Ethernet 2", "192.0.2.10", false); err != nil {
 			t.Errorf("idempotent delete must be nil, got %v", err)
 		}
@@ -1000,7 +1000,7 @@ func TestNetIPAddressDelete_Idempotent(t *testing.T) {
 		restore := niStubSequence([]frResponse{{stdout: niErr(t, "interface_not_found", "gone"), stderr: "", err: nil}})
 		defer restore()
 
-		_, c := niNewClient(t)
+		c := niNewClient(t)
 		if err := c.Delete(context.Background(), "Ethernet 2", "192.0.2.10", false); err != nil {
 			t.Errorf("idempotent delete must be nil, got %v", err)
 		}
@@ -1020,7 +1020,7 @@ func TestNetIPAddressDelete_GuardRefusesManagementIP(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	if err := c.Delete(context.Background(), "Ethernet", "172.18.122.203", false); !IsNetIPAddressError(err, NetIPAddressErrorMgmtAtRisk) {
 		t.Errorf("expected management_path_at_risk, got %v", err)
 	}
@@ -1037,7 +1037,7 @@ func TestNetIPAddressRestoreDHCP(t *testing.T) {
 	})
 	defer restore()
 
-	_, c := niNewClient(t)
+	c := niNewClient(t)
 	if err := c.RestoreDHCP(context.Background(), "Ethernet 2"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

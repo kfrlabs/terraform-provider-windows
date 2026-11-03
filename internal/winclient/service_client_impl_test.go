@@ -367,9 +367,9 @@ func TestRunEnvelope_MalformedJSON(t *testing.T) {
 // Create — happy path + EC-1 + EC-11
 // -----------------------------------------------------------------------------
 
-func fakeState(name string) map[string]any {
+func fakeState() map[string]any {
 	return map[string]any{
-		"name": name, "display_name": name, "description": "",
+		"name": "svc", "display_name": "svc", "description": "",
 		"binary_path": `C:\svc.exe`, "start_type": "Automatic", "current_status": "Stopped",
 		"service_account": "LocalSystem", "dependencies": []string{}, "hostname": "WIN01",
 	}
@@ -382,7 +382,7 @@ func TestCreate_HappyPath(t *testing.T) {
 		if !strings.Contains(script, `'C:\svc.exe'`) {
 			t.Errorf("script missing quoted binary path")
 		}
-		return okEnvelope(t, fakeState("svc")), "", nil
+		return okEnvelope(t, fakeState()), "", nil
 	})
 	defer restore()
 
@@ -448,7 +448,7 @@ func TestCreate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	restore := stubRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
 		capturedScript = script
 		capturedStdin = stdin
-		return okEnvelope(t, fakeState("svc")), "", nil
+		return okEnvelope(t, fakeState()), "", nil
 	})
 	defer restore()
 
@@ -485,7 +485,7 @@ func TestUpdate_PasswordInjectedViaStdin_NotInScriptBody(t *testing.T) {
 	restore := stubRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
 		capturedScript = script
 		capturedStdin = stdin
-		return okEnvelope(t, fakeState("svc")), "", nil
+		return okEnvelope(t, fakeState()), "", nil
 	})
 	defer restore()
 
@@ -522,11 +522,11 @@ func TestCreate_ReconcileRunning(t *testing.T) {
 		step++
 		switch step {
 		case 1:
-			return okEnvelope(t, fakeState("svc")), "", nil
+			return okEnvelope(t, fakeState()), "", nil
 		case 2:
 			return okEnvelope(t, map[string]any{"status": "Running"}), "", nil
 		default:
-			running := fakeState("svc")
+			running := fakeState()
 			running["current_status"] = "Running"
 			return okEnvelope(t, running), "", nil
 		}
@@ -554,7 +554,7 @@ func TestCreate_ReconcileRunning(t *testing.T) {
 
 func TestRead_HappyPath(t *testing.T) {
 	restore := stubRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
-		d := fakeState("svc")
+		d := fakeState()
 		d["service_account"] = ".\\svcuser"
 		d["binary_path"] = `"C:\with space.exe"`
 		return okEnvelope(t, d), "", nil
@@ -615,7 +615,7 @@ func TestRead_NotFoundViaKind(t *testing.T) {
 
 func TestUpdate_HappyPath(t *testing.T) {
 	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
-		return okEnvelope(t, fakeState("svc")), "", nil
+		return okEnvelope(t, fakeState()), "", nil
 	})
 	defer restore()
 
@@ -636,7 +636,7 @@ func TestUpdate_ClearsDependencies(t *testing.T) {
 	var captured string
 	restore := stubBothPS(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		captured = script
-		return okEnvelope(t, fakeState("svc")), "", nil
+		return okEnvelope(t, fakeState()), "", nil
 	})
 	defer restore()
 

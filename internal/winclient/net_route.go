@@ -785,28 +785,28 @@ func formatNetRouteUnknownMessage(op, routeDesc, host, cause string) string {
 // Read helpers
 // ---------------------------------------------------------------------------
 
-// resolveNetRouteInterface returns the numeric index, host spelling and
+// resolveNetRouteInterface returns the numeric index and
 // interface metric of alias for the given family, or an
 // interface_not_found error listing the valid aliases.
-func (n *NetRouteClientImpl) resolveNetRouteInterface(ctx context.Context, alias string, isV6 bool) (index int, hostAlias string, ifMetric int, err error) {
+func (n *NetRouteClientImpl) resolveNetRouteInterface(ctx context.Context, alias string, isV6 bool) (index int, ifMetric int, err error) {
 	resp, err := n.runNetRouteEnvelope(ctx, "resolve_interface",
 		buildNetRouteResolveScript(alias, isV6),
 		map[string]string{"interface_alias": alias})
 	if err != nil {
-		return 0, "", 0, err
+		return 0, 0, err
 	}
 	var j netRouteIfaceJSON
 	if jerr := json.Unmarshal(resp.Data, &j); jerr != nil {
-		return 0, "", 0, NewNetRouteError(NetRouteErrorUnknown,
+		return 0, 0, NewNetRouteError(NetRouteErrorUnknown,
 			"failed to parse interface resolution JSON", jerr,
 			map[string]string{"interface_alias": alias})
 	}
 	if j.InterfaceIndex <= 0 {
-		return 0, "", 0, NewNetRouteError(NetRouteErrorUnknown,
+		return 0, 0, NewNetRouteError(NetRouteErrorUnknown,
 			"host returned an invalid interface index", nil,
 			map[string]string{"interface_alias": alias})
 	}
-	return j.InterfaceIndex, j.InterfaceAlias, j.InterfaceMetric, nil
+	return j.InterfaceIndex, j.InterfaceMetric, nil
 }
 
 // readSingleRoute reads one route for the exact triplet on one interface. A
@@ -839,7 +839,7 @@ func (n *NetRouteClientImpl) Create(ctx context.Context, input NetRouteInput) (*
 	// configured spelling (see netRouteID).
 	alias := strings.TrimSpace(input.InterfaceAlias)
 
-	ifIndex, _, ifMetric, err := n.resolveNetRouteInterface(ctx, alias, isV6)
+	ifIndex, ifMetric, err := n.resolveNetRouteInterface(ctx, alias, isV6)
 	if err != nil {
 		return nil, err
 	}
@@ -985,7 +985,7 @@ func (n *NetRouteClientImpl) Update(ctx context.Context, interfaceAlias, destina
 	// configured spelling (see netRouteID).
 	alias := strings.TrimSpace(interfaceAlias)
 
-	ifIndex, _, ifMetric, err := n.resolveNetRouteInterface(ctx, alias, isV6)
+	ifIndex, ifMetric, err := n.resolveNetRouteInterface(ctx, alias, isV6)
 	if err != nil {
 		return nil, err
 	}
@@ -1020,7 +1020,7 @@ func (n *NetRouteClientImpl) Delete(ctx context.Context, interfaceAlias, destina
 	// configured spelling (see splitNetRouteID).
 	alias := strings.TrimSpace(interfaceAlias)
 
-	ifIndex, _, _, err := n.resolveNetRouteInterface(ctx, alias, isV6)
+	ifIndex, _, err := n.resolveNetRouteInterface(ctx, alias, isV6)
 	if err != nil {
 		if IsNetRouteError(err, NetRouteErrorInterfaceNotFound) {
 			return nil // interface already gone: nothing to remove

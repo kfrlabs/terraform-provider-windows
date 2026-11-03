@@ -71,10 +71,10 @@ func smbErr(t *testing.T, kind, msg string) string {
 	return string(b) + "\n"
 }
 
-func fakeSmbData(name string) map[string]any {
+func fakeSmbData() map[string]any {
 	return map[string]any{
 		"found":                   true,
-		"name":                    name,
+		"name":                    "Finance",
 		"path":                    `D:\Shares\Finance`,
 		"description":             "Finance share",
 		"folder_enumeration_mode": "AccessBased",
@@ -425,7 +425,7 @@ func TestSmbShareCreate_HappyPath(t *testing.T) {
 	var gotScript string
 	restore := stubSmbRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		gotScript = script
-		return smbOK(t, fakeSmbData("Finance")), "", nil
+		return smbOK(t, fakeSmbData()), "", nil
 	})
 	defer restore()
 
@@ -475,7 +475,7 @@ func TestSmbShareCreate_NormalisesTrailingBackslash(t *testing.T) {
 	var gotScript string
 	restore := stubSmbRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		gotScript = script
-		return smbOK(t, fakeSmbData("Finance")), "", nil
+		return smbOK(t, fakeSmbData()), "", nil
 	})
 	defer restore()
 
@@ -537,7 +537,7 @@ func TestSmbShareRead_NotFound(t *testing.T) {
 
 func TestSmbShareRead_HappyPath(t *testing.T) {
 	restore := stubSmbRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
-		return smbOK(t, fakeSmbData("Finance")), "", nil
+		return smbOK(t, fakeSmbData()), "", nil
 	})
 	defer restore()
 
@@ -557,7 +557,7 @@ func TestSmbShareRead_HappyPath(t *testing.T) {
 // TestSmbShareRead_SingleElementObject pins the ConvertTo-Json quirk: a
 // one-element access list arrives as a bare object, not an array.
 func TestSmbShareRead_SingleElementObject(t *testing.T) {
-	data := fakeSmbData("Finance")
+	data := fakeSmbData()
 	data["read_access"] = map[string]any{"name": "Everyone", "sid": "S-1-1-1"}
 	restore := stubSmbRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		return smbOK(t, data), "", nil
@@ -582,7 +582,7 @@ func TestSmbShareUpdate_HappyPath(t *testing.T) {
 	var gotScript string
 	restore := stubSmbRun(func(ctx context.Context, c *Client, script string) (string, string, error) {
 		gotScript = script
-		return smbOK(t, fakeSmbData("Finance")), "", nil
+		return smbOK(t, fakeSmbData()), "", nil
 	})
 	defer restore()
 
