@@ -23,9 +23,9 @@
 #     fails the workflow. When you change a schema description, an example
 #     or an import script, run `make docs` (`go generate ./...`) and commit
 #   - Rendering depends on the Terraform CLI version: regenerate with the
-#     CI-pinned Terraform (setup-terraform step below, currently 1.9.8). A
-#     newer local CLI renders WriteOnly attributes differently and
-#     reintroduces drift.
+#     CI-pinned Terraform (setup-terraform step below, currently 1.13.5).
+#     Older CLIs (<1.11) cannot emit the write_only flag, so WriteOnly
+#     attributes render differently and reintroduce drift.
 
 name: docs
 
@@ -69,7 +69,7 @@ jobs:
       # the tool tries to fetch Terraform from releases.hashicorp.com).
       - uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: 1.9.8
+          terraform_version: 1.13.5
           terraform_wrapper: false
 
       - name: go generate ./...

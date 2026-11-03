@@ -15,7 +15,7 @@ All common tasks go through the `GNUmakefile` (the single makefile; a legacy dup
 | `make testacc` | Acceptance tests: `TF_ACC=1 go test -tags acceptance ./... -v -timeout 120m` |
 | `make lint` | `golangci-lint run` |
 | `make fmt` | `gofmt -s -w .` + `terraform fmt -recursive examples/` |
-| `make docs` | Regenerate `docs/` via `tfplugindocs` (`go generate ./...`) |
+| `make docs` | Regenerate `docs/` via `tfplugindocs` (`go generate ./...`). Requires Terraform CLI 1.13.5 (CI pin) |
 
 Run a single test:
 ```bash
