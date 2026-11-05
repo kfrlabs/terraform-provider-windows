@@ -3,7 +3,7 @@
 page_title: "windows_net_route Resource - windows"
 subcategory: ""
 description: |-
-  Manages one persistent IP route on one network interface of a remote Windows host (New-NetRoute / Set-NetRoute / Remove-NetRoute -PolicyStore PersistentStore via SSH and PowerShell): static routes to remote networks, on-link routes, and manually managed default gateways.
+  Manages one persistent IP route on one network interface of a remote Windows host (New-NetRoute / Set-NetRoute / Remove-NetRoute without -PolicyStore, so the Windows default both-stores behaviour keeps the route reboot-surviving, via SSH and PowerShell): static routes to remote networks, on-link routes, and manually managed default gateways.
   interface_alias, destination_prefix and next_hop identify the route and are immutable after creation (ForceNew); only route_metric is updated in place. destination_prefix must be in canonical masked CIDR form (10.0.0.5/24 is a plan-time error that names 10.0.0.0/24); 0.0.0.0/0 and ::/0 are default routes. next_hop must be the same family as the prefix; 0.0.0.0 / :: means on-link (no gateway).
   Route metric vs interface metric: Windows selects routes by longest prefix first, then by the lowest effective metric (route_metric + interface_metric). This resource manages the route metric; the interface metric is observed. Adding a manual default route with a higher effective metric than the existing one is the supported "backup gateway" pattern: the existing route keeps winning until it disappears.
   Safety — this resource changes routing for the whole host and can sever its own SSH session: deleting, replacing or re-metricing the route that carries the provider's own SSH return traffic is refused fail-closed, as is creating or updating a route that would hijack that traffic. When the management path cannot be determined the operation is refused as well. unsafe_skip_management_check bypasses the guard entirely: the change may apply and still end in an apply error (transport lost, timeout), and the host must stay reachable at the provider host address afterwards. Consider a precondition on the windows_net_route data source reading back the default route before changing gateways.
@@ -12,7 +12,7 @@ description: |-
 
 # windows_net_route (Resource)
 
-Manages one persistent IP route on one network interface of a remote Windows host (`New-NetRoute` / `Set-NetRoute` / `Remove-NetRoute -PolicyStore PersistentStore` via SSH and PowerShell): static routes to remote networks, on-link routes, and manually managed default gateways.
+Manages one persistent IP route on one network interface of a remote Windows host (`New-NetRoute` / `Set-NetRoute` / `Remove-NetRoute` without `-PolicyStore`, so the Windows default both-stores behaviour keeps the route reboot-surviving, via SSH and PowerShell): static routes to remote networks, on-link routes, and manually managed default gateways.
 
 `interface_alias`, `destination_prefix` and `next_hop` identify the route and are immutable after creation (ForceNew); only `route_metric` is updated in place. `destination_prefix` must be in canonical masked CIDR form (`10.0.0.5/24` is a plan-time error that names `10.0.0.0/24`); `0.0.0.0/0` and `::/0` are default routes. `next_hop` must be the same family as the prefix; `0.0.0.0` / `::` means on-link (no gateway).
 
