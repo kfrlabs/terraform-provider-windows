@@ -10,8 +10,8 @@
 //	normalize/validate: canonical masked prefixes, host-bits rejection,
 //	                    family agreement, next-hop rejections, metric range
 //	script builders: user values only via psQuote, exact -eq alias match,
-//	                 -InterfaceIndex + Where-Object triplet, PersistentStore
-//	                 on mutating cmdlets only
+//	                 -InterfaceIndex + Where-Object triplet, no -PolicyStore
+//	                 anywhere (New/Set-Remove default to both stores)
 //	envelope mapping: unreachable on transport/timeout, typed remote kinds
 //	Create/Read/Lookup/Update/Delete: happy paths, pre-flight kinds,
 //	 guard refusals (exact + hijack), unsafe_skip bypass, single
@@ -291,7 +291,7 @@ func TestValidateNetRouteInput(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Script builders: quoting, exact match, PersistentStore
+// Script builders: quoting, exact match, no -PolicyStore
 // ---------------------------------------------------------------------------
 
 func TestNetRouteScripts_QuotingAndSemantics(t *testing.T) {
@@ -340,14 +340,12 @@ func TestNetRouteScripts_QuotingAndSemantics(t *testing.T) {
 			t.Errorf("%s script must not pass the alias to -InterfaceAlias (wildcard semantics)", name)
 		}
 	}
-	// Mutating cmdlets target the PersistentStore; reads never do (they
-	// observe the effective ActiveStore view).
-	for _, name := range []string{"create", "set", "remove"} {
-		if !strings.Contains(scripts[name], "-PolicyStore PersistentStore") {
-			t.Errorf("%s script must target the PersistentStore", name)
-		}
-	}
-	for _, name := range []string{"read", "lookup", "resolve", "mgmt"} {
+	// No script passes -PolicyStore: New/Set/Remove-NetRoute default to both
+	// stores (reboot-surviving), and -PolicyStore PersistentStore is rejected
+	// by New-NetRoute ("Invalid parameter"). Reads observe the effective
+	// ActiveStore view; persistence itself is asserted by the acceptance
+	// suite (Get-NetRoute -PolicyStore PersistentStore).
+	for _, name := range []string{"resolve", "read", "lookup", "create", "set", "remove", "mgmt"} {
 		if strings.Contains(scripts[name], "-PolicyStore") {
 			t.Errorf("%s script must not pass -PolicyStore", name)
 		}

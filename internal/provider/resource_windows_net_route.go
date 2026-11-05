@@ -2,7 +2,8 @@
 // Terraform resource lifecycle for windows_net_route.
 //
 // One persistent IP route on one network interface (New-NetRoute /
-// Set-NetRoute / Remove-NetRoute -PolicyStore PersistentStore): static
+// Set-NetRoute / Remove-NetRoute without -PolicyStore, so the Windows
+// default both-stores behaviour keeps the route reboot-surviving): static
 // routes to remote networks, on-link routes (next hop 0.0.0.0 / ::) and
 // manually managed default gateways. windows_net_ip_address deliberately
 // does not own the default gateway; this resource does.
@@ -124,7 +125,8 @@ func (r *windowsNetRouteResource) Schema(ctx context.Context, _ resource.SchemaR
 func windowsNetRouteSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages one persistent IP route on one network interface of a remote Windows host " +
-			"(`New-NetRoute` / `Set-NetRoute` / `Remove-NetRoute -PolicyStore PersistentStore` via SSH and PowerShell): " +
+			"(`New-NetRoute` / `Set-NetRoute` / `Remove-NetRoute` without `-PolicyStore`, so the Windows default " +
+			"both-stores behaviour keeps the route reboot-surviving, via SSH and PowerShell): " +
 			"static routes to remote networks, on-link routes, and manually managed default gateways.\n\n" +
 			"`interface_alias`, `destination_prefix` and `next_hop` identify the route and are immutable after creation " +
 			"(ForceNew); only `route_metric` is updated in place. `destination_prefix` must be in canonical masked CIDR " +

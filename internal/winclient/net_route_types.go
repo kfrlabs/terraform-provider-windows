@@ -4,7 +4,8 @@
 // Spec alignment: windows_net_route spec v1 (issue #231).
 //
 // Scope: one persistent route per resource (New-NetRoute / Set-NetRoute /
-// Remove-NetRoute -PolicyStore PersistentStore). Static routes to remote
+// Remove-NetRoute without -PolicyStore, so the default both-stores behaviour
+// keeps the route reboot-surviving). Static routes to remote
 // networks, on-link routes (next hop 0.0.0.0 / ::) and manually managed
 // default gateways. Out of scope: policy-based routing, route print
 // persistent-route compatibility, IPv6 router-advertisement routes, route

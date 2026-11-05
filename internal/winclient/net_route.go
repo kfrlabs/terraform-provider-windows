@@ -236,7 +236,9 @@ $wantPrefix = %s
 // buildNetRouteCreateScript renders the atomic create: resolve, exact-triplet
 // pre-flight with protocol discrimination (NetMgmt -> already_exists with an
 // import hint, anything else -> route_owned_by_other_protocol), New-NetRoute
-// into the PersistentStore, read-back.
+// without -PolicyStore (the default writes both stores, so the route is
+// persistent; -PolicyStore PersistentStore is rejected by New-NetRoute with
+// "Invalid parameter"), read-back.
 func buildNetRouteCreateScript(alias, prefix, nextHop string, metric int, isV6 bool) string {
 	return psNetRouteHeader + fmt.Sprintf(`
 $family = %s
@@ -262,7 +264,7 @@ $metric = %d
     return
   }
   try {
-    $null = New-NetRoute -InterfaceIndex $ifIndex -DestinationPrefix $wantPrefix -NextHop $wantNextHop -RouteMetric $metric -PolicyStore PersistentStore -ErrorAction Stop
+    $null = New-NetRoute -InterfaceIndex $ifIndex -DestinationPrefix $wantPrefix -NextHop $wantNextHop -RouteMetric $metric -ErrorAction Stop
   } catch {
     Emit-Err (Classify-NetRoute $_) ([string]$_.Exception.Message) @{ interface_alias = [string]$alias; destination_prefix = [string]$wantPrefix; next_hop = [string]$wantNextHop; step = 'create' }
     return
@@ -282,8 +284,9 @@ $metric = %d
 `, netRouteFamilyToken(isV6), psQuote(alias), psQuote(prefix), psQuote(nextHop), metric, netRouteResolveFragment)
 }
 
-// buildNetRouteSetScript renders the in-place metric update (Set-NetRoute in
-// the PersistentStore) plus read-back.
+// buildNetRouteSetScript renders the in-place metric update (Set-NetRoute
+// without -PolicyStore, so both the active and the persistent copies are
+// updated) plus read-back.
 func buildNetRouteSetScript(alias, prefix, nextHop string, metric int, isV6 bool) string {
 	return psNetRouteHeader + fmt.Sprintf(`
 $family = %s
@@ -294,7 +297,7 @@ $metric = %d
 & {
 %s
   try {
-    $null = Set-NetRoute -InterfaceIndex $ifIndex -DestinationPrefix $wantPrefix -NextHop $wantNextHop -RouteMetric $metric -PolicyStore PersistentStore -ErrorAction Stop
+    $null = Set-NetRoute -InterfaceIndex $ifIndex -DestinationPrefix $wantPrefix -NextHop $wantNextHop -RouteMetric $metric -ErrorAction Stop
   } catch {
     Emit-Err (Classify-NetRoute $_) ([string]$_.Exception.Message) @{ interface_alias = [string]$alias; destination_prefix = [string]$wantPrefix; next_hop = [string]$wantNextHop; step = 'set' }
     return
@@ -317,6 +320,8 @@ $metric = %d
 // buildNetRouteRemoveScript renders the guarded delete. A missing route
 // emits Emit-OK null (idempotent delete); a concurrently removed route
 // between pre-flight and removal maps to the same outcome via Classify.
+// Remove-NetRoute runs without -PolicyStore so both the active and the
+// persistent copies are deleted together.
 func buildNetRouteRemoveScript(alias, prefix, nextHop string, isV6 bool) string {
 	return psNetRouteHeader + fmt.Sprintf(`
 $family = %s
@@ -336,7 +341,7 @@ $wantNextHop = %s
     return
   }
   try {
-    $null = Remove-NetRoute -InterfaceIndex $ifIndex -DestinationPrefix $wantPrefix -NextHop $wantNextHop -PolicyStore PersistentStore -Confirm:$false -ErrorAction Stop
+    $null = Remove-NetRoute -InterfaceIndex $ifIndex -DestinationPrefix $wantPrefix -NextHop $wantNextHop -Confirm:$false -ErrorAction Stop
   } catch {
     $kind = Classify-NetRoute $_
     if ($kind -eq 'not_found') {
