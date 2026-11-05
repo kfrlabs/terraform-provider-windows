@@ -67,21 +67,24 @@ func testAccNetIPAddressTarget(t *testing.T) string {
 }
 
 // testAccNetIPAddressFixture renders a windows_net_ip_address resource plus
-// a data source reading the same address back.
-func testAccNetIPAddressFixture(alias, extra string) string {
+// a data source reading the same address back. prefixLength and skipAsSource
+// are parameters because HCL forbids defining the same argument twice: the
+// update step changes them, so they cannot be appended via extra.
+func testAccNetIPAddressFixture(alias string, prefixLength int, skipAsSource bool, extra string) string {
 	return fmt.Sprintf(`
 resource "windows_net_ip_address" "test" {
   interface_alias = %[1]q
   ip_address      = "192.0.2.10"
-  prefix_length   = 24
-%[2]s
+  prefix_length   = %[2]d
+  skip_as_source  = %[3]t
+%[4]s
 }
 
 data "windows_net_ip_address" "test" {
   ip_address       = windows_net_ip_address.test.ip_address
   interface_alias  = windows_net_ip_address.test.interface_alias
 }
-`, alias, extra)
+`, alias, prefixLength, skipAsSource, extra)
 }
 
 // TestAccWindowsNetIPAddress_Basic — create + update + import, documentation
@@ -94,7 +97,7 @@ func TestAccWindowsNetIPAddress_Basic(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccNetIPAddressFixture(alias, ""),
+				Config: testAccNetIPAddressFixture(alias, 24, false, ""),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("windows_net_ip_address.test", "interface_alias", alias),
 					resource.TestCheckResourceAttr("windows_net_ip_address.test", "ip_address", "192.0.2.10"),
@@ -109,7 +112,7 @@ func TestAccWindowsNetIPAddress_Basic(t *testing.T) {
 			},
 			{
 				// In-place update: prefix length and skip_as_source.
-				Config: testAccNetIPAddressFixture(alias, "  prefix_length   = 25\n  skip_as_source  = true\n"),
+				Config: testAccNetIPAddressFixture(alias, 25, true, ""),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("windows_net_ip_address.test", "prefix_length", "25"),
 					resource.TestCheckResourceAttr("windows_net_ip_address.test", "skip_as_source", "true"),

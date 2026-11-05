@@ -74,20 +74,23 @@ func testAccDNSClientTarget(t *testing.T) string {
 }
 
 // testAccDNSClientFixture renders a windows_dns_client resource plus a data
-// source reading the same interface back. Documentation ranges only.
-func testAccDNSClientFixture(alias, extra string) string {
+// source reading the same interface back. servers is the HCL list literal
+// for ipv4_server_addresses (kept as a parameter because HCL forbids
+// defining the same argument twice: the update step shrinks the list, so it
+// cannot be appended via extra). Documentation ranges only.
+func testAccDNSClientFixture(alias, servers, extra string) string {
 	return fmt.Sprintf(`
 resource "windows_dns_client" "test" {
   interface_alias       = %[1]q
-  ipv4_server_addresses = ["192.0.2.53", "198.51.100.53"]
-%[2]s
+  ipv4_server_addresses = %[2]s
+%[3]s
   reset_on_destroy = true
 }
 
 data "windows_dns_client" "test" {
   interface_alias = windows_dns_client.test.interface_alias
 }
-`, alias, extra)
+`, alias, servers, extra)
 }
 
 // TestAccWindowsDNSClient_Basic — create + update + import, documentation
@@ -100,7 +103,7 @@ func TestAccWindowsDNSClient_Basic(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccDNSClientFixture(alias, ""),
+				Config: testAccDNSClientFixture(alias, `["192.0.2.53", "198.51.100.53"]`, ""),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("windows_dns_client.test", "interface_alias", alias),
 					resource.TestCheckResourceAttr("windows_dns_client.test", "id", alias),
@@ -112,7 +115,7 @@ func TestAccWindowsDNSClient_Basic(t *testing.T) {
 			},
 			{
 				// In-place update: shrink the list and set the suffix.
-				Config: testAccDNSClientFixture(alias, "  ipv4_server_addresses      = [\"192.0.2.53\"]\n  connection_specific_suffix = \"corp.example.com\"\n"),
+				Config: testAccDNSClientFixture(alias, `["192.0.2.53"]`, "  connection_specific_suffix = \"corp.example.com\"\n"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("windows_dns_client.test", "ipv4_server_addresses.0", "192.0.2.53"),
 					resource.TestCheckResourceAttr("windows_dns_client.test", "ipv4_server_addresses.#", "1"),
@@ -121,10 +124,13 @@ func TestAccWindowsDNSClient_Basic(t *testing.T) {
 			},
 			{
 				// Import round-trip; the interface must verify in place.
-				ResourceName:      "windows_dns_client.test",
-				ImportState:       true,
-				ImportStateId:     alias,
-				ImportStateVerify: true,
+				// reset_on_destroy is config-only (never read back from the
+				// host), so the imported state cannot reproduce it.
+				ResourceName:            "windows_dns_client.test",
+				ImportState:             true,
+				ImportStateId:           alias,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"reset_on_destroy"},
 			},
 		},
 	})

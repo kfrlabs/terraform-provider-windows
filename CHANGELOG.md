@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `windows_net_route`: create and update no longer pass `-PolicyStore
+  PersistentStore` to `New-NetRoute` / `Set-NetRoute` — that combination is
+  rejected by Windows (`Invalid parameter`, system error 87), so no route
+  could ever be created. Both cmdlets now run without `-PolicyStore`, which
+  is the Windows default that writes the route to both stores and keeps it
+  reboot-surviving; delete drops the filter as well so both copies are
+  removed together. Found by running the acceptance suite against a
+  secondary NIC (#242).
+- Acceptance fixtures `TestAccWindowsDNSClient_Basic` and
+  `TestAccWindowsNetIPAddress_Basic`: the update steps redefined an argument
+  already set in the base config (`ipv4_server_addresses`, `prefix_length`),
+  which HCL rejects — both tests could never pass. The fixtures now take
+  the updated values as parameters (#242).
+
 ### Changed
 
 - The minimum supported Terraform version is now documented as >= 1.11:
