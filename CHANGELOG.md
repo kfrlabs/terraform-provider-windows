@@ -20,6 +20,17 @@ All notable changes to this project will be documented in this file.
   which HCL rejects — both tests could never pass. The fixtures now take
   the updated values as parameters (#242).
 
+### Removed
+
+- Acceptance skeletons `TestAccWindowsDomainMembership_{Basic,
+  DriftDetection,UnjoinOnDestroy,DeleteIsNoOp}`: joining a domain is
+  destructive and no CI environment provides a test domain, so they could
+  never run. The join/unjoin/drift/delete lifecycle is covered by unit
+  tests with a fake transport, and the plan-time guard tests
+  (`InvalidDomain`, `MissingCredential`, `UnjoinNeedsStatePassword`) keep
+  running in the acceptance suite. The corresponding allow-list entry is
+  dropped from `.github/testacc-allowed-skips.json` (#242).
+
 ### Changed
 
 - The minimum supported Terraform version is now documented as >= 1.11:

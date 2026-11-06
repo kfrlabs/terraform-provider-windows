@@ -1,11 +1,6 @@
 {
-  "$comment": "Acceptance skips expected under CI (TF_ACC=1, WINDOWS_HOST set, but WITHOUT optional opt-in vars: WINDOWS_TEST_INTERFACE, WINDOWS_TEST_DOMAIN, WINDOWS_HOSTNAME_ALLOW_RENAME, WINDOWS_LP_MSI_URL/SHA256, WINDOWS_LP_EXE_URL/PATTERN, TF_ACC_TASK_USER/PASSWORD). Consumed by .github/scripts/Invoke-AccTests.ps1 (-AllowedSkipsFile): any SKIP whose test name matches no entry, or whose reason matches none of the entry's reason substrings, fails the lane. An entry with no 'reasons' key matches any reason for that test name. The list is global (no per-lane or per-workflow axis): both testacc-windows.yml and testacc-lab-container.yml enforce the same file. Future tightening: scope entries per lane/workflow once the suite grows skips that legitimately differ between the self-target runner and the lab container.",
+  "$comment": "Acceptance skips expected under CI (TF_ACC=1, WINDOWS_HOST set, but WITHOUT optional opt-in vars: WINDOWS_TEST_INTERFACE, WINDOWS_HOSTNAME_ALLOW_RENAME, WINDOWS_LP_MSI_URL/SHA256, WINDOWS_LP_EXE_URL/PATTERN, TF_ACC_TASK_USER/PASSWORD). Consumed by .github/scripts/Invoke-AccTests.ps1 (-AllowedSkipsFile): any SKIP whose test name matches no entry, or whose reason matches none of the entry's reason substrings, fails the lane. An entry with no 'reasons' key matches any reason for that test name. The list is global (no per-lane or per-workflow axis): both testacc-windows.yml and testacc-lab-container.yml enforce the same file. Future tightening: scope entries per lane/workflow once the suite grows skips that legitimately differ between the self-target runner and the lab container.",
   "allowed": [
-    {
-      "pattern": "^TestAccWindowsDomainMembership_(Basic|DriftDetection|UnjoinOnDestroy|DeleteIsNoOp)$",
-      "reasons": ["WINDOWS_TEST_DOMAIN not set", "SKELETON"],
-      "comment": "Joining a domain is destructive and no test domain exists in CI, so skipUnlessTestDomain fires first; the SKELETON reason documents the second gate if a disposable domain were ever provided."
-    },
     {
       "pattern": "^TestAccWindowsHostname_(Basic|UpdateInPlace|DriftDetection|DeleteIsNoOp)$",
       "reasons": ["WINDOWS_HOSTNAME_ALLOW_RENAME", "SKELETON"],
