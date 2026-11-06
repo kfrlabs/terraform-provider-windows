@@ -7,7 +7,10 @@
 # running on the `LAB-WINDOCKER-01` self-hosted runner's own Docker host,
 # published on port 2222. The runner reaches it over the host's LAN IP (its
 # own container network cannot resolve the sibling container by name or via
-# "localhost", only via the host's published port).
+# "localhost", only via the host's published port). The `Attach secondary
+# test network` step additionally connects the container to the
+# `tfacc-secondary` NAT network so the dns_client / net_ip_address /
+# net_route suites get their required WINDOWS_TEST_INTERFACE (#242).
 #
 # This is deliberately NOT wired to pull_request: self-hosted runners
 # executing arbitrary fork-PR code is the textbook privilege-escalation path
@@ -162,6 +165,34 @@ jobs:
             Start-Sleep -Seconds 2
           }
           Write-Host "SSH reachable on $($env:WINDOWS_HOST):$($env:WINDOWS_PORT)"
+
+      # Secondary NIC for the network families (issue #242 item 3). The
+      # dns_client / net_ip_address / net_route suites only run against an
+      # explicit secondary interface (WINDOWS_TEST_INTERFACE) that is never
+      # the management NIC, so the lab container gets a second vNIC on a
+      # dedicated NAT network. The subnet is fixed so the step can pick the
+      # new adapter deterministically by address, whatever alias Windows
+      # assigns it ("Ethernet 2", ...). The network outlives container
+      # recreates; the connect is idempotent.
+      - name: Attach secondary test network
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $net = 'tfacc-secondary'
+          $subnet = '10.254.254.0/24'
+          if (-not (docker network ls -q --filter "name=^${net}$")) {
+            docker network create --driver nat --subnet $subnet $net | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "docker network create $net failed" }
+          }
+          $attached = docker inspect tfacc-win --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+          if ($attached -notmatch [regex]::Escape($net)) {
+            docker network connect $net tfacc-win | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "docker network connect $net failed" }
+          }
+          $alias = docker exec tfacc-win powershell -NoProfile -Command "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { `$_.IPAddress -like '10.254.254.*' } | Select-Object -ExpandProperty InterfaceAlias -First 1"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($alias)) { throw "secondary NIC has no 10.254.254.x address on tfacc-win" }
+          $alias = $alias.Trim()
+          Write-Host "Secondary test interface on tfacc-win: $alias"
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "WINDOWS_TEST_INTERFACE=$alias`r`n")
 
       - name: Run acceptance tests
         env:
