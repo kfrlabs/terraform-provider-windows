@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- CI (`testacc-lab-container`): attach the `tfacc-win` container to a
+  dedicated `tfacc-secondary` NAT network and export the new vNIC alias as
+  `WINDOWS_TEST_INTERFACE`, so the `dns_client` / `net_ip_address` /
+  `net_route` suites run instead of skipping (#242).
+
 - `windows_net_route`: create and update no longer pass `-PolicyStore
   PersistentStore` to `New-NetRoute` / `Set-NetRoute` — that combination is
   rejected by Windows (`Invalid parameter`, system error 87), so no route
