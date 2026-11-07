@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-07
+
 ### Fixed
 
 - CI (`testacc-lab-container`): attach the `tfacc-win` container to a
