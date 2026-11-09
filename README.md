@@ -1,5 +1,12 @@
 # terraform-provider-windows
 
+[![test](https://github.com/kfrlabs/terraform-provider-windows/actions/workflows/test.yml/badge.svg)](https://github.com/kfrlabs/terraform-provider-windows/actions/workflows/test.yml)
+[![docs](https://github.com/kfrlabs/terraform-provider-windows/actions/workflows/docs.yml/badge.svg)](https://github.com/kfrlabs/terraform-provider-windows/actions/workflows/docs.yml)
+[![release-check](https://github.com/kfrlabs/terraform-provider-windows/actions/workflows/release-check.yml/badge.svg)](https://github.com/kfrlabs/terraform-provider-windows/actions/workflows/release-check.yml)
+[![Go](https://img.shields.io/github/go-mod/go-version/kfrlabs/terraform-provider-windows?style=flat-square)](https://go.dev/dl/)
+[![Release](https://img.shields.io/github/v/release/kfrlabs/terraform-provider-windows?style=flat-square)](https://github.com/kfrlabs/terraform-provider-windows/releases)
+[![License](https://img.shields.io/github/license/kfrlabs/terraform-provider-windows?style=flat-square)](LICENSE)
+
 A Terraform provider to manage Windows resources over **SSH**: it connects to
 the target host's OpenSSH Server and executes PowerShell there.
 
