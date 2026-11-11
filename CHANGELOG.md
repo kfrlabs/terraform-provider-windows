@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- New `windows_iis_app_pool` resource and `windows_iis_app_pool` data
+  source (#283): manages an IIS application pool on the target host
+  (`WebAdministration`: `New-WebAppPool`, `Get-ItemProperty` /
+  `Set-ItemProperty IIS:\AppPools\<name>`, `Remove-WebAppPool`,
+  `Start-WebAppPool` / `Stop-WebAppPool`). Every non-identity attribute is
+  Optional+Computed — only configured attributes are enforced, unconfigured
+  ones reflect the observed value (same semantics as
+  `windows_firewall_profile`). A `SpecificUser` identity takes
+  `identity_username` plus the WriteOnly `identity_password_wo`, which
+  travels on stdin, never reaches state or logs, and is re-sent only when
+  `identity_password_wo_version` changes (same pattern as
+  `windows_local_user`). Runtime `state` (`Started` / `Stopped`) is enforced
+  only when configured. Create refuses existing pools with an import hint
+  (half-created pools are deleted best-effort); Delete refuses with `in_use`
+  while sites or applications still reference the pool, listing them. This
+  change also delivers the shared IIS helper (`internal/winclient/iis_common.go`):
+  the PowerShell prelude (InvariantCulture, `Ensure-IIS` detection of
+  W3SVC/WAS + `WebAdministration` with an actionable `iis_not_installed`
+  error pointing at `windows_feature` `Web-Server`), the shared `Classify-IIS`
+  fragment, IIS TimeSpan <-> minutes conversion, pool-name validation, and a
+  3-attempt retry (short backoff) of writes that hit the
+  `applicationHost.config` file-has-changed-on-disk flake.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
