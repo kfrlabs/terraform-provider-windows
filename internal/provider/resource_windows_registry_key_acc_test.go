@@ -32,21 +32,12 @@ func testAccRegistryKeyPreCheck(t *testing.T) {
 // deliberately NOT listed in managed_value_names.
 func testAccRegistryKeyFixture(purge string) string {
 	return `
-resource "windows_registry_key" "key" {
-  hive                 = "HKLM"
-  path                 = "` + regKeyTestPath + `"
-  purge_unknown_values = ` + purge + `
-  managed_value_names  = ["Managed"]
-}
-
 resource "windows_registry_value" "managed" {
   hive         = "HKLM"
   path         = "` + regKeyTestPath + `"
   name         = "Managed"
   type         = "REG_SZ"
   value_string = "kept"
-
-  depends_on = [windows_registry_key.key]
 }
 
 resource "windows_registry_value" "oob" {
@@ -55,8 +46,18 @@ resource "windows_registry_value" "oob" {
   name         = "OOB"
   type         = "REG_SZ"
   value_string = "unmanaged"
+}
 
-  depends_on = [windows_registry_key.key]
+resource "windows_registry_key" "key" {
+  hive                 = "HKLM"
+  path                 = "` + regKeyTestPath + `"
+  purge_unknown_values = ` + purge + `
+  managed_value_names  = ["Managed"]
+
+  depends_on = [
+    windows_registry_value.managed,
+    windows_registry_value.oob,
+  ]
 }
 `
 }
