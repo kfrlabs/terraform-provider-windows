@@ -1,6 +1,6 @@
 module github.com/kfrlabs/terraform-provider-windows
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/hashicorp/terraform-plugin-docs v0.25.0

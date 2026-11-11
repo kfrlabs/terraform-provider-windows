@@ -262,22 +262,40 @@ func (registryPathValidator) Description(_ context.Context) string {
 func (v registryPathValidator) MarkdownDescription(ctx context.Context) string {
 	return v.Description(ctx)
 }
+
+// validateRegistryPathString enforces the shared path rules (EC-6) plus
+// traversal-segment rejection. It is used by registryPathValidator (both
+// registry resources) and by the key resource ImportState handler so config
+// validation and import accept the same paths.
+func validateRegistryPathString(val string) error {
+	upper := strings.ToUpper(val)
+	for _, hive := range knownHiveAbbreviations {
+		if upper == hive || strings.HasPrefix(upper, hive+"\\") {
+			return fmt.Errorf("path %q must not include the hive prefix (EC-6b). Use the hive attribute instead", val)
+		}
+	}
+	if !registryPathRegex.MatchString(val) {
+		return fmt.Errorf("path %q is invalid: must be non-empty, no leading/trailing backslash, no NUL bytes (EC-6c/d/e)", val)
+	}
+	for _, seg := range strings.Split(val, "\\") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("path %q is invalid: path segments must not be empty, %q, or %q (path traversal)", val, ".", "..")
+		}
+	}
+	return nil
+}
+
 func (registryPathValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
 	val := req.ConfigValue.ValueString()
-	upper := strings.ToUpper(val)
-	for _, hive := range knownHiveAbbreviations {
-		if upper == hive || strings.HasPrefix(upper, hive+"\\") {
-			resp.Diagnostics.AddAttributeError(req.Path, "Invalid registry path — hive prefix detected",
-				fmt.Sprintf("path %q must not include the hive prefix (EC-6b). Use the hive attribute instead.", val))
+	if err := validateRegistryPathString(val); err != nil {
+		if strings.Contains(err.Error(), "hive prefix") {
+			resp.Diagnostics.AddAttributeError(req.Path, "Invalid registry path — hive prefix detected", err.Error())
 			return
 		}
-	}
-	if !registryPathRegex.MatchString(val) {
-		resp.Diagnostics.AddAttributeError(req.Path, "Invalid registry path",
-			fmt.Sprintf("path %q is invalid: must be non-empty, no leading/trailing backslash, no NUL bytes (EC-6c/d/e).", val))
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid registry path", err.Error())
 	}
 }
 

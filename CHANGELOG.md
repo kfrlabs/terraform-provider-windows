@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- New `windows_registry_key` resource and `windows_registry_key` data
+  source (#280): the resource ensures a registry key exists, optionally
+  purges unmanaged value names (`purge_unknown_values` with an explicit
+  `managed_value_names` allow-list; the Default value is `""`), and
+  optionally removes the key on destroy (`delete_key_on_destroy`, with
+  `recursive` for subkey trees). Defaults are no-ops: unknown values are
+  only reported in `unknown_value_names`, and the key is left in place on
+  destroy. The key never carries value payloads — each `hive/path/name`
+  keeps a single owner via `windows_registry_value` — and descriptions
+  warn about Group Policy-managed `Policies` paths.
+
 ## [0.3.1] - 2026-11-07
 
 ### Fixed
