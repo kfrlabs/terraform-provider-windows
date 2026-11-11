@@ -57,7 +57,7 @@ output "registry_values_summary" {
 
 ### Required
 
-- `hive` (String) Registry hive: HKLM, HKCU, HKCR, HKU, or HKCC (case-insensitive).
+- `hive` (String) Registry hive: HKLM, HKCU, HKCR, HKU, or HKCC (case-insensitive, normalised to uppercase).
 - `path` (String) Subkey path under the hive (backslash-separated, no leading/trailing backslash).
 
 ### Optional
@@ -68,7 +68,7 @@ output "registry_values_summary" {
 
 - `id` (String) Composite ID: "<HIVE>\<PATH>".
 - `value_names` (List of String) Live value names enumerated in the key. The Default (unnamed) value appears as "".
-- `values` (List of Object) Name+kind summary of every value in the key, for drift detection without purge. (see [below for nested schema](#nestedatt--values))
+- `values` (Attributes List) Name+kind summary of every value in the key, for drift detection without purge. (see [below for nested schema](#nestedatt--values))
 
 <a id="nestedatt--timeouts"></a>
 ### Nested Schema for `timeouts`

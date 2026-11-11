@@ -13,7 +13,7 @@ description: |-
 
 Manages a Windows registry key on a remote host over SSH + PowerShell: ensures the key exists, optionally purges unmanaged value names, and optionally removes the key on destroy.
 
-The key resource never carries value payloads: manage each value with a `windows_registry_value` resource and list its name in `managed_value_names` so the purge does not delete it. Each hive/path/name has a single owner: list every name managed by `windows_registry_value` resources in `managed_value_names`. The key resource never sets value data; managing the same name from both resources is last-write-wins, so order the key after its values with `depends_on` when `purge_unknown_values` is true.
+The key resource never carries value payloads: manage each value with a `windows_registry_value` resource and list its name in `managed_value_names` so the purge does not delete it. Each hive/path/name has a single owner: list every name managed by windows_registry_value resources in managed_value_names. The key resource never sets value data; managing the same name from both resources is last-write-wins, so order the key after its values with depends_on when purge_unknown_values is true.
 
 By default (`purge_unknown_values = false`, `delete_key_on_destroy = false`) the resource is a no-op towards unknown values and leaves the key in place on destroy.
 

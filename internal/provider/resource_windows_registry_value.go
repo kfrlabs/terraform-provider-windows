@@ -271,15 +271,15 @@ func validateRegistryPathString(val string) error {
 	upper := strings.ToUpper(val)
 	for _, hive := range knownHiveAbbreviations {
 		if upper == hive || strings.HasPrefix(upper, hive+"\\") {
-			return fmt.Errorf("path %q must not include the hive prefix (EC-6b). Use the hive attribute instead.", val)
+			return fmt.Errorf("path %q must not include the hive prefix (EC-6b). Use the hive attribute instead", val)
 		}
 	}
 	if !registryPathRegex.MatchString(val) {
-		return fmt.Errorf("path %q is invalid: must be non-empty, no leading/trailing backslash, no NUL bytes (EC-6c/d/e).", val)
+		return fmt.Errorf("path %q is invalid: must be non-empty, no leading/trailing backslash, no NUL bytes (EC-6c/d/e)", val)
 	}
 	for _, seg := range strings.Split(val, "\\") {
 		if seg == "" || seg == "." || seg == ".." {
-			return fmt.Errorf("path %q is invalid: path segments must not be empty, %q, or %q (path traversal).", val, ".", "..")
+			return fmt.Errorf("path %q is invalid: path segments must not be empty, %q, or %q (path traversal)", val, ".", "..")
 		}
 	}
 	return nil
