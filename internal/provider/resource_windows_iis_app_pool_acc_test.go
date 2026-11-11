@@ -97,6 +97,30 @@ func accEnsureIIS(t *testing.T) {
 	}); err != nil {
 		t.Skipf("cannot install the Web-Server feature; skipping: %v", err)
 	}
+	// IncludeManagementTools does not reliably pull the WebAdministration
+	// module on every image (notably windows-latest): install the scripting
+	// tools (which own the module) and the management console explicitly.
+	// Best-effort: a missing subfeature name must not fail the suite when
+	// Web-Server itself installed fine; the re-probe below decides.
+	if _, _, err := fc.Install(ctx, winclient.FeatureInput{
+		Name: "Web-Scripting-Tools", IncludeManagementTools: true,
+	}); err != nil {
+		t.Logf("Web-Scripting-Tools install returned: %v", err)
+	}
+	if _, _, err := fc.Install(ctx, winclient.FeatureInput{
+		Name: "Web-Mgmt-Console",
+	}); err != nil {
+		t.Logf("Web-Mgmt-Console install returned: %v", err)
+	}
+	// Re-probe: the module list is read from disk on every call, but the
+	// install may still be settling; a host that cannot provide IIS must
+	// skip rather than fail every pool test.
+	reprobeCtx, reprobeCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer reprobeCancel()
+	if _, reprobeErr := poolClient.Read(reprobeCtx, "tf-acc-probe-does-not-exist"); reprobeErr != nil &&
+		winclient.IsIISAppPoolError(reprobeErr, winclient.IISAppPoolErrorIISNotInstalled) {
+		t.Skipf("IIS management tools still missing after install; skipping: %v", reprobeErr)
+	}
 }
 
 // TestAccWindowsIISAppPool_Basic — create with a partial configuration,
