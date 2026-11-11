@@ -52,9 +52,13 @@ func accIISAppPoolClient(t *testing.T) *winclient.IISAppPoolClient {
 }
 
 // accEnsureIIS installs the Web-Server feature (with management tools) when
-// it is missing, and skips the test when IIS cannot be provided. The
-// throwaway container (servercore:ltsc2025) starts without IIS; the
-// authorized test server is expected to keep it.
+// IIS or its management tools are missing, and skips the test when IIS
+// cannot be provided. The throwaway container (servercore:ltsc2025) starts
+// without IIS; the authorized test server is expected to keep it. The
+// Web-Server feature may report Installed without the WebAdministration
+// module (missing management tools), so IIS itself is probed via a dummy
+// pool Read: iis_not_installed triggers an idempotent Install with
+// IncludeManagementTools even when the feature already reports Installed.
 func accEnsureIIS(t *testing.T) {
 	t.Helper()
 	cfg := winclient.Config{Timeout: 60 * time.Second}
@@ -73,10 +77,21 @@ func accEnsureIIS(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot probe the Web-Server feature; skipping: %v", err)
 	}
-	if info != nil && info.Installed {
+	featureInstalled := info != nil && info.Installed
+	poolClient := winclient.NewIISAppPoolClient(c)
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer probeCancel()
+	_, probeErr := poolClient.Read(probeCtx, "tf-acc-probe-does-not-exist")
+	if probeErr == nil || winclient.IsIISAppPoolError(probeErr, winclient.IISAppPoolErrorNotFound) {
 		return
 	}
-	t.Log("Web-Server not installed; installing with management tools for the acceptance suite")
+	if !winclient.IsIISAppPoolError(probeErr, winclient.IISAppPoolErrorIISNotInstalled) {
+		if featureInstalled {
+			return
+		}
+		t.Skipf("cannot probe IIS on the Windows target; skipping: %v", probeErr)
+	}
+	t.Log("IIS management tools missing; installing Web-Server with management tools for the acceptance suite")
 	if _, _, err := fc.Install(ctx, winclient.FeatureInput{
 		Name: "Web-Server", IncludeManagementTools: true,
 	}); err != nil {

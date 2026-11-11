@@ -17,7 +17,7 @@
 //	                           LocalSystem warns; credential without
 //	                           SpecificUser warns
 //	Settings projection      — only configured attrs sent, empty-vs-null
-//	                           schedule, unknown defers
+//	                           schedule, unknown skipped (never sent)
 //	Delta                    — only changed configured attrs sent
 //	Create (happy)           — password forwarded from config, version kept,
 //	                           WO never in state
@@ -566,15 +566,28 @@ func TestModelToIISAppPoolSettings_EmptyScheduleAuthoritative(t *testing.T) {
 func TestModelToIISAppPoolSettings_UnknownDefers(t *testing.T) {
 	ctx := context.Background()
 	m := windowsIISAppPoolModel{
-		ManagedPipelineMode: types.StringUnknown(),
-		RecyclingSchedule:   types.SetNull(types.StringType),
+		ManagedPipelineMode:   types.StringUnknown(),
+		QueueLength:           types.Int64Unknown(),
+		Enable32BitAppOnWin64: types.BoolUnknown(),
+		RecyclingSchedule:     types.SetNull(types.StringType),
 	}
-	if _, diags := modelToIISAppPoolSettings(ctx, m); !diags.HasError() {
-		t.Error("unknown attributes must abort with a deferring diagnostic")
+	s, diags := modelToIISAppPoolSettings(ctx, m)
+	if diags.HasError() {
+		t.Fatalf("unknown attributes must be skipped without error, got: %v", apDiagSummaries(diags))
+	}
+	if s.ManagedPipelineMode != nil || s.QueueLength != nil || s.Enable32BitAppOnWin64 != nil {
+		t.Error("unknown attributes must stay nil (never sent)")
+	}
+	if s.RecyclingScheduleSet {
+		t.Error("null schedule must stay unset")
 	}
 	m2 := windowsIISAppPoolModel{RecyclingSchedule: types.SetUnknown(types.StringType)}
-	if _, diags := modelToIISAppPoolSettings(ctx, m2); !diags.HasError() {
-		t.Error("unknown schedule must abort with a deferring diagnostic")
+	s2, diags := modelToIISAppPoolSettings(ctx, m2)
+	if diags.HasError() {
+		t.Fatalf("unknown schedule must be skipped without error, got: %v", apDiagSummaries(diags))
+	}
+	if s2.RecyclingScheduleSet || s2.RecyclingSchedule != nil {
+		t.Error("unknown schedule must stay unset (never sent)")
 	}
 }
 

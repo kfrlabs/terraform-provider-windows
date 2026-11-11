@@ -939,19 +939,11 @@ func (r *windowsIISAppPoolResource) ImportState(ctx context.Context, req resourc
 // Helpers: settings projection (partial management)
 // ---------------------------------------------------------------------------
 
-// unknownIISAppPoolSetting is the shared deferring diagnostic for unknown
-// values: the run defers instead of converging the pool on a guess.
-func unknownIISAppPoolSetting() diag.Diagnostic {
-	return diag.NewErrorDiagnostic(
-		"Unknown Windows IIS application pool setting",
-		"One or more pool settings are unknown. Retry the apply once the referenced values are known instead of converging the pool on a guess.",
-	)
-}
-
 // modelToIISAppPoolSettings converts a Terraform model to an
-// IISAppPoolSettings delta: null (or unknown-checked) attributes stay nil
-// and are never sent to the host. An unknown attribute aborts with a
-// diagnostic so the run defers instead of converging on a guess.
+// IISAppPoolSettings delta: null or unknown attributes stay nil and are
+// never sent to the host. Optional+Computed attributes not configured are
+// Unknown in the plan during Create, so Unknown is skipped (never sent)
+// rather than aborting.
 func modelToIISAppPoolSettings(ctx context.Context, m windowsIISAppPoolModel) (winclient.IISAppPoolSettings, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	var s winclient.IISAppPoolSettings
@@ -978,34 +970,6 @@ func modelToIISAppPoolSettings(ctx context.Context, m windowsIISAppPoolModel) (w
 		return &v
 	}
 
-	for _, st := range []types.String{
-		m.ManagedRuntimeVersion, m.ManagedPipelineMode, m.StartMode,
-		m.IdentityType, m.IdentityUsername, m.IdleTimeoutAction,
-		m.CPUAction, m.State,
-	} {
-		if st.IsUnknown() {
-			diags.Append(unknownIISAppPoolSetting())
-			return winclient.IISAppPoolSettings{}, diags
-		}
-	}
-	for _, b := range []types.Bool{
-		m.Enable32BitAppOnWin64, m.AutoStart, m.LoadUserProfile, m.RapidFailProtection,
-	} {
-		if b.IsUnknown() {
-			diags.Append(unknownIISAppPoolSetting())
-			return winclient.IISAppPoolSettings{}, diags
-		}
-	}
-	for _, n := range []types.Int64{
-		m.QueueLength, m.IdleTimeoutMinutes, m.MaxProcesses,
-		m.RecyclingPeriodicRestartMinutes, m.RecyclingPrivateMemoryKB, m.CPULimitPercent,
-	} {
-		if n.IsUnknown() {
-			diags.Append(unknownIISAppPoolSetting())
-			return winclient.IISAppPoolSettings{}, diags
-		}
-	}
-
 	s.ManagedRuntimeVersion = strPtr(m.ManagedRuntimeVersion)
 	s.ManagedPipelineMode = strPtr(m.ManagedPipelineMode)
 	s.Enable32BitAppOnWin64 = boolPtr(m.Enable32BitAppOnWin64)
@@ -1025,11 +989,9 @@ func modelToIISAppPoolSettings(ctx context.Context, m windowsIISAppPoolModel) (w
 	s.CPUAction = strPtr(m.CPUAction)
 	s.State = strPtr(m.State)
 
-	if m.RecyclingSchedule.IsUnknown() {
-		diags.Append(unknownIISAppPoolSetting())
-		return winclient.IISAppPoolSettings{}, diags
-	}
-	if !m.RecyclingSchedule.IsNull() {
+	// An Unknown schedule is skipped (never sent), like every other
+	// Optional+Computed attribute that is not configured in the plan.
+	if !m.RecyclingSchedule.IsNull() && !m.RecyclingSchedule.IsUnknown() {
 		var entries []string
 		diags.Append(m.RecyclingSchedule.ElementsAs(ctx, &entries, false)...)
 		if diags.HasError() {
