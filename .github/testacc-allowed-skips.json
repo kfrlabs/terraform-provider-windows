@@ -75,6 +75,11 @@
       "pattern": "^TestAccWindowsScheduledTask_PasswordSensitive$",
       "reasons": ["TF_ACC_TASK_USER / TF_ACC_TASK_PASSWORD not set"],
       "comment": "Needs a dedicated service account that CI does not provision."
+    },
+    {
+      "pattern": "^TestAccWindowsIISAppPool",
+      "reasons": ["IIS management tools still missing after install"],
+      "comment": "The windows-latest GitHub image cannot provide the WebAdministration module (Install-WindowsFeature Web-Server/Web-Scripting-Tools/Web-Mgmt-Console reports success but the module never appears), so accEnsureIIS skips instead of failing. The needle names this exact post-install condition; on targets where IIS installs (lab servercore container), the tests run and any skip there still fails the gate."
     }
   ]
 }

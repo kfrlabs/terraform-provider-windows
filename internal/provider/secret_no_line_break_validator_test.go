@@ -226,3 +226,8 @@ func TestCertificatePfxPasswordWo_NoLineBreak(t *testing.T) {
 	s := windowsCertificateSchemaDefinition(context.Background())
 	assertSecretAttrGuarded(t, path.Root("pfx_password_wo"), secretAttrValidators(t, s, "pfx_password_wo"))
 }
+
+func TestIISAppPoolPasswordWo_NoLineBreak(t *testing.T) {
+	s := windowsIISAppPoolSchemaDefinition(context.Background())
+	assertSecretAttrGuarded(t, path.Root("identity_password_wo"), secretAttrValidators(t, s, "identity_password_wo"))
+}
