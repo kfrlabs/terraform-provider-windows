@@ -119,6 +119,129 @@ func (mc *LocalGroupMemberClient) runLGMEnvelope(ctx context.Context, op, key, s
 }
 
 // ---------------------------------------------------------------------------
+// Get-LgmMembers — shared three-tier member projection (EC-6, ADR-LGM-5)
+// ---------------------------------------------------------------------------
+
+// lgmMembersPsFunction defines the Get-LgmMembers PowerShell function shared
+// by ClientLocalGroupMember.List and LocalGroupClient.List (issue #298).
+// It takes a group SID string and returns a hashtable:
+//
+//	@{ ok = $true; tier = 'primary'|'wmi'|'net_localgroup'|'all_failed'; members = @(...) }
+//	@{ ok = $false; notFound = $true; message = <Get-LocalGroupMember error> }
+//
+// Tier 1 (Get-LocalGroupMember) captures the live ObjectClass and the raw
+// Name (possibly empty for orphaned SIDs — the ""-to-SID coercion lives
+// Go-side in ClientLocalGroupMember.List only). Tiers 2/3 cannot observe
+// either and report ObjectClass 'Unknown' with a best-effort Name.
+const lgmMembersPsFunction = `
+function Get-LgmMembers([string]$GroupSID) {
+    # ─── Tier 1: Get-LocalGroupMember ───────────────────────────────────────
+    $t1Err = $null
+    try {
+        $rawM = @(Get-LocalGroupMember -SID $GroupSID -ErrorAction Stop)
+        $members = @()
+        foreach ($m in $rawM) {
+            $sidVal = if ($m.SID.PSObject.Properties.Name -contains 'Value') {
+                $m.SID.Value
+            } else {
+                [string]$m.SID
+            }
+            $srcStr  = try { $m.PrincipalSource.ToString() } catch { 'Unknown' }
+            $ocStr   = try { $m.ObjectClass.ToString() } catch { 'Unknown' }
+            if ([string]::IsNullOrEmpty($ocStr)) { $ocStr = 'Unknown' }
+            $members += [ordered]@{ SID = $sidVal; Name = [string]$m.Name; PrincipalSource = $srcStr; ObjectClass = $ocStr }
+        }
+        return @{ ok = $true; tier = 'primary'; members = $members }
+    } catch {
+        $t1Err = $_
+    }
+
+    # Group-not-found: distinct from orphaned-SID failure (EC-5)
+    if ($t1Err -and (
+        $t1Err.FullyQualifiedErrorId -match 'GroupNotFound' -or
+        $t1Err.Exception.Message     -match 'was not found'
+    )) {
+        return @{ ok = $false; notFound = $true; message = $t1Err.Exception.Message }
+    }
+
+    # ─── Tier 2: Win32_GroupUser WMI ────────────────────────────────────────
+    try {
+        $grpWMI = @(Get-WmiObject -Class Win32_Group |
+                     Where-Object { $_.SID -eq $GroupSID })
+        if ($grpWMI.Count -eq 0) { throw "SID $GroupSID not found in Win32_Group" }
+        $grpPath = $grpWMI[0].__PATH
+        $rels    = @(Get-WmiObject -Class Win32_GroupUser |
+                      Where-Object { $_.GroupComponent -eq $grpPath })
+        $members = @()
+        foreach ($rel in $rels) {
+            $pc = $rel.PartComponent
+            if ($pc -match "\.Domain='([^']+)',Name='([^']+)'") {
+                $dom = $Matches[1]; $nm = $Matches[2]
+                $dn  = "$dom\$nm"
+                $sid = $dn
+                try {
+                    $ntAcc = New-Object System.Security.Principal.NTAccount($dom, $nm)
+                    $sid   = $ntAcc.Translate(
+                                 [System.Security.Principal.SecurityIdentifier]).Value
+                } catch {}
+                $members += [ordered]@{
+                    SID             = $sid
+                    Name            = $dn
+                    PrincipalSource = 'Unknown'
+                    ObjectClass     = 'Unknown'
+                }
+            }
+        }
+        return @{ ok = $true; tier = 'wmi'; members = $members }
+    } catch {}
+
+    # ─── Tier 3: net localgroup ─────────────────────────────────────────────
+    try {
+        $grpName = ''
+        try {
+            $grpName = (Get-LocalGroup -SID $GroupSID -ErrorAction Stop).Name
+        } catch {}
+        if ($grpName -eq '') {
+            $w = @(Get-WmiObject -Class Win32_Group |
+                    Where-Object { $_.SID -eq $GroupSID })
+            if ($w.Count -gt 0) { $grpName = $w[0].Name }
+        }
+        if ($grpName -eq '') { throw "Cannot resolve group name for SID $GroupSID" }
+
+        $output  = & net localgroup $grpName 2>&1
+        $members = @()
+        $inSect  = $false
+        foreach ($line in $output) {
+            $s = [string]$line
+            if ($s -match '^-+')                   { $inSect = $true;  continue }
+            if ($s -match 'The command completed') { break }
+            if (-not $inSect)                     { continue }
+            $name = $s.Trim()
+            if ($name -eq '')                     { continue }
+            $sid = $name
+            if (-not ($name -match '^S-\d')) {
+                try {
+                    $ntAcc = New-Object System.Security.Principal.NTAccount($name)
+                    $sid   = $ntAcc.Translate(
+                                 [System.Security.Principal.SecurityIdentifier]).Value
+                } catch {}
+            }
+            $members += [ordered]@{
+                SID             = $sid
+                Name            = $name
+                PrincipalSource = 'Unknown'
+                ObjectClass     = 'Unknown'
+            }
+        }
+        return @{ ok = $true; tier = 'net_localgroup'; members = $members }
+    } catch {}
+
+    # All tiers failed — conservative empty response (ADR-LGM-5)
+    return @{ ok = $true; tier = 'all_failed'; members = @() }
+}
+`
+
+// ---------------------------------------------------------------------------
 // List — three-tier orphan-SID fallback (EC-6, ADR-LGM-5)
 // ---------------------------------------------------------------------------
 
@@ -127,6 +250,7 @@ type lgmMember struct {
 	SID             string `json:"SID"`
 	Name            string `json:"Name"`
 	PrincipalSource string `json:"PrincipalSource"`
+	ObjectClass     string `json:"ObjectClass"`
 }
 
 // lgmListData is the JSON shape of the data field in the List response.
@@ -150,133 +274,16 @@ func (mc *LocalGroupMemberClient) List(ctx context.Context, groupSID string) ([]
 	qSID := psQuote(groupSID)
 
 	script := fmt.Sprintf(`
-$gSID  = %s
-
-# ─── Tier 1: Get-LocalGroupMember ───────────────────────────────────────────
-$t1Err  = $null
-$t1Done = $false
-$members = $null
-try {
-    $rawM = @(Get-LocalGroupMember -SID $gSID -ErrorAction Stop)
-    $members = @()
-    foreach ($m in $rawM) {
-        $sidVal = if ($m.SID.PSObject.Properties.Name -contains 'Value') {
-            $m.SID.Value
-        } else {
-            [string]$m.SID
-        }
-        $srcStr  = try { $m.PrincipalSource.ToString() } catch { 'Unknown' }
-        $nameVal = if ($m.Name -and $m.Name.Length -gt 0) { $m.Name } else { $sidVal }
-        $members += [ordered]@{ SID = $sidVal; Name = $nameVal; PrincipalSource = $srcStr }
-    }
-    $t1Done = $true
-} catch {
-    $t1Err = $_
-}
-
-if ($t1Done) {
-    Emit-OK @{ tier = 'primary'; members = $members }
+$gSID = %s
+$res = Get-LgmMembers $gSID
+if (-not $res.ok) {
+    Emit-Err 'group_not_found' $res.message @{ group_sid = $gSID }
     return
 }
-
-# Group-not-found: distinct from orphaned-SID failure (EC-5)
-if ($t1Err -and (
-    $t1Err.FullyQualifiedErrorId -match 'GroupNotFound' -or
-    $t1Err.Exception.Message     -match 'was not found'
-)) {
-    Emit-Err 'group_not_found' $t1Err.Exception.Message @{ group_sid = $gSID }
-    return
-}
-
-# ─── Tier 2: Win32_GroupUser WMI ────────────────────────────────────────────
-$t2Done  = $false
-$members = $null
-try {
-    $grpWMI = @(Get-WmiObject -Class Win32_Group |
-                 Where-Object { $_.SID -eq $gSID })
-    if ($grpWMI.Count -eq 0) { throw "SID $gSID not found in Win32_Group" }
-    $grpPath = $grpWMI[0].__PATH
-    $rels    = @(Get-WmiObject -Class Win32_GroupUser |
-                  Where-Object { $_.GroupComponent -eq $grpPath })
-    $members = @()
-    foreach ($rel in $rels) {
-        $pc = $rel.PartComponent
-        if ($pc -match "\.Domain='([^']+)',Name='([^']+)'") {
-            $dom = $Matches[1]; $nm = $Matches[2]
-            $dn  = "$dom\$nm"
-            $sid = $dn
-            try {
-                $ntAcc = New-Object System.Security.Principal.NTAccount($dom, $nm)
-                $sid   = $ntAcc.Translate(
-                             [System.Security.Principal.SecurityIdentifier]).Value
-            } catch {}
-            $members += [ordered]@{
-                SID             = $sid
-                Name            = $dn
-                PrincipalSource = 'Unknown'
-            }
-        }
-    }
-    $t2Done = $true
-} catch {}
-
-if ($t2Done) {
-    Emit-OK @{ tier = 'wmi'; members = $members }
-    return
-}
-
-# ─── Tier 3: net localgroup ─────────────────────────────────────────────────
-$t3Done  = $false
-$members = $null
-try {
-    $grpName = ''
-    try {
-        $grpName = (Get-LocalGroup -SID $gSID -ErrorAction Stop).Name
-    } catch {}
-    if ($grpName -eq '') {
-        $w = @(Get-WmiObject -Class Win32_Group |
-                Where-Object { $_.SID -eq $gSID })
-        if ($w.Count -gt 0) { $grpName = $w[0].Name }
-    }
-    if ($grpName -eq '') { throw "Cannot resolve group name for SID $gSID" }
-
-    $output  = & net localgroup $grpName 2>&1
-    $members = @()
-    $inSect  = $false
-    foreach ($line in $output) {
-        $s = [string]$line
-        if ($s -match '^-+')                   { $inSect = $true;  continue }
-        if ($s -match 'The command completed') { break }
-        if (-not $inSect)                     { continue }
-        $name = $s.Trim()
-        if ($name -eq '')                     { continue }
-        $sid = $name
-        if (-not ($name -match '^S-\d')) {
-            try {
-                $ntAcc = New-Object System.Security.Principal.NTAccount($name)
-                $sid   = $ntAcc.Translate(
-                             [System.Security.Principal.SecurityIdentifier]).Value
-            } catch {}
-        }
-        $members += [ordered]@{
-            SID             = $sid
-            Name            = $name
-            PrincipalSource = 'Unknown'
-        }
-    }
-    $t3Done = $true
-} catch {}
-
-if ($t3Done) {
-    Emit-OK @{ tier = 'net_localgroup'; members = $members }
-    return
-}
-
-# All tiers failed — conservative empty response (ADR-LGM-5)
-Emit-OK @{ tier = 'all_failed'; members = @() }
+Emit-OK @{ tier = $res.tier; members = $res.members }
 `, qSID)
 
-	resp, err := mc.runLGMEnvelope(ctx, "list", groupSID, script)
+	resp, err := mc.runLGMEnvelope(ctx, "list", groupSID, lgmMembersPsFunction+"\n"+script)
 	if err != nil {
 		return nil, err
 	}
@@ -297,11 +304,16 @@ Emit-OK @{ tier = 'all_failed'; members = @() }
 			name = sid
 		}
 		src := normalizePrincipalSource(m.PrincipalSource)
+		oc := m.ObjectClass
+		if oc == "" {
+			oc = "Unknown"
+		}
 		states = append(states, &LocalGroupMemberState{
 			GroupSID:        groupSID,
 			MemberSID:       sid,
 			MemberName:      name,
 			PrincipalSource: src,
+			ObjectClass:     oc,
 		})
 	}
 	return states, nil
@@ -502,6 +514,7 @@ func (mc *LocalGroupMemberClient) Add(ctx context.Context, input LocalGroupMembe
 			MemberSID:       resolvedSID,
 			MemberName:      resolvedSID,
 			PrincipalSource: "Unknown",
+			ObjectClass:     "Unknown",
 		}, nil
 	}
 	return state, nil

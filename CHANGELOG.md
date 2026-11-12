@@ -6,6 +6,30 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_local_groups` collection data source (#298): read-only
+  inventory of every local group on the remote Windows host in a single
+  round-trip — the sibling collection of `windows_local_group`. Every
+  `groups` element carries the singular data source attribute set (`sid`,
+  `name`, `description`) plus `is_builtin` (derived Go-side from the SID
+  `S-1-5-32-*` BUILTIN prefix) and the `members` list (`name`, `sid`,
+  `object_class`, `principal_source`), which is null unless
+  `include_members` is true. `names` and `sids` double as exact-match
+  filters (host-side `Where-Object`, sets) and as convenience outputs in
+  group order; `name_regex` (RE2, Go-side), `include_builtin` (null defaults
+  to true) and `include_members` (null defaults to false) narrow further.
+  `groups` is sorted by name (case-insensitive), members by member SID; an
+  empty match is a valid empty list. The data source ID is the hex SHA-256
+  of the normalised filter set. Membership reuses a shared `Get-LgmMembers`
+  projection: Tier 1 (`Get-LocalGroupMember`) captures the live
+  `ObjectClass`, tiers 2/3 (`Win32_GroupUser`, `net localgroup`) report
+  `Unknown`. Orphaned SIDs keep an empty member `name` on this path; the
+  member resource keeps its own `""`-to-SID coercion untouched. Backed by
+  the new `winclient.LocalGroupLister` interface (`List` on the existing
+  `LocalGroupClient`); running on a domain controller (`DomainRole >= 4`)
+  is a typed `unsupported_on_domain_controller` error.
+  `timeouts.read` defaults to 10m like the other collection-family data
+  sources.
+
 - New `windows_domain_membership` data source (#299): singleton read-only
   view of the sibling resource's observed state — `part_of_domain`, the DNS
   `domain` (empty when workgroup-joined, never the workgroup name), the

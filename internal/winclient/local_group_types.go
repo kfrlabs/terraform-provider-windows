@@ -58,6 +58,16 @@ const (
 	// Windows-side validation (defence-in-depth, EC-6).
 	LocalGroupErrorInvalidName LocalGroupErrorKind = "invalid_name"
 
+	// LocalGroupErrorInvalidParameter is returned when a List filter fails
+	// Go-side validation (e.g. name_regex is not a valid regular expression).
+	// No host call is made in that case.
+	LocalGroupErrorInvalidParameter LocalGroupErrorKind = "invalid_parameter"
+
+	// LocalGroupErrorUnsupportedOnDC is returned when List runs on a domain
+	// controller (Win32_ComputerSystem DomainRole >= 4), where the
+	// LocalAccounts cmdlets address the domain database, not local groups.
+	LocalGroupErrorUnsupportedOnDC LocalGroupErrorKind = "unsupported_on_domain_controller"
+
 	// LocalGroupErrorUnknown is returned for unrecognised PowerShell errors
 	// or unexpected SSH transport failures.
 	LocalGroupErrorUnknown LocalGroupErrorKind = "unknown"
@@ -164,6 +174,12 @@ var ErrLocalGroupNameConflict = &LocalGroupError{Kind: LocalGroupErrorNameConfli
 // ErrLocalGroupInvalidName is a sentinel for invalid name (EC-6).
 var ErrLocalGroupInvalidName = &LocalGroupError{Kind: LocalGroupErrorInvalidName}
 
+// ErrLocalGroupInvalidParameter is a sentinel for invalid List filters.
+var ErrLocalGroupInvalidParameter = &LocalGroupError{Kind: LocalGroupErrorInvalidParameter}
+
+// ErrLocalGroupUnsupportedOnDC is a sentinel for List on a domain controller.
+var ErrLocalGroupUnsupportedOnDC = &LocalGroupError{Kind: LocalGroupErrorUnsupportedOnDC}
+
 // ErrLocalGroupUnknown is a sentinel for unexpected errors.
 var ErrLocalGroupUnknown = &LocalGroupError{Kind: LocalGroupErrorUnknown}
 
@@ -193,8 +209,11 @@ type GroupInput struct {
 // GroupState holds the observed state of a Windows local group as returned
 // by Read (Get-LocalGroup -SID <sid> | ConvertTo-Json -Depth 3).
 //
-// Members are intentionally absent: membership management is out of scope for
-// this resource version (ADR-LG-3).
+// Members are populated only by LocalGroupLister.List when the
+// IncludeMembers filter is set; every other entry point (Read, Create,
+// Update, Import) leaves them nil. Membership management itself is out of
+// scope for the resource (ADR-LG-3); the windows_local_group_member
+// resource owns single-membership lifecycle.
 type GroupState struct {
 	// Name is the Windows local group name as returned by Get-LocalGroup.
 	// Always stored in the casing that Windows uses (ADR-LG-4).
@@ -209,6 +228,13 @@ type GroupState struct {
 	// Used as the Terraform resource ID and as the -SID parameter for all
 	// subsequent mutating cmdlets.
 	SID string
+
+	// Members holds the observed membership of the group, sorted by member
+	// SID. Nil when membership was not requested (IncludeMembers false);
+	// a non-nil empty slice means the group was read with membership and
+	// has none. Orphaned SIDs keep an empty MemberName (no ""-to-SID
+	// coercion here — that coercion lives in ClientLocalGroupMember.List).
+	Members []LocalGroupMemberState
 }
 
 // ---------------------------------------------------------------------------
@@ -248,4 +274,51 @@ type WindowsLocalGroupClient interface {
 	// ImportBySID resolves a local group by SID string (EC-10, SID import path).
 	// Returns ErrLocalGroupNotFound when no group with the given SID exists.
 	ImportBySID(ctx context.Context, sid string) (*GroupState, error)
+}
+
+// ---------------------------------------------------------------------------
+// LocalGroupFilter / LocalGroupLister — read-only inventory (issue #298)
+// ---------------------------------------------------------------------------
+
+// LocalGroupFilter narrows a LocalGroupLister List call. The zero value
+// matches every non-built-in local group on the host; set IncludeBuiltin to
+// include groups under the S-1-5-32 BUILTIN authority.
+type LocalGroupFilter struct {
+	// Names is an optional exact-match set of group names. Empty matches all.
+	// Applied host-side via Where-Object -eq (case-insensitive, like Windows).
+	Names []string
+
+	// SIDs is an optional exact-match set of group SID strings. Empty matches
+	// all. Applied host-side via Where-Object -eq.
+	SIDs []string
+
+	// NameRegex is an optional RE2 regular expression matched against the
+	// group name. Matching is case-sensitive; prefix the pattern with (?i)
+	// for a case-insensitive match. Applied Go-side.
+	NameRegex string
+
+	// IncludeBuiltin keeps built-in groups (SID prefix "S-1-5-32-", e.g.
+	// Administrators, Users, Guests) when true; false drops them.
+	IncludeBuiltin bool
+
+	// IncludeMembers populates GroupState.Members via the shared
+	// Get-LgmMembers projection when true; false leaves Members nil.
+	IncludeMembers bool
+}
+
+// LocalGroupLister is the read-only inventory contract for the
+// windows_local_groups collection data source.
+//
+// It is intentionally separate from WindowsLocalGroupClient: adding List to
+// WindowsLocalGroupClient would break every existing fake implementing that
+// interface (resource + singular data source tests). List reuses the exact
+// per-group JSON projection of Read plus the shared Get-LgmMembers member
+// projection of ClientLocalGroupMember.List, so all paths evolve together.
+type LocalGroupLister interface {
+	// List returns every local group in a single round-trip, filtered and
+	// sorted by name (case-insensitive). Members are populated only when
+	// the filter requests them, sorted by member SID. An empty inventory
+	// match is valid (empty slice, nil error); invalid filters return a
+	// typed invalid_parameter error without any host call.
+	List(ctx context.Context, filter LocalGroupFilter) ([]GroupState, error)
 }

@@ -328,6 +328,7 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsLegacyPackageDataSource,
 		NewWindowsLocalGroupDataSource,
 		NewWindowsLocalGroupMemberDataSource,
+		NewWindowsLocalGroupsDataSource,
 		NewWindowsLocalUserDataSource,
 		NewWindowsLocalUsersDataSource,
 		NewWindowsNetIPAddressDataSource,

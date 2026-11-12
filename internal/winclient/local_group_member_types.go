@@ -222,6 +222,13 @@ type LocalGroupMemberState struct {
 	// PrincipalSource is the account origin: "Local", "ActiveDirectory",
 	// "AzureAD", "MicrosoftAccount", or "Unknown" (orphaned SIDs, EC-6).
 	PrincipalSource string
+
+	// ObjectClass is the Windows account class as reported by
+	// Get-LocalGroupMember (e.g. "User", "Group"). Tier 2/3 fallbacks
+	// (Win32_GroupUser, net localgroup) cannot observe it and report
+	// "Unknown", as does the Add fallback state (issue #298). Empty when
+	// unset by older payloads; the List mapping normalises it to "Unknown".
+	ObjectClass string `json:"object_class"`
 }
 
 // ---------------------------------------------------------------------------

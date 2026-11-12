@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -114,6 +116,10 @@ func mapLGKind(k string) LocalGroupErrorKind {
 		return LocalGroupErrorNameConflict
 	case "invalid_name":
 		return LocalGroupErrorInvalidName
+	case "invalid_parameter":
+		return LocalGroupErrorInvalidParameter
+	case "unsupported_on_domain_controller":
+		return LocalGroupErrorUnsupportedOnDC
 	default:
 		return LocalGroupErrorUnknown
 	}
@@ -168,6 +174,188 @@ func parseGroupData(op string, data json.RawMessage) (*GroupState, error) {
 		Description: g.Description,
 		SID:         g.SID.Value,
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// IsBuiltinLocalGroupSID — BUILTIN authority check (EC-2, ADR-LG-2)
+// ---------------------------------------------------------------------------
+
+// IsBuiltinLocalGroupSID reports whether sid belongs to the BUILTIN authority
+// ("S-1-5-32-" prefix: Administrators, Users, Guests, ...). It mirrors the
+// Delete EC-2 pre-flight check (ADR-LG-2) and implements the List
+// IncludeBuiltin filter.
+func IsBuiltinLocalGroupSID(sid string) bool {
+	return strings.HasPrefix(sid, "S-1-5-32-")
+}
+
+// ---------------------------------------------------------------------------
+// List — read-only inventory for windows_local_groups (issue #298)
+// ---------------------------------------------------------------------------
+
+// Compile-time assertion: LocalGroupClient satisfies LocalGroupLister.
+var _ LocalGroupLister = (*LocalGroupClient)(nil)
+
+// psLocalGroupListEntry is the JSON shape of one group in the List response:
+// the exact Read projection (psLocalGroup) plus the optional Members array
+// from the shared Get-LgmMembers projection. Members is null when membership
+// was not requested and an array (possibly empty) otherwise.
+type psLocalGroupListEntry struct {
+	psLocalGroup
+	Members []lgmMember `json:"Members"`
+}
+
+// buildLocalGroupListScript renders the inventory script: the domain
+// controller guard FIRST (LocalAccounts addresses the domain database on a
+// DC, not local groups), then the same LocalAccounts module-availability
+// check Create uses (probing Get-LocalGroup, the cmdlet List needs, with the
+// identical message), then Get-LocalGroup over all accounts narrowed
+// host-side by the exact names/sids filters, projected with the shared
+// Get-LgmMembers function in a loop when membership is requested.
+func buildLocalGroupListScript(names, sids []string, includeMembers bool) string {
+	var b strings.Builder
+	b.WriteString("$nameFilter = @(")
+	for i, n := range names {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(psQuote(n))
+	}
+	b.WriteString(")\n$sidFilter = @(")
+	for i, s := range sids {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(psQuote(s))
+	}
+	b.WriteString(")\n")
+	if includeMembers {
+		b.WriteString("$wantMembers = $true\n")
+	} else {
+		b.WriteString("$wantMembers = $false\n")
+	}
+	b.WriteString(`
+# DC guard (must run first): on a domain controller the LocalAccounts
+# cmdlets address the domain database, so a local-group inventory is meaningless.
+$domainRole = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).DomainRole
+if ($domainRole -ge 4) {
+    Emit-Err 'unsupported_on_domain_controller' ("local group inventory is not supported on a domain controller (DomainRole " + $domainRole + "); run this data source against a member server or workstation instead") @{ domain_role = "$domainRole"; step = 'dc_guard' }
+    return
+}
+
+# Module guard (same check and message as Create; probes the cmdlet List uses).
+if (-not (Get-Command Get-LocalGroup -ErrorAction SilentlyContinue)) {
+    Emit-Err 'unknown' 'Microsoft.PowerShell.LocalAccounts module not available; requires Windows Server 2016 / Windows 10 or later' @{}
+    return
+}
+
+try {
+    $groups = @(Get-LocalGroup -ErrorAction Stop)
+    if ($nameFilter.Count -gt 0) { $groups = @($groups | Where-Object { $nameFilter -contains $_.Name }) }
+    if ($sidFilter.Count -gt 0) { $groups = @($groups | Where-Object { $sidFilter -contains $_.SID.Value }) }
+    $out = @()
+    foreach ($g in $groups) {
+        $sidVal = $g.SID.Value
+        $entry = [ordered]@{ Name = $g.Name; Description = $g.Description; SID = $sidVal; Members = $null }
+        if ($wantMembers) {
+            $res = Get-LgmMembers $sidVal
+            if ($res.ok) {
+                $entry.Members = $res.members
+            } else {
+                # The group vanished between enumeration and member read —
+                # degrade to empty membership (conservative, ADR-LGM-5).
+                $entry.Members = @()
+            }
+        }
+        $out += $entry
+    }
+    Emit-OK $out
+} catch {
+    $kind = Classify-LG $_.Exception.Message $_.FullyQualifiedErrorId
+    Emit-Err $kind $_.Exception.Message @{ step = 'list_local_groups' }
+}
+`)
+	return lgmMembersPsFunction + "\n" + b.String()
+}
+
+// mapLGListMember projects one lgmMember JSON entry onto a
+// LocalGroupMemberState. Unlike ClientLocalGroupMember.List, an empty Name
+// is kept as-is (orphaned SIDs carry MemberName "" with the SID in
+// MemberSID); the resource mapping keeps its own ""-to-SID coercion
+// untouched. An empty ObjectClass normalises to "Unknown".
+func mapLGListMember(groupSID string, m lgmMember) LocalGroupMemberState {
+	oc := m.ObjectClass
+	if oc == "" {
+		oc = "Unknown"
+	}
+	return LocalGroupMemberState{
+		GroupSID:        groupSID,
+		MemberSID:       m.SID,
+		MemberName:      m.Name,
+		PrincipalSource: normalizePrincipalSource(m.PrincipalSource),
+		ObjectClass:     oc,
+	}
+}
+
+// List returns every local group in a single round-trip, filtered and sorted
+// by name (case-insensitive). Members are populated only when the filter
+// requests them, sorted by member SID. An empty inventory match is valid
+// (empty slice, nil error). Filters are validated before any host call; an
+// invalid filter never reaches the host.
+func (lc *LocalGroupClient) List(ctx context.Context, filter LocalGroupFilter) ([]GroupState, error) {
+	var nameRe *regexp.Regexp
+	if strings.TrimSpace(filter.NameRegex) != "" {
+		var err error
+		nameRe, err = regexp.Compile(filter.NameRegex)
+		if err != nil {
+			return nil, NewLocalGroupError(LocalGroupErrorInvalidParameter,
+				fmt.Sprintf("name_regex %q is not a valid regular expression: %v", filter.NameRegex, err), nil,
+				map[string]string{"name_regex": filter.NameRegex})
+		}
+	}
+
+	resp, err := lc.runLGEnvelope(ctx, "list", "", buildLocalGroupListScript(filter.Names, filter.SIDs, filter.IncludeMembers))
+	if err != nil {
+		return nil, err
+	}
+	var entries []psLocalGroupListEntry
+	if jerr := json.Unmarshal(resp.Data, &entries); jerr != nil {
+		return nil, NewLocalGroupError(LocalGroupErrorUnknown,
+			"failed to parse LocalGroup list JSON", jerr,
+			map[string]string{"host": lc.c.cfg.Host})
+	}
+	out := make([]GroupState, 0, len(entries))
+	for _, e := range entries {
+		if e.SID.Value == "" {
+			return nil, NewLocalGroupError(LocalGroupErrorUnknown,
+				"LocalGroup list JSON has empty SID.Value", nil, nil)
+		}
+		if nameRe != nil && !nameRe.MatchString(e.Name) {
+			continue
+		}
+		if !filter.IncludeBuiltin && IsBuiltinLocalGroupSID(e.SID.Value) {
+			continue
+		}
+		gs := GroupState{
+			Name:        e.Name,
+			Description: e.Description,
+			SID:         e.SID.Value,
+		}
+		if filter.IncludeMembers {
+			members := make([]LocalGroupMemberState, 0, len(e.Members))
+			for _, m := range e.Members {
+				members = append(members, mapLGListMember(e.SID.Value, m))
+			}
+			sort.Slice(members, func(i, j int) bool {
+				return strings.ToLower(members[i].MemberSID) < strings.ToLower(members[j].MemberSID)
+			})
+			gs.Members = members
+		}
+		out = append(out, gs)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------
