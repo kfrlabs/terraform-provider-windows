@@ -1,13 +1,15 @@
 {
-  "$comment": "Acceptance test groups shared by testacc-windows.yml and testacc-lab-container.yml, consumed by .github/scripts/Invoke-AccTests.ps1. Each `run` is a `go test -run` regexp (RE2: no lookahead). Families are prefix-matched so new tests of an existing resource land in the right group automatically. The catch-all group runs every ^TestAcc test that no other group claims; its skip pattern is derived from the other groups, so it never needs manual upkeep. If it starts finding tests, give the new resource family its own group.",
+  "$comment": "Acceptance test groups shared by testacc-windows.yml and testacc-lab-container.yml, consumed by .github/scripts/Invoke-AccTests.ps1 and .github/scripts/testacc-plan.py. Each `run` is a `go test -run` regexp (RE2: no lookahead). Families are prefix-matched so new tests of an existing resource land in the right group automatically. The catch-all group runs every ^TestAcc test that no other group claims; its skip pattern is derived from the other groups, so it never needs manual upkeep. If it starts finding tests, give the new resource family its own group. `dedicated`: machine-global work (DISM) that always gets a runner of its own. `githubHosted: false`: tests that can only skip on windows-latest (they cost minutes there for nothing), run by testacc-lab-container only. `githubLanes`: the full-run layout of testacc-windows.yml, one runner per lane and auth mode.",
   "groups": [
     {
       "name": "feature-basic",
-      "run": "^TestAccWindowsFeature_Basic$"
+      "run": "^TestAccWindowsFeature_Basic$",
+      "dedicated": true
     },
     {
       "name": "feature-import",
-      "run": "^TestAccWindowsFeature_Import$"
+      "run": "^TestAccWindowsFeature_Import$",
+      "dedicated": true
     },
     {
       "name": "feature-datasource",
@@ -38,9 +40,22 @@
       "run": "^TestAcc(WindowsCertificate|WindowsSmbShare|WindowsDomainMembership)(DataSource)?_"
     },
     {
+      "name": "iis",
+      "run": "^TestAccWindowsIISAppPool(DataSource)?_",
+      "githubHosted": false
+    },
+    {
       "name": "rest",
       "run": "^TestAcc",
       "catchAll": true
     }
+  ],
+  "githubLanes": [
+    { "name": "feature-basic", "lanes": "feature-basic", "auths": ["password"] },
+    { "name": "feature-import", "lanes": "feature-import", "auths": ["password"] },
+    { "name": "storage", "lanes": "storage", "auths": ["password", "publickey"] },
+    { "name": "identity-net", "lanes": "identity-net", "auths": ["password", "publickey"] },
+    { "name": "misc-core", "lanes": "scheduling+feature-datasource+packages", "auths": ["password", "publickey"] },
+    { "name": "misc-rest", "lanes": "network+security-sharing+rest", "auths": ["password", "publickey"] }
   ]
 }
