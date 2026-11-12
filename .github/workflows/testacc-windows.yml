@@ -10,7 +10,8 @@
 # pull requests, and this repository is public (see testacc-lab-container.yml
 # for the self-hosted counterpart).
 #
-# Layout (timings from runs 40750546504 and 40766054855):
+# Layout (timings from runs 40750546504 and 40766054855, refreshed after the
+# misc split in #308):
 #
 #   * windows_feature write tests are the floor: Install-WindowsFeature and
 #     Get-WindowsFeature cost ~6.5min per test, and DISM is machine-global, so
@@ -18,8 +19,12 @@
 #     Wall time for the whole workflow is bounded by these two jobs (~8min).
 #   * Every other family takes 4-6min run sequentially, so each gets its own
 #     runner; the smallest ones (scheduling, feature data source, packages and
-#     the catch-all) share one, still under the floor. Groups are defined in
-#     .github/testacc-groups.json.
+#     the catch-all) used to share one misc runner, but that lane kept growing
+#     (107 tests: the new standalone/collection data sources all land in
+#     `rest` until they earn their own group) and started hitting the 45min
+#     job timeout and out-of-memory failures on 4-vCPU runners. It is now
+#     split in two balanced lanes (~54 vs ~53 tests), misc-core and misc-rest.
+#     Groups are defined in .github/testacc-groups.json.
 #   * Do NOT run several families concurrently on one runner: tried in
 #     40766054855, the tests are CPU/memory bound on a 4-vCPU windows-latest
 #     (terraform, provider and remote PowerShell all run on the same box).
@@ -28,9 +33,9 @@
 #   * Public-key auth only changes the SSH handshake, not what the provider
 #     does once connected, so it skips the two windows_feature floor jobs.
 #
-# That is 8 runners per run instead of 12 (2 auth x 6 shards), for the same
-# wall time: less pressure on the account's concurrent-job limit, which test.yml
-# and other PRs share.
+# That is 10 runners per run instead of 8 (one extra misc lane per auth
+# mode), for a shorter wall time: less pressure on the account's
+# concurrent-job limit, which test.yml and other PRs share.
 
 name: testacc-windows
 
@@ -38,7 +43,7 @@ on:
   workflow_dispatch:
     inputs:
       run_filter:
-        description: "Value passed to `go test -run` (regexp). Replaces the group split: one job per auth mode (`misc`) runs it; the other jobs skip their tests."
+        description: "Value passed to `go test -run` (regexp). Replaces the group split: one job per auth mode (`misc-core`, `misc-rest`) runs it; the other jobs skip their tests."
         required: false
         default: ""
   # A transport change that only breaks against a real Windows sshd would
@@ -71,14 +76,19 @@ jobs:
         include:
           # `lanes` holds group names from .github/testacc-groups.json; '+'
           # runs them one after the other in a single test process.
+          # The old single misc lane (scheduling+feature-datasource+packages+
+          # network+security-sharing+rest, ~107 tests) is split in two
+          # balanced lanes so no single runner carries the whole catch-all.
           - { auth: password, name: feature-basic, lanes: feature-basic }
           - { auth: password, name: feature-import, lanes: feature-import }
           - { auth: password, name: storage, lanes: storage }
           - { auth: password, name: identity-net, lanes: identity-net }
-          - { auth: password, name: misc, lanes: scheduling+feature-datasource+packages+network+security-sharing+rest, filter: true }
+          - { auth: password, name: misc-core, lanes: scheduling+feature-datasource+packages, filter: true }
+          - { auth: password, name: misc-rest, lanes: network+security-sharing+rest, filter: true }
           - { auth: publickey, name: storage, lanes: storage }
           - { auth: publickey, name: identity-net, lanes: identity-net }
-          - { auth: publickey, name: misc, lanes: scheduling+feature-datasource+packages+network+security-sharing+rest, filter: true }
+          - { auth: publickey, name: misc-core, lanes: scheduling+feature-datasource+packages, filter: true }
+          - { auth: publickey, name: misc-rest, lanes: network+security-sharing+rest, filter: true }
     defaults:
       run:
         shell: pwsh
