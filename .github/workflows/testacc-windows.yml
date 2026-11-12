@@ -1,4 +1,4 @@
-# On-demand acceptance (functional) tests against a GitHub-hosted Windows runner.
+# Acceptance (functional) tests against GitHub-hosted Windows runners.
 #
 # Unlike test.yml (build/vet/unit/lint on ubuntu), this workflow runs the real
 # acceptance suite (TF_ACC=1, build tag `acceptance`) that drives the provider
@@ -10,32 +10,33 @@
 # pull requests, and this repository is public (see testacc-lab-container.yml
 # for the self-hosted counterpart).
 #
-# Layout (timings from runs 40750546504 and 40766054855, refreshed after the
-# misc split in #308):
+# Layout:
 #
-#   * windows_feature write tests are the floor: Install-WindowsFeature and
-#     Get-WindowsFeature cost ~6.5min per test, and DISM is machine-global, so
-#     TestAccWindowsFeature_Basic and _Import each keep a dedicated runner.
-#     Wall time for the whole workflow is bounded by these two jobs (~8min).
-#   * Every other family takes 4-6min run sequentially, so each gets its own
-#     runner; the smallest ones (scheduling, feature data source, packages and
-#     the catch-all) used to share one misc runner, but that lane kept growing
-#     (107 tests: the new standalone/collection data sources all land in
-#     `rest` until they earn their own group) and started hitting the 45min
-#     job timeout and out-of-memory failures on 4-vCPU runners. It is now
-#     split in two balanced lanes (~54 vs ~53 tests), misc-core and misc-rest.
-#     Groups are defined in .github/testacc-groups.json.
+#   * `plan` (ubuntu) decides what to run (.github/scripts/testacc-plan.py) and
+#     cross-compiles the acceptance test binary once for every Windows job, so
+#     the Windows runners need no Go toolchain, module download or cache save
+#     (that alone used to cost ~3min per job).
+#   * Pull requests are selective: only the acceptance tests of the resource
+#     families whose files changed run (resource_windows_<x>*.go,
+#     datasource_windows_<x>*.go, winclient/<x>*.go), password auth only,
+#     packed in lanes of at most 30 tests. A change to shared code (transport,
+#     provider wiring, acceptance helpers, go.mod/go.sum, this CI) runs the
+#     full suite instead; unit-test-only changes run nothing here.
+#   * Pushes to main and workflow_dispatch run the full suite, the safety net
+#     for cross-resource regressions a selective PR run cannot see.
+#   * Full runs use `githubLanes` from .github/testacc-groups.json:
+#     windows_feature write tests cost ~6.5min each (DISM is machine-global),
+#     so TestAccWindowsFeature_Basic and _Import keep a dedicated runner and
+#     bound the wall time; every other family gets its own runner. Public-key
+#     auth only changes the SSH handshake, so it skips the two feature jobs.
+#   * Groups marked `githubHosted: false` (IIS: the windows-latest image never
+#     provides the WebAdministration module, so those tests spent ~7min
+#     installing IIS only to skip) are left to testacc-lab-container.yml.
 #   * Do NOT run several families concurrently on one runner: tried in
 #     40766054855, the tests are CPU/memory bound on a 4-vCPU windows-latest
 #     (terraform, provider and remote PowerShell all run on the same box).
 #     Each family took 2-3x longer, nothing was gained in wall time, and the
 #     runner ran out of memory ("The paging file is too small").
-#   * Public-key auth only changes the SSH handshake, not what the provider
-#     does once connected, so it skips the two windows_feature floor jobs.
-#
-# That is 10 runners per run instead of 8 (one extra misc lane per auth
-# mode), for a shorter wall time: less pressure on the account's
-# concurrent-job limit, which test.yml and other PRs share.
 
 name: testacc-windows
 
@@ -43,20 +44,26 @@ on:
   workflow_dispatch:
     inputs:
       run_filter:
-        description: "Value passed to `go test -run` (regexp). Replaces the group split: one job per auth mode (`misc-core`, `misc-rest`) runs it; the other jobs skip their tests."
+        description: "Value passed to `go test -run` (regexp). Replaces the group split: one job per auth mode runs it."
         required: false
         default: ""
   # A transport change that only breaks against a real Windows sshd would
   # otherwise reach main unnoticed: the unit suite never dials a Windows host.
   pull_request:
     branches: [main]
-    paths:
+    paths: &acc-paths
       - "internal/winclient/**"
       - "internal/provider/**"
+      - "go.mod"
+      - "go.sum"
       - ".github/workflows/testacc-windows.yml"
       - ".github/scripts/Invoke-AccTests.ps1"
+      - ".github/scripts/testacc-plan.py"
       - ".github/testacc-groups.json"
       - ".github/testacc-allowed-skips.json"
+  push:
+    branches: [main]
+    paths: *acc-paths
 
 permissions:
   contents: read
@@ -66,40 +73,70 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: plan & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The diff needs the merge base of the PR.
+          fetch-depth: 0
+
+      - name: Plan acceptance jobs
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          RUN_FILTER: ${{ inputs.run_filter }}
+        run: python3 .github/scripts/testacc-plan.py --event "$EVENT" --base "$BASE" --head "${HEAD:-HEAD}" --run-filter "$RUN_FILTER"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        if: steps.plan.outputs.mode != 'none'
+        with:
+          # Canonical toolchain: track the version pinned in go.mod.
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build acceptance test binary (windows/amd64)
+        if: steps.plan.outputs.mode != 'none'
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go test -c -tags acceptance -o provider-acc.test.exe ./internal/provider/
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: steps.plan.outputs.mode != 'none'
+        with:
+          name: provider-acc-test
+          path: provider-acc.test.exe
+          retention-days: 1
+          if-no-files-found: error
+
   acceptance:
     name: acceptance (${{ matrix.auth }}, ${{ matrix.name }})
+    needs: plan
+    if: needs.plan.outputs.mode != 'none'
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # `lanes` holds group names from .github/testacc-groups.json; '+'
-          # runs them one after the other in a single test process.
-          # The old single misc lane (scheduling+feature-datasource+packages+
-          # network+security-sharing+rest, ~107 tests) is split in two
-          # balanced lanes so no single runner carries the whole catch-all.
-          - { auth: password, name: feature-basic, lanes: feature-basic }
-          - { auth: password, name: feature-import, lanes: feature-import }
-          - { auth: password, name: storage, lanes: storage }
-          - { auth: password, name: identity-net, lanes: identity-net }
-          - { auth: password, name: misc-core, lanes: scheduling+feature-datasource+packages, filter: true }
-          - { auth: password, name: misc-rest, lanes: network+security-sharing+rest, filter: true }
-          - { auth: publickey, name: storage, lanes: storage }
-          - { auth: publickey, name: identity-net, lanes: identity-net }
-          - { auth: publickey, name: misc-core, lanes: scheduling+feature-datasource+packages, filter: true }
-          - { auth: publickey, name: misc-rest, lanes: network+security-sharing+rest, filter: true }
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          # Canonical toolchain: track the version pinned in go.mod.
-          go-version-file: go.mod
-          cache: true
+          name: provider-acc-test
+          path: ${{ runner.temp }}
 
       # Provision the runner as its own SSH target. A dedicated local admin
       # with a random password is used instead of the runner account so no
@@ -237,16 +274,12 @@ jobs:
           }
           Write-Host "Public-key authentication confirmed"
 
-      # Built as a separate step so the compile time shows apart from the
-      # test time.
-      - name: Build acceptance test binary
-        run: go test -c -tags acceptance -o "$env:RUNNER_TEMP\provider-acc.test.exe" ./internal/provider/
-
       - name: Run acceptance tests
-        if: inputs.run_filter == '' || matrix.filter
         env:
           TF_ACC: "1"
-          RUN_FILTER: ${{ inputs.run_filter }}
+          # Planned per job: empty runs the `lanes` groups, otherwise a
+          # `go test -run` regexp (selective PR lanes, run_filter).
+          RUN_FILTER: ${{ matrix.run }}
         run: |
           # Each auth job proves its own path: the key job runs without a
           # password, the password job without a key.
@@ -263,3 +296,21 @@ jobs:
             -AllowedSkipsFile (Join-Path $env:GITHUB_WORKSPACE '.github\testacc-allowed-skips.json') `
             -Title 'acceptance (${{ matrix.auth }}, ${{ matrix.name }})'
           exit $LASTEXITCODE
+
+  # Single stable check name whatever the planned matrix looks like (it changes
+  # per PR), suitable as a required status check.
+  result:
+    name: testacc-windows result
+    needs: [plan, acceptance]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check acceptance outcome
+        env:
+          PLAN: ${{ needs.plan.result }}
+          MODE: ${{ needs.plan.outputs.mode }}
+          ACC: ${{ needs.acceptance.result }}
+        run: |
+          echo "plan=$PLAN mode=$MODE acceptance=$ACC"
+          [ "$PLAN" = success ] || exit 1
+          [ "$MODE" = none ] || [ "$ACC" = success ]

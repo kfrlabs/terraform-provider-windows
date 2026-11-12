@@ -201,7 +201,7 @@ jobs:
           & ./.github/scripts/Invoke-AccTests.ps1 `
             -Binary "$env:RUNNER_TEMP\provider-acc.test.exe" `
             -WorkingDirectory (Join-Path $env:GITHUB_WORKSPACE 'internal\provider') `
-            -Lanes 'feature-basic+feature-import+feature-datasource storage+identity-net+scheduling+packages+network+security-sharing+rest' `
+            -Lanes 'feature-basic+feature-import+feature-datasource storage+identity-net+scheduling+packages+network+security-sharing+iis+rest' `
             -RunFilter "$env:RUN_FILTER" `
             -LogDirectory (Join-Path $env:RUNNER_TEMP 'testacc-logs') `
             -Timeout 50m `
