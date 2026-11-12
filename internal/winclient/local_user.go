@@ -21,11 +21,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 )
 
-// Compile-time assertion: LocalUserClientImpl satisfies LocalUserClient.
+// Compile-time assertions: LocalUserClientImpl satisfies LocalUserClient and
+// the read-only LocalUserLister inventory interface (issue #297).
 var _ LocalUserClient = (*LocalUserClientImpl)(nil)
+var _ LocalUserLister = (*LocalUserClientImpl)(nil)
 
 // LocalUserClientImpl is the PowerShell/SSH-backed LocalUserClient.
 type LocalUserClientImpl struct {
@@ -172,6 +177,10 @@ func mapLUKind(k string) LocalUserErrorKind {
 		return LocalUserErrorPermission
 	case "invalid_name":
 		return LocalUserErrorInvalidName
+	case "invalid_parameter":
+		return LocalUserErrorInvalidParameter
+	case "unsupported_on_domain_controller":
+		return LocalUserErrorUnsupportedOnDC
 	default:
 		return LocalUserErrorUnknown
 	}
@@ -688,4 +697,113 @@ try {
 		return nil, err
 	}
 	return parseUserData("import_by_sid", resp.Data)
+}
+
+// ---------------------------------------------------------------------------
+// List — read-only inventory for windows_local_users (issue #297)
+// ---------------------------------------------------------------------------
+
+// IsBuiltinLocalUserSID reports whether sid belongs to a built-in account:
+// the RID (trailing numeric component after the last '-') is below 1000
+// (Administrator 500, Guest 501, DefaultAccount 503, WDAGUtilityAccount
+// 504, ...). A non-numeric trailing component is not built-in.
+func IsBuiltinLocalUserSID(sid string) bool {
+	rid := sid
+	if i := strings.LastIndex(sid, "-"); i >= 0 {
+		rid = sid[i+1:]
+	}
+	n, err := strconv.Atoi(rid)
+	if err != nil {
+		return false
+	}
+	return n < 1000
+}
+
+// buildLocalUserListScript renders the inventory script: the domain
+// controller guard FIRST (LocalAccounts addresses the domain database on a
+// DC, not local users), then the same LocalAccounts module-availability
+// check Create uses (probing Get-LocalUser, the cmdlet List needs, with the
+// identical message), then Get-LocalUser over all accounts projected through
+// the shared Get-UserData hashtable — the exact projection Read uses.
+func buildLocalUserListScript() string {
+	return `
+# DC guard (must run first): on a domain controller the LocalAccounts
+# cmdlets address the domain database, so a local-user inventory is meaningless.
+$domainRole = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).DomainRole
+if ($domainRole -ge 4) {
+    Emit-Err 'unsupported_on_domain_controller' ("local user inventory is not supported on a domain controller (DomainRole " + $domainRole + "); run this data source against a member server or workstation instead") @{ domain_role = "$domainRole"; step = 'dc_guard' }
+    return
+}
+
+# Module guard (same check and message as Create; probes the cmdlet List uses).
+if (-not (Get-Command Get-LocalUser -ErrorAction SilentlyContinue)) {
+    Emit-Err 'unknown' 'Microsoft.PowerShell.LocalAccounts module not available; requires Windows Server 2016 / Windows 10 or later' @{}
+    return
+}
+
+try {
+    $users = Get-LocalUser -ErrorAction Stop
+    if ($null -eq $users) { $data = @() } else { $data = @($users | ForEach-Object { Get-UserData $_ }) }
+    Emit-OK $data
+} catch {
+    $kind = Classify-LU $_.Exception.Message $_.FullyQualifiedErrorId
+    Emit-Err $kind $_.Exception.Message @{ step = 'list_local_users' }
+}
+`
+}
+
+// List returns every local user account in a single round-trip, filtered
+// Go-side and sorted by name (case-insensitive). An empty inventory match is
+// valid (empty slice, nil error). Filters are validated before any host
+// call; an invalid filter never reaches the host.
+//
+// NOTE (issue #297): per the ADR-0009 standalone rule a sibling collection
+// would normally get a new <r>.go file pair, but List reuses the exact
+// per-user JSON projection of Read (the Get-UserData hashtable in luPsHeader
+// plus parseUserData), so it lives in this file to keep the two projections
+// adjacent. The Read/Create/Update/Delete/Import scripts are left
+// byte-identical; only this List block and mapLUKind are new.
+func (lc *LocalUserClientImpl) List(ctx context.Context, filter LocalUserFilter) ([]UserState, error) {
+	var nameRe *regexp.Regexp
+	if strings.TrimSpace(filter.NameRegex) != "" {
+		var err error
+		nameRe, err = regexp.Compile(filter.NameRegex)
+		if err != nil {
+			return nil, NewLocalUserError(LocalUserErrorInvalidParameter,
+				fmt.Sprintf("name_regex %q is not a valid regular expression: %v", filter.NameRegex, err), nil,
+				map[string]string{"name_regex": filter.NameRegex})
+		}
+	}
+
+	resp, err := lc.runLUEnvelope(ctx, "list", "", buildLocalUserListScript())
+	if err != nil {
+		return nil, err
+	}
+	var raws []json.RawMessage
+	if jerr := json.Unmarshal(resp.Data, &raws); jerr != nil {
+		return nil, NewLocalUserError(LocalUserErrorUnknown,
+			"failed to parse LocalUser list JSON", jerr,
+			map[string]string{"host": lc.c.cfg.Host})
+	}
+	out := make([]UserState, 0, len(raws))
+	for _, raw := range raws {
+		us, perr := parseUserData("list", raw)
+		if perr != nil {
+			return nil, perr
+		}
+		if nameRe != nil && !nameRe.MatchString(us.Name) {
+			continue
+		}
+		if filter.Enabled != nil && us.Enabled != *filter.Enabled {
+			continue
+		}
+		if !filter.IncludeBuiltin && IsBuiltinLocalUserSID(us.SID) {
+			continue
+		}
+		out = append(out, *us)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
 }

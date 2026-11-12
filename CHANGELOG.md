@@ -113,6 +113,31 @@ All notable changes to this project will be documented in this file.
   round-trip); `timeouts.read` defaults to 10m like the other
   collection-family data sources.
 
+- New `windows_local_users` collection data source (#297): read-only
+  inventory of every local user account on the remote Windows host in a
+  single round-trip — the sibling collection of `windows_local_user`.
+  Every `users` element carries the singular data source attribute set
+  (`sid`, `name`, `full_name`, `description`, `enabled`,
+  `password_never_expires`, `user_may_not_change_password`,
+  `account_never_expires`, `account_expires`, `last_logon`,
+  `password_last_set`, `principal_source`) plus `is_builtin` (derived
+  Go-side from the SID RID: numeric and below 1000), with `names` and
+  `sids` convenience lists in the same order. Optional filters:
+  `name_regex` (RE2 on the SAM name, case-sensitive unless prefixed
+  with `(?i)`), `enabled` (null means all) and `include_builtin`
+  (null defaults to true). `users` is sorted by name
+  (case-insensitive); an empty match is a valid empty list. The data
+  source ID is the hex SHA-256 of the normalised filter set. Backed by
+  the new `winclient.LocalUserLister` interface (`List` on the existing
+  `LocalUserClientImpl`, sharing the exact `Get-UserData` projection and
+  Go-side mapping of the sibling `Read` — no new winclient file, a
+  documented deviation from the ADR-0009 standalone rule; `LocalUserClient`
+  and its fakes are untouched); running on a domain controller
+  (`DomainRole >= 4`) is a typed `unsupported_on_domain_controller`
+  error since the LocalAccounts cmdlets address the domain database
+  there. `timeouts.read` defaults to 10m like the other
+  collection-family data sources.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
