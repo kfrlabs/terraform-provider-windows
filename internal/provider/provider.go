@@ -284,6 +284,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 	return []func() resource.Resource{
 		NewWindowsCertificateResource,
 		NewWindowsDirectoryResource,
+		NewWindowsDiskResource,
 		NewWindowsDNSClientResource,
 		NewWindowsDomainMembershipResource,
 		NewWindowsEnvironmentVariableResource,
@@ -315,6 +316,7 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 	return []func() datasource.DataSource{
 		NewWindowsCertificateDataSource,
 		NewWindowsDirectoryDataSource,
+		NewWindowsDiskDataSource,
 		NewWindowsDNSClientDataSource,
 		NewWindowsDomainMembershipDataSource,
 		NewWindowsEnvironmentVariableDataSource,
