@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-05-08
+- Amended: 2026-11-12 (#294)
 - Supersedes: none
 - Relates to: ADR-0008 (decoupled chain)
 
@@ -89,3 +90,29 @@ Unchanged. ATTEMPT counters, fix-loop boundaries (max 3), ESCALATE on schema/spe
 - **Parallel `*-ds` task set**: rejected — 80% prompt duplication, drift guaranteed.
 - **Detect `KIND` from spec.yaml only (no input plumbing)**: rejected — `schema-architect` needs `KIND` before reading the spec on disk to decide which template to invoke; cleaner to make it a first-class input.
 - **Separate winclient `<R>DataSourceClient` interface and types**: rejected — the existing pattern (single `<R>Client` with `Read` reused by the data source) is simpler, avoids duplication, and matches all existing data sources in the repo (see `windows_environment_variable`).
+
+## Amendment 2026-11-12 — Standalone and collection data sources
+
+Standalone data sources (no sibling resource, e.g. `windows_os_info` in
+#294) and collection data sources (e.g. `windows_local_users` alongside
+`windows_local_user`) extend the conventions above without changing the
+existing rows:
+
+- Plural naming for collections: a collection data source takes the plural
+  Terraform type name next to its singular sibling (`windows_local_users`
+  next to `windows_local_user`), never a `_list` / `_all` suffix.
+- A standalone data source gets a new winclient file pair
+  `internal/winclient/<r>.go` + `internal/winclient/<r>_types.go` following
+  the resource layout; the "reuses sibling resource's `Read`" rule cannot
+  apply when there is no sibling.
+- Collection outputs are `ListNestedAttribute`s sorted deterministically,
+  with optional `Optional` filter arguments; an empty result is a valid
+  empty list, never an error.
+- To add `List` without breaking existing fakes, declare a small dedicated
+  `<R>Lister` interface (e.g. `WindowsLocalUserLister`) that the concrete
+  client satisfies, instead of widening the existing client interface.
+
+The `_info` / `_data` suffix ban (Terraform naming, CRITICAL) only
+disambiguates sibling pairs that would otherwise share a type name. It does
+not forbid descriptive names where no sibling resource exists, so
+`windows_os_info` is allowed: no `windows_os` resource exists or is planned.
