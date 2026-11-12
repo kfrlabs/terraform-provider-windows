@@ -88,6 +88,31 @@ All notable changes to this project will be documented in this file.
   valid, dedicated `<R>Lister` interface) and records that the `_info`
   suffix ban only disambiguates sibling pairs.
 
+- New standalone `windows_installed_software` collection data source
+  (#296): read-only inventory of the Uninstall registry hives on the
+  remote Windows host — `name`, `version`, `publisher`, `install_date`
+  (YYYY-MM-DD, `""` when missing or unparseable), `install_location`,
+  `product_code` (MSI ProductCode GUID normalised to upper-case with
+  braces, `""` for non-MSI key names), `is_msi`, `architecture` (`x86`
+  for the WOW6432Node hive, otherwise the host architecture),
+  `scope` (`machine`/`user`) with `user_sid`, `estimated_size_kb`,
+  `uninstall_string` / `quiet_uninstall_string` and `registry_key`.
+  Optional filters: `name_regex`, `publisher_regex` (RE2, Go-side),
+  `product_code` (any common spelling, the only filter pre-applied
+  host-side), `include_system_components`, `include_updates` and
+  `include_user_installs` (additionally enumerates the Uninstall keys of
+  the loaded per-user hives under `HKU`). `packages` is sorted by name
+  (case-insensitive), then version, then registry key; an empty match is
+  a valid empty list, and `skipped_entries` counts keys skipped because
+  their values were unreadable (DisplayName-less keys are silently
+  omitted, not counted). The machine hives are shared with
+  `windows_legacy_package` through the new
+  `UninstallRegistryHivePaths` constant (kept aligned by test);
+  `Win32_Product` is never queried. Backed by a new
+  `winclient.WindowsInstalledSoftwareClient` (`List`, single
+  round-trip); `timeouts.read` defaults to 10m like the other
+  collection-family data sources.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
