@@ -324,6 +324,7 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsFirewallProfileDataSource,
 		NewWindowsHostnameDataSource,
 		NewWindowsIISAppPoolDataSource,
+		NewWindowsInstalledSoftwareDataSource,
 		NewWindowsLegacyPackageDataSource,
 		NewWindowsLocalGroupDataSource,
 		NewWindowsLocalGroupMemberDataSource,

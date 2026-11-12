@@ -19,6 +19,20 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// Shared Uninstall hive paths
+// ---------------------------------------------------------------------------
+
+// UninstallRegistryHivePaths lists the machine-wide Uninstall registry hives
+// scanned for installed software. Shared with windows_installed_software.
+// The PS literal in Get-LpUninstallEntry is the second source of truth for
+// the same hive set; keep both aligned (see TestUninstallHivesAligned).
+// Kept as var (slices cannot be const); the test pins its exact contents.
+var UninstallRegistryHivePaths = []string{
+	"HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+	"HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+}
+
+// ---------------------------------------------------------------------------
 // LegacyPackageInput — desired configuration consumed by Create / Update
 // ---------------------------------------------------------------------------
 
