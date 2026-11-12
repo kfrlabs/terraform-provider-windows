@@ -153,7 +153,8 @@ type DomainUnjoinInput struct {
 
 // DomainMembershipState is the observed domain-membership state of a host.
 type DomainMembershipState struct {
-	// Domain is the domain reported by Win32_ComputerSystem.Domain.
+	// Domain is the DNS name of the joined domain (Win32_ComputerSystem.Domain).
+	// Empty when the host is not domain-joined — never the workgroup name.
 	Domain string
 	// PartOfDomain is true when the host is domain-joined.
 	PartOfDomain bool
@@ -163,7 +164,33 @@ type DomainMembershipState struct {
 	PendingReboot bool
 	// SecureChannelOk is the Test-ComputerSecureChannel result.
 	// Informational only: it may be false while a join reboot is pending.
+	// Meaningless when SecureChannelNull is true; kept as false then.
 	SecureChannelOk bool
+	// SecureChannelNull reports that no secure-channel result exists: the
+	// host is not domain-joined, or the read skipped the
+	// Test-ComputerSecureChannel probe (DomainMembershipReadOptions).
+	// The resource path ignores this flag and keeps reading SecureChannelOk
+	// (false when null, matching the historical workgroup behavior); the
+	// data source maps it to a null secure_channel_ok.
+	SecureChannelNull bool
+	// Workgroup is the workgroup name (Win32_ComputerSystem.Workgroup).
+	// Empty when the host is domain-joined.
+	Workgroup string
+	// DNSHostName is the fully qualified host name
+	// (Win32_ComputerSystem.DNSHostName).
+	DNSHostName string
+	// NetBIOSDomain is the NetBIOS (short) domain name, resolved from
+	// Win32_NTDomain with a first-DNS-label fallback. Empty when the host
+	// is not domain-joined.
+	NetBIOSDomain string
+	// DomainRole is the Win32_ComputerSystem.DomainRole value mapped to its
+	// documented name (StandaloneWorkstation, MemberWorkstation,
+	// StandaloneServer, MemberServer, BackupDomainController,
+	// PrimaryDomainController).
+	DomainRole string
+	// MachineID is the stable per-machine identifier
+	// (HKLM:\SOFTWARE\Microsoft\Cryptography\MachineGuid).
+	MachineID string
 }
 
 // DomainJoinResult is the side-channel returned by Join.
@@ -182,11 +209,25 @@ type DomainUnjoinResult struct {
 	RebootScheduled bool
 }
 
+// DomainMembershipReadOptions tunes ReadWithOptions.
+type DomainMembershipReadOptions struct {
+	// CheckSecureChannel controls the Test-ComputerSecureChannel probe.
+	// True preserves the historical Read behavior. False skips the probe
+	// (no domain-controller round-trip) for inventory-only reads; the
+	// state then reports SecureChannelNull with SecureChannelOk false.
+	CheckSecureChannel bool
+}
+
 // WindowsDomainMembershipClient is the contract for the
-// windows_domain_membership resource.
+// windows_domain_membership resource and data source.
 type WindowsDomainMembershipClient interface {
 	// Read returns the current domain-membership state of the target host.
+	// Equivalent to ReadWithOptions with CheckSecureChannel=true.
 	Read(ctx context.Context) (*DomainMembershipState, error)
+
+	// ReadWithOptions returns the current domain-membership state of the
+	// target host, optionally skipping the secure-channel probe.
+	ReadWithOptions(ctx context.Context, opts DomainMembershipReadOptions) (*DomainMembershipState, error)
 
 	// Join joins the host to the given domain. The pre-flight refuses hosts
 	// that are already joined (ErrDomainMembershipAlreadyJoined for the

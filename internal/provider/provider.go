@@ -315,6 +315,7 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsCertificateDataSource,
 		NewWindowsDirectoryDataSource,
 		NewWindowsDNSClientDataSource,
+		NewWindowsDomainMembershipDataSource,
 		NewWindowsEnvironmentVariableDataSource,
 		NewWindowsFeatureDataSource,
 		NewWindowsFileDataSource,

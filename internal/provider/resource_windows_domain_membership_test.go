@@ -50,6 +50,13 @@ func (f *fakeDomainMembershipClient) Read(_ context.Context) (*winclient.DomainM
 	return f.readOut, f.readErr
 }
 
+// ReadWithOptions mirrors Read for resource tests: the resource never
+// skips the secure-channel probe.
+func (f *fakeDomainMembershipClient) ReadWithOptions(_ context.Context, _ winclient.DomainMembershipReadOptions) (*winclient.DomainMembershipState, error) {
+	f.readCalls++
+	return f.readOut, f.readErr
+}
+
 func (f *fakeDomainMembershipClient) Join(_ context.Context, in winclient.DomainJoinInput) (*winclient.DomainMembershipState, *winclient.DomainJoinResult, error) {
 	f.joinCalls++
 	f.joinInput = &in

@@ -93,17 +93,43 @@ function Test-DMPendingReboot {
   return $false
 }
 
-function Read-DomainMembershipState {
+function Read-DomainMembershipState([bool]$CheckSecureChannel = $true) {
   $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
   $pending = Test-DMPendingReboot
-  $sc = $false
-  try { $sc = [bool](Test-ComputerSecureChannel -ErrorAction Stop) } catch { $sc = $false }
+  $partOfDomain = [bool]$cs.PartOfDomain
+  $domain = ""
+  if ($partOfDomain) { $domain = [string]$cs.Domain }
+  $workgroup = ""
+  if (-not $partOfDomain) { $workgroup = [string]$cs.Workgroup }
+  $netbiosDomain = ""
+  if ($partOfDomain) {
+    try {
+      $domains = @(Get-CimInstance -ClassName Win32_NTDomain -ErrorAction Stop)
+      $match = $domains | Where-Object { $_.DomainName -eq $cs.Domain -or $_.DnsForestName -eq $cs.Domain } | Select-Object -First 1
+      if ($null -eq $match) { $match = $domains | Select-Object -First 1 }
+      if (($null -ne $match) -and $match.DomainName) { $netbiosDomain = [string]$match.DomainName }
+    } catch { $netbiosDomain = "" }
+    if ([string]::IsNullOrEmpty($netbiosDomain) -and $domain.Contains('.')) {
+      $netbiosDomain = $domain.Split('.')[0].ToUpperInvariant()
+    }
+  }
+  $sc = $null
+  if ($partOfDomain -and $CheckSecureChannel) {
+    try { $sc = [bool](Test-ComputerSecureChannel -ErrorAction Stop) } catch { $sc = $false }
+  }
+  $machineId = ""
+  try { $machineId = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid -ErrorAction Stop).MachineGuid } catch { $machineId = "" }
   return [ordered]@{
-    domain            = [string]$cs.Domain
-    part_of_domain    = [bool]$cs.PartOfDomain
+    domain            = $domain
+    part_of_domain    = $partOfDomain
     computer_name     = [string]$cs.Name
+    workgroup         = $workgroup
+    dns_host_name     = [string]$cs.DNSHostName
+    netbios_domain    = $netbiosDomain
+    domain_role       = [int]$cs.DomainRole
+    machine_id        = [string]$machineId
     pending_reboot    = [bool]$pending
-    secure_channel_ok = [bool]$sc
+    secure_channel_ok = $sc
   }
 }
 `
@@ -191,32 +217,146 @@ func mapDomainMembershipKind(k string) DomainMembershipErrorKind {
 }
 
 // domainMembershipStatePayload mirrors the JSON object produced by
-// Read-DomainMembershipState.
+// Read-DomainMembershipState. SecureChannelOk is a pointer so a JSON null
+// (no probe: workgroup host, or CheckSecureChannel=false) unmarshals to nil
+// instead of collapsing to false. Older hosts omit the newer keys; JSON
+// unmarshal leaves them at their zero values.
 type domainMembershipStatePayload struct {
 	Domain          string `json:"domain"`
 	PartOfDomain    bool   `json:"part_of_domain"`
 	ComputerName    string `json:"computer_name"`
 	PendingReboot   bool   `json:"pending_reboot"`
-	SecureChannelOk bool   `json:"secure_channel_ok"`
+	SecureChannelOk *bool  `json:"secure_channel_ok"`
+	Workgroup       string `json:"workgroup"`
+	DNSHostName     string `json:"dns_host_name"`
+	NetBIOSDomain   string `json:"netbios_domain"`
+	DomainRole      int    `json:"domain_role"`
+	MachineID       string `json:"machine_id"`
+}
+
+// mapDomainRole translates a Win32_ComputerSystem.DomainRole value (0-5) to
+// its documented name. Unknown values are a hard error, never a silent
+// default: an unmapped role means the host reports something this provider
+// does not understand.
+func mapDomainRole(role int) (string, error) {
+	switch role {
+	case 0:
+		return "StandaloneWorkstation", nil
+	case 1:
+		return "MemberWorkstation", nil
+	case 2:
+		return "StandaloneServer", nil
+	case 3:
+		return "MemberServer", nil
+	case 4:
+		return "BackupDomainController", nil
+	case 5:
+		return "PrimaryDomainController", nil
+	default:
+		return "", NewDomainMembershipError(DomainMembershipErrorUnknown,
+			fmt.Sprintf("unknown domain role %d reported by Win32_ComputerSystem", role), nil, nil)
+	}
 }
 
 // toDomainMembershipState projects a payload onto the public state type.
-func toDomainMembershipState(p *domainMembershipStatePayload) *DomainMembershipState {
+// The Go layer — not PowerShell — enforces the empty-string rules so they
+// stay unit-testable: Domain and NetBIOSDomain are "" when the host is not
+// joined (never the workgroup name), Workgroup is "" when it is, and a null
+// secure_channel_ok (or any workgroup host) surfaces as SecureChannelNull
+// with SecureChannelOk false, preserving the historical resource read.
+func toDomainMembershipState(p *domainMembershipStatePayload) (*DomainMembershipState, error) {
+	if p == nil {
+		return nil, nil
+	}
+	role, err := mapDomainRole(p.DomainRole)
+	if err != nil {
+		return nil, err
+	}
+	st := &DomainMembershipState{
+		Domain:        p.Domain,
+		PartOfDomain:  p.PartOfDomain,
+		ComputerName:  p.ComputerName,
+		Workgroup:     p.Workgroup,
+		DNSHostName:   p.DNSHostName,
+		NetBIOSDomain: p.NetBIOSDomain,
+		DomainRole:    role,
+		MachineID:     p.MachineID,
+		PendingReboot: p.PendingReboot,
+	}
+	if p.SecureChannelOk != nil {
+		st.SecureChannelOk = *p.SecureChannelOk
+	}
+	if !p.PartOfDomain {
+		st.Domain = ""
+		st.NetBIOSDomain = ""
+		st.SecureChannelNull = true
+	} else {
+		st.Workgroup = ""
+		if p.SecureChannelOk == nil {
+			st.SecureChannelNull = true
+		}
+	}
+	return st, nil
+}
+
+// toDomainMembershipStateLenient projects a payload onto the public state
+// type for the mutation paths (Join/Unjoin). A successful mutation must not
+// collapse into a total failure just because the post-operation state
+// reports a Win32_ComputerSystem.DomainRole this provider does not know
+// yet: the reboot side-channel and the rest of the state are still valid.
+// Unknown roles map to "" instead of erroring; Read/ReadWithOptions keep
+// the strict mapping above and fail loudly per spec.
+func toDomainMembershipStateLenient(p *domainMembershipStatePayload) *DomainMembershipState {
 	if p == nil {
 		return nil
 	}
-	return &DomainMembershipState{
-		Domain:          p.Domain,
-		PartOfDomain:    p.PartOfDomain,
-		ComputerName:    p.ComputerName,
-		PendingReboot:   p.PendingReboot,
-		SecureChannelOk: p.SecureChannelOk,
+	role, err := mapDomainRole(p.DomainRole)
+	if err != nil {
+		role = ""
 	}
+	st := &DomainMembershipState{
+		Domain:        p.Domain,
+		PartOfDomain:  p.PartOfDomain,
+		ComputerName:  p.ComputerName,
+		Workgroup:     p.Workgroup,
+		DNSHostName:   p.DNSHostName,
+		NetBIOSDomain: p.NetBIOSDomain,
+		DomainRole:    role,
+		MachineID:     p.MachineID,
+		PendingReboot: p.PendingReboot,
+	}
+	if p.SecureChannelOk != nil {
+		st.SecureChannelOk = *p.SecureChannelOk
+	}
+	if !p.PartOfDomain {
+		st.Domain = ""
+		st.NetBIOSDomain = ""
+		st.SecureChannelNull = true
+	} else {
+		st.Workgroup = ""
+		if p.SecureChannelOk == nil {
+			st.SecureChannelNull = true
+		}
+	}
+	return st
 }
 
 // Read returns the current domain-membership state of the target host.
+// It delegates to ReadWithOptions with the secure-channel probe enabled,
+// preserving the historical resource behavior.
 func (d *DomainMembershipClient) Read(ctx context.Context) (*DomainMembershipState, error) {
-	script := "try { $s = Read-DomainMembershipState; Emit-OK $s } catch { Emit-Err (Classify-DomainMembership $_.Exception.Message) $_.Exception.Message @{} }"
+	return d.ReadWithOptions(ctx, DomainMembershipReadOptions{CheckSecureChannel: true})
+}
+
+// ReadWithOptions returns the current domain-membership state of the target
+// host, optionally skipping the Test-ComputerSecureChannel probe
+// (CheckSecureChannel=false). Skipping avoids a domain-controller
+// round-trip for inventory-only reads such as the
+// windows_domain_membership data source; the state then reports
+// SecureChannelNull with SecureChannelOk false.
+func (d *DomainMembershipClient) ReadWithOptions(ctx context.Context, opts DomainMembershipReadOptions) (*DomainMembershipState, error) {
+	script := fmt.Sprintf("try { $s = Read-DomainMembershipState -CheckSecureChannel:$%s; Emit-OK $s } catch { Emit-Err (Classify-DomainMembership $_.Exception.Message) $_.Exception.Message @{} }",
+		psBool(opts.CheckSecureChannel))
 	resp, err := d.runDomainMembershipEnvelope(ctx, "read", script, nil)
 	if err != nil {
 		return nil, err
@@ -225,7 +365,7 @@ func (d *DomainMembershipClient) Read(ctx context.Context) (*DomainMembershipSta
 	if jerr := json.Unmarshal(resp.Data, &payload); jerr != nil {
 		return nil, NewDomainMembershipError(DomainMembershipErrorUnknown, "failed to parse domain membership state", jerr, map[string]string{"host": d.c.cfg.Host})
 	}
-	return toDomainMembershipState(&payload), nil
+	return toDomainMembershipState(&payload)
 }
 
 // psDomainJoinBody runs the join pre-flight, consumes the credential from
@@ -316,7 +456,8 @@ func (d *DomainMembershipClient) Join(ctx context.Context, in DomainJoinInput) (
 	if payload.State == nil {
 		return nil, nil, NewDomainMembershipError(DomainMembershipErrorUnknown, "missing state in payload", nil, map[string]string{"domain": in.Domain})
 	}
-	return toDomainMembershipState(payload.State), &DomainJoinResult{
+	state := toDomainMembershipStateLenient(payload.State)
+	return state, &DomainJoinResult{
 		RebootScheduled: payload.RebootScheduled,
 	}, nil
 }
@@ -393,7 +534,8 @@ func (d *DomainMembershipClient) Unjoin(ctx context.Context, in DomainUnjoinInpu
 	if payload.State == nil {
 		return nil, nil, NewDomainMembershipError(DomainMembershipErrorUnknown, "missing state in payload", nil, nil)
 	}
-	return toDomainMembershipState(payload.State), &DomainUnjoinResult{
+	state := toDomainMembershipStateLenient(payload.State)
+	return state, &DomainUnjoinResult{
 		AlreadyAbsent:   payload.AlreadyAbsent,
 		RebootScheduled: payload.RebootScheduled,
 	}, nil
