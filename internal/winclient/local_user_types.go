@@ -5,12 +5,14 @@
 //
 // File layout:
 //
-//	LocalUserErrorKind      — string enum of typed error categories (8 kinds)
+//	LocalUserErrorKind      — string enum of typed error categories (10 kinds)
 //	LocalUserError          — structured error type with Kind, Message, Context, Cause
 //	Sentinel errors          — pre-constructed *LocalUserError values for errors.Is
 //	UserInput               — input parameters for Create/Update operations
 //	UserState               — observed state returned by Read / Create / Import
 //	LocalUserClient         — granular CRUD + import interface
+//	LocalUserFilter         — List filter for the windows_local_users inventory
+//	LocalUserLister         — read-only inventory interface (collection DS)
 package winclient
 
 import (
@@ -56,6 +58,17 @@ const (
 	// LocalUserErrorInvalidName is returned when a user name fails
 	// Windows-side validation — defence-in-depth (EC-10).
 	LocalUserErrorInvalidName LocalUserErrorKind = "invalid_name"
+
+	// LocalUserErrorInvalidParameter is returned when a List filter fails
+	// Go-side validation (e.g. name_regex does not compile). No host call
+	// is made.
+	LocalUserErrorInvalidParameter LocalUserErrorKind = "invalid_parameter"
+
+	// LocalUserErrorUnsupportedOnDC is returned when List runs on a domain
+	// controller (Win32_ComputerSystem DomainRole >= 4), where the
+	// LocalAccounts cmdlets address the domain database instead of local
+	// user accounts.
+	LocalUserErrorUnsupportedOnDC LocalUserErrorKind = "unsupported_on_domain_controller"
 
 	// LocalUserErrorUnknown is the catch-all for unrecognised PowerShell
 	// errors or unexpected SSH transport failures.
@@ -151,6 +164,12 @@ var ErrLocalUserPermission = &LocalUserError{Kind: LocalUserErrorPermission}
 
 // ErrLocalUserInvalidName is a sentinel for invalid name (EC-10).
 var ErrLocalUserInvalidName = &LocalUserError{Kind: LocalUserErrorInvalidName}
+
+// ErrLocalUserInvalidParameter is a sentinel for List filter validation.
+var ErrLocalUserInvalidParameter = &LocalUserError{Kind: LocalUserErrorInvalidParameter}
+
+// ErrLocalUserUnsupportedOnDC is a sentinel for List on a domain controller.
+var ErrLocalUserUnsupportedOnDC = &LocalUserError{Kind: LocalUserErrorUnsupportedOnDC}
 
 // ErrLocalUserUnknown is a sentinel for unexpected errors.
 var ErrLocalUserUnknown = &LocalUserError{Kind: LocalUserErrorUnknown}
@@ -295,4 +314,42 @@ type LocalUserClient interface {
 
 	// ImportBySID resolves a user by SID string (SID import path).
 	ImportBySID(ctx context.Context, sid string) (*UserState, error)
+}
+
+// ---------------------------------------------------------------------------
+// LocalUserFilter / LocalUserLister — read-only inventory (issue #297)
+// ---------------------------------------------------------------------------
+
+// LocalUserFilter narrows a LocalUserLister List call. The zero value
+// matches every non-built-in local user account on the host; set
+// IncludeBuiltin to include built-in accounts.
+type LocalUserFilter struct {
+	// NameRegex is an optional RE2 regular expression matched against the
+	// SAM account name. Matching is case-sensitive; prefix the pattern
+	// with (?i) for a case-insensitive match.
+	NameRegex string
+
+	// Enabled narrows by account state when non-nil (true keeps enabled
+	// accounts, false keeps disabled ones); nil matches both.
+	Enabled *bool
+
+	// IncludeBuiltin keeps built-in accounts (SID RID below 1000, e.g.
+	// Administrator, Guest) when true; false drops them.
+	IncludeBuiltin bool
+}
+
+// LocalUserLister is the read-only inventory contract for the
+// windows_local_users collection data source.
+//
+// It is intentionally separate from LocalUserClient: adding List to
+// LocalUserClient would break every existing fake implementing that
+// interface (resource + singular data source tests). List reuses the exact
+// Get-UserData projection and parseUserData mapping of the sibling Read, so
+// both paths evolve together in local_user.go.
+type LocalUserLister interface {
+	// List returns every local user account in a single round-trip,
+	// filtered Go-side and sorted by name (case-insensitive). An empty
+	// inventory match is valid (empty slice, nil error); invalid filters
+	// return a typed invalid_parameter error without any host call.
+	List(ctx context.Context, filter LocalUserFilter) ([]UserState, error)
 }
