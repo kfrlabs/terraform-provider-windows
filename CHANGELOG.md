@@ -45,6 +45,24 @@ All notable changes to this project will be documented in this file.
   3-attempt retry (short backoff) of writes that hit the
   `applicationHost.config` file-has-changed-on-disk flake.
 
+- New standalone `windows_os_info` data source (#294): read-only view of
+  the OS inventory of the remote Windows host with no sibling resource —
+  `product_name`, `version`, `build_number` / `ubr` (combined as
+  `full_build`), `display_version`, `edition_id`, the numeric `sku` with
+  its `sku_name`, `installation_type`, `is_server` / `is_server_core`,
+  `product_type` (Workstation/DomainController/Server), `architecture`
+  (x86/x64/arm/arm64), `install_date`, `last_boot_time`, `system_drive`,
+  `windows_directory`, `os_language`, `powershell_version`; the stable
+  machine ID (HKLM MachineGuid) is exposed as the data source ID (`"current"`
+  fallback when empty). Unknown SKU / product / architecture codes degrade
+  to `""` instead of erroring. Backed by a new `winclient.OSInfoClient`
+  (`Read` in a single round-trip via the shared `runEnvelope` helper);
+  `timeouts.read` defaults to 1m. Also amends ADR-0009 with the standalone
+  and collection data source conventions (plural collection names, new
+  winclient file pair, sorted `ListNestedAttribute` outputs with empty as
+  valid, dedicated `<R>Lister` interface) and records that the `_info`
+  suffix ban only disambiguates sibling pairs.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
