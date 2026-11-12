@@ -45,6 +45,31 @@ All notable changes to this project will be documented in this file.
   3-attempt retry (short backoff) of writes that hit the
   `applicationHost.config` file-has-changed-on-disk flake.
 
+- New standalone `windows_network_adapters` collection data source (#295):
+  read-only inventory of every adapter on the remote Windows host with no
+  sibling resource — `name`, `interface_index`, `interface_description`,
+  `mac_address`, the derived `status` (`Up`/`Disconnected`/`Disabled`/
+  `NotPresent` from the `InterfaceOperationalStatus`/`MediaConnectState`/
+  `AdminStatus` numeric triple), `admin_enabled`, `link_speed_bps`
+  (`ReceiveLinkSpeed`), `media_type` / `physical_media_type` (documented
+  NDIS names, `""` when unknown), `is_physical` / `is_virtual`, `vlan_id`,
+  the `driver_*` fields, per-family `mtu_ipv4` / `mtu_ipv6` (`null` when the
+  family is unbound — 0 is never a valid MTU), `dhcp_enabled`, the sorted
+  `ipv4_addresses` / `ipv6_addresses` (canonical CIDR, host bits preserved,
+  link-local kept), `default_gateways`, `dns_servers`, `network_category`,
+  and the advisory `is_management` flag. Optional filters: `names` (exact,
+  case-insensitive), `name_regex` (RE2), `mac_address` (any common
+  spelling), `status`, `physical_only` and `include_hidden` (only the names
+  and the two bools reach the host; the rest filter Go-side). A single
+  round-trip collects `Get-NetAdapter` plus the bulk `Get-NetIPInterface` /
+  `Get-NetIPAddress` / `Get-NetRoute` (default routes) /
+  `Get-DnsClientServerAddress` / `Get-NetConnectionProfile` collections
+  joined by interface index. `adapters` is sorted by `interface_index`; an
+  empty match is a valid empty list. The data source ID is the hex SHA-256
+  of the normalised filter set. Backed by a new
+  `winclient.WindowsNetworkAdaptersClient` (`List`); `timeouts.read`
+  defaults to 10m like the other net-family data sources.
+
 - New standalone `windows_os_info` data source (#294): read-only view of
   the OS inventory of the remote Windows host with no sibling resource —
   `product_name`, `version`, `build_number` / `ubr` (combined as
