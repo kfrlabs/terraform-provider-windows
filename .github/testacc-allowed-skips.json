@@ -77,6 +77,11 @@
       "comment": "Needs a dedicated service account that CI does not provision."
     },
     {
+      "pattern": "^TestAccWindowsTimezone_",
+      "reasons": ["host zone immutable", "cannot read live time zone"],
+      "comment": "Changing the system time zone is ineffective where the target shares the host clock (lab container): the mutability probe skips instead of failing. The InvalidIANA plan-time test never skips."
+    },
+    {
       "pattern": "^TestAccWindowsIISAppPool",
       "reasons": ["IIS management tools still missing after install"],
       "comment": "The windows-latest GitHub image cannot provide the WebAdministration module (Install-WindowsFeature Web-Server/Web-Scripting-Tools/Web-Mgmt-Console reports success but the module never appears), so accEnsureIIS skips instead of failing. The needle names this exact post-install condition; on targets where IIS installs (lab servercore container), the tests run and any skip there still fails the gate."

@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_timezone` resource and `windows_timezone` data source
+  (#286): manages the system time zone of the remote Windows host, which is
+  a singleton — the host always has exactly one, so Create and Update share
+  one idempotent Set operation (`Set-TimeZone`, or `tzutil.exe /s
+  "<id>_dstoff"` — gated on `$LASTEXITCODE` — when
+  `daylight_saving_disabled` is true), Read refreshes from the live host and
+  never removes the resource from state, and Delete makes no remote change
+  unless `restore_on_destroy` re-applies the pre-existing values captured
+  into private state at creation (or import) time. Windows IDs are used
+  (e.g. `Romance Standard Time`); IANA IDs such as `Europe/Paris` are
+  rejected at plan time with a hint. Exposes `display_name`,
+  `base_utc_offset`, `supports_daylight_saving_time`, the live
+  `current_utc_offset` (all formatted server-side in invariant culture) and
+  `tzautoupdate_enabled`, which warns on every operation while the
+  `tzautoupdate` service may move the zone out from under Terraform. The
+  Terraform resource ID is anchored on the host MachineGuid. `timeouts`
+  default to 5m on the resource and on the singleton data source.
+
 - New `windows_local_groups` collection data source (#298): read-only
   inventory of every local group on the remote Windows host in a single
   round-trip — the sibling collection of `windows_local_group`. Every
