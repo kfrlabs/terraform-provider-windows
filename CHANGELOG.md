@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_domain_membership` data source (#299): singleton read-only
+  view of the sibling resource's observed state — `part_of_domain`, the DNS
+  `domain` (empty when workgroup-joined, never the workgroup name), the
+  `workgroup` (empty when joined), `computer_name`, `dns_host_name` with
+  `fqdn` as its alias, the NetBIOS `netbios_domain` (Win32_NTDomain with a
+  first-DNS-label fallback, empty when not joined), the `domain_role`
+  (Win32 0-5 mapped to its documented name; unknown values are a hard
+  error), `pending_reboot`, the `secure_channel_ok` result (`null` when
+  the host is not joined or when `check_secure_channel` is `false`), and
+  the stable `machine_id` (HKLM MachineGuid) as the data source ID.
+  `check_secure_channel` (Optional+Computed, default `true`) skips the
+  `Test-ComputerSecureChannel` probe for inventory-only reads. Reuses the
+  sibling resource's `winclient.DomainMembershipClient` via a new
+  `ReadWithOptions` method (`Read` keeps its historical probed behavior, so
+  the resource is untouched); `timeouts.read` defaults to 2m.
+
 - New `windows_iis_app_pool` resource and `windows_iis_app_pool` data
   source (#283): manages an IIS application pool on the target host
   (`WebAdministration`: `New-WebAppPool`, `Get-ItemProperty` /
