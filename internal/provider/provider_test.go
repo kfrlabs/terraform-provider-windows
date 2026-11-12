@@ -60,11 +60,11 @@ func TestProvider_Schema(t *testing.T) {
 
 func TestProvider_ResourcesAndDataSources(t *testing.T) {
 	p := &windowsProvider{}
-	if got := len(p.Resources(context.Background())); got != 24 {
-		t.Errorf("Resources len = %d, want 24 (certificate + directory + dns_client + domain_membership + service + smb_share + feature + firewall_profile + hostname + iis_app_pool + local_group + local_group_member + local_user + registry_value + registry_key + environment_variable + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl + net_ip_address + net_route)", got)
+	if got := len(p.Resources(context.Background())); got != 25 {
+		t.Errorf("Resources len = %d, want 25 (certificate + directory + dns_client + domain_membership + service + smb_share + feature + firewall_profile + hostname + iis_app_pool + local_group + local_group_member + local_user + registry_value + registry_key + environment_variable + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl + net_ip_address + net_route + timezone)", got)
 	}
-	if got := len(p.DataSources(context.Background())); got != 29 {
-		t.Errorf("DataSources len = %d, want 29 (certificate + directory + dns_client + domain_membership + feature + file + file_acl + firewall_profile + hostname + iis_app_pool + installed_software + legacy_package + local_group + local_group_member + local_groups + local_user + local_users + registry_value + registry_key + service + smb_share + environment_variable + scheduled_task + firewall_rule + winget_package + net_ip_address + net_route + network_adapters + os_info)", got)
+	if got := len(p.DataSources(context.Background())); got != 30 {
+		t.Errorf("DataSources len = %d, want 30 (certificate + directory + dns_client + domain_membership + feature + file + file_acl + firewall_profile + hostname + iis_app_pool + installed_software + legacy_package + local_group + local_group_member + local_groups + local_user + local_users + registry_value + registry_key + service + smb_share + environment_variable + scheduled_task + firewall_rule + winget_package + net_ip_address + net_route + network_adapters + os_info + timezone)", got)
 	}
 }
 

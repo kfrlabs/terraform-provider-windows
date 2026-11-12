@@ -305,6 +305,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsScheduledTaskResource,
 		NewWindowsServiceResource,
 		NewWindowsSmbShareResource,
+		NewWindowsTimezoneResource,
 		NewWindowsWingetPackageResource,
 	}
 }
@@ -340,6 +341,7 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsScheduledTaskDataSource,
 		NewWindowsServiceDataSource,
 		NewWindowsSmbShareDataSource,
+		NewWindowsTimezoneDataSource,
 		NewWindowsWingetPackageDataSource,
 	}
 }
