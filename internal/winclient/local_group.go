@@ -255,7 +255,10 @@ try {
     $out = @()
     foreach ($g in $groups) {
         $sidVal = $g.SID.Value
-        $entry = [ordered]@{ Name = $g.Name; Description = $g.Description; SID = $sidVal; Members = $null }
+        # SID keeps the exact Read projection shape (psLocalGroup): the
+        # SecurityIdentifier serialises as an object, so re-wrap the string
+        # value instead of emitting it bare.
+        $entry = [ordered]@{ Name = $g.Name; Description = $g.Description; SID = @{ Value = $sidVal }; Members = $null }
         if ($wantMembers) {
             $res = Get-LgmMembers $sidVal
             if ($res.ok) {

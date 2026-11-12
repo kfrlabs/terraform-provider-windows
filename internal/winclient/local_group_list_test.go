@@ -378,6 +378,11 @@ func TestLocalGroupList_Script(t *testing.T) {
 		"list_local_groups",
 		"'O''Brien'",
 		"'S-1-5-32-544'",
+		// The group SID must keep the exact Read projection shape
+		// (psLocalGroup object with a Value field): emitting the bare
+		// string breaks List on a live host while object-shaped stubs
+		// still pass (regression guard for the acc-only failure mode).
+		"SID = @{ Value = $sidVal }",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("List script missing %q", want)
