@@ -6,6 +6,25 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_disk` resource and `windows_disk` data source (#290):
+  adopts a physical disk on the target host (`Get-Disk` / `Set-Disk` /
+  `Initialize-Disk`) by exactly one of `unique_id` (the stable identity and
+  Terraform ID, preferred), `serial_number`, `location` or `number`
+  (scan-time assignment that can shift across reboots, so using it warns).
+  Zero matches are an error, several are an `ambiguous_disk` error. The
+  resource never creates or destroys disk hardware: Create adopts the disk,
+  initializes it to `partition_style` (`GPT` or `MBR`) only when it is RAW
+  (anything else with a different style is a `partition_style_mismatch`
+  error), enforces `is_offline` / `is_read_only` in place, and Delete only
+  drops the adoption from state with no remote call. Disks hosting the OS
+  (`is_boot` / `is_system`), the active pagefile, the crash-dump target, or
+  clustered disks are refused fail-closed with `protected_storage`, as is a
+  disk whose placement cannot be determined (guard shared with #291/#292 in
+  the new `internal/winclient/storage_common.go`: selector resolution,
+  CIM MI_RESULT/HRESULT-first classification, pure-Go size parsing and GPT
+  GUID constants). The resource ID and the data source ID are the disk
+  `UniqueId`; `timeouts` default to 10m. Import by UniqueId.
+
 - New `windows_timezone` resource and `windows_timezone` data source
   (#286): manages the system time zone of the remote Windows host, which is
   a singleton — the host always has exactly one, so Create and Update share
