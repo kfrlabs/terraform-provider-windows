@@ -152,6 +152,25 @@ func (c *Client) RunPowerShellWithInput(ctx context.Context, script, stdin strin
 	return c.run(ctx, script, stdin)
 }
 
+// RunPowerShell5WithInput executes the given PowerShell script with the
+// supplied stdin string piped to the process in a one-shot Windows
+// PowerShell 5.1 process (powershell.exe), bypassing the persistent
+// session entirely. It exists for engines that only exist in 5.1 —
+// Invoke-DscResource / PSDesiredStateConfiguration 1.1, whose inbox module
+// is not discoverable from the persistent pwsh 7 session. The one-shot
+// bootstrap rebinds [Console]::In the same way as the persistent session,
+// so multi-line stdin documents work unmodified; see oneShotBootstrap.
+func (c *Client) RunPowerShell5WithInput(ctx context.Context, script, stdin string) (string, string, error) {
+	if c == nil {
+		return "", "", fmt.Errorf("winclient: nil client")
+	}
+	if err := c.acquire(ctx); err != nil {
+		return "", "", err
+	}
+	defer c.release()
+	return c.runOneShot(ctx, script, stdin)
+}
+
 // run sends one request to the persistent PowerShell session, establishing
 // it first if needed, and retries exactly once against a freshly
 // re-established session only when the request is known not to have reached

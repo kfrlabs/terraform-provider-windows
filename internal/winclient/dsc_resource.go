@@ -50,12 +50,15 @@ func NewDSCResourceClient(c *Client) *DSCResourceClient {
 }
 
 // runDSCPowerShell is the package-level indirection used by
-// DSCResourceClient. Tests may override it; production code must not. The
+// DSCResourceClient. Tests may override it; production code must not. It
+// always runs in a one-shot Windows PowerShell 5.1 process: Invoke-DscResource
+// / PSDesiredStateConfiguration 1.1 do not exist in the persistent pwsh 7
+// session, whose module path cannot see the inbox 5.1 DSC module. The
 // stdin string carries the properties JSON document on the first line and
 // the credentials JSON document on the second line; scripts that take no
 // payload pass "".
 var runDSCPowerShell = func(ctx context.Context, c *Client, script, stdin string) (string, string, error) {
-	return c.RunPowerShellWithInput(ctx, script, stdin)
+	return c.RunPowerShell5WithInput(ctx, script, stdin)
 }
 
 // ---------------------------------------------------------------------------
