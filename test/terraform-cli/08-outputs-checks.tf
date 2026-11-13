@@ -60,7 +60,7 @@ output "scheduled_task_id" {
 
 # Resource vs data source cross-checks — a mismatch is a real finding.
 output "check_registry_value" {
-  value     = {
+  value = {
     resource = windows_registry_value.version.value_string
     data     = data.windows_registry_value.version.value_string
   }
@@ -68,7 +68,7 @@ output "check_registry_value" {
 }
 
 output "check_registry_dword" {
-  value     = {
+  value = {
     resource = windows_registry_value.max_retries.value_string
     data     = data.windows_registry_value.max_retries.value_string
   }
