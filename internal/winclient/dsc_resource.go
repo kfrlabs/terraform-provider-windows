@@ -156,6 +156,41 @@ function Get-DSCPropFlag([object]$p, [string]$n) {
   } catch { }
   return $false
 }
+
+# Convert-DscJsonToHashtable parses a JSON document into nested hashtables.
+# ConvertFrom-Json -AsHashtable requires PowerShell 6+, but DSC only runs on
+# Windows PowerShell 5.1, so the PSCustomObject tree is converted manually
+# (recursively: objects to hashtables, arrays element-wise, scalars kept).
+function Convert-DscValueToHashtable([object]$Value) {
+  if ($null -eq $Value) { return $null }
+  if ($Value -is [string] -or $Value -is [ValueType]) { return $Value }
+  if ($Value -is [System.Collections.IDictionary]) {
+    $h = @{}
+    foreach ($k in $Value.Keys) { $h[[string]$k] = Convert-DscValueToHashtable $Value[$k] }
+    return $h
+  }
+  if ($Value -is [System.Collections.IEnumerable]) {
+    # NOTE: do not use $a += $x here: array-concat enumerates hashtable
+    # values, shredding embedded objects into DictionaryEntries.
+    $a = New-Object System.Collections.ArrayList
+    foreach ($e in $Value) { [void]$a.Add((Convert-DscValueToHashtable $e)) }
+    return $a.ToArray()
+  }
+  $props = @($Value.PSObject.Properties)
+  if ($props.Count -gt 0) {
+    $h = @{}
+    foreach ($p in $props) { $h[[string]$p.Name] = Convert-DscValueToHashtable $p.Value }
+    return $h
+  }
+  return $Value
+}
+function Convert-DscJsonToHashtable([string]$Json) {
+  if ([string]::IsNullOrWhiteSpace($Json)) { return @{} }
+  $obj = $Json | ConvertFrom-Json -ErrorAction Stop
+  $h = Convert-DscValueToHashtable $obj
+  if ($null -eq $h) { return @{} }
+  return $h
+}
 `
 
 // ---------------------------------------------------------------------------
@@ -280,8 +315,8 @@ $credsLine = [Console]::In.ReadLine()
 if ([string]::IsNullOrEmpty($propsLine)) { $propsLine = '{}' }
 if ([string]::IsNullOrEmpty($credsLine)) { $credsLine = '{}' }
 try {
-  $propsH = $propsLine | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-  $credsH = $credsLine | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+  $propsH = Convert-DscJsonToHashtable $propsLine
+  $credsH = Convert-DscJsonToHashtable $credsLine
 } catch {
   Emit-Err 'invalid_value' 'Could not parse the properties document sent to the target host.' @{ step = 'decode' }
   return

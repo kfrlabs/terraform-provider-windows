@@ -694,6 +694,15 @@ func TestDSCDelete_StateOnlyMakesNoCall(t *testing.T) {
 }
 
 func TestDSCStdin_ReachesHostIntact(t *testing.T) {
+	// The DSC scripts run on Windows PowerShell 5.1 (one-shot transport),
+	// where ConvertFrom-Json has no -AsHashtable switch: documents are
+	// decoded via the Convert-DscJsonToHashtable helper instead.
+	if strings.Contains(dscPsHeader+dscInvokeBody, "| ConvertFrom-Json -AsHashtable") {
+		t.Error("DSC scripts must not use the AsHashtable switch (absent on PowerShell 5.1)")
+	}
+	if !strings.Contains(dscPsHeader, "function Convert-DscJsonToHashtable") {
+		t.Error("DSC header must define Convert-DscJsonToHashtable for 5.1 JSON decoding")
+	}
 	var setCalls int
 	var gotStdin string
 	inner := dscFakeTransport([]bool{false, true}, &setCalls)

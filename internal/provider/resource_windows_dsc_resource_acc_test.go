@@ -45,7 +45,6 @@ resource "windows_dsc_resource" "env" {
     Ensure = "Present"
     Name   = "TF_ACC_DSC_TEST"
     Value  = "` + value + `"
-    Target = ["Machine"]
   }
 
   destroy_properties = {
