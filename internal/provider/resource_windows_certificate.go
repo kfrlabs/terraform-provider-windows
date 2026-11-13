@@ -884,6 +884,9 @@ func (r *windowsCertificateResource) Delete(ctx context.Context, req resource.De
 		deleteKey = state.DeletePrivateKey.ValueBool()
 	}
 	if err := r.certs.Delete(ctx, location, store, thumbprint, deleteKey); err != nil {
+		if winclient.IsCertificateError(err, winclient.CertificateErrorNotFound) {
+			return // already gone
+		}
 		addCertificateDiag(&resp.Diagnostics, "Error deleting Windows certificate", err)
 		return
 	}
