@@ -171,10 +171,14 @@ function Convert-DscValueToHashtable([object]$Value) {
   }
   if ($Value -is [System.Collections.IEnumerable]) {
     # NOTE: do not use $a += $x here: array-concat enumerates hashtable
-    # values, shredding embedded objects into DictionaryEntries.
+    # values, shredding embedded objects into DictionaryEntries. And do not
+    # bare-return the array: PowerShell unrolls single-element arrays on
+    # function output (turning ["1"] into "1"), so -NoEnumerate preserves
+    # the array object itself.
     $a = New-Object System.Collections.ArrayList
     foreach ($e in $Value) { [void]$a.Add((Convert-DscValueToHashtable $e)) }
-    return $a.ToArray()
+    Write-Output $a.ToArray() -NoEnumerate
+    return
   }
   $props = @($Value.PSObject.Properties)
   if ($props.Count -gt 0) {
