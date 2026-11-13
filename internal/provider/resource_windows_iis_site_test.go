@@ -288,7 +288,7 @@ func TestWindowsIISSiteResource_Schema(t *testing.T) {
 		t.Fatalf("bindings: expected schema.ListNestedAttribute, got %T", bindingsAttr)
 	}
 	if !bindingsAttr.Computed || bindingsAttr.Optional || bindingsAttr.Required {
-		t.Error("bindings must be Computed-only (owned by windows_iis_site_binding)")
+		t.Error("bindings must be Computed-only (owned by windows_iis_binding)")
 	}
 	idAttr, ok := s.Attributes["id"].(schema.StringAttribute)
 	if !ok {

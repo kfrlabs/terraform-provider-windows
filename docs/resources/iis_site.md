@@ -4,7 +4,7 @@ page_title: "windows_iis_site Resource - windows"
 subcategory: ""
 description: |-
   Manages an IIS site on a remote Windows host via SSH and PowerShell (WebAdministration module: New-Item IIS:\Sites\<name> -Bindings @(), Get/Set-WebConfigurationProperty, Set-ItemProperty IIS:\Sites\<name>, Remove-Website, Start-Website / Stop-Website).
-  The site is always created with zero bindings: bindings are not managed here (see windows_iis_site_binding). The read-only bindings attribute (protocol plus binding_information) reflects the observed view so plans stay stable.
+  The site is always created with zero bindings: bindings are not managed here (see windows_iis_binding). The read-only bindings attribute (protocol plus binding_information) reflects the observed view so plans stay stable.
   Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime state (Started / Stopped) is enforced only when configured — except that a Started site with no bindings stays Stopped with a warning (IIS cannot run an unbound site) instead of failing.
   Requires IIS on the target host: install it with the windows_feature resource (Web-Server; add Web-Mgmt-Console / Web-Scripting-Tools for the WebAdministration module on Server Core).
   Import format: <site name>.
@@ -14,7 +14,7 @@ description: |-
 
 Manages an IIS site on a remote Windows host via SSH and PowerShell (`WebAdministration` module: `New-Item IIS:\Sites\<name> -Bindings @()`, `Get/Set-WebConfigurationProperty`, `Set-ItemProperty IIS:\Sites\<name>`, `Remove-Website`, `Start-Website` / `Stop-Website`).
 
-The site is always created with zero bindings: bindings are not managed here (see `windows_iis_site_binding`). The read-only `bindings` attribute (`protocol` plus `binding_information`) reflects the observed view so plans stay stable.
+The site is always created with zero bindings: bindings are not managed here (see `windows_iis_binding`). The read-only `bindings` attribute (`protocol` plus `binding_information`) reflects the observed view so plans stay stable.
 
 Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime `state` (`Started` / `Stopped`) is enforced only when configured — except that a `Started` site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site) instead of failing.
 
@@ -28,7 +28,7 @@ Import format: `<site name>`.
 # Manage an IIS site with zero bindings: only the configured attributes are
 # written; everything else on the host is left untouched. The site stays
 # Stopped (with a warning) while it has no bindings — IIS cannot run an
-# unbound site — and starts once windows_iis_site_binding adds one.
+# unbound site — and starts once windows_iis_binding adds one.
 #
 # Requires IIS on the target host (WebAdministration module): install it
 # with windows_feature first (Web-Server; add Web-Mgmt-Console /
@@ -105,7 +105,7 @@ resource "windows_iis_site" "web" {
 
 ### Read-Only
 
-- `bindings` (Attributes List) Read-only view of the site bindings (`protocol` plus `binding_information`, e.g. `*:80:example.com`). Managed by the `windows_iis_site_binding` resource — never written by this resource. (see [below for nested schema](#nestedatt--bindings))
+- `bindings` (Attributes List) Read-only view of the site bindings (`protocol` plus `binding_information`, e.g. `*:80:example.com`). Managed by the `windows_iis_binding` resource — never written by this resource. (see [below for nested schema](#nestedatt--bindings))
 - `id` (String) Resource identifier. Set to the site name.
 
 <a id="nestedatt--timeouts"></a>
@@ -137,6 +137,6 @@ The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/c
 # Import a site by name. The live settings are adopted into state;
 # unconfigured attributes reflect the observed values, and site_id stays
 # managed (it is part of the identity). The bindings view is observed
-# read-only (managed by windows_iis_site_binding).
+# read-only (managed by windows_iis_binding).
 terraform import windows_iis_site.web 'web'
 ```

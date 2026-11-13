@@ -3,7 +3,7 @@
 // Reads the observed state of an existing IIS site by name without
 // managing it. Every sibling-resource setting is exposed read-only,
 // including the bindings view (protocol plus binding_information, owned
-// by windows_iis_site_binding), plus the read-only timeouts{read} block.
+// by windows_iis_binding), plus the read-only timeouts{read} block.
 package provider
 
 import (
@@ -75,7 +75,7 @@ func (d *windowsIISSiteDataSource) Schema(ctx context.Context, _ datasource.Sche
 			"on a remote Windows host without managing it. Connection timeout surfaces in whole " +
 			"seconds, converted server-side. The `bindings` view (`protocol` plus " +
 			"`binding_information`) is read-only here and managed by " +
-			"`windows_iis_site_binding`.\n\n" +
+			"`windows_iis_binding`.\n\n" +
 			"Requires IIS on the target host (`windows_feature` `Web-Server`).\n\n" +
 			"Returns an error when the site does not exist on the target host.",
 		Attributes: map[string]schema.Attribute{

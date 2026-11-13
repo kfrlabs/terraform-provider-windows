@@ -8,7 +8,7 @@
 //
 // Bindings are intentionally a read-only view (protocol plus
 // binding_information): they are observed here so plans stay stable, but
-// they are managed by the windows_iis_site_binding resource (issue #285),
+// they are managed by the windows_iis_binding resource (issue #285),
 // never by this one.
 package winclient
 

@@ -3,14 +3,14 @@
 page_title: "windows_iis_site Data Source - windows"
 subcategory: ""
 description: |-
-  Reads the observed state of an existing IIS site by name on a remote Windows host without managing it. Connection timeout surfaces in whole seconds, converted server-side. The bindings view (protocol plus binding_information) is read-only here and managed by windows_iis_site_binding.
+  Reads the observed state of an existing IIS site by name on a remote Windows host without managing it. Connection timeout surfaces in whole seconds, converted server-side. The bindings view (protocol plus binding_information) is read-only here and managed by windows_iis_binding.
   Requires IIS on the target host (windows_feature Web-Server).
   Returns an error when the site does not exist on the target host.
 ---
 
 # windows_iis_site (Data Source)
 
-Reads the observed state of an existing IIS site by `name` on a remote Windows host without managing it. Connection timeout surfaces in whole seconds, converted server-side. The `bindings` view (`protocol` plus `binding_information`) is read-only here and managed by `windows_iis_site_binding`.
+Reads the observed state of an existing IIS site by `name` on a remote Windows host without managing it. Connection timeout surfaces in whole seconds, converted server-side. The `bindings` view (`protocol` plus `binding_information`) is read-only here and managed by `windows_iis_binding`.
 
 Requires IIS on the target host (`windows_feature` `Web-Server`).
 
