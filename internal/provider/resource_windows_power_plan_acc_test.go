@@ -162,7 +162,9 @@ func TestAccWindowsPowerPlan_Basic(t *testing.T) {
 			{
 				Config: cfg,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("windows_power_plan.acc", "plan", winclient.PowerPlanHighPerformanceGUID),
+					// The configured spelling is preserved in state;
+					// plan_guid carries the resolved canonical GUID.
+					resource.TestCheckResourceAttr("windows_power_plan.acc", "plan", "high_performance"),
 					resource.TestCheckResourceAttr("windows_power_plan.acc", "plan_guid", winclient.PowerPlanHighPerformanceGUID),
 					resource.TestCheckResourceAttrSet("windows_power_plan.acc", "id"),
 					resource.TestCheckResourceAttrSet("windows_power_plan.acc", "plan_name"),
@@ -255,7 +257,7 @@ func TestAccWindowsPowerPlan_RestoreOnDestroy(t *testing.T) {
 			{
 				Config: powerPlanAccConfig("high_performance", changedAC),
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("windows_power_plan.acc", "plan", winclient.PowerPlanHighPerformanceGUID),
+					resource.TestCheckResourceAttr("windows_power_plan.acc", "plan", "high_performance"),
 				),
 			},
 		},
@@ -310,8 +312,10 @@ resource "windows_power_plan" "imp" {
 				ImportStateVerify: true,
 				// restore_on_destroy is a local destroy-time intent,
 				// not host state; plan_name is localised
-				// informational text.
-				ImportStateVerifyIgnore: []string{"restore_on_destroy"},
+				// informational text; plan keeps the configured
+				// spelling after apply but import has no prior
+				// config so it surfaces the observed GUID.
+				ImportStateVerifyIgnore: []string{"restore_on_destroy", "plan"},
 			},
 		},
 	})

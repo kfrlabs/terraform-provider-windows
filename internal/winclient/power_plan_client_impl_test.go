@@ -369,6 +369,23 @@ func TestPowerPlanHeader_Conventions(t *testing.T) {
 	}
 }
 
+func TestPowerPlanAliasTable_GuidFirst(t *testing.T) {
+	// Real `powercfg /aliases` output lists the GUID first
+	// ("<guid>  SCHEME_MIN"), so the GUID-first match must be primary
+	// with the alias-first spelling kept as a fallback.
+	guidFirst := `([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s+([A-Za-z][A-Za-z0-9_]*)`
+	aliasFirst := `([A-Za-z][A-Za-z0-9_]*)\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`
+	if !strings.Contains(psPowerPlanHeader, guidFirst) {
+		t.Error("Get-PowerAliasTable must match GUID-first powercfg /aliases lines")
+	}
+	if !strings.Contains(psPowerPlanHeader, aliasFirst) {
+		t.Error("Get-PowerAliasTable must keep the alias-first match as a fallback")
+	}
+	if strings.Index(psPowerPlanHeader, guidFirst) > strings.Index(psPowerPlanHeader, aliasFirst) {
+		t.Error("GUID-first match must be primary (appear before the alias-first fallback)")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Read
 // ---------------------------------------------------------------------------

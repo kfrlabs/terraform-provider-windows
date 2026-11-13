@@ -147,37 +147,6 @@ func (powerPlanReferenceValidator) ValidateString(_ context.Context, req validat
 	}
 }
 
-// powerPlanCanonicalModifier normalises the plan reference to its canonical
-// lower-case GUID at plan time (aliases resolve via the static table).
-// Without it a configured alias would plan a perpetual diff against the
-// observed GUID.
-type powerPlanCanonicalModifier struct{}
-
-// Description returns a human-readable description for plan output.
-func (powerPlanCanonicalModifier) Description(_ context.Context) string {
-	return "Normalises the power plan reference to its canonical GUID."
-}
-
-// MarkdownDescription returns the Markdown variant of Description.
-func (m powerPlanCanonicalModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-// PlanModifyString resolves a known, non-null alias or GUID to its
-// canonical lower-case GUID. Unresolvable values pass through unchanged
-// so the validator reports them.
-func (powerPlanCanonicalModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
-		return
-	}
-	guid, err := winclient.ResolvePowerPlanReference(req.PlanValue.ValueString())
-	if err != nil {
-		resp.PlanValue = req.PlanValue
-		return
-	}
-	resp.PlanValue = types.StringValue(guid)
-}
-
 // Metadata sets the resource type name ("windows_power_plan").
 func (r *windowsPowerPlanResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_power_plan"
@@ -198,8 +167,8 @@ func windowsPowerPlanSchemaDefinition(ctx context.Context) schema.Schema {
 			"provisions anything new — it only writes the configured AC/DC setting values in place " +
 			"(`powercfg /setacvalueindex` / `/setdcvalueindex`) and activates the plan (`powercfg /setactive`), and deleting it makes no remote change unless " +
 			"`restore_on_destroy` is set.\n\n" +
-			"`plan` takes a GUID or an alias (`balanced`, `high_performance`, `power_saver`, `ultimate_performance`), normalised to the " +
-			"canonical GUID at plan time. Plan names are never accepted: `ElementName` is localised. When the desired plan is absent from the host " +
+			"`plan` takes a GUID or an alias (`balanced`, `high_performance`, `power_saver`, `ultimate_performance`), resolved to the " +
+			"canonical GUID at apply time; the configured spelling is preserved in state. Plan names are never accepted: `ElementName` is localised. When the desired plan is absent from the host " +
 			"(e.g. `ultimate_performance`), `create_if_missing` duplicates the well-known template (`powercfg /duplicatescheme`); custom plan GUIDs have no template " +
 			"source and still fail with `plan_not_found`. Otherwise a missing plan is an error. " +
 			"Only the listed `settings` are managed. Identity is GUID-only everywhere: `powercfg /query` text is never parsed.\n\n" +
@@ -218,13 +187,10 @@ func windowsPowerPlanSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 			"plan": schema.StringAttribute{
 				Required:            true,
-				Description:         "Desired active power plan: a GUID or an alias (balanced, high_performance, power_saver, ultimate_performance). Normalised to the canonical GUID at plan time. Plan names are localised and never accepted.",
-				MarkdownDescription: "Desired active power plan: a GUID or an alias (`balanced`, `high_performance`, `power_saver`, `ultimate_performance`). Normalised to the canonical GUID at plan time. Plan names are localised and never accepted.",
+				Description:         "Desired active power plan: a GUID or an alias (balanced, high_performance, power_saver, ultimate_performance). Resolved to the canonical GUID at apply time; the configured spelling is preserved in state. Plan names are localised and never accepted.",
+				MarkdownDescription: "Desired active power plan: a GUID or an alias (`balanced`, `high_performance`, `power_saver`, `ultimate_performance`). Resolved to the canonical GUID at apply time; the configured spelling is preserved in state. Plan names are localised and never accepted.",
 				Validators: []validator.String{
 					powerPlanReferenceValidator{},
-				},
-				PlanModifiers: []planmodifier.String{
-					powerPlanCanonicalModifier{},
 				},
 			},
 			"settings": schema.ListNestedAttribute{
@@ -837,13 +803,15 @@ func powerPlanSettingsToListValue(settings []winclient.PowerPlanSettingState) (t
 }
 
 // powerPlanStateToModel projects an observed PowerPlanState into a
-// Terraform model. The managed plan attribute always reflects the observed
-// active plan (canonical GUID) so an out-of-band switch surfaces as drift;
-// plan_guid mirrors it for consumers, plan_name is informational. The
-// input-only intent (create_if_missing, restore_on_destroy), the
-// user-configured timeouts and the resource ID anchor are preserved from
-// the prior plan/state across the projection (Set overwrites the full
-// state object).
+// Terraform model. The plan_guid attribute always mirrors the observed
+// active plan (canonical GUID) so an out-of-band switch surfaces as
+// drift; plan keeps the configured spelling whenever it resolves to the
+// observed GUID (case-insensitive) and falls back to the observed GUID
+// on genuine drift — mirroring the settings ref-preservation below.
+// plan_name is informational. The input-only intent
+// (create_if_missing, restore_on_destroy), the user-configured timeouts
+// and the resource ID anchor are preserved from the prior plan/state
+// across the projection (Set overwrites the full state object).
 //
 // Settings refs are preserved from the prior model when the counts match:
 // the host always reports canonical GUIDs while configuration may use
@@ -895,9 +863,19 @@ func powerPlanStateToModel(state *winclient.PowerPlanState, prior windowsPowerPl
 	if restore.IsNull() || restore.IsUnknown() {
 		restore = types.BoolValue(false)
 	}
+	// Preserve the configured plan spelling (alias or GUID casing) when
+	// it resolves to the observed active plan; genuine drift (another
+	// plan active, or no usable prior ref such as import) surfaces the
+	// observed GUID.
+	planRef := state.PlanGUID
+	if !prior.Plan.IsNull() && !prior.Plan.IsUnknown() {
+		if guid, err := winclient.ResolvePowerPlanReference(prior.Plan.ValueString()); err == nil && strings.EqualFold(guid, state.PlanGUID) {
+			planRef = prior.Plan.ValueString()
+		}
+	}
 	return windowsPowerPlanModel{
 		ID:               id,
-		Plan:             types.StringValue(state.PlanGUID),
+		Plan:             types.StringValue(planRef),
 		Settings:         settingsList,
 		CreateIfMissing:  create,
 		RestoreOnDestroy: restore,

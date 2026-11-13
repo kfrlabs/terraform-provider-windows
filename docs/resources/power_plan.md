@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   Manages the active power plan of a remote Windows machine over SSH/PowerShell.
   The active plan is a singleton: the host always has exactly one, so creating this resource never provisions anything new — it only writes the configured AC/DC setting values in place (powercfg /setacvalueindex / /setdcvalueindex) and activates the plan (powercfg /setactive), and deleting it makes no remote change unless restore_on_destroy is set.
-  plan takes a GUID or an alias (balanced, high_performance, power_saver, ultimate_performance), normalised to the canonical GUID at plan time. Plan names are never accepted: ElementName is localised. When the desired plan is absent from the host (e.g. ultimate_performance), create_if_missing duplicates the well-known template (powercfg /duplicatescheme); custom plan GUIDs have no template source and still fail with plan_not_found. Otherwise a missing plan is an error. Only the listed settings are managed. Identity is GUID-only everywhere: powercfg /query text is never parsed.
+  plan takes a GUID or an alias (balanced, high_performance, power_saver, ultimate_performance), resolved to the canonical GUID at apply time; the configured spelling is preserved in state. Plan names are never accepted: ElementName is localised. When the desired plan is absent from the host (e.g. ultimate_performance), create_if_missing duplicates the well-known template (powercfg /duplicatescheme); custom plan GUIDs have no template source and still fail with plan_not_found. Otherwise a missing plan is an error. Only the listed settings are managed. Identity is GUID-only everywhere: powercfg /query text is never parsed.
   Destroy is a no-op by default: a Windows machine cannot exist without an active plan; terraform destroy only removes the resource from state unless restore_on_destroy re-applies the pre-existing plan and values. A plan duplicated by create_if_missing is deleted on destroy whenever it is inactive (powercfg /delete).
   Import format: any non-empty ID (its value is ignored; the live active plan is adopted, e.g. current).
 ---
@@ -16,7 +16,7 @@ Manages the active power plan of a remote Windows machine over SSH/PowerShell.
 
 The active plan is a **singleton**: the host always has exactly one, so creating this resource never provisions anything new — it only writes the configured AC/DC setting values in place (`powercfg /setacvalueindex` / `/setdcvalueindex`) and activates the plan (`powercfg /setactive`), and deleting it makes no remote change unless `restore_on_destroy` is set.
 
-`plan` takes a GUID or an alias (`balanced`, `high_performance`, `power_saver`, `ultimate_performance`), normalised to the canonical GUID at plan time. Plan names are never accepted: `ElementName` is localised. When the desired plan is absent from the host (e.g. `ultimate_performance`), `create_if_missing` duplicates the well-known template (`powercfg /duplicatescheme`); custom plan GUIDs have no template source and still fail with `plan_not_found`. Otherwise a missing plan is an error. Only the listed `settings` are managed. Identity is GUID-only everywhere: `powercfg /query` text is never parsed.
+`plan` takes a GUID or an alias (`balanced`, `high_performance`, `power_saver`, `ultimate_performance`), resolved to the canonical GUID at apply time; the configured spelling is preserved in state. Plan names are never accepted: `ElementName` is localised. When the desired plan is absent from the host (e.g. `ultimate_performance`), `create_if_missing` duplicates the well-known template (`powercfg /duplicatescheme`); custom plan GUIDs have no template source and still fail with `plan_not_found`. Otherwise a missing plan is an error. Only the listed `settings` are managed. Identity is GUID-only everywhere: `powercfg /query` text is never parsed.
 
 **Destroy is a no-op by default:** a Windows machine cannot exist without an active plan; `terraform destroy` only removes the resource from state unless `restore_on_destroy` re-applies the pre-existing plan and values. A plan duplicated by `create_if_missing` is deleted on destroy whenever it is inactive (`powercfg /delete`).
 
@@ -83,7 +83,7 @@ output "plan_name" {
 
 ### Required
 
-- `plan` (String) Desired active power plan: a GUID or an alias (`balanced`, `high_performance`, `power_saver`, `ultimate_performance`). Normalised to the canonical GUID at plan time. Plan names are localised and never accepted.
+- `plan` (String) Desired active power plan: a GUID or an alias (`balanced`, `high_performance`, `power_saver`, `ultimate_performance`). Resolved to the canonical GUID at apply time; the configured spelling is preserved in state. Plan names are localised and never accepted.
 
 ### Optional
 

@@ -101,8 +101,11 @@ type powerPlanListPayload struct {
 //
 // Get-PowerAliasTable parses powercfg /aliases (stable alias/GUID pairs,
 // never localised text) into an upper-cased-alias to lower-case-GUID
-// table. Lines without a GUID (headers, blanks) are skipped, so the parse
-// does not depend on column layout or localisation.
+// table. Real output lists the GUID first
+// (e.g. "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  SCHEME_MIN"), so the
+// GUID-first match is primary; an alias-first match stays as a fallback.
+// Lines without a GUID (headers, blanks) are skipped, so the parse does
+// not depend on column layout or localisation.
 const psPowerPlanHeader = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
@@ -135,6 +138,8 @@ function Get-PowerAliasTable([string]$PowerCfg) {
   $out = & $PowerCfg /aliases 2>&1 | Out-String
   if ($LASTEXITCODE -ne 0) { throw ('powercfg /aliases failed (exit {0}): {1}' -f $LASTEXITCODE, $out.Trim()) }
   foreach ($line in ($out -split "\r?\n")) {
+    $m = [regex]::Match($line, '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s+([A-Za-z][A-Za-z0-9_]*)')
+    if ($m.Success) { $t[$m.Groups[2].Value.ToUpperInvariant()] = $m.Groups[1].Value.ToLowerInvariant(); continue }
     $m = [regex]::Match($line, '([A-Za-z][A-Za-z0-9_]*)\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})')
     if ($m.Success) { $t[$m.Groups[1].Value.ToUpperInvariant()] = $m.Groups[2].Value.ToLowerInvariant() }
   }

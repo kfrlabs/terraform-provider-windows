@@ -12,7 +12,9 @@
 //	                           restore_on_destroy defaults, timeouts block,
 //	                           computed plan_guid/plan_name
 //	Plan validator           — GUID (any case) or alias; names rejected
-//	Canonical modifier       — alias/upper-case to lower-case GUID
+//	No canonical modifier    — the configured plan spelling is preserved
+//	                           in state when it resolves to the observed
+//	                           active GUID (genuine drift surfaces the GUID)
 //	Config validator        — each setting needs ac_value or dc_value
 //	Settings projection      — only configured values sent, unknown defers
 //	State projection        — plan canonicalised, intent preserved, id
@@ -46,7 +48,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -352,37 +353,59 @@ func TestPowerPlanReferenceValidator(t *testing.T) {
 	}
 }
 
-func TestPowerPlanCanonicalModifier(t *testing.T) {
+func TestPowerPlanNoCanonicalModifier(t *testing.T) {
 	s := windowsPowerPlanSchemaDefinition(context.Background())
 	planAttr, ok := s.Attributes["plan"].(schema.StringAttribute)
 	if !ok {
 		t.Fatalf("expected schema.StringAttribute, got %T", planAttr)
 	}
-	if len(planAttr.PlanModifiers) == 0 {
-		t.Fatal("plan must carry the canonicalising plan modifier")
+	if len(planAttr.PlanModifiers) != 0 {
+		t.Errorf("plan must carry no plan modifiers (the configured spelling is preserved in state at apply time), got %d", len(planAttr.PlanModifiers))
 	}
-	for _, tc := range []struct {
-		in   string
-		want string
-	}{
-		{"high_performance", winclient.PowerPlanHighPerformanceGUID},
-		{"High_Performance", winclient.PowerPlanHighPerformanceGUID},
-		{"8C5E7FDA-E8BF-4A96-9A85-A6E23A8C635C", winclient.PowerPlanHighPerformanceGUID},
-		{winclient.PowerPlanBalancedGUID, winclient.PowerPlanBalancedGUID},
-	} {
-		resp := &planmodifier.StringResponse{}
-		planAttr.PlanModifiers[0].PlanModifyString(context.Background(),
-			planmodifier.StringRequest{PlanValue: types.StringValue(tc.in)}, resp)
-		if resp.PlanValue.ValueString() != tc.want {
-			t.Errorf("canonical(%q) = %q, want %q", tc.in, resp.PlanValue.ValueString(), tc.want)
+}
+
+func TestPowerPlanStateToModel_PreservesPlanSpelling(t *testing.T) {
+	newPrior := func(plan string) windowsPowerPlanModel {
+		return windowsPowerPlanModel{
+			Plan:             types.StringValue(plan),
+			CreateIfMissing:  types.BoolValue(false),
+			RestoreOnDestroy: types.BoolValue(false),
 		}
 	}
-	// Unresolvable values pass through so the validator reports them.
-	resp := &planmodifier.StringResponse{}
-	planAttr.PlanModifiers[0].PlanModifyString(context.Background(),
-		planmodifier.StringRequest{PlanValue: types.StringValue("bogus")}, resp)
-	if resp.PlanValue.ValueString() != "bogus" {
-		t.Errorf("bogus plan must pass through, got %q", resp.PlanValue.ValueString())
+	for _, tc := range []struct {
+		name     string
+		prior    string
+		observed string
+		want     string
+	}{
+		{"alias preserved", "high_performance", winclient.PowerPlanHighPerformanceGUID, "high_performance"},
+		{"alias case preserved", "High_Performance", winclient.PowerPlanHighPerformanceGUID, "High_Performance"},
+		{"guid case preserved", "8C5E7FDA-E8BF-4A96-9A85-A6E23A8C635C", winclient.PowerPlanHighPerformanceGUID, "8C5E7FDA-E8BF-4A96-9A85-A6E23A8C635C"},
+		{"genuine drift surfaces observed guid", "high_performance", winclient.PowerPlanBalancedGUID, winclient.PowerPlanBalancedGUID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := okPowerPlanState()
+			st.PlanGUID = tc.observed
+			m, diags := powerPlanStateToModel(st, newPrior(tc.prior))
+			if diags.HasError() {
+				t.Fatalf("stateToModel: %v", diags)
+			}
+			if m.Plan.ValueString() != tc.want {
+				t.Errorf("plan = %q, want %q", m.Plan.ValueString(), tc.want)
+			}
+			if m.PlanGUID.ValueString() != tc.observed {
+				t.Errorf("plan_guid = %q, want observed %q", m.PlanGUID.ValueString(), tc.observed)
+			}
+		})
+	}
+	// No usable prior ref (e.g. import): the observed GUID is surfaced.
+	st := okPowerPlanState()
+	m, diags := powerPlanStateToModel(st, windowsPowerPlanModel{})
+	if diags.HasError() {
+		t.Fatalf("stateToModel: %v", diags)
+	}
+	if m.Plan.ValueString() != st.PlanGUID {
+		t.Errorf("plan without prior = %q, want observed %q", m.Plan.ValueString(), st.PlanGUID)
 	}
 }
 
