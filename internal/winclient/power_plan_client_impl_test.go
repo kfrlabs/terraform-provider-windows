@@ -576,6 +576,37 @@ func TestPowerPlanApply_ScriptShape(t *testing.T) {
 	}
 }
 
+func TestPowerPlanScripts_NoWQLInstanceIDFilter(t *testing.T) {
+	// WQL treats backslash as an escape character, so an InstanceID equality
+	// -Filter never matches (and some hosts reject it as "Invalid query").
+	// All CIM lookups by InstanceID must enumerate + Where-Object instead.
+	var scripts []string
+	restore := stubPpRun(nil, func(script string) (string, string, error) {
+		scripts = append(scripts, script)
+		return ppOK(t, ppStatePayload(nil)), "", nil
+	})
+	defer restore()
+
+	c := NewPowerPlanClient(newPpTestClient(t))
+	if _, err := c.Read(context.Background(), nil); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if _, err := c.Apply(context.Background(), ppApplyInput()); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if err := c.DeletePlan(context.Background(), PowerPlanBalancedGUID); err != nil {
+		t.Fatalf("DeletePlan: %v", err)
+	}
+	for _, s := range scripts {
+		if strings.Contains(s, "-Filter (\"InstanceID=") {
+			t.Errorf("script must not filter InstanceID via WQL (backslash escaping); use Where-Object instead, got:\n%s", s)
+		}
+	}
+	if !strings.Contains(strings.Join(scripts, "\n"), "Where-Object { $_.InstanceID -eq ") {
+		t.Error("expected a Where-Object InstanceID comparison in the generated scripts")
+	}
+}
+
 func TestPowerPlanApply_DCStoredWithoutBattery(t *testing.T) {
 	// A DC-only override is a valid single-source apply: Windows stores
 	// DC values even on hosts without a battery, so no warning or skip.

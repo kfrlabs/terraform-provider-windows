@@ -156,7 +156,10 @@ function Resolve-PowerGuid([hashtable]$Table, [string]$Value, [string]$What) {
 
 function Read-PowerSettingValue([string]$PlanGuid, [string]$AcDc, [string]$SettingGuid) {
   $id = ('Microsoft:PowerSettingDataIndex\{0}\{1}\{2}' -f $PlanGuid, $AcDc, $SettingGuid)
-  $o = Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSettingDataIndex -Filter ("InstanceID='" + $id + "'") -ErrorAction Stop
+  # NOTE: no WMI -Filter here. WQL treats backslash as an escape character,
+  # so an InstanceID equality filter never matches (and some hosts reject it
+  # outright as "Invalid query"). Enumerate + Where-Object instead.
+  $o = Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSettingDataIndex -ErrorAction Stop | Where-Object { $_.InstanceID -eq $id } | Select-Object -First 1
   if ($null -eq $o) { return $null }
   return [int64]$o.SettingIndexValue
 }
@@ -196,7 +199,7 @@ $Settings = @@SETTINGS@@
         $subGuid = Resolve-PowerGuid $aliasTable ([string]$s.Sub) 'subgroup'
         $setGuid = Resolve-PowerGuid $aliasTable ([string]$s.Setting) 'setting'
       } catch { Emit-Err 'setting_not_found' $_.Exception.Message @{ step = 'resolve'; subgroup = [string]$s.Sub; setting = [string]$s.Setting }; return }
-      $def = @(Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSetting -Filter ("InstanceID='Microsoft:PowerSetting\{" + $setGuid + "}'") -ErrorAction Stop)
+      $def = @(Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSetting -ErrorAction Stop | Where-Object { $_.InstanceID -eq ('Microsoft:PowerSetting\{' + $setGuid + '}') })
       if ($def.Count -eq 0) { Emit-Err 'setting_not_found' ('power setting ' + [string]$s.Setting + ' is unknown to the target host') @{ step = 'resolve'; setting = [string]$s.Setting }; return }
       try {
         $ac = Read-PowerSettingValue $planGuid 'AC' $setGuid
@@ -252,7 +255,7 @@ $Settings = @@SETTINGS@@
         $subGuid = Resolve-PowerGuid $aliasTable ([string]$s.Sub) 'subgroup'
         $setGuid = Resolve-PowerGuid $aliasTable ([string]$s.Setting) 'setting'
       } catch { Emit-Err 'setting_not_found' $_.Exception.Message @{ step = 'resolve'; subgroup = [string]$s.Sub; setting = [string]$s.Setting }; return }
-      $def = @(Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSetting -Filter ("InstanceID='Microsoft:PowerSetting\{" + $setGuid + "}'") -ErrorAction Stop)
+      $def = @(Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSetting -ErrorAction Stop | Where-Object { $_.InstanceID -eq ('Microsoft:PowerSetting\{' + $setGuid + '}') })
       if ($def.Count -eq 0) { Emit-Err 'setting_not_found' ('power setting ' + [string]$s.Setting + ' is unknown to the target host') @{ step = 'resolve'; setting = [string]$s.Setting }; return }
       $resolved += [ordered]@{ subgroup = $subGuid; setting = $setGuid; ac = $s.AC; dc = $s.DC }
     }
