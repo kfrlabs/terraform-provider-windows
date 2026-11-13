@@ -60,11 +60,11 @@ func TestProvider_Schema(t *testing.T) {
 
 func TestProvider_ResourcesAndDataSources(t *testing.T) {
 	p := &windowsProvider{}
-	if got := len(p.Resources(context.Background())); got != 32 {
-		t.Errorf("Resources len = %d, want 32 (certificate + directory + disk + dns_client + domain_membership + service + smb_share + feature + firewall_profile + hostname + iis_app_pool + iis_binding + iis_site + local_group + local_group_member + local_user + ntp + registry_value + registry_key + environment_variable + eventlog + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl + net_ip_address + net_route + partition + timezone + volume)", got)
+	if got := len(p.Resources(context.Background())); got != 33 {
+		t.Errorf("Resources len = %d, want 33 (certificate + directory + disk + dns_client + domain_membership + service + smb_share + feature + firewall_profile + hostname + iis_app_pool + iis_binding + iis_site + local_group + local_group_member + local_user + ntp + registry_value + registry_key + environment_variable + eventlog + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl + net_ip_address + net_route + partition + power_plan + timezone + volume)", got)
 	}
-	if got := len(p.DataSources(context.Background())); got != 35 {
-		t.Errorf("DataSources len = %d, want 35 (certificate + directory + disk + dns_client + domain_membership + feature + file + file_acl + firewall_profile + hostname + iis_app_pool + iis_site + installed_software + legacy_package + local_group + local_group_member + local_groups + local_user + local_users + ntp + registry_value + registry_key + service + smb_share + environment_variable + eventlog + scheduled_task + firewall_rule + winget_package + net_ip_address + net_route + network_adapters + os_info + timezone + volume)", got)
+	if got := len(p.DataSources(context.Background())); got != 36 {
+		t.Errorf("DataSources len = %d, want 36 (certificate + directory + disk + dns_client + domain_membership + feature + file + file_acl + firewall_profile + hostname + iis_app_pool + iis_site + installed_software + legacy_package + local_group + local_group_member + local_groups + local_user + local_users + ntp + registry_value + registry_key + service + smb_share + environment_variable + eventlog + scheduled_task + firewall_rule + winget_package + net_ip_address + net_route + network_adapters + os_info + power_plan + timezone + volume)", got)
 	}
 }
 
