@@ -328,47 +328,55 @@ func buildEventLogGuard(settings EventLogSettings) string {
 // the host value is left untouched. Retention is translated to the .NET
 // LogMode spelling here; an unknown retention fails closed before any
 // script is built.
+//
+// Every assignment is guarded by a live-value comparison: some hosts reject
+// SaveChanges when a property is written with its current value (observed
+// with IsEnabled on classic logs — "The parameter is incorrect"), so
+// no-op writes are skipped. Reads of these properties are always safe;
+// only redundant writes trip the host quirk.
 func buildEventLogSetBlock(settings EventLogSettings) (string, error) {
 	var sb strings.Builder
 	if settings.MaximumSizeBytes != nil {
 		if err := ValidateEventLogSize(*settings.MaximumSizeBytes); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&sb, "    $c.MaximumSizeInBytes = %d\n", *settings.MaximumSizeBytes)
+		fmt.Fprintf(&sb, "    if ([int64]$c.MaximumSizeInBytes -ne %d) { $c.MaximumSizeInBytes = %d }\n", *settings.MaximumSizeBytes, *settings.MaximumSizeBytes)
 	}
 	if settings.Retention != nil {
 		mode, err := EventLogRetentionToLogMode(*settings.Retention)
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&sb, "    $c.LogMode = %s\n", psQuote(mode))
+		fmt.Fprintf(&sb, "    if ([string]$c.LogMode -ne %s) { $c.LogMode = %s }\n", psQuote(mode), psQuote(mode))
 	}
 	if settings.Enabled != nil {
 		if *settings.Enabled {
-			sb.WriteString("    $c.IsEnabled = $true\n")
+			sb.WriteString("    if (-not [bool]$c.IsEnabled) { $c.IsEnabled = $true }\n")
 		} else {
-			sb.WriteString("    $c.IsEnabled = $false\n")
+			sb.WriteString("    if ([bool]$c.IsEnabled) { $c.IsEnabled = $false }\n")
 		}
 	}
 	if settings.LogFilePath != nil {
-		fmt.Fprintf(&sb, "    $c.LogFilePath = %s\n", psQuote(*settings.LogFilePath))
+		fmt.Fprintf(&sb, "    if ([string]$c.LogFilePath -ne %s) { $c.LogFilePath = %s }\n", psQuote(*settings.LogFilePath), psQuote(*settings.LogFilePath))
 	}
 	return sb.String(), nil
 }
 
 // buildEventLogRestoreBlock renders the assignment lines that re-apply a
 // captured snapshot verbatim. The stored LogMode is already the host
-// spelling (Circular, AutoBackup, Retain).
+// spelling (Circular, AutoBackup, Retain). Like the set block, every write
+// is guarded by a live-value comparison so redundant writes (which some
+// hosts reject in SaveChanges) are skipped.
 func buildEventLogRestoreBlock(snap EventLogState) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "    $c.MaximumSizeInBytes = %d\n", snap.MaximumSizeBytes)
-	fmt.Fprintf(&sb, "    $c.LogMode = %s\n", psQuote(snap.LogMode))
+	fmt.Fprintf(&sb, "    if ([int64]$c.MaximumSizeInBytes -ne %d) { $c.MaximumSizeInBytes = %d }\n", snap.MaximumSizeBytes, snap.MaximumSizeBytes)
+	fmt.Fprintf(&sb, "    if ([string]$c.LogMode -ne %s) { $c.LogMode = %s }\n", psQuote(snap.LogMode), psQuote(snap.LogMode))
 	if snap.IsEnabled {
-		sb.WriteString("    $c.IsEnabled = $true\n")
+		sb.WriteString("    if (-not [bool]$c.IsEnabled) { $c.IsEnabled = $true }\n")
 	} else {
-		sb.WriteString("    $c.IsEnabled = $false\n")
+		sb.WriteString("    if ([bool]$c.IsEnabled) { $c.IsEnabled = $false }\n")
 	}
-	fmt.Fprintf(&sb, "    $c.LogFilePath = %s\n", psQuote(snap.LogFilePath))
+	fmt.Fprintf(&sb, "    if ([string]$c.LogFilePath -ne %s) { $c.LogFilePath = %s }\n", psQuote(snap.LogFilePath), psQuote(snap.LogFilePath))
 	return sb.String()
 }
 

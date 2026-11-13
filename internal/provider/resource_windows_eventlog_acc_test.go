@@ -278,8 +278,9 @@ resource "windows_eventlog" "imp" {
 				ImportStateId:     "Application",
 				ImportStateVerify: true,
 				// Counters move as the live log receives events between
-				// the import read and the verify refresh.
-				ImportStateVerifyIgnore: []string{"record_count", "file_size_bytes"},
+				// the import read and the verify refresh. restore_on_destroy
+				// is a local destroy-time intent, not host state.
+				ImportStateVerifyIgnore: []string{"record_count", "file_size_bytes", "restore_on_destroy"},
 			},
 		},
 	})

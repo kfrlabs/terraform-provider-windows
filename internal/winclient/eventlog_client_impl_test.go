@@ -273,6 +273,39 @@ func TestBuildEventLogRestoreBlock_Verbatim(t *testing.T) {
 	}
 }
 
+func TestBuildEventLogBlocks_SkipRedundantWrites(t *testing.T) {
+	// Some hosts reject SaveChanges when a property is written with its
+	// current value (observed with IsEnabled on classic logs: "The parameter
+	// is incorrect"). Every assignment must therefore be guarded by a
+	// live-value comparison so no-op writes are skipped.
+	size := int64(20971520)
+	ret := "overwrite"
+	enabled := true
+	path := `%SystemRoot%\System32\Winevt\Logs\Application.evtx`
+	setBlock, err := buildEventLogSetBlock(EventLogSettings{
+		MaximumSizeBytes: &size, Retention: &ret, Enabled: &enabled, LogFilePath: &path,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	restoreBlock := buildEventLogRestoreBlock(EventLogState{
+		Name: "Application", MaximumSizeBytes: 20971520, LogMode: "Circular",
+		IsEnabled: true, LogFilePath: path,
+	})
+	for _, block := range []string{setBlock, restoreBlock} {
+		for _, want := range []string{
+			"[int64]$c.MaximumSizeInBytes -ne 20971520",
+			"[string]$c.LogMode -ne ",
+			"[bool]$c.IsEnabled",
+			"[string]$c.LogFilePath -ne ",
+		} {
+			if !strings.Contains(block, want) {
+				t.Errorf("write block missing live-value guard %q, got:\n%s", want, block)
+			}
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // parseEventLogState
 // ---------------------------------------------------------------------------
