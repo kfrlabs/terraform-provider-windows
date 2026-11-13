@@ -1218,13 +1218,20 @@ func RedactDSCState(schema *DSCResourceSchema, state map[string]any) map[string]
 		if v == nil {
 			continue
 		}
-		name := k
-		if sp := schema.Property(k); sp != nil {
-			if sp.IsCredential() {
-				continue
-			}
-			name = sp.Name
+		sp := schema.Property(k)
+		if sp == nil {
+			// Drop anything the schema does not declare: Invoke-DscResource
+			// serialises the live CimInstance with envelope metadata
+			// (CimClass, CimInstanceProperties, CimSystemProperties with
+			// ServerName, ConfigurationName, ...). Keeping it would persist
+			// host-specific noise in current_state_json and churn the
+			// state on every read.
+			continue
 		}
+		if sp.IsCredential() {
+			continue
+		}
+		name := sp.Name
 		if m, ok := v.(map[string]any); ok {
 			if rv, keep := redactDSCValue(m); keep {
 				if rm, ok := rv.(map[string]any); ok {

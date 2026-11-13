@@ -434,11 +434,15 @@ func TestRedactDSCState(t *testing.T) {
 			"UserName": "u",
 			"Password": "System.Security.SecureString",
 		},
-		"Nested": map[string]any{
+		"DependsOn": map[string]any{
 			"Key":        "k",
 			"NullNested": nil,
 			"Cred":       map[string]any{"username": "u", "password": "p"},
 		},
+		// Host envelope metadata is not schema-declared and must be
+		// dropped so current_state_json carries no volatile noise.
+		"CimSystemProperties": map[string]any{"ServerName": "localhost"},
+		"ConfigurationName":   "localhost",
 	}
 	redacted := RedactDSCState(schema, raw)
 	if _, ok := redacted["Credential"]; ok {
@@ -447,7 +451,13 @@ func TestRedactDSCState(t *testing.T) {
 	if _, ok := redacted["Nulls"]; ok {
 		t.Errorf("null value survived redaction: %v", redacted)
 	}
-	nested, ok := redacted["Nested"].(map[string]any)
+	if _, ok := redacted["CimSystemProperties"]; ok {
+		t.Errorf("undeclared host metadata survived redaction: %v", redacted)
+	}
+	if _, ok := redacted["ConfigurationName"]; ok {
+		t.Errorf("undeclared host metadata survived redaction: %v", redacted)
+	}
+	nested, ok := redacted["DependsOn"].(map[string]any)
 	if !ok {
 		t.Fatalf("nested object lost its shape: %v", redacted)
 	}

@@ -250,10 +250,8 @@ func windowsDSCResourceSchemaDefinition(ctx context.Context) schema.Schema {
 			"current_state_json": schema.StringAttribute{
 				Computed: true,
 				Description: "Redacted `Invoke-DscResource -Method Get` output as canonical JSON " +
-					"(credential values dropped, nulls omitted). Informational only: never produces drift.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+					"(credential values dropped, nulls omitted, schema-declared properties only). " +
+					"Informational only: never produces drift.",
 			},
 			"reboot_required": schema.BoolAttribute{
 				Computed: true,
