@@ -623,6 +623,43 @@ func TestDSCEnsure_ModuleNotFound(t *testing.T) {
 	}
 }
 
+func TestDSCPreflight_UsesVersionedModuleSpecification(t *testing.T) {
+	// Regression: passing a Get-Module result object to Get-DscResource
+	// -Module fails when several versions are installed (the result is a
+	// ModuleInfoGrouping, not convertible to ModuleSpecification). The
+	// preflight must unwrap groups and address the module by
+	// ModuleName+RequiredVersion instead of passing a module object.
+	var got string
+	withDSCFake(t, func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		if strings.Contains(script, "$modReqVer") {
+			if got == "" {
+				got = script
+			}
+			return dscFakePreflight + "\n", "", nil
+		}
+		return "{\"ok\":true,\"data\":{\"in_desired_state\":true,\"reboot_required\":false}}\n", "", nil
+	})
+	c := NewDSCResourceClient(newDSCTestClient(t))
+	if _, err := c.Ensure(context.Background(), DSCEnsureInput{
+		ModuleName: "PSDesiredStateConfiguration", ResourceName: "Environment",
+		Properties: map[string]any{"Name": "X"},
+	}); err != nil {
+		t.Fatalf("Ensure() = %v", err)
+	}
+	for _, want := range []string{
+		"ModuleInfoGrouping",
+		"RequiredVersion",
+		"Properties['Group']",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("preflight script missing %q, got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "-Module $mod ") || strings.Contains(got, "-Module $mod\n") || strings.Contains(got, "-Module $mod\r") {
+		t.Errorf("preflight must not pass a module object to -Module, got:\n%s", got)
+	}
+}
+
 func TestDSCRead_MissingResourceReturnsNil(t *testing.T) {
 	withDSCFake(t, func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
 		return "{\"ok\":false,\"kind\":\"resource_not_found\",\"message\":\"DSC resource 'R' was not found.\"}\n", "", nil

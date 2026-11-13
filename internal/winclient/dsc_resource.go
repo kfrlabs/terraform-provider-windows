@@ -183,7 +183,14 @@ if ($lcmState -match '^(Busy|Pending)') {
   return
 }
 
-$mods = @(Get-Module -ListAvailable -Name $modName)
+$rawMods = @(Get-Module -ListAvailable -Name $modName)
+# Flatten ModuleInfoGrouping wrappers: when several versions of a module
+# are installed, Get-Module returns group objects that -Module parameters
+# cannot convert ("Cannot convert ... ModuleInfoGrouping to ...").
+$mods = @()
+foreach ($m in $rawMods) {
+  if ($null -ne $m.PSObject.Properties['Group']) { $mods += @($m.Group) } else { $mods += $m }
+}
 if ($mods.Count -eq 0) {
   Emit-Err 'module_not_found' ('DSC module ''' + $modName + ''' is not installed on the target host.') @{ module = $modName; step = 'module' }
   return
@@ -211,19 +218,21 @@ if ($modReqVer -ne '') {
     Emit-Err 'module_not_found' ('DSC module ''' + $modName + ''' version ''' + $modReqVer + ''' is not installed on the target host (installed: ' + $have + ').') @{ module = $modName; wanted_version = $modReqVer; installed_versions = $have; step = 'module' }
     return
   }
-  $mod = $sel[0]
+  $modVerResolved = $sel[0].Version.ToString()
 } else {
-  $mod = $mods[0]
+  $modVerResolved = $mods[0].Version.ToString()
 }
-
+# Pass a ModuleName+RequiredVersion specification rather than a module
+# object: -Module only accepts ModuleSpecification-convertible values.
+$modArg = @{ ModuleName = $modName; RequiredVersion = $modVerResolved }
 try {
-  $found = @(Get-DscResource -Name $resName -Module $mod -ErrorAction Stop)
+  $found = @(Get-DscResource -Name $resName -Module $modArg -ErrorAction Stop)
 } catch {
   Emit-Err (Classify-DscResource $_ 'schema') ([string]$_.Exception.Message) @{ module = $modName; resource = $resName; step = 'schema' }
   return
 }
 if ($found.Count -eq 0) {
-  Emit-Err 'resource_not_found' ('DSC resource ''' + $resName + ''' was not found in module ''' + $modName + ''' version ' + $mod.Version.ToString() + ' on the target host.') @{ module = $modName; resource = $resName; step = 'schema' }
+  Emit-Err 'resource_not_found' ('DSC resource ''' + $resName + ''' was not found in module ''' + $modName + ''' version ' + $modVerResolved + ' on the target host.') @{ module = $modName; resource = $resName; step = 'schema' }
   return
 }
 $r = $found[0]
@@ -241,8 +250,8 @@ $props = @($r.Properties | ForEach-Object {
 Emit-OK ([ordered]@{
   refresh_mode   = $refreshMode
   lcm_state      = $lcmState
-  module_name    = $mod.Name
-  module_version = $mod.Version.ToString()
+  module_name    = $modName
+  module_version = $modVerResolved
   resource_name  = [string]$r.Name
   properties     = $props
 })
@@ -289,7 +298,7 @@ foreach ($k in $credsH.Keys) {
     return
   }
 }
-$modArg = @{ ModuleName = $modName; ModuleVersion = $modVer }
+$modArg = @{ ModuleName = $modName; RequiredVersion = $modVer }
 try {
   $out = Invoke-DscResource -Name $resName -ModuleName $modArg -Method $method -Property $invokeProps -ErrorAction Stop
 } catch {
