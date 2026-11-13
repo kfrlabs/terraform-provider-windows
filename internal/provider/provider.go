@@ -287,6 +287,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsDiskResource,
 		NewWindowsDNSClientResource,
 		NewWindowsDomainMembershipResource,
+		NewWindowsDSCResource,
 		NewWindowsEnvironmentVariableResource,
 		NewWindowsEventLogResource,
 		NewWindowsFeatureResource,
