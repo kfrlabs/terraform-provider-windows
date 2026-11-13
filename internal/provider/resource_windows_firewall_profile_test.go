@@ -43,6 +43,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -307,6 +311,56 @@ func isOptionalComputedAttr(a any) bool {
 	oc, ok1 := a.(optionalChecker)
 	cc, ok2 := a.(computedChecker)
 	return ok1 && ok2 && oc.IsOptional() && cc.IsComputed()
+}
+
+// TestFirewallProfileResource_SettingsUseStateForUnknown (issue #322):
+// every Optional+Computed profile setting is observed from the host
+// (Get-NetFirewallProfile, tri-states project to null) and must carry
+// UseStateForUnknown so an unconfigured attribute keeps its prior state
+// instead of planning an unknown value that fails with
+// "inconsistent result after apply". The bespoke Read keeps the
+// disabled_interface_aliases null-when-unmanaged projection; the plan
+// modifier only affects unknown values, never null.
+func TestFirewallProfileResource_SettingsUseStateForUnknown(t *testing.T) {
+	s := windowsFirewallProfileSchemaDefinition(context.Background())
+	for _, n := range []string{
+		"enabled", "allow_inbound_rules", "allow_local_firewall_rules",
+		"allow_local_ipsec_rules", "allow_unicast_response_to_multicast",
+		"notify_on_listen", "log_allowed", "log_blocked", "log_ignored",
+	} {
+		a, ok := s.Attributes[n].(schema.BoolAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.BoolAttribute, got %T", n, s.Attributes[n])
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], boolplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		}
+	}
+	for _, n := range []string{
+		"default_inbound_action", "default_outbound_action", "log_file_name",
+	} {
+		a, ok := s.Attributes[n].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.StringAttribute, got %T", n, s.Attributes[n])
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		}
+	}
+	intAttr, ok := s.Attributes["log_max_size_kilobytes"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("log_max_size_kilobytes: expected schema.Int64Attribute, got %T", s.Attributes["log_max_size_kilobytes"])
+	}
+	if len(intAttr.PlanModifiers) != 1 || !reflect.DeepEqual(intAttr.PlanModifiers[0], int64planmodifier.UseStateForUnknown()) {
+		t.Errorf("log_max_size_kilobytes must carry exactly UseStateForUnknown, got %v", intAttr.PlanModifiers)
+	}
+	setAttr, ok := s.Attributes["disabled_interface_aliases"].(schema.SetAttribute)
+	if !ok {
+		t.Fatalf("disabled_interface_aliases: expected schema.SetAttribute, got %T", s.Attributes["disabled_interface_aliases"])
+	}
+	if len(setAttr.PlanModifiers) != 1 || !reflect.DeepEqual(setAttr.PlanModifiers[0], setplanmodifier.UseStateForUnknown()) {
+		t.Errorf("disabled_interface_aliases must carry exactly UseStateForUnknown, got %v", setAttr.PlanModifiers)
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -33,7 +33,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -165,8 +168,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"managed_runtime_version": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "CLR version for the pool (`\"\"` means No Managed Code, `v2.0`, `v4.0`).",
 				Validators: []validator.String{
 					stringvalidator.OneOf("", "v2.0", "v4.0"),
@@ -174,8 +180,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"managed_pipeline_mode": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Managed pipeline mode. One of `Integrated`, `Classic`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("Integrated", "Classic"),
@@ -183,14 +192,20 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"enable_32bit_app_on_win64": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether 32-bit applications run on 64-bit Windows (`enable32BitAppOnWin64`).",
 			},
 
 			"start_mode": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Pool start mode. One of `OnDemand`, `AlwaysRunning`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("OnDemand", "AlwaysRunning"),
@@ -198,14 +213,20 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"auto_start": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether the pool starts automatically (`autoStart`).",
 			},
 
 			"queue_length": schema.Int64Attribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "HTTP.sys request queue length (`queueLength`, 10-65535).",
 				Validators: []validator.Int64{
 					int64validator.Between(10, 65535),
@@ -213,8 +234,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"identity_type": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Pool identity (`processModel.identityType`). One of `ApplicationPoolIdentity`, `LocalSystem`, `LocalService`, `NetworkService`, `SpecificUser`. `LocalSystem` runs with full machine privileges: plan warns. `SpecificUser` additionally requires `identity_username` and `identity_password_wo`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("ApplicationPoolIdentity", "LocalSystem", "LocalService", "NetworkService", "SpecificUser"),
@@ -222,8 +246,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"identity_username": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Account for a `SpecificUser` identity (`processModel.userName`, e.g. `CONTOSO\\svc-web`). Required when `identity_type = \"SpecificUser\"`; inert otherwise.",
 			},
 
@@ -259,14 +286,20 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"load_user_profile": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether IIS loads the user profile for the pool identity (`processModel.loadUserProfile`).",
 			},
 
 			"idle_timeout_minutes": schema.Int64Attribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "Idle timeout in minutes (`processModel.idleTimeout`, 0-43200; `0` disables the timeout).",
 				Validators: []validator.Int64{
 					int64validator.Between(0, 43200),
@@ -274,8 +307,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"idle_timeout_action": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Action when the idle timeout elapses. One of `Terminate`, `Suspend`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("Terminate", "Suspend"),
@@ -283,8 +319,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"max_processes": schema.Int64Attribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "Maximum worker processes (`processModel.maxProcesses`, 0-2147483647; `0` is NUMA aware).",
 				Validators: []validator.Int64{
 					int64validator.Between(0, 2147483647),
@@ -292,8 +331,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"recycling_periodic_restart_minutes": schema.Int64Attribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "Periodic restart interval in minutes (`recycling.periodicRestart.time`; `0` disables the interval restart).",
 				Validators: []validator.Int64{
 					int64validator.AtLeast(0),
@@ -304,6 +346,9 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.Set{
+					setplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Daily recycle schedule (`recycling.periodicRestart.schedule`), each entry `HH:MM:SS` (24h). Null means unmanaged; an empty set clears the schedule (full replace of the collection).",
 				Validators: []validator.Set{
 					iisAppPoolScheduleValidator{},
@@ -311,8 +356,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"recycling_private_memory_kb": schema.Int64Attribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "Private-memory recycle threshold in kilobytes (`recycling.periodicRestart.privateMemory`).",
 				Validators: []validator.Int64{
 					int64validator.AtLeast(0),
@@ -320,14 +368,20 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"rapid_fail_protection": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether rapid-fail protection is enabled (`failure.rapidFailProtection`).",
 			},
 
 			"cpu_limit_percent": schema.Int64Attribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "CPU limit in whole percent (`cpu.limit`, 0-100; converted ×1000 server-side).",
 				Validators: []validator.Int64{
 					int64validator.Between(0, 100),
@@ -335,8 +389,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"cpu_action": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Action when the CPU limit is exceeded. One of `NoAction`, `KillW3wp`, `Throttle`, `ThrottleUnderLoad`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("NoAction", "KillW3wp", "Throttle", "ThrottleUnderLoad"),
@@ -344,8 +401,11 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"state": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Runtime state of the pool. One of `Started`, `Stopped`. Enforced only when configured (`Start-WebAppPool` / `Stop-WebAppPool`).",
 				Validators: []validator.String{
 					stringvalidator.OneOf("Started", "Stopped"),

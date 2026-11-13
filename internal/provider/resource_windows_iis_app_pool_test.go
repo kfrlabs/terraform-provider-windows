@@ -32,6 +32,7 @@ package provider
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -293,6 +298,58 @@ func TestWindowsIISAppPoolResource_Schema(t *testing.T) {
 	}
 	if !idAttr.Computed || idAttr.Optional || idAttr.Required {
 		t.Error("id must be computed only")
+	}
+}
+
+// TestWindowsIISAppPoolResource_SettingsUseStateForUnknown (issue #322):
+// every Optional+Computed pool setting is observed from IIS
+// (Get-ItemProperty) and must carry UseStateForUnknown so an unconfigured
+// attribute keeps its prior state instead of planning an unknown value
+// that fails with "inconsistent result after apply".
+func TestWindowsIISAppPoolResource_SettingsUseStateForUnknown(t *testing.T) {
+	s := windowsIISAppPoolSchemaDefinition(context.Background())
+	for _, n := range []string{
+		"managed_runtime_version", "managed_pipeline_mode", "start_mode",
+		"identity_type", "identity_username", "idle_timeout_action",
+		"cpu_action", "state",
+	} {
+		a, ok := s.Attributes[n].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.StringAttribute, got %T", n, s.Attributes[n])
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		}
+	}
+	for _, n := range []string{
+		"enable_32bit_app_on_win64", "auto_start", "load_user_profile", "rapid_fail_protection",
+	} {
+		a, ok := s.Attributes[n].(schema.BoolAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.BoolAttribute, got %T", n, s.Attributes[n])
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], boolplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		}
+	}
+	for _, n := range []string{
+		"queue_length", "idle_timeout_minutes", "max_processes",
+		"recycling_periodic_restart_minutes", "recycling_private_memory_kb", "cpu_limit_percent",
+	} {
+		a, ok := s.Attributes[n].(schema.Int64Attribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.Int64Attribute, got %T", n, s.Attributes[n])
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], int64planmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		}
+	}
+	setAttr, ok := s.Attributes["recycling_schedule"].(schema.SetAttribute)
+	if !ok {
+		t.Fatalf("recycling_schedule: expected schema.SetAttribute, got %T", s.Attributes["recycling_schedule"])
+	}
+	if len(setAttr.PlanModifiers) != 1 || !reflect.DeepEqual(setAttr.PlanModifiers[0], setplanmodifier.UseStateForUnknown()) {
+		t.Errorf("recycling_schedule must carry exactly UseStateForUnknown, got %v", setAttr.PlanModifiers)
 	}
 }
 

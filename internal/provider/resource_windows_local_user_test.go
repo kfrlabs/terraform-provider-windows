@@ -25,6 +25,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -309,6 +311,25 @@ func TestLocalUserSchema_PasswordWoIsWriteOnly(t *testing.T) {
 	}
 	if pwAttr.Required {
 		t.Error("password_wo must NOT be Required (creates a hard incompatibility with the legacy `password` path)")
+	}
+}
+
+// TestLocalUserSchema_AccountExpiresIsObserved (issue #322): account_expires
+// is filled by Read from Windows even when unconfigured, so it is
+// Optional+Computed with UseStateForUnknown — an unconfigured value keeps
+// its prior state instead of planning unknown and failing with
+// "inconsistent result after apply".
+func TestLocalUserSchema_AccountExpiresIsObserved(t *testing.T) {
+	s := windowsLocalUserSchemaDefinition(context.Background())
+	aeAttr, ok := s.Attributes["account_expires"].(rschema.StringAttribute)
+	if !ok {
+		t.Fatalf("account_expires attr is not StringAttribute")
+	}
+	if !aeAttr.Optional || !aeAttr.Computed {
+		t.Error("account_expires must be Optional+Computed")
+	}
+	if len(aeAttr.PlanModifiers) != 1 || !reflect.DeepEqual(aeAttr.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
+		t.Errorf("account_expires must carry exactly UseStateForUnknown, got %v", aeAttr.PlanModifiers)
 	}
 }
 

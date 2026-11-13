@@ -36,7 +36,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -170,14 +173,20 @@ func windowsFirewallProfileSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"enabled": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether the firewall is active for this profile. Disabling it (`false`) turns the firewall off for that network location: plan warns, and it should only be used on otherwise isolated hosts.",
 			},
 
 			"default_inbound_action": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Default action for inbound traffic that matches no rule. One of `Allow`, `Block`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("Allow", "Block"),
@@ -185,8 +194,11 @@ func windowsFirewallProfileSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"default_outbound_action": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Default action for outbound traffic that matches no rule. One of `Allow`, `Block`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("Allow", "Block"),
@@ -194,38 +206,56 @@ func windowsFirewallProfileSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"allow_inbound_rules": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether inbound firewall rules are honoured for this profile. Disabling it on the profile carrying the SSH session trips the lockout guard.",
 			},
 
 			"allow_local_firewall_rules": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether locally created firewall rules are honoured for this profile.",
 			},
 
 			"allow_local_ipsec_rules": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether locally created IPsec rules are honoured for this profile.",
 			},
 
 			"allow_unicast_response_to_multicast": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether unicast responses to multicast traffic are allowed for this profile.",
 			},
 
 			"notify_on_listen": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether the user is notified when an application starts listening on a port.",
 			},
 
 			"log_file_name": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Path of the firewall log file. Must be an absolute Windows path or start with `%systemroot%` (case-insensitive).",
 				Validators: []validator.String{
 					firewallProfileLogPathValidator{},
@@ -233,8 +263,11 @@ func windowsFirewallProfileSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"log_max_size_kilobytes": schema.Int64Attribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "Maximum size of the firewall log file, in kilobytes (1-32767).",
 				Validators: []validator.Int64{
 					int64validator.Between(1, 32767),
@@ -242,20 +275,29 @@ func windowsFirewallProfileSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"log_allowed": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether allowed connections are written to the firewall log.",
 			},
 
 			"log_blocked": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether blocked connections are written to the firewall log.",
 			},
 
 			"log_ignored": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether ignored (dropped before filtering) packets are written to the firewall log.",
 			},
 
@@ -263,6 +305,9 @@ func windowsFirewallProfileSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.Set{
+					setplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Interfaces excluded from this profile (e.g. a VPN adapter). Null means unmanaged; an empty set clears the exclusion list.",
 			},
 

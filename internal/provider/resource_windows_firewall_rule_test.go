@@ -28,6 +28,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	schemavalidator "github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -98,6 +99,43 @@ func TestFirewallRuleResource_GroupUsesPriorStateBeforeRequiresReplace(t *testin
 	}
 	if !strings.Contains(fmt.Sprintf("%T", group.PlanModifiers[1]), "requiresReplaceIfModifier") {
 		t.Errorf("second group plan modifier = %T, want RequiresReplace", group.PlanModifiers[1])
+	}
+}
+
+// TestFirewallRuleResource_ObservedAttrsUseStateForUnknown (issue #322):
+// every Optional+Computed firewall setting is observed from Windows
+// (Get-NetFirewall*Filter) and must carry UseStateForUnknown so an
+// unconfigured attribute keeps its prior state instead of planning an
+// unknown value that fails with "inconsistent result after apply".
+func TestFirewallRuleResource_ObservedAttrsUseStateForUnknown(t *testing.T) {
+	s := windowsFirewallRuleSchemaDefinition(context.Background())
+	for _, n := range []string{
+		"edge_traversal_policy", "protocol", "program", "service", "interface_type",
+	} {
+		a, ok := s.Attributes[n].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.StringAttribute, got %T", n, s.Attributes[n])
+		}
+		if !a.Optional || !a.Computed {
+			t.Errorf("%s must be Optional+Computed", n)
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		}
+	}
+	for _, n := range []string{
+		"profile", "local_port", "remote_port", "local_address", "remote_address",
+	} {
+		a, ok := s.Attributes[n].(schema.ListAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.ListAttribute, got %T", n, s.Attributes[n])
+		}
+		if !a.Optional || !a.Computed {
+			t.Errorf("%s must be Optional+Computed", n)
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], listplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		}
 	}
 }
 
