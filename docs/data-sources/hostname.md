@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   Reads the current hostname state of the remote Windows host without managing it. This is a singleton data source — no lookup keys are required.
   Exposes current_name (active name), pending_name (effective after next reboot), reboot_pending, and the stable machine_id (HKLM MachineGuid).
-  The Terraform data source ID is always "current".
+  The Terraform data source ID is the stable machine_id (HKLM MachineGuid).
 ---
 
 # windows_hostname (Data Source)
@@ -14,7 +14,7 @@ Reads the current hostname state of the remote Windows host without managing it.
 
 Exposes `current_name` (active name), `pending_name` (effective after next reboot), `reboot_pending`, and the stable `machine_id` (HKLM MachineGuid).
 
-The Terraform data source ID is always `"current"`.
+The Terraform data source ID is the stable `machine_id` (HKLM MachineGuid).
 
 ## Example Usage
 
@@ -56,7 +56,7 @@ output "machine_id" {
 ### Read-Only
 
 - `current_name` (String) Active computer name as exposed by `Win32_ComputerSystem.Name`.
-- `id` (String) Data source ID; always "current" (singleton).
+- `id` (String) Data source ID; the stable machine ID (HKLM MachineGuid).
 - `machine_id` (String) Stable per-machine identifier read from `HKLM:\SOFTWARE\Microsoft\Cryptography\MachineGuid`.
 - `pending_name` (String) Hostname queued to take effect on next reboot. Equal to `current_name` when no rename is pending.
 - `reboot_pending` (Boolean) True when `pending_name` differs from `current_name` (case-insensitive).

@@ -194,8 +194,8 @@ func TestHostnameDSRead_HappyPath(t *testing.T) {
 	}
 	var state windowsHostnameDataSourceModel
 	resp.State.Get(context.Background(), &state)
-	if state.ID.ValueString() != "current" {
-		t.Errorf("ID = %q, want current", state.ID.ValueString())
+	if state.ID.ValueString() != "abc-123-def" {
+		t.Errorf("ID = %q, want stable machine_id", state.ID.ValueString())
 	}
 	if state.CurrentName.ValueString() != "WIN-SERVER01" {
 		t.Errorf("CurrentName = %q", state.CurrentName.ValueString())
@@ -250,6 +250,26 @@ func TestHostnameDSRead_Error(t *testing.T) {
 	}
 }
 
+func TestHostnameDSRead_EmptyMachineIDErrors(t *testing.T) {
+	d := &windowsHostnameDataSource{
+		hn: &fakeHostnameClientDS{
+			readOut: &winclient.HostnameState{
+				CurrentName:   "WIN-SERVER01",
+				PendingName:   "WIN-SERVER01",
+				RebootPending: false,
+				MachineID:     "",
+			},
+		},
+	}
+	cfg := hostnameDSConfig()
+	req := datasource.ReadRequest{Config: cfg}
+	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
+	d.Read(context.Background(), req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic when MachineGuid is missing")
+	}
+}
+
 // TestHostnameDSRead_BoundedByTimeouts verifies the data source Read runs
 // under a deadline derived from `timeouts.read` (issue #197):
 // hostnameDSDefaultTimeout when the block is absent, the configured value
@@ -268,7 +288,7 @@ func TestHostnameDSRead_BoundedByTimeouts(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeHostnameClientDS{
-				readOut: &winclient.HostnameState{CurrentName: "HOST"},
+				readOut: &winclient.HostnameState{CurrentName: "HOST", MachineID: "abc-123-def"},
 			}
 			d := &windowsHostnameDataSource{hn: fake}
 			cfg := hostnameDSConfig()

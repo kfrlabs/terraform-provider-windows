@@ -367,10 +367,10 @@ func TestDomainMembershipDSRead_SkipSecureChannel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Read — empty machine ID falls back to "current"
+// Read — empty machine ID is an error, never a placeholder ID
 // ---------------------------------------------------------------------------
 
-func TestDomainMembershipDSRead_EmptyMachineIDFallsBack(t *testing.T) {
+func TestDomainMembershipDSRead_EmptyMachineIDErrors(t *testing.T) {
 	out := joinedDMState()
 	out.MachineID = ""
 	d := &windowsDomainMembershipDataSource{dm: &fakeDomainMembershipClientDS{readOut: out}}
@@ -379,13 +379,8 @@ func TestDomainMembershipDSRead_EmptyMachineIDFallsBack(t *testing.T) {
 
 	d.Read(context.Background(), datasource.ReadRequest{Config: cfg}, resp)
 
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
-	}
-	var state windowsDomainMembershipDataSourceModel
-	resp.State.Get(context.Background(), &state)
-	if state.ID.ValueString() != "current" {
-		t.Errorf("ID = %q, want current fallback", state.ID.ValueString())
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic when MachineGuid is missing")
 	}
 }
 

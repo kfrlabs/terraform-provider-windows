@@ -927,6 +927,15 @@ func TestNTPStateToModel_EmptyPeersAndIDFallback(t *testing.T) {
 	}
 }
 
+func TestNTPStateToModel_EmptyMachineIDNoPriorErrors(t *testing.T) {
+	live := okNTPState()
+	live.MachineID = ""
+	_, diags := ntpStateToModel(live, windowsNTPModel{Timeouts: ntpNullTimeouts()})
+	if !diags.HasError() {
+		t.Fatal("expected error diagnostic when MachineGuid is missing with no prior ID")
+	}
+}
+
 func TestNTPModelToInput_NullAndUnknownSkip(t *testing.T) {
 	m := windowsNTPModel{
 		Type:                         types.StringValue("NT5DS"),

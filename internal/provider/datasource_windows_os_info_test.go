@@ -283,7 +283,7 @@ func TestOSInfoDSRead_ServerCore(t *testing.T) {
 	}
 }
 
-func TestOSInfoDSRead_EmptyMachineIDFallsBack(t *testing.T) {
+func TestOSInfoDSRead_EmptyMachineIDErrors(t *testing.T) {
 	live := fakeOSInfoState()
 	live.MachineID = ""
 	d := &windowsOSInfoDataSource{
@@ -294,13 +294,8 @@ func TestOSInfoDSRead_EmptyMachineIDFallsBack(t *testing.T) {
 
 	d.Read(context.Background(), datasource.ReadRequest{Config: cfg}, resp)
 
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
-	}
-	var state windowsOSInfoDataSourceModel
-	resp.State.Get(context.Background(), &state)
-	if state.ID.ValueString() != "current" {
-		t.Errorf("ID = %q, want current fallback", state.ID.ValueString())
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic when MachineGuid is missing")
 	}
 }
 

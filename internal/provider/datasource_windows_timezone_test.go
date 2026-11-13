@@ -214,10 +214,9 @@ func TestTimezoneDSRead_HappyPath(t *testing.T) {
 	}
 }
 
-// TestTimezoneDSRead_EmptyMachineIDFallsBack pins the empty-GUID fallback:
-// an unreadable MachineGuid yields the singleton literal instead of an
-// empty Terraform ID (which the framework rejects).
-func TestTimezoneDSRead_EmptyMachineIDFallsBack(t *testing.T) {
+// TestTimezoneDSRead_EmptyMachineIDErrors pins the empty-GUID behaviour:
+// an unreadable MachineGuid is an error, never a placeholder ID.
+func TestTimezoneDSRead_EmptyMachineIDErrors(t *testing.T) {
 	out := okTimezoneState()
 	out.MachineID = ""
 	d := &windowsTimezoneDataSource{
@@ -228,13 +227,8 @@ func TestTimezoneDSRead_EmptyMachineIDFallsBack(t *testing.T) {
 
 	d.Read(context.Background(), datasource.ReadRequest{Config: cfg}, resp)
 
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
-	}
-	var state windowsTimezoneDataSourceModel
-	resp.State.Get(context.Background(), &state)
-	if state.ID.ValueString() != "current" {
-		t.Errorf("ID = %q, want current fallback", state.ID.ValueString())
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic when MachineGuid is missing")
 	}
 }
 

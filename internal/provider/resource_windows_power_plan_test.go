@@ -582,6 +582,15 @@ func TestPowerPlanStateToModel_PreservesIntentAndIDFallback(t *testing.T) {
 	}
 }
 
+func TestPowerPlanStateToModel_EmptyMachineIDNoPriorErrors(t *testing.T) {
+	st := okPowerPlanState()
+	st.MachineID = ""
+	_, diags := powerPlanStateToModel(st, windowsPowerPlanModel{})
+	if !diags.HasError() {
+		t.Fatal("expected error diagnostic when MachineGuid is missing with no prior ID")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Create
 // ---------------------------------------------------------------------------

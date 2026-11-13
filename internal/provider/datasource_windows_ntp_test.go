@@ -166,7 +166,7 @@ func TestNTPDSRead_HappyPath(t *testing.T) {
 	}
 }
 
-func TestNTPDSRead_MachineIDFallback(t *testing.T) {
+func TestNTPDSRead_EmptyMachineIDErrors(t *testing.T) {
 	live := okNTPState()
 	live.MachineID = ""
 	fc := &fakeNTPClientDS{readOut: live}
@@ -179,16 +179,8 @@ func TestNTPDSRead_MachineIDFallback(t *testing.T) {
 	}}
 	d.Read(context.Background(), req, resp)
 
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("Read diags: %v", fpDiagSummaries(resp.Diagnostics))
-	}
-	var m windowsNTPDataSourceModel
-	resp.Diagnostics.Append(resp.State.Get(context.Background(), &m)...)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("State.Get: %v", resp.Diagnostics)
-	}
-	if m.ID.ValueString() != "current" {
-		t.Errorf("id = %q, want fallback current", m.ID.ValueString())
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic when MachineGuid is missing")
 	}
 }
 
