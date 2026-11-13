@@ -14,8 +14,12 @@
 //     host via powercfg /aliases (stable, non-localised alias/GUID
 //     pairs, cached per call). powercfg /query text is never parsed.
 //   - Existence checks read WMI root\cimv2\power (Win32_PowerPlan
-//     InstanceID, Win32_PowerSetting, Win32_PowerSettingDataIndex
-//     SettingIndexValue).
+//     InstanceID, Win32_PowerSetting). AC/DC values are read from the
+//     registry store powercfg itself writes
+//     (HKLM:\...\PowerSchemes\<plan>\<sub>\<setting>\AC|DCSettingIndex):
+//     Win32_PowerSettingDataIndex instances are unreliable read-back
+//     (missing/stale after powercfg writes) and powercfg /query text is
+//     localised and never parsed.
 //
 // Activation uses powercfg /setactive gated on $LASTEXITCODE:
 // Win32_PowerPlan.Activate() is unreliable on recent builds and is never
@@ -154,14 +158,18 @@ function Resolve-PowerGuid([hashtable]$Table, [string]$Value, [string]$What) {
   throw ('{0} {1} could not be resolved via powercfg /aliases' -f $What, $Value)
 }
 
-function Read-PowerSettingValue([string]$PlanGuid, [string]$AcDc, [string]$SettingGuid) {
-  $id = ('Microsoft:PowerSettingDataIndex\{0}\{1}\{2}' -f $PlanGuid, $AcDc, $SettingGuid)
-  # NOTE: no WMI -Filter here. WQL treats backslash as an escape character,
-  # so an InstanceID equality filter never matches (and some hosts reject it
-  # outright as "Invalid query"). Enumerate + Where-Object instead.
-  $o = Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSettingDataIndex -ErrorAction Stop | Where-Object { $_.InstanceID -eq $id } | Select-Object -First 1
-  if ($null -eq $o) { return $null }
-  return [int64]$o.SettingIndexValue
+function Read-PowerSettingValue([string]$PlanGuid, [string]$SubgroupGuid, [string]$AcDc, [string]$SettingGuid) {
+  # Values are read from the registry store that powercfg itself writes
+  # (HKLM PowerSchemes key), not from WMI: Win32_PowerSettingDataIndex
+  # instances are unreliable read-back (missing/stale after powercfg
+  # writes), and localised command output text must never be parsed.
+  # A missing value means "never configured" and returns $null.
+  $prop = if ($AcDc -eq 'AC') { 'ACSettingIndex' } else { 'DCSettingIndex' }
+  $key = ('HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\{0}\{1}\{2}' -f $PlanGuid, $SubgroupGuid, $SettingGuid)
+  try {
+    $v = (Get-ItemProperty -LiteralPath $key -Name $prop -ErrorAction Stop).$prop
+    return [int64]$v
+  } catch { return $null }
 }
 
 function Get-PowerPlans {
@@ -202,8 +210,8 @@ $Settings = @@SETTINGS@@
       $def = @(Get-CimInstance -Namespace 'root\cimv2\power' -ClassName Win32_PowerSetting -ErrorAction Stop | Where-Object { $_.InstanceID -eq ('Microsoft:PowerSetting\{' + $setGuid + '}') })
       if ($def.Count -eq 0) { Emit-Err 'setting_not_found' ('power setting ' + [string]$s.Setting + ' is unknown to the target host') @{ step = 'resolve'; setting = [string]$s.Setting }; return }
       try {
-        $ac = Read-PowerSettingValue $planGuid 'AC' $setGuid
-        $dc = Read-PowerSettingValue $planGuid 'DC' $setGuid
+        $ac = Read-PowerSettingValue $planGuid $subGuid 'AC' $setGuid
+        $dc = Read-PowerSettingValue $planGuid $subGuid 'DC' $setGuid
       } catch { Emit-Err (Classify-PowerPlan $_) $_.Exception.Message @{ step = 'read_values'; setting = $setGuid }; return }
       $vals += [ordered]@{ subgroup_guid = $subGuid; setting_guid = $setGuid; ac_value = $ac; dc_value = $dc }
     }
@@ -279,8 +287,8 @@ $Settings = @@SETTINGS@@
       $ac = $null
       $dc = $null
       try {
-        if ($null -ne $r.ac) { $ac = Read-PowerSettingValue $effective 'AC' $r.setting }
-        if ($null -ne $r.dc) { $dc = Read-PowerSettingValue $effective 'DC' $r.setting }
+        if ($null -ne $r.ac) { $ac = Read-PowerSettingValue $effective $r.subgroup 'AC' $r.setting }
+        if ($null -ne $r.dc) { $dc = Read-PowerSettingValue $effective $r.subgroup 'DC' $r.setting }
       } catch { Emit-Err (Classify-PowerPlan $_) $_.Exception.Message @{ step = 'verify'; setting = $r.setting }; return }
       if (($null -ne $r.ac -and $ac -ne [int64]$r.ac) -or ($null -ne $r.dc -and $dc -ne [int64]$r.dc)) {
         Emit-Err 'unknown' ('power setting change did not take effect for ' + $r.setting) @{ step = 'verify'; setting = $r.setting }

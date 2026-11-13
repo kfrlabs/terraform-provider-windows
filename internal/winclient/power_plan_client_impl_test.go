@@ -312,8 +312,9 @@ func TestPowerPlanHeader_Conventions(t *testing.T) {
 		"function Get-PowerPlans",
 		"root\\cimv2\\power",
 		"Win32_PowerPlan",
-		"Win32_PowerSettingDataIndex",
-		"SettingIndexValue",
+		"ACSettingIndex",
+		"DCSettingIndex",
+		"Power\\User\\PowerSchemes",
 		"function Emit-OK",
 		"function Emit-Err",
 	} {
