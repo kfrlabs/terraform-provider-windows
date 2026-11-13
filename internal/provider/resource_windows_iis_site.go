@@ -7,7 +7,7 @@
 // state). Bindings are deliberately NOT managed here: the site is always
 // created with zero bindings and the bindings attribute is a read-only
 // view (protocol plus binding_information) owned by the
-// windows_iis_site_binding resource (issue #285).
+// windows_iis_binding resource (issue #285).
 //
 // Every setting except name is Optional+Computed: only configured
 // attributes are enforced, unconfigured ones reflect the observed value
@@ -140,7 +140,7 @@ func windowsIISSiteBindingObjectType() attr.Type {
 // Optional+Computed + ForceNew; `physical_path` is Required and updated in
 // place; every other setting is Optional+Computed (partial management:
 // only configured attributes are sent to the host). `bindings` is
-// Computed-only (managed by windows_iis_site_binding, issue #285).
+// Computed-only (managed by windows_iis_binding, issue #285).
 func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages an IIS site on a remote Windows host via SSH and PowerShell " +
@@ -148,7 +148,7 @@ func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 			"`Get/Set-WebConfigurationProperty`, `Set-ItemProperty IIS:\\Sites\\<name>`, " +
 			"`Remove-Website`, `Start-Website` / `Stop-Website`).\n\n" +
 			"The site is always created with zero bindings: bindings are not managed here (see " +
-			"`windows_iis_site_binding`). The read-only `bindings` attribute (`protocol` plus " +
+			"`windows_iis_binding`). The read-only `bindings` attribute (`protocol` plus " +
 			"`binding_information`) reflects the observed view so plans stay stable.\n\n" +
 			"Only the attributes configured in Terraform are written; every other setting on the host is " +
 			"left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime " +
@@ -263,7 +263,7 @@ func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 
 			"bindings": schema.ListNestedAttribute{
 				Computed:    true,
-				Description: "Read-only view of the site bindings (`protocol` plus `binding_information`, e.g. `*:80:example.com`). Managed by the `windows_iis_site_binding` resource — never written by this resource.",
+				Description: "Read-only view of the site bindings (`protocol` plus `binding_information`, e.g. `*:80:example.com`). Managed by the `windows_iis_binding` resource — never written by this resource.",
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.UseStateForUnknown(),
 				},
@@ -346,7 +346,7 @@ func (v iisSiteNameValidator) ValidateString(_ context.Context, req validator.St
 // Started-vs-Stopped diff while the site has no bindings: IIS cannot run
 // an unbound site, so the CRUD scripts deliberately leave it Stopped and
 // warn. Planning Stopped matches the host reality; once bindings appear
-// (managed by windows_iis_site_binding) the modifier goes quiet and the
+// (managed by windows_iis_binding) the modifier goes quiet and the
 // next plan proposes Started again.
 type iisSiteStateSuppressUnboundModifier struct{}
 
@@ -635,7 +635,7 @@ func (r *windowsIISSiteResource) Delete(ctx context.Context, req resource.Delete
 
 // ImportState adopts an existing site by name. The site_id starts
 // managed (it is part of the identity); bindings are observed as the
-// read-only view (owned by windows_iis_site_binding).
+// read-only view (owned by windows_iis_binding).
 func (r *windowsIISSiteResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	name := strings.TrimSpace(req.ID)
 	if err := winclient.ValidateIISSiteName(name); err != nil {
@@ -889,7 +889,7 @@ func warnIISSiteLeftStopped(d *diag.Diagnostics, plannedState types.String, obse
 	}
 	d.AddWarning(
 		"IIS site left Stopped: no bindings",
-		fmt.Sprintf("IIS site %q is configured with state = \"Started\" but has no bindings, and IIS cannot run an unbound site, so it was left Stopped. Add bindings (windows_iis_site_binding) and the next apply will start it.", observed.Name),
+		fmt.Sprintf("IIS site %q is configured with state = \"Started\" but has no bindings, and IIS cannot run an unbound site, so it was left Stopped. Add bindings (windows_iis_binding) and the next apply will start it.", observed.Name),
 	)
 }
 

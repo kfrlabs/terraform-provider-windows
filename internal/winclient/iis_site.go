@@ -10,7 +10,7 @@
 // with zero bindings (New-Item -Bindings @(), so no transient *:80:http
 // binding ever exists) and the bindings attribute is a read-only view
 // (protocol plus binding_information) owned by the
-// windows_iis_site_binding resource (issue #285).
+// windows_iis_binding resource (issue #285).
 //
 // Security invariants:
 //   - Site names, paths and every other user-supplied string are

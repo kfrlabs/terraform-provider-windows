@@ -295,6 +295,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsFirewallProfileResource,
 		NewWindowsHostnameResource,
 		NewWindowsIISAppPoolResource,
+		NewWindowsIISBindingResource,
 		NewWindowsIISSiteResource,
 		NewWindowsLegacyPackageResource,
 		NewWindowsLocalGroupResource,

@@ -1,7 +1,7 @@
 # Manage an IIS site with zero bindings: only the configured attributes are
 # written; everything else on the host is left untouched. The site stays
 # Stopped (with a warning) while it has no bindings — IIS cannot run an
-# unbound site — and starts once windows_iis_site_binding adds one.
+# unbound site — and starts once windows_iis_binding adds one.
 #
 # Requires IIS on the target host (WebAdministration module): install it
 # with windows_feature first (Web-Server; add Web-Mgmt-Console /

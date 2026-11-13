@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_iis_binding` resource (#285): manages one IIS binding on a
+  site on the target host (`New-WebBinding -SslFlags` / `Remove-WebBinding`,
+  `AddSslCertificate` / `RemoveSslCertificate`). Identity is
+  `<site>|<protocol>|<bindingInformation>` (e.g.
+  `web|https|*:443:example.com`, IPv6 bracketed). `site_name`, `protocol`,
+  `ip_address` (default `*`, netip canonical), `port` and `host_header`
+  (lower-case) are ForceNew; `require_sni` (`SslFlags` bit 0, https plus
+  host required), `certificate_thumbprint` (40 hex, https required) and
+  `certificate_store_name` (`My`/`WebHosting`) update in place (remove plus
+  re-add in one script). Create checks site-exists, then the global
+  conflict scan (`already_exists` with an import hint on the site,
+  `conflict` naming the other site), then the certificate (present in
+  `Cert:\LocalMachine\<store>` with a private key) and the HTTP.sys SSL
+  ownership (`ssl_binding_conflict`); the certificate is added with
+  binding rollback on failure and the site auto-starts when its
+  `serverAutoStart` asks for it. Binding the SSH management port (provider
+  port or probed `ManagementPath` `ServerPort`) is refused fail-closed
+  with `would_lock_out` before anything is applied. Read matches the exact
+  binding; Delete removes the certificate first, then the binding
+  (idempotent). `timeouts` default to 10m. No data source in v1.
+
 - New `windows_volume` resource and `windows_volume` data source (#292):
   last of the storage trio — formats one partition on a data disk on the
   target host (`Format-Volume` / `Get-Volume` / `Set-Volume`) and manages its
@@ -165,7 +186,7 @@ All notable changes to this project will be documented in this file.
   `logFile.*` and `limits.*`, `Remove-Website`, `Start-Website` /
   `Stop-Website`). The site is always created with zero bindings — the
   `bindings` attribute is a Computed-only read-only view (`protocol` plus
-  `binding_information`) owned by `windows_iis_site_binding` (#285).
+  `binding_information`) owned by `windows_iis_binding` (#285).
   `name` is Required + ForceNew (the Terraform ID); `site_id` is
   Optional+Computed + ForceNew (when unconfigured IIS allocates the
   lowest free ID itself, 1-4294967295 when set); `physical_path` is
