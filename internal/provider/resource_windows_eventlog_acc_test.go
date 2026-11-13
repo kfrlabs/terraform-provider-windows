@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -240,17 +241,32 @@ resource "windows_eventlog" "rst" {
 			},
 			{
 				// Removing the resource destroys it: restore_on_destroy
-				// re-applies the pre-existing values, which the data
-				// source then observes.
+				// re-applies the pre-existing values. The sibling data
+				// source below is read during plan (before the destroy),
+				// so it cannot observe the restored values; verify with
+				// a direct out-of-band read instead, which runs after
+				// apply completes.
 				Config: `
 data "windows_eventlog" "rst" {
   name = "Application"
 }
 `,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("data.windows_eventlog.rst", "maximum_size_bytes", fmt.Sprintf("%d", observedSize)),
-					resource.TestCheckResourceAttr("data.windows_eventlog.rst", "retention", observedRetention),
-				),
+				Check: func(_ *terraform.State) error {
+					live, err := c.Read(context.Background(), "Application")
+					if err != nil {
+						return fmt.Errorf("post-destroy read: %v", err)
+					}
+					if live == nil {
+						return fmt.Errorf("Application log not found after destroy")
+					}
+					if live.MaximumSizeBytes != observedSize {
+						return fmt.Errorf("maximum_size_bytes after destroy = %d, want restored %d", live.MaximumSizeBytes, observedSize)
+					}
+					if winclient.EventLogLogModeToRetention(live.LogMode) != observedRetention {
+						return fmt.Errorf("retention after destroy = %q, want restored %q", winclient.EventLogLogModeToRetention(live.LogMode), observedRetention)
+					}
+					return nil
+				},
 			},
 		},
 	})
