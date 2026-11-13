@@ -203,7 +203,10 @@ func TestModelFromFeature_AllFields(t *testing.T) {
 		Source:                 types.StringValue(`\\srv\share`),
 		Restart:                types.BoolValue(true),
 	}
-	got := modelFromFeature(info, prior)
+	got, md := modelFromFeature(info, prior)
+	if md.HasError() {
+		t.Fatalf("modelFromFeature diags: %v", md)
+	}
 	if got.ID.ValueString() != "Web-Server" || got.Name.ValueString() != "Web-Server" {
 		t.Errorf("ID/Name mismatch: %+v", got)
 	}
@@ -222,7 +225,10 @@ func TestModelFromFeature_NullDefaults(t *testing.T) {
 		IncludeManagementTools: types.BoolUnknown(),
 		Restart:                types.BoolNull(),
 	}
-	got := modelFromFeature(info, prior)
+	got, md := modelFromFeature(info, prior)
+	if md.HasError() {
+		t.Fatalf("modelFromFeature diags: %v", md)
+	}
 	if got.IncludeSubFeatures.ValueBool() {
 		t.Error("IncludeSubFeatures default should be false")
 	}
@@ -231,6 +237,39 @@ func TestModelFromFeature_NullDefaults(t *testing.T) {
 	}
 	if got.Restart.ValueBool() {
 		t.Error("Restart default should be false")
+	}
+}
+
+func TestModelFromFeature_InvalidInstallState(t *testing.T) {
+	// install_state is pure-Computed (no schema validator): an unexpected
+	// host spelling must surface as an error diagnostic from the
+	// projection, not as schema rejection.
+	info := &winclient.FeatureInfo{Name: "Web-Server", InstallState: "Bogus"}
+	_, md := modelFromFeature(info, windowsFeatureModel{})
+	if !md.HasError() {
+		t.Fatal("expected error diagnostic for unknown host install_state")
+	}
+}
+
+func TestFeatureRead_Handler_InvalidInstallState(t *testing.T) {
+	bad := okFeatureInfo()
+	bad.InstallState = "Bogus"
+	fake := &fakeFeatureClient{readOut: bad}
+	r := &windowsFeatureResource{feat: fake}
+	schemaDef := windowsFeatureSchemaDefinition(context.Background())
+	prior := tfsdk.State{
+		Schema: schemaDef,
+		Raw: featObj(map[string]tftypes.Value{
+			"id":   tftypes.NewValue(tftypes.String, "Web-Server"),
+			"name": tftypes.NewValue(tftypes.String, "Web-Server"),
+		}),
+	}
+	resp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: prior.Raw.Copy()},
+	}
+	r.Read(context.Background(), resource.ReadRequest{State: prior}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("Read must fail when the host reports an unknown install_state")
 	}
 }
 

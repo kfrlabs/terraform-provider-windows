@@ -281,23 +281,127 @@ func TestHostnameConfigure_Valid(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestHostnameImportState(t *testing.T) {
-	r := &windowsHostnameResource{}
+	const guid = "9a8b7c6d-1234-5678-abcd-ef0123456789"
+	fake := &fakeHostnameClient{
+		readOut: fakeHnState(guid, "MYHOST", "MYHOST", false),
+	}
+	r := &windowsHostnameResource{hn: fake}
 	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
 	}
 	r.ImportState(context.Background(),
-		resource.ImportStateRequest{ID: "9a8b7c6d-1234-5678-abcd-ef0123456789"}, resp)
+		resource.ImportStateRequest{ID: guid}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("ImportState unexpected diags: %v", resp.Diagnostics)
 	}
 	var m windowsHostnameModel
 	resp.State.Get(context.Background(), &m)
-	if m.ID.ValueString() != "9a8b7c6d-1234-5678-abcd-ef0123456789" {
+	if m.ID.ValueString() != guid {
 		t.Errorf("ID = %q, want machine GUID", m.ID.ValueString())
 	}
-	if m.MachineID.ValueString() != "9a8b7c6d-1234-5678-abcd-ef0123456789" {
+	if m.MachineID.ValueString() != guid {
 		t.Errorf("MachineID = %q, want machine GUID", m.MachineID.ValueString())
+	}
+	if m.CurrentName.ValueString() != "MYHOST" || m.PendingName.ValueString() != "MYHOST" {
+		t.Errorf("imported names = %q/%q, want observed live state",
+			m.CurrentName.ValueString(), m.PendingName.ValueString())
+	}
+}
+
+func TestHostnameImportState_BadIDs(t *testing.T) {
+	for _, bad := range []string{"", "   ", "not-a-guid", "9a8b7c6d-1234", "MYHOST", "{9a8b7c6d-1234-5678-abcd-ef0123456789}"} {
+		fake := &fakeHostnameClient{
+			readOut: fakeHnState("9a8b7c6d-1234-5678-abcd-ef0123456789", "MYHOST", "MYHOST", false),
+		}
+		r := &windowsHostnameResource{hn: fake}
+		schemaDef := windowsHostnameSchemaDefinition(context.Background())
+		resp := &resource.ImportStateResponse{
+			State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
+		}
+		r.ImportState(context.Background(), resource.ImportStateRequest{ID: bad}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Errorf("ID %q must fail import validation", bad)
+		}
+	}
+}
+
+func TestHostnameImportState_MachineMismatch(t *testing.T) {
+	// A well-formed GUID that is not this host's MachineGuid must fail the
+	// import: the handler verifies the ID against the live host instead of
+	// trusting it blindly.
+	fake := &fakeHostnameClient{
+		readErr: winclient.NewHostnameError(
+			winclient.HostnameErrorMachineMismatch,
+			`live MachineGuid "other" does not match state id`,
+			nil, nil,
+		),
+	}
+	r := &windowsHostnameResource{hn: fake}
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
+	}
+	r.ImportState(context.Background(), resource.ImportStateRequest{
+		ID: "9a8b7c6d-1234-5678-abcd-ef0123456789",
+	}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("import of another machine's GUID must fail")
+	}
+}
+
+func TestHostnameImportState_ReadError(t *testing.T) {
+	fake := &fakeHostnameClient{
+		readErr: winclient.NewHostnameError(
+			winclient.HostnameErrorUnreachable,
+			"ssh: connection refused",
+			nil, nil,
+		),
+	}
+	r := &windowsHostnameResource{hn: fake}
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
+	}
+	r.ImportState(context.Background(), resource.ImportStateRequest{
+		ID: "9a8b7c6d-1234-5678-abcd-ef0123456789",
+	}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("unreachable host must fail the import")
+	}
+}
+
+// deadlineHnClient captures the ctx deadline seen by Read.
+type deadlineHnClient struct {
+	fakeHostnameClient
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineHnClient) Read(ctx context.Context, _ string) (*winclient.HostnameState, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return f.readOut, f.readErr
+}
+
+func TestHostnameImportState_BoundedByDefaultTimeout(t *testing.T) {
+	const guid = "9a8b7c6d-1234-5678-abcd-ef0123456789"
+	fake := &deadlineHnClient{fakeHostnameClient: fakeHostnameClient{
+		readOut: fakeHnState(guid, "MYHOST", "MYHOST", false),
+	}}
+	r := &windowsHostnameResource{hn: fake}
+	schemaDef := windowsHostnameSchemaDefinition(context.Background())
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
+	}
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: guid}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState unexpected diags: %v", resp.Diagnostics)
+	}
+	if !fake.ok {
+		t.Fatal("ImportState ran without a context deadline; the live verify Read is not timeout-bound")
+	}
+	if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > hostnameDefaultTimeout {
+		t.Errorf("ImportState deadline in %v, want (0, %v]", remaining, hostnameDefaultTimeout)
 	}
 }
 
@@ -949,13 +1053,17 @@ func TestHostnameImportState_LeavesTimeoutsNull(t *testing.T) {
 	// ImportState uses SetAttribute (no full Set), so the timeouts value
 	// stays null with the schema's types. Guards against regressions that
 	// would break the subsequent Read.
-	r := &windowsHostnameResource{}
+	const guid = "9a8b7c6d-1234-5678-abcd-ef0123456789"
+	fake := &fakeHostnameClient{
+		readOut: fakeHnState(guid, "MYHOST", "MYHOST", false),
+	}
+	r := &windowsHostnameResource{hn: fake}
 	schemaDef := windowsHostnameSchemaDefinition(context.Background())
 	resp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: schemaDef, Raw: hnObj(nil)},
 	}
 	r.ImportState(context.Background(),
-		resource.ImportStateRequest{ID: "9a8b7c6d-1234-5678-abcd-ef0123456789"}, resp)
+		resource.ImportStateRequest{ID: guid}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("ImportState unexpected diags: %v", resp.Diagnostics)
 	}

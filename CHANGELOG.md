@@ -475,6 +475,19 @@ All notable changes to this project will be documented in this file.
   first). Enabling `source_url_insecure_skip_verify` additionally warns
   at apply time, where the download actually happens.
 
+- Import verification via live Read with timeout (#326):
+  `windows_firewall_rule` import now bounds its verify Read with the
+  10m resource default (previously unbounded) and still fails closed
+  when the rule is missing. `windows_hostname` import no longer trusts
+  the ID blindly: it validates the non-empty machine-GUID shape
+  (8-4-4-4-12 hex) and verifies the live host under the 10m default
+  timeout, failing the import on unreachable hosts, GUID mismatches
+  (another machine's ID), or empty reads; the observed live state (not
+  the raw ID) seeds the imported state. `windows_feature`
+  `install_state` (pure-Computed) no longer carries a schema `OneOf`
+  validator: unexpected host spellings surface as a Read-time error
+  diagnostic from the state projection instead of schema rejection.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added

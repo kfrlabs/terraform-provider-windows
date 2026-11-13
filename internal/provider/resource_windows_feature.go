@@ -153,11 +153,12 @@ func windowsFeatureSchemaDefinition(ctx context.Context) schema.Schema {
 				Description: "True if the last operation reported RestartNeeded=Yes or the OS exposes a pending reboot flag.",
 			},
 			"install_state": schema.StringAttribute{
+				// Pure-Computed: no schema Validators. The value comes from
+				// the host (Get-WindowsFeature); an unexpected host spelling
+				// is a Read-time error from modelFromFeature, not a
+				// plan-time schema rejection.
 				Computed:    true,
 				Description: "Current install state: Installed, Available, or Removed.",
-				Validators: []validator.String{
-					stringvalidator.OneOf("Installed", "Available", "Removed"),
-				},
 			},
 
 			// Per-operation timeouts (terraform-plugin-framework-timeouts).
@@ -231,7 +232,11 @@ func (r *windowsFeatureResource) Create(ctx context.Context, req resource.Create
 		addFeatureDiag(&resp.Diagnostics, "Create windows_feature failed", err)
 		return
 	}
-	final := modelFromFeature(info, plan)
+	final, md := modelFromFeature(info, plan)
+	resp.Diagnostics.Append(md...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	applyInstallResult(&resp.Diagnostics, &final, plan, result)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
@@ -265,7 +270,11 @@ func (r *windowsFeatureResource) Read(ctx context.Context, req resource.ReadRequ
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	final := modelFromFeature(info, state)
+	final, md := modelFromFeature(info, state)
+	resp.Diagnostics.Append(md...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 
@@ -307,7 +316,11 @@ func (r *windowsFeatureResource) Update(ctx context.Context, req resource.Update
 		addFeatureDiag(&resp.Diagnostics, "Update windows_feature failed", err)
 		return
 	}
-	final := modelFromFeature(info, plan)
+	final, md := modelFromFeature(info, plan)
+	resp.Diagnostics.Append(md...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	applyInstallResult(&resp.Diagnostics, &final, plan, result)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
@@ -374,7 +387,19 @@ func (r *windowsFeatureResource) Delete(ctx context.Context, req resource.Delete
 
 // modelFromFeature projects a winclient.FeatureInfo onto a windowsFeatureModel,
 // preserving desired-input fields (include_*, source, restart) from prior plan.
-func modelFromFeature(info *winclient.FeatureInfo, prior windowsFeatureModel) windowsFeatureModel {
+// The host-reported InstallState is validated here, not by a schema
+// validator: install_state is pure-Computed, so an unexpected host spelling
+// must surface as a Read-time error diagnostic, never as schema rejection.
+func modelFromFeature(info *winclient.FeatureInfo, prior windowsFeatureModel) (windowsFeatureModel, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	switch info.InstallState {
+	case "Installed", "Available", "Removed":
+	default:
+		diags.AddError(
+			"Unexpected Windows feature install state",
+			fmt.Sprintf("The host reported install state %q for feature %q; expected one of Installed, Available, Removed.", info.InstallState, info.Name),
+		)
+	}
 	out := windowsFeatureModel{
 		ID:                     types.StringValue(info.Name),
 		Name:                   types.StringValue(info.Name),
@@ -400,7 +425,7 @@ func modelFromFeature(info *winclient.FeatureInfo, prior windowsFeatureModel) wi
 	if out.Restart.IsNull() || out.Restart.IsUnknown() {
 		out.Restart = types.BoolValue(false)
 	}
-	return out
+	return out, diags
 }
 
 // applyInstallResult overwrites RestartPending from the install result and
