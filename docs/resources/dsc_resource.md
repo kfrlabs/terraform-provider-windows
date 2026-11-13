@@ -131,7 +131,7 @@ resource "windows_dsc_resource" "script" {
 
 ### Read-Only
 
-- `current_state_json` (String) Redacted `Invoke-DscResource -Method Get` output as canonical JSON (credential values dropped, nulls omitted). Informational only: never produces drift.
+- `current_state_json` (String) Redacted `Invoke-DscResource -Method Get` output as canonical JSON (credential values dropped, nulls omitted, schema-declared properties only). Informational only: never produces drift.
 - `id` (String) Resource identifier: `<module>|<resource>|<sha256 hex of the canonical key-properties JSON>`.
 - `in_desired_state` (Boolean) Outcome of the last `Test-DscConfiguration`-equivalent `Invoke-DscResource -Method Test` call: true when the host reports the desired state. Always planned as true so a failed Test produces an update plan that re-converges on apply.
 - `reboot_required` (Boolean) Whether the last converge reported RebootRequired. Advisory only: the provider schedules no reboot (warns instead).
