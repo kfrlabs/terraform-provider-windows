@@ -18,20 +18,28 @@
 #     (that alone used to cost ~3min per job).
 #   * Pull requests are selective: only the acceptance tests of the resource
 #     families whose files changed run (resource_windows_<x>*.go,
-#     datasource_windows_<x>*.go, winclient/<x>*.go), password auth only,
-#     packed in lanes of at most 30 tests. A change to shared code (transport,
-#     provider wiring, acceptance helpers, go.mod/go.sum, this CI) runs the
-#     full suite instead; unit-test-only changes run nothing here.
+#     datasource_windows_<x>*.go, winclient/<x>*.go), password auth only. A
+#     change to shared code (transport, provider wiring, acceptance helpers,
+#     go.mod/go.sum, this CI) runs the full suite instead, unless it only
+#     appends new top-level functions/types (a helper for a new resource);
+#     unit-test-only changes run nothing here.
 #   * Pushes to main and workflow_dispatch run the full suite, the safety net
 #     for cross-resource regressions a selective PR run cannot see.
-#   * Full runs use `githubLanes` from .github/testacc-groups.json:
-#     windows_feature write tests cost ~6.5min each (DISM is machine-global),
-#     so TestAccWindowsFeature_Basic and _Import keep a dedicated runner and
-#     bound the wall time; every other family gets its own runner. Public-key
-#     auth only changes the SSH handshake, so it skips the two feature jobs.
-#   * Groups marked `githubHosted: false` (IIS: the windows-latest image never
-#     provides the WebAdministration module, so those tests spent ~7min
-#     installing IIS only to skip) are left to testacc-lab-container.yml.
+#   * Lanes are packed automatically, in both modes: windows_feature write
+#     tests cost ~6.5min each (DISM is machine-global), so
+#     TestAccWindowsFeature_Basic and _Import keep a dedicated runner and bound
+#     the wall time; every other test is spread over runners of ~4min each
+#     (measured costs in .github/testacc-timings.json) and at most
+#     `github.laneMaxTests` tests (.github/testacc-groups.json). The cap
+#     matters: one test process running ~90 tests in a row (the old misc-rest
+#     catch-all, 43477317669) exhausts the runner ("The paging file is too
+#     small", "Starting the CLR failed") and fails unrelated tests. New
+#     resources need no lane assignment. Public-key auth only changes the SSH
+#     handshake, so full runs give it a single smoke lane
+#     (`github.publickeyFamilies`).
+#   * Groups marked `githubHosted: false` (every IIS family: the windows-latest
+#     image never provides the WebAdministration module, so those tests spent
+#     ~7min installing IIS only to skip) are left to testacc-lab-container.yml.
 #   * Do NOT run several families concurrently on one runner: tried in
 #     40766054855, the tests are CPU/memory bound on a 4-vCPU windows-latest
 #     (terraform, provider and remote PowerShell all run on the same box).
@@ -60,6 +68,7 @@ on:
       - ".github/scripts/Invoke-AccTests.ps1"
       - ".github/scripts/testacc-plan.py"
       - ".github/testacc-groups.json"
+      - ".github/testacc-timings.json"
       - ".github/testacc-allowed-skips.json"
   push:
     branches: [main]
