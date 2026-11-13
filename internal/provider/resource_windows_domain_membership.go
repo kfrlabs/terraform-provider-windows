@@ -54,7 +54,6 @@ var (
 	_ resource.Resource                     = (*windowsDomainMembershipResource)(nil)
 	_ resource.ResourceWithConfigure        = (*windowsDomainMembershipResource)(nil)
 	_ resource.ResourceWithImportState      = (*windowsDomainMembershipResource)(nil)
-	_ resource.ResourceWithModifyPlan       = (*windowsDomainMembershipResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsDomainMembershipResource)(nil)
 )
 
@@ -146,12 +145,15 @@ func windowsDomainMembershipSchemaDefinition(ctx context.Context) schema.Schema 
 			"and when `restart = true` a detached host reboot is scheduled ~60s after the join (likewise for the unjoin), " +
 			"so the reboot lands after Terraform records state. With `restart = false` (default), `pending_reboot` records " +
 			"the requirement and the host must be rebooted out-of-band.\n\n" +
-			"`ou_path` is **create-only**: it is used for the initial `Add-Computer` call and never read back. Changing it " +
-			"later only emits a warning and performs no remote action — the computer account is not moved.\n\n" +
+			"`ou_path` and `server` are **create-only**: they are used for the initial `Add-Computer` call and never read back. Changing either " +
+			"later forces replacement (a new join) — the computer account is never moved in place.\n\n" +
 			"**Destroy semantics:** by default destroy is a no-op (the host stays domain-joined). With " +
 			"`unjoin_on_destroy = true` the host is unjoined into `unjoin_workgroup_name` on destroy. The unjoin " +
 			"credential must come from the state-persisted `join_credential.password`: `password_wo` is WriteOnly and " +
-			"unavailable at destroy time, so that combination is rejected at plan time.",
+			"unavailable at destroy time, so that combination is rejected at plan time.\n\n" +
+			"`Update` re-reads the live host to refresh the Computed attributes (`computer_name`, `pending_reboot`, " +
+			"`secure_channel_ok`) and therefore requires the host to be reachable — an unreachable host fails the update " +
+			"instead of silently keeping prior values.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -178,13 +180,19 @@ func windowsDomainMembershipSchemaDefinition(ctx context.Context) schema.Schema 
 			},
 			"ou_path": schema.StringAttribute{
 				Optional:            true,
-				Description:         "Distinguished name of the OU for the computer account (e.g. \"OU=Servers,DC=corp,DC=example,DC=com\"). Create-only: used for the initial Add-Computer call, never read back; changing it later only warns.",
-				MarkdownDescription: "Distinguished name of the OU for the computer account (e.g. `\"OU=Servers,DC=corp,DC=example,DC=com\"`). **Create-only:** used for the initial `Add-Computer` call and never read back. Changing it later emits a warning and performs no remote action (the computer account is not moved).",
+				Description:         "Distinguished name of the OU for the computer account (e.g. \"OU=Servers,DC=corp,DC=example,DC=com\"). Create-only: used for the initial Add-Computer call, never read back; changing it later forces replacement.",
+				MarkdownDescription: "Distinguished name of the OU for the computer account (e.g. `\"OU=Servers,DC=corp,DC=example,DC=com\"`). **Create-only:** used for the initial `Add-Computer` call and never read back. Changing it later forces replacement (the computer account is never moved in place).",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"server": schema.StringAttribute{
 				Optional:            true,
-				Description:         "Optional domain controller (or domain) name passed to Add-Computer -Server. Changing it later performs no remote action.",
-				MarkdownDescription: "Optional domain controller (or domain) name passed to `Add-Computer -Server`. Changing it later performs no remote action.",
+				Description:         "Optional domain controller (or domain) name passed to Add-Computer -Server. Create-only: changing it later forces replacement.",
+				MarkdownDescription: "Optional domain controller (or domain) name passed to `Add-Computer -Server`. **Create-only:** changing it later forces replacement.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"join_credential": schema.SingleNestedAttribute{
 				Required:            true,
@@ -371,38 +379,6 @@ func (domainMembershipUnjoinValidator) ValidateResource(
 	)
 }
 
-// ModifyPlan warns when the create-only ou_path changes between state and
-// plan. The OU is only consumed by the initial Add-Computer call; later
-// changes perform no remote action (the computer account is not moved).
-func (r *windowsDomainMembershipResource) ModifyPlan(
-	ctx context.Context,
-	req resource.ModifyPlanRequest,
-	resp *resource.ModifyPlanResponse,
-) {
-	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
-		return
-	}
-	var plan, prior windowsDomainMembershipModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if plan.OUPath.IsUnknown() || prior.OUPath.IsUnknown() {
-		return
-	}
-	if plan.OUPath.Equal(prior.OUPath) {
-		return
-	}
-	resp.Diagnostics.AddAttributeWarning(
-		path.Root("ou_path"),
-		"OU path is create-only",
-		"ou_path changed, but the OU is only consumed by the initial Add-Computer call and is never read back. "+
-			"The computer account will NOT be moved; this change performs no remote action. "+
-			"To place the account in a different OU, move it out-of-band (e.g. with Active Directory Users and Computers).",
-	)
-}
-
 // Configure extracts the shared *winclient.Client from provider data.
 func (r *windowsDomainMembershipResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
@@ -538,11 +514,12 @@ func (r *windowsDomainMembershipResource) Read(ctx context.Context, req resource
 	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 
-// Update applies in-place, state-only changes. Only restart, timeouts (and
-// the unjoin_* destroy behaviour) are mutable in place; no remote action is
-// performed. ou_path/server are create-only: changes only warn via
-// ModifyPlan and perform no remote action, so prior values are preserved.
-// domain and join_credential changes force replacement via RequiresReplace.
+// Update applies in-place, state-only changes and then re-reads the live
+// host to refresh the Computed attributes (computer_name, pending_reboot,
+// secure_channel_ok). Only restart, timeouts (and the unjoin_* destroy
+// behaviour) are mutable in place; no remote mutation is performed.
+// domain, ou_path, server and join_credential changes force replacement
+// via RequiresReplace, so Update only ever sees in-place fields drift.
 func (r *windowsDomainMembershipResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, prior windowsDomainMembershipModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -559,28 +536,64 @@ func (r *windowsDomainMembershipResource) Update(ctx context.Context, req resour
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
 
-	tflog.Debug(ctx, "windows_domain_membership Update (state-only, no remote action)", map[string]interface{}{
+	tflog.Debug(ctx, "windows_domain_membership Update (state-only, refresh computed from live)", map[string]interface{}{
 		"domain": plan.Domain.ValueString(),
 	})
 
-	// No remote I/O: project the plan through, preserving the live-observed
-	// computed attributes and the persisted credential from prior state.
-	// ou_path/server are create-only inputs: the new values only warned via
-	// ModifyPlan and performed no remote action, so prior (observed) values
-	// are kept to avoid persisting unapplied desire as state.
+	// No remote mutation: project the plan through, preserving the
+	// persisted credential from prior state. ou_path/server carry
+	// RequiresReplace, so any change to them replaces instead of reaching
+	// Update — plan values are authoritative here.
 	final := plan
 	final.ID = prior.ID
-	final.OUPath = prior.OUPath
-	final.Server = prior.Server
-	final.ComputerName = prior.ComputerName
-	final.PendingReboot = prior.PendingReboot
-	final.SecureChannelOk = prior.SecureChannelOk
 	// The WriteOnly password is never in state; keep it null even if a test
 	// plan carries one (defensive, mirrors scheduled_task).
 	final.JoinCredential = domainMembershipCredentialForState(ctx, &resp.Diagnostics, plan.JoinCredential, prior.JoinCredential)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Refresh Computed attributes from the live host instead of copying
+	// prior values, so a reboot (or any out-of-band change) that flipped
+	// pending_reboot / secure_channel_ok / computer_name is reflected.
+	// Update requires host reachability: a refresh failure errors instead
+	// of silently keeping prior values. Unlike Read, Update cannot remove
+	// the resource from state, so out-of-band drift is an error.
+	live, err := r.dm.Read(ctx)
+	if err != nil {
+		addDomainMembershipDiag(&resp.Diagnostics, "Update windows_domain_membership failed", err)
+		return
+	}
+	if live == nil || !live.PartOfDomain {
+		resp.Diagnostics.AddError(
+			"Update windows_domain_membership failed",
+			"The host is not joined to a domain (PartOfDomain=false), so the Computed attributes "+
+				"cannot be refreshed. Update cannot remove the resource from state like Read does: "+
+				"re-join the host out-of-band or remove the resource with terraform state rm / taint.",
+		)
+		return
+	}
+	if !strings.EqualFold(live.Domain, plan.Domain.ValueString()) {
+		if prior.PendingReboot.ValueBool() {
+			tflog.Warn(ctx, "windows_domain_membership domain mismatch tolerated while a reboot is pending",
+				map[string]interface{}{
+					"state_domain": plan.Domain.ValueString(),
+					"live_domain":  live.Domain,
+				})
+		} else {
+			resp.Diagnostics.AddError(
+				"Update windows_domain_membership failed",
+				fmt.Sprintf("The host is joined to %q, not the configured %q. Update cannot remove the resource "+
+					"from state like Read does: re-join the host out-of-band or replace the resource.",
+					live.Domain, plan.Domain.ValueString()),
+			)
+			return
+		}
+	}
+	final.ComputerName = types.StringValue(live.ComputerName)
+	final.PendingReboot = types.BoolValue(live.PendingReboot)
+	final.SecureChannelOk = types.BoolValue(live.SecureChannelOk)
+	warnDomainReboot(&resp.Diagnostics, final.PendingReboot.ValueBool(), plan.Restart.ValueBool(), "update")
 	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 

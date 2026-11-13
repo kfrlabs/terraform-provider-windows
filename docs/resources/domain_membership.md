@@ -6,8 +6,9 @@ description: |-
   Joins a remote Windows host to an Active Directory domain (Add-Computer) over SSH and PowerShell, and optionally unjoins it on destroy (Remove-Computer).
   The Terraform resource ID is the lower-cased domain DNS name. The join credential travels to the host on stdin and never appears in the script body or logs.
   A domain join only takes full effect after a reboot: Add-Computer is invoked without -Restart, and when restart = true a detached host reboot is scheduled ~60s after the join (likewise for the unjoin), so the reboot lands after Terraform records state. With restart = false (default), pending_reboot records the requirement and the host must be rebooted out-of-band.
-  ou_path is create-only: it is used for the initial Add-Computer call and never read back. Changing it later only emits a warning and performs no remote action — the computer account is not moved.
+  ou_path and server are create-only: they are used for the initial Add-Computer call and never read back. Changing either later forces replacement (a new join) — the computer account is never moved in place.
   Destroy semantics: by default destroy is a no-op (the host stays domain-joined). With unjoin_on_destroy = true the host is unjoined into unjoin_workgroup_name on destroy. The unjoin credential must come from the state-persisted join_credential.password: password_wo is WriteOnly and unavailable at destroy time, so that combination is rejected at plan time.
+  Update re-reads the live host to refresh the Computed attributes (computer_name, pending_reboot, secure_channel_ok) and therefore requires the host to be reachable — an unreachable host fails the update instead of silently keeping prior values.
 ---
 
 # windows_domain_membership (Resource)
@@ -18,9 +19,11 @@ The Terraform resource ID is the lower-cased domain DNS name. The join credentia
 
 A domain join only takes full effect after a reboot: `Add-Computer` is invoked **without** `-Restart`, and when `restart = true` a detached host reboot is scheduled ~60s after the join (likewise for the unjoin), so the reboot lands after Terraform records state. With `restart = false` (default), `pending_reboot` records the requirement and the host must be rebooted out-of-band.
 
-`ou_path` is **create-only**: it is used for the initial `Add-Computer` call and never read back. Changing it later only emits a warning and performs no remote action — the computer account is not moved.
+`ou_path` and `server` are **create-only**: they are used for the initial `Add-Computer` call and never read back. Changing either later forces replacement (a new join) — the computer account is never moved in place.
 
 **Destroy semantics:** by default destroy is a no-op (the host stays domain-joined). With `unjoin_on_destroy = true` the host is unjoined into `unjoin_workgroup_name` on destroy. The unjoin credential must come from the state-persisted `join_credential.password`: `password_wo` is WriteOnly and unavailable at destroy time, so that combination is rejected at plan time.
+
+`Update` re-reads the live host to refresh the Computed attributes (`computer_name`, `pending_reboot`, `secure_channel_ok`) and therefore requires the host to be reachable — an unreachable host fails the update instead of silently keeping prior values.
 
 ## Example Usage
 
@@ -86,8 +89,8 @@ resource "windows_domain_membership" "this" {
 # Advanced example: place the computer account in a dedicated OU and
 # schedule a detached host reboot ~60s after the join when a reboot is
 # required (restart = true only takes effect when a pending reboot is
-# reported). The OU is create-only: changing ou_path later only warns and
-# never moves the account.
+# reported). The OU and server are create-only: changing ou_path or server
+# later forces replacement (a new join), never an in-place move.
 resource "windows_domain_membership" "ou" {
   domain  = "corp.example.com"
   ou_path = "OU=Servers,DC=corp,DC=example,DC=com"
@@ -136,9 +139,9 @@ output "domain_pending_reboot" {
 
 ### Optional
 
-- `ou_path` (String) Distinguished name of the OU for the computer account (e.g. `"OU=Servers,DC=corp,DC=example,DC=com"`). **Create-only:** used for the initial `Add-Computer` call and never read back. Changing it later emits a warning and performs no remote action (the computer account is not moved).
+- `ou_path` (String) Distinguished name of the OU for the computer account (e.g. `"OU=Servers,DC=corp,DC=example,DC=com"`). **Create-only:** used for the initial `Add-Computer` call and never read back. Changing it later forces replacement (the computer account is never moved in place).
 - `restart` (Boolean) When `true` and the join/unjoin leaves a pending reboot, schedule a detached host reboot ~60s after the operation (`shutdown.exe /r /t 60`), so the reboot lands after Terraform records state. When `false` and a reboot is required, `pending_reboot` is set and the host must be rebooted out-of-band. Default `false`.
-- `server` (String) Optional domain controller (or domain) name passed to `Add-Computer -Server`. Changing it later performs no remote action.
+- `server` (String) Optional domain controller (or domain) name passed to `Add-Computer -Server`. **Create-only:** changing it later forces replacement.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `unjoin_on_destroy` (Boolean) When `true`, `terraform destroy` unjoins the host into `unjoin_workgroup_name` (`Remove-Computer`). Requires `join_credential.password` (the state-persisted password — `password_wo` is unavailable at destroy time). Default `false`: destroy is a no-op and the host stays domain-joined.
 - `unjoin_workgroup_name` (String) Workgroup the host joins when `unjoin_on_destroy` unjoins it. NetBIOS rule: 1..15 chars, alphanumeric + hyphen, cannot start/end with a hyphen, cannot be purely numeric. Default `WORKGROUP`.
