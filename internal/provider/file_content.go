@@ -41,8 +41,25 @@ var fileEncodings = []string{
 	fileEncodingUTF16LEBOM, fileEncodingASCII, fileEncodingLatin1,
 }
 
-// fileDownloadTimeout bounds a provider-side source_url download.
+// fileDownloadTimeout bounds a provider-side source_url download, including
+// retries and backoff. The apply path additionally derives its context from
+// the resource `timeouts` (create/update, default fileDefaultTimeout), so
+// the effective deadline is whichever expires first.
 const fileDownloadTimeout = 10 * time.Minute
+
+// fileDownloadAttempts is the total number of provider-side download tries:
+// the initial attempt plus two retries with a short backoff (#325).
+const fileDownloadAttempts = 3
+
+// fileDownloadRetryBackoff is the pause between provider-side download
+// attempts.
+const fileDownloadRetryBackoff = time.Second
+
+// fileUserAgent identifies provider-side source_url downloads. The provider
+// version is not threaded through Configure (resources only receive the
+// shared SSH client), so a constant token is used until version propagation
+// exists; an explicit User-Agent entry in source_url_headers still wins.
+const fileUserAgent = "terraform-provider-windows"
 
 // encodeFileContent renders text content into the byte sequence to be written.
 //
@@ -113,17 +130,14 @@ func readLocalSource(path string) ([]byte, error) {
 }
 
 // downloadSource fetches source_url provider-side (download_on = "terraform").
+//
+// The fetch runs under fileDownloadTimeout (further bounded by the resource
+// timeouts the apply path puts on ctx) and retries transient failures —
+// transport errors and HTTP 5xx — up to fileDownloadAttempts total tries.
+// Permanent failures (invalid URL, HTTP 4xx, oversized body) fail fast.
 func downloadSource(ctx context.Context, url string, headers map[string]string, insecureSkipVerify bool) ([]byte, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, fileDownloadTimeout)
 	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("invalid source_url %q: %w", url, err)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
 
 	client := &http.Client{Timeout: fileDownloadTimeout}
 	if insecureSkipVerify {
@@ -134,27 +148,63 @@ func downloadSource(ctx context.Context, url string, headers map[string]string, 
 		}
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("downloading %q failed: %w", url, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	var lastErr error
+	for attempt := 1; attempt <= fileDownloadAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("invalid source_url %q: %w", url, err)
+		}
+		req.Header.Set("User-Agent", fileUserAgent)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
 
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("downloading %q failed: %w", url, err)
+		} else {
+			body, retryable, readErr := readDownloadBody(resp, url)
+			_ = resp.Body.Close()
+			if readErr == nil {
+				return body, nil
+			}
+			if !retryable {
+				return nil, readErr
+			}
+			lastErr = readErr
+		}
+
+		if attempt < fileDownloadAttempts {
+			select {
+			case <-reqCtx.Done():
+				return nil, lastErr
+			case <-time.After(fileDownloadRetryBackoff):
+			}
+		}
+	}
+	return nil, lastErr
+}
+
+// readDownloadBody consumes a download response. The retryable flag reports
+// whether the caller should try again: HTTP 5xx only. Every other failure —
+// 4xx, an unreadable body, or a body past the size cap — is permanent.
+func readDownloadBody(resp *http.Response, url string) (body []byte, retryable bool, err error) {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("downloading %q returned HTTP %d", url, resp.StatusCode)
+		err = fmt.Errorf("downloading %q returned HTTP %d", url, resp.StatusCode)
+		return nil, resp.StatusCode >= 500, err
 	}
 
 	// Cap the read one byte above the limit so an oversized body is detected
 	// without buffering the whole thing.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, winclient.FileMaxContentBytes+1))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, winclient.FileMaxContentBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("reading body of %q failed: %w", url, err)
+		return nil, false, fmt.Errorf("reading body of %q failed: %w", url, err)
 	}
 	if int64(len(body)) > winclient.FileMaxContentBytes {
-		return nil, fmt.Errorf("%q returned more than the %d byte limit of windows_file; consider download_on = \"target\"",
+		return nil, false, fmt.Errorf("%q returned more than the %d byte limit of windows_file; consider download_on = \"target\"",
 			url, winclient.FileMaxContentBytes)
 	}
-	return body, nil
+	return body, false, nil
 }
 
 // encodeBase64 is a thin wrapper kept for symmetry and testability.

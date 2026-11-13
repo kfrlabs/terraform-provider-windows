@@ -130,7 +130,7 @@ variable "license" { sensitive = true }
 - `source_url_insecure_skip_verify` (Boolean) Skip TLS certificate verification for `source_url`. Raises a warning diagnostic.
 - `source_url_sha256` (String) Expected SHA-256 of the downloaded payload.
 
-Required with an `http://` `source_url` and when `download_on = "target"`; strongly recommended otherwise (see the `source_url` threat model). When pinned, plans stay local with no download at plan time and every payload is verified before it is written.
+Required with an `http://` `source_url` and when `download_on = "target"`; strongly recommended otherwise (see the `source_url` threat model). Plans never download: a pinned digest is used as-is for `content_sha256` and every payload is verified before it is written.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
