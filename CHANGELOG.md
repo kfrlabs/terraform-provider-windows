@@ -6,6 +6,33 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_ntp` resource and `windows_ntp` data source (#287):
+  manages the Windows Time service (W32Time) time source singleton on the
+  target host — sync `type` (`NTP`, `NT5DS`, `AllSync`, `NoSync`), the
+  ordered NTP peer list (`W32Time\Parameters\NtpServer`, `addr,flags`
+  space-separated, flags default `0x9` and normalised lower-case), the
+  `special_poll_interval_seconds` (`NtpClient\SpecialPollInterval`,
+  16-86400), the `reliable` flag (`Config\AnnounceFlags` `5`/`10`), the
+  NTP server role (`NtpServer\Enabled`) and the max
+  positive/negative phase corrections. Writes go through
+  `Set-ItemProperty` (values via `psQuote`) followed by
+  `w32tm /config /update` (exit-code gated) and an optional
+  `w32tm /resync /rediscover` whose failure is a warning, never an
+  error; every apply re-reads and verifies. The `W32Time` service is set
+  to `Automatic` start and started unless `manage_service` is false (for
+  operators whose `windows_service` resource owns W32Time). No
+  locale-dependent `w32tm` text is ever parsed: the registry is the
+  source of truth and `/query /source` is read as an opaque peer name.
+  Peers are required for `NTP`/`AllSync` and forbidden for
+  `NT5DS`/`NoSync` (plan-time); warnings cover domain-joined hosts not
+  using `NT5DS`, Group Policy overrides, an enabled Hyper-V time-sync
+  provider and the UDP/123 firewall implication of the server role. The
+  resource ID is the host MachineGuid; delete is state-only unless
+  `restore_on_destroy` re-applies the snapshot captured at creation (or
+  import) time. Import by any non-empty ID (the live time source is
+  adopted). The data source is the singleton read-only view (same type
+  name, `timeouts.read`). `timeouts` default to 5m.
+
 - New `windows_eventlog` resource and `windows_eventlog` data source
   (#289): manages the size and retention policy of an existing event log on
   the target host (classic logs such as `Application`, `System`, `Security`,

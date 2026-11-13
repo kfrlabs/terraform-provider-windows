@@ -110,6 +110,11 @@
       "pattern": "^TestAccWindowsVolume_",
       "reasons": ["WINDOWS_ACC_STORAGE"],
       "comment": "Volume tests attach a throwaway VHDX via diskpart and require opt-in WINDOWS_ACC_STORAGE=1, which is unset in CI, so the skip is expected."
+    },
+    {
+      "pattern": "^TestAccWindowsNTP",
+      "reasons": ["W32Time"],
+      "comment": "Containers share the host clock and typically ship no W32Time service, so the mutability probe skips instead of failing; the TypeServersMatrix plan-time tests match the pattern but never skip. The needle names the W32Time condition in every skip message."
     }
   ]
 }
