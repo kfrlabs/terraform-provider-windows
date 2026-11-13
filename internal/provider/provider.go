@@ -301,6 +301,7 @@ func (p *windowsProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewWindowsLocalUserResource,
 		NewWindowsNetIPAddressResource,
 		NewWindowsNetRouteResource,
+		NewWindowsPartitionResource,
 		NewWindowsRegistryValueResource,
 		NewWindowsRegistryKeyResource,
 		NewWindowsScheduledTaskResource,
