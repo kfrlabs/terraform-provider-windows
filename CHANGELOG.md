@@ -155,6 +155,33 @@ All notable changes to this project will be documented in this file.
   3-attempt retry (short backoff) of writes that hit the
   `applicationHost.config` file-has-changed-on-disk flake.
 
+- New `windows_iis_site` resource and `windows_iis_site` data
+  source (#284): manages an IIS site on the target host
+  (`WebAdministration`: `New-Item IIS:\Sites\<name> -Bindings @()`,
+  `Get/Set-WebConfigurationProperty` for the root application
+  (`applicationPool`, `enabledProtocols`, `preloadEnabled`), the root
+  virtual directory (`physicalPath`) and the XPath-escaped site filters,
+  `Set-ItemProperty IIS:\Sites\<name>` for `serverAutoStart`,
+  `logFile.*` and `limits.*`, `Remove-Website`, `Start-Website` /
+  `Stop-Website`). The site is always created with zero bindings — the
+  `bindings` attribute is a Computed-only read-only view (`protocol` plus
+  `binding_information`) owned by `windows_iis_site_binding` (#285).
+  `name` is Required + ForceNew (the Terraform ID); `site_id` is
+  Optional+Computed + ForceNew (when unconfigured IIS allocates the
+  lowest free ID itself, 1-4294967295 when set); `physical_path` is
+  Required and updated in place, with a host-side `%SystemDrive%`
+  expansion plus a literal `Test-Path` existence check (`path_not_found`,
+  never `mkdir`); every other setting is Optional+Computed — only
+  configured attributes are enforced, unconfigured ones reflect the
+  observed value (same semantics as `windows_iis_app_pool`). Create
+  refuses existing sites with an import hint and colliding IDs with
+  `id_conflict` (naming the conflicting site); a missing pool or path
+  yields `app_pool_not_found` / `path_not_found`. A configured
+  `state = "Started"` on a site with no bindings leaves the site
+  `Stopped` with a warning (IIS cannot run an unbound site) instead of
+  failing, and a plan modifier suppresses the resulting diff while the
+  site stays unbound. `timeouts` default to 10m. Import by site name.
+
 - New standalone `windows_network_adapters` collection data source (#295):
   read-only inventory of every adapter on the remote Windows host with no
   sibling resource — `name`, `interface_index`, `interface_description`,

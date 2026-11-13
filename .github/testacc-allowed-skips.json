@@ -87,6 +87,11 @@
       "comment": "The windows-latest GitHub image cannot provide the WebAdministration module (Install-WindowsFeature Web-Server/Web-Scripting-Tools/Web-Mgmt-Console reports success but the module never appears), so accEnsureIIS skips instead of failing. The needle names this exact post-install condition; on targets where IIS installs (lab servercore container), the tests run and any skip there still fails the gate."
     },
     {
+      "pattern": "^TestAccWindowsIISSite",
+      "reasons": ["IIS management tools still missing after install"],
+      "comment": "Same as windows_iis_app_pool: the windows-latest GitHub image cannot provide WebAdministration, so IIS site acceptance tests skip via accEnsureIIS; on targets with real IIS they run."
+    },
+    {
       "pattern": "^TestAccWindowsDisk_",
       "reasons": ["WINDOWS_ACC_STORAGE"],
       "comment": "Storage tests attach a throwaway VHDX via diskpart and require opt-in WINDOWS_ACC_STORAGE=1, which is unset in CI, so the skip is expected."
