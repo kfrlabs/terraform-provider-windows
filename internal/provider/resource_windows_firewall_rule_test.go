@@ -26,6 +26,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
@@ -1149,5 +1150,50 @@ func TestFirewallRuleDelete_PermissionDenied(t *testing.T) {
 	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error diagnostic for delete failure")
+	}
+}
+
+// TestFirewallPortSyntaxValidator pins the #324 plan-time port grammar on
+// local_port/remote_port: `Any` (any case), a single numeric port, or a
+// numeric range. Anything else (addresses, service names, malformed ranges)
+// must fail at plan time; protocol scoping stays in CV-2.
+func TestFirewallPortSyntaxValidator(t *testing.T) {
+	s := windowsFirewallRuleSchemaDefinition(context.Background())
+	for _, key := range []string{"local_port", "remote_port"} {
+		a, ok := s.Attributes[key].(schema.ListAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.ListAttribute, got %T", key, s.Attributes[key])
+		}
+		if len(a.Validators) == 0 {
+			t.Fatalf("%s must carry a port-syntax validator (#324)", key)
+		}
+		run := func(vals ...string) diag.Diagnostics {
+			elems := make([]attr.Value, len(vals))
+			for i, v := range vals {
+				elems[i] = types.StringValue(v)
+			}
+			req := schemavalidator.ListRequest{
+				Path:        path.Root(key),
+				ConfigValue: types.ListValueMust(types.StringType, elems),
+			}
+			resp := &schemavalidator.ListResponse{}
+			for _, v := range a.Validators {
+				v.ValidateList(context.Background(), req, resp)
+			}
+			return resp.Diagnostics
+		}
+		for _, good := range []string{"Any", "any", "ANY", "80", "443", "0", "65535", "8000-8100"} {
+			if d := run(good); d.HasError() {
+				t.Errorf("%s %q should pass, got %v", key, good, d)
+			}
+		}
+		if d := run("80", "443", "Any"); d.HasError() {
+			t.Errorf("%s mixed valid ports should pass, got %v", key, d)
+		}
+		for _, bad := range []string{"", "http", "80-", "-80", "80-abc", "1.2.3.4/24", "80,443", "Dynamic"} {
+			if d := run(bad); !d.HasError() {
+				t.Errorf("%s %q should be rejected", key, bad)
+			}
+		}
 	}
 }

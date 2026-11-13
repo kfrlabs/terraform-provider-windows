@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -526,4 +527,55 @@ func fileSourceValidatorDiagsUnknownURL(t *testing.T, sha256 string, insecure bo
 		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: raw},
 	}, resp)
 	return resp.Diagnostics
+}
+
+// TestWindowsFileAttributesSchemaEnum pins the #324 plan-time enum on the
+// attributes list: exactly the NormaliseFileAttributes keywords (lowercase).
+// The system/temporary mutual exclusion stays in the cross-field validator.
+func TestWindowsFileAttributesSchemaEnum(t *testing.T) {
+	s := fileSchema(t)
+	a, ok := s.Attributes["attributes"].(schema.ListAttribute)
+	if !ok {
+		t.Fatalf("attributes: expected schema.ListAttribute, got %T", s.Attributes["attributes"])
+	}
+	if len(a.Validators) == 0 {
+		t.Fatal("attributes must carry an enum validator (#324)")
+	}
+	run := func(vals ...string) diag.Diagnostics {
+		elems := make([]attr.Value, len(vals))
+		for i, v := range vals {
+			elems[i] = types.StringValue(v)
+		}
+		// Empty config (no attributes declared) is valid: the attribute is
+		// Optional+Computed.
+		lst := types.ListValueMust(types.StringType, elems)
+		if len(vals) == 0 {
+			lst = types.ListNull(types.StringType)
+		}
+		req := validator.ListRequest{
+			Path:        path.Root("attributes"),
+			ConfigValue: lst,
+		}
+		resp := &validator.ListResponse{}
+		for _, v := range a.Validators {
+			v.ValidateList(context.Background(), req, resp)
+		}
+		return resp.Diagnostics
+	}
+	for _, good := range []string{"hidden", "readonly", "archive", "system", "temporary"} {
+		if d := run(good); d.HasError() {
+			t.Errorf("attributes %q should pass, got %v", good, d)
+		}
+	}
+	if d := run("hidden", "readonly"); d.HasError() {
+		t.Errorf("attributes [hidden readonly] should pass, got %v", d)
+	}
+	if d := run(); d.HasError() {
+		t.Errorf("null attributes should pass, got %v", d)
+	}
+	for _, bad := range []string{"compressed", "HIDDEN", "ReadOnly", "", "normal"} {
+		if d := run(bad); !d.HasError() {
+			t.Errorf("attributes %q should be rejected", bad)
+		}
+	}
 }

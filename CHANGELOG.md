@@ -19,6 +19,27 @@ All notable changes to this project will be documented in this file.
   on the next refresh/plan; if a stale state needs manual repair, use
   `terraform state rm` followed by `import`.
 
+### Changed
+
+- Plan-time validation is stricter (fail fast at plan instead of at apply)
+  (#324):
+  - `windows_firewall_rule`: `local_port`/`remote_port` entries must be
+    `Any`, a numeric port (`80`), or a numeric range (`8000-8100`).
+  - `windows_file`: `attributes` entries must be one of `hidden`,
+    `readonly`, `archive`, `system`, `temporary` (the `system`/`temporary`
+    mutual exclusion is still enforced by the cross-field validator).
+  - `windows_net_ip_address`: `prefix_length` must be 1-128 (the IPv4 1-32
+    refinement against the address family is unchanged).
+  - `windows_iis_app_pool`: `identity_username` must be non-empty and shaped
+    like `DOMAIN\user` (including `BUILTIN\...` / `NT AUTHORITY\...`), a UPN
+    (`user@domain`), or a bare local name.
+  - `windows_scheduled_task` already validates `days_of_week` against the
+    weekday enum and `triggers` size at plan time; no change there.
+  - The `List` -> `Set` migration for `windows_scheduled_task.triggers`,
+    `days_of_week`, and `windows_file.attributes` (unordered collections that
+    currently show reorder-only diffs) is deferred: it is breaking (state
+    migration) and stays out of this release.
+
 ### Added
 
 - New `windows_dsc_resource` resource (#293): generic gateway managing one

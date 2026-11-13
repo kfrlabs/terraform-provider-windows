@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -175,6 +176,11 @@ func windowsNetIPAddressSchemaDefinition(ctx context.Context) schema.Schema {
 				Required: true,
 				Description: "Subnet prefix length: 1-32 for IPv4, 1-128 for IPv6 (validated against " +
 					"the address family at plan time). Updated in place.",
+				Validators: []validator.Int64{
+					// Attribute-level range gate (#324): the family refinement
+					// (1-32 for IPv4) stays in netIPAddressConfigValidator.
+					int64validator.Between(1, 128),
+				},
 			},
 
 			"skip_as_source": schema.BoolAttribute{

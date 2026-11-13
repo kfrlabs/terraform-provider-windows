@@ -1212,3 +1212,44 @@ func TestIISAppPoolErrorDiag_InUse(t *testing.T) {
 		t.Errorf("in_use diag must keep kind + guidance, got:\n%s", joined)
 	}
 }
+
+// TestIISAppPoolIdentityUsernameValidator pins the #324 plan-time shape of
+// identity_username: DOMAIN\user (including built-ins like
+// `NT AUTHORITY\...`), UPN, or a bare local name. Presence for SpecificUser
+// stays in iisAppPoolIdentityValidator; this only gates the shape.
+func TestIISAppPoolIdentityUsernameValidator(t *testing.T) {
+	s := windowsIISAppPoolSchemaDefinition(context.Background())
+	a, ok := s.Attributes["identity_username"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("identity_username: expected schema.StringAttribute, got %T", s.Attributes["identity_username"])
+	}
+	if len(a.Validators) < 2 {
+		t.Fatalf("identity_username must carry length + shape validators (#324), got %d", len(a.Validators))
+	}
+	run := func(v string) diag.Diagnostics {
+		resp := &validator.StringResponse{}
+		for _, vl := range a.Validators {
+			vl.ValidateString(context.Background(), validator.StringRequest{
+				Path: path.Root("identity_username"), ConfigValue: types.StringValue(v),
+			}, resp)
+		}
+		return resp.Diagnostics
+	}
+	for _, good := range []string{
+		`CONTOSO\svc-web`,
+		`NT AUTHORITY\SYSTEM`,
+		`BUILTIN\Administrators`,
+		`svc@example.com`,
+		`svc-web`,
+		`a`,
+	} {
+		if d := run(good); d.HasError() {
+			t.Errorf("identity_username %q should pass, got %v", good, d)
+		}
+	}
+	for _, bad := range []string{"", `\user`, `user\`, `DOMAIN\`, `@domain`, `user@`} {
+		if d := run(bad); !d.HasError() {
+			t.Errorf("identity_username %q should be rejected", bad)
+		}
+	}
+}

@@ -271,6 +271,11 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				},
 				Description: "Local TCP/UDP port(s). Accepts numeric ports, ranges, and keywords. " +
 					"Valid only when protocol is `TCP` or `UDP` (CV-2). Populated from Get-NetFirewallPortFilter.",
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(
+						stringvalidator.RegexMatches(firewallPortRe, firewallPortDesc),
+					),
+				},
 			},
 
 			"remote_port": schema.ListAttribute{
@@ -282,6 +287,11 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				},
 				Description: "Remote TCP/UDP port(s). Same constraints as local_port. " +
 					"Populated from Get-NetFirewallPortFilter.",
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(
+						stringvalidator.RegexMatches(firewallPortRe, firewallPortDesc),
+					),
+				},
 			},
 
 			"local_address": schema.ListAttribute{
@@ -792,6 +802,15 @@ func addFirewallDiag(d *diag.Diagnostics, summary string, err error) {
 // ---------------------------------------------------------------------------
 // Validators
 // ---------------------------------------------------------------------------
+
+// firewallPortRe accepts the NetFirewallRule port-filter grammar at plan
+// time (#324): the `Any` keyword (case-insensitive, as Windows reports
+// `Any`), a single numeric port, or a numeric range. Protocol scoping
+// (ports only valid with TCP/UDP) stays in firewallRulePortProtocolValidator
+// (CV-2); numeric bounds (0-65535) are enforced by Windows at apply time.
+var firewallPortRe = regexp.MustCompile(`^(?i)(ANY|[0-9]+(-[0-9]+)?)$`)
+
+const firewallPortDesc = "must be `Any`, a numeric port (e.g. `80`), or a numeric range (e.g. `8000-8100`)"
 
 // firewallProtocolValidator validates that the protocol attribute value is
 // either a well-known keyword or a numeric string in the range 0-255.

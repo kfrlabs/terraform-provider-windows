@@ -865,3 +865,35 @@ func TestWindowsNetIPAddressResource_ImportState_Refusals(t *testing.T) {
 		}
 	}
 }
+
+// TestNetIPAddressPrefixLengthSchemaRange pins the #324 attribute-level
+// Between(1,128) gate on prefix_length. The IPv4 refinement (1-32) stays in
+// netIPAddressConfigValidator, which keeps the family-aware diagnostics.
+func TestNetIPAddressPrefixLengthSchemaRange(t *testing.T) {
+	s := windowsNetIPAddressSchemaDefinition(context.Background())
+	a, ok := s.Attributes["prefix_length"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("prefix_length: expected schema.Int64Attribute, got %T", s.Attributes["prefix_length"])
+	}
+	if len(a.Validators) == 0 {
+		t.Fatal("prefix_length must carry a range validator (#324)")
+	}
+	for _, v := range []int64{1, 24, 32, 64, 128} {
+		resp := &validator.Int64Response{}
+		a.Validators[0].ValidateInt64(context.Background(), validator.Int64Request{
+			Path: path.Root("prefix_length"), ConfigValue: types.Int64Value(v),
+		}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Errorf("prefix_length %d should pass, got %v", v, resp.Diagnostics)
+		}
+	}
+	for _, v := range []int64{-1, 0, 129, 255} {
+		resp := &validator.Int64Response{}
+		a.Validators[0].ValidateInt64(context.Background(), validator.Int64Request{
+			Path: path.Root("prefix_length"), ConfigValue: types.Int64Value(v),
+		}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Errorf("prefix_length %d should be rejected", v)
+		}
+	}
+}

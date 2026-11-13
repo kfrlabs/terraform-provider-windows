@@ -252,6 +252,10 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 					stringplanmodifier.UseStateForUnknown(),
 				},
 				Description: "Account for a `SpecificUser` identity (`processModel.userName`, e.g. `CONTOSO\\svc-web`). Required when `identity_type = \"SpecificUser\"`; inert otherwise.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+					stringvalidator.RegexMatches(iisAppPoolUsernameRe, iisAppPoolUsernameDesc),
+				},
 			},
 
 			"identity_password_wo": schema.StringAttribute{
@@ -425,6 +429,16 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 // ---------------------------------------------------------------------------
 // Validators
 // ---------------------------------------------------------------------------
+
+// iisAppPoolUsernameRe accepts the account shapes IIS understands (#324),
+// deliberately permissive so built-in accounts are never rejected:
+// DOMAIN\user (including `BUILTIN\...` and `NT AUTHORITY\...`), UPN
+// (user@domain), or a bare local name. Emptiness is rejected by the length
+// check alongside; presence for SpecificUser stays in
+// iisAppPoolIdentityValidator.
+var iisAppPoolUsernameRe = regexp.MustCompile(`^([^@\\]+\\[^@\\]+|[^@]+@[^@]+|[^@\\]+)$`)
+
+const iisAppPoolUsernameDesc = "must be a DOMAIN\\user account, a UPN (user@domain), or a bare local account name"
 
 // iisAppPoolNameValidator enforces the pool-name rules at plan time
 // (mirroring winclient.ValidateIISAppPoolName): no forbidden characters and
