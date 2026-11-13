@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_partition` resource (#291): manages one partition on a data
+  disk on the target host (`New-Partition` / `Get-Partition` /
+  `Resize-Partition` / `Set-Partition` / `Remove-Partition`), including its
+  drive letter. Identity is `<disk_unique_id>|<guid>` on GPT and
+  `<disk_unique_id>|<offset>` on MBR (never the scan-time partition number,
+  which is informational only). Create refuses protected, offline, read-only
+  or RAW disks (`disk_not_ready`), checks the largest free extent
+  (`insufficient_space` carries it in the message), creates with
+  `-AssignDriveLetter:$false` and then assigns the configured letter
+  explicitly (upper-cased `D`-`Z`; `A`/`B`/`C` rejected; in use is a
+  `drive_letter_in_use` error). `size_bytes` grows in place (shrink refused
+  with `shrink_not_supported` in v1); `use_maximum_size` is create-only and
+  later growth is not automatic; `offset_bytes`, `gpt_type`
+  (`basic_data`/`msr`/`recovery` or GUID, GPT only) and `mbr_type`
+  (`IFS`/`FAT32`/`FAT32_LBA`/`EXTENDED`/`NTFS`, hex or decimal byte, MBR
+  only) force replacement. The boot/system/EFI/MSR/recovery/pagefile guard
+  fails closed with `protected_storage`. Delete destroys the partition and
+  its data (docs recommend `lifecycle { prevent_destroy = true }`); a
+  missing partition is success. Import by `id`. `timeouts` default to 15m.
+  No data source in v1.
+
 - New `windows_disk` resource and `windows_disk` data source (#290):
   adopts a physical disk on the target host (`Get-Disk` / `Set-Disk` /
   `Initialize-Disk`) by exactly one of `unique_id` (the stable identity and
