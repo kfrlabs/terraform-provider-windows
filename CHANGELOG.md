@@ -6,6 +6,34 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_volume` resource and `windows_volume` data source (#292):
+  last of the storage trio — formats one partition on a data disk on the
+  target host (`Format-Volume` / `Get-Volume` / `Set-Volume`) and manages its
+  volume label in place. Identity is the Get-Volume UniqueId (the
+  `\\?\Volume{...}\` object path); the hosting `partition_id` is the
+  `windows_partition` ID (`<disk_unique_id>|<guid>` on GPT,
+  `<disk_unique_id>|<offset>` on MBR, parsed with the shared
+  `ParsePartitionID` helper). Create resolves the disk and the partition by
+  the GUID/offset key (never the scan-time number), refuses protected
+  storage fail-closed (shared guard with #290/#291), refuses
+  already-formatted partitions with `already_formatted` unless
+  `allow_format_existing` is set, then formats quick by default (`full_format`
+  selects a slow full format) and re-reads. `partition_id`, `file_system`
+  (`NTFS`/`ReFS`/`exFAT`/`FAT32`, canonicalized at plan) and
+  `allocation_unit_size` (power-of-two 512 B-2 MiB, narrowed per file
+  system; `NTFS` 512-65536, `FAT32` 512-32768, `exFAT` 512-2097152, `ReFS`
+  4 KiB or 64 KiB only) are ForceNew — changing `file_system` plan-warns
+  that replacement reformats and destroys data — while `file_system_label`
+  (32 chars for `NTFS`/`ReFS`, 11 for `exFAT`/`FAT32`) updates in place via
+  `Set-Volume`. Read by UniqueId drops gone or unformatted (null/RAW)
+  volumes from state; Delete is state-only with zero remote calls (volumes
+  are never unformatted; the `delete` timeout knob stays exposed but
+  unconsumed, like `windows_disk`). Import by UniqueId or drive letter
+  (`E:`), resolving the hosting `partition_id` host-side. The data source
+  looks up by exactly one of `drive_letter` (`C` allowed: reads never change
+  the volume), `unique_id` or `file_system_label` (exact, case-insensitive;
+  several matches are an error). `timeouts` default to 30m.
+
 - New `windows_partition` resource (#291): manages one partition on a data
   disk on the target host (`New-Partition` / `Get-Partition` /
   `Resize-Partition` / `Set-Partition` / `Remove-Partition`), including its
