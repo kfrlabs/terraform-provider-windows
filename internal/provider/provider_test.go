@@ -60,11 +60,11 @@ func TestProvider_Schema(t *testing.T) {
 
 func TestProvider_ResourcesAndDataSources(t *testing.T) {
 	p := &windowsProvider{}
-	if got := len(p.Resources(context.Background())); got != 27 {
-		t.Errorf("Resources len = %d, want 27 (certificate + directory + disk + dns_client + domain_membership + service + smb_share + feature + firewall_profile + hostname + iis_app_pool + local_group + local_group_member + local_user + registry_value + registry_key + environment_variable + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl + net_ip_address + net_route + partition + timezone)", got)
+	if got := len(p.Resources(context.Background())); got != 28 {
+		t.Errorf("Resources len = %d, want 28 (certificate + directory + disk + dns_client + domain_membership + service + smb_share + feature + firewall_profile + hostname + iis_app_pool + local_group + local_group_member + local_user + registry_value + registry_key + environment_variable + scheduled_task + firewall_rule + winget_package + legacy_package + file + file_acl + net_ip_address + net_route + partition + timezone + volume)", got)
 	}
-	if got := len(p.DataSources(context.Background())); got != 31 {
-		t.Errorf("DataSources len = %d, want 31 (certificate + directory + disk + dns_client + domain_membership + feature + file + file_acl + firewall_profile + hostname + iis_app_pool + installed_software + legacy_package + local_group + local_group_member + local_groups + local_user + local_users + registry_value + registry_key + service + smb_share + environment_variable + scheduled_task + firewall_rule + winget_package + net_ip_address + net_route + network_adapters + os_info + timezone)", got)
+	if got := len(p.DataSources(context.Background())); got != 32 {
+		t.Errorf("DataSources len = %d, want 32 (certificate + directory + disk + dns_client + domain_membership + feature + file + file_acl + firewall_profile + hostname + iis_app_pool + installed_software + legacy_package + local_group + local_group_member + local_groups + local_user + local_users + registry_value + registry_key + service + smb_share + environment_variable + scheduled_task + firewall_rule + winget_package + net_ip_address + net_route + network_adapters + os_info + timezone + volume)", got)
 	}
 }
 
