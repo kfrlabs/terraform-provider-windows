@@ -59,8 +59,8 @@ resource "windows_domain_membership" "this" {
 # Advanced example: place the computer account in a dedicated OU and
 # schedule a detached host reboot ~60s after the join when a reboot is
 # required (restart = true only takes effect when a pending reboot is
-# reported). The OU is create-only: changing ou_path later only warns and
-# never moves the account.
+# reported). The OU and server are create-only: changing ou_path or server
+# later forces replacement (a new join), never an in-place move.
 resource "windows_domain_membership" "ou" {
   domain  = "corp.example.com"
   ou_path = "OU=Servers,DC=corp,DC=example,DC=com"

@@ -586,14 +586,20 @@ func TestDomainMembershipRead_MismatchRemoves_UnlessPendingReboot(t *testing.T) 
 }
 
 // -----------------------------------------------------------------------------
-// Update handler (state-only, no remote action)
+// Update handler (state-only, Computed refreshed from live)
 // -----------------------------------------------------------------------------
 
-func TestDomainMembershipUpdate_NoRemoteAction(t *testing.T) {
+func TestDomainMembershipUpdate_RefreshesComputedFromLive(t *testing.T) {
 	fake := &fakeDomainMembershipClient{
-		// Any remote call would succeed; the assertion is that none happens.
-		readOut: fakeDMState("corp.example.com", true, false),
-		joinOut: fakeDMState("corp.example.com", true, false),
+		// Live host reports changed computed values: Update must surface
+		// them instead of copying prior state.
+		readOut: &winclient.DomainMembershipState{
+			Domain:          "corp.example.com",
+			PartOfDomain:    true,
+			ComputerName:    "WIN02",
+			PendingReboot:   true,
+			SecureChannelOk: false,
+		},
 	}
 	r := &windowsDomainMembershipResource{dm: fake}
 	schemaResp := &resource.SchemaResponse{}
@@ -601,40 +607,67 @@ func TestDomainMembershipUpdate_NoRemoteAction(t *testing.T) {
 	plan := tfsdk.Plan{Schema: schemaResp.Schema, Raw: dmObj(map[string]tftypes.Value{
 		"id":              tftypes.NewValue(tftypes.String, "corp.example.com"),
 		"domain":          tftypes.NewValue(tftypes.String, "corp.example.com"),
-		"ou_path":         tftypes.NewValue(tftypes.String, "OU=New,DC=corp,DC=example,DC=com"),
-		"server":          tftypes.NewValue(tftypes.String, "dc01.corp.example.com"),
+		"ou_path":         tftypes.NewValue(tftypes.String, "OU=Old,DC=corp,DC=example,DC=com"),
+		"server":          tftypes.NewValue(tftypes.String, "dc00.corp.example.com"),
 		"restart":         tftypes.NewValue(tftypes.Bool, true),
 		"join_credential": dmCredentialValue("joiner", "S3cret!", ""),
 		"computer_name":   tftypes.NewValue(tftypes.String, nil), // unknown in real plans
 	})}
 	priorState := tfsdk.State{Schema: schemaResp.Schema, Raw: dmObj(map[string]tftypes.Value{
-		"id":              tftypes.NewValue(tftypes.String, "corp.example.com"),
-		"domain":          tftypes.NewValue(tftypes.String, "corp.example.com"),
-		"ou_path":         tftypes.NewValue(tftypes.String, "OU=Old,DC=corp,DC=example,DC=com"),
-		"server":          tftypes.NewValue(tftypes.String, "dc00.corp.example.com"),
-		"join_credential": dmCredentialValue("joiner", "S3cret!", ""),
-		"computer_name":   tftypes.NewValue(tftypes.String, "WIN01"),
-		"pending_reboot":  tftypes.NewValue(tftypes.Bool, false),
+		"id":                tftypes.NewValue(tftypes.String, "corp.example.com"),
+		"domain":            tftypes.NewValue(tftypes.String, "corp.example.com"),
+		"ou_path":           tftypes.NewValue(tftypes.String, "OU=Old,DC=corp,DC=example,DC=com"),
+		"server":            tftypes.NewValue(tftypes.String, "dc00.corp.example.com"),
+		"join_credential":   dmCredentialValue("joiner", "S3cret!", ""),
+		"computer_name":     tftypes.NewValue(tftypes.String, "WIN01"),
+		"pending_reboot":    tftypes.NewValue(tftypes.Bool, false),
+		"secure_channel_ok": tftypes.NewValue(tftypes.Bool, true),
 	})}
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: priorState.Raw.Copy()}}
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: priorState}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error diags: %v", resp.Diagnostics)
 	}
-	if fake.readCalls+fake.joinCalls+fake.unjoinCalls != 0 {
-		t.Errorf("Update must perform no remote action (read=%d join=%d unjoin=%d)",
+	if fake.readCalls != 1 {
+		t.Errorf("Update must re-Read the live host once (read=%d join=%d unjoin=%d)",
 			fake.readCalls, fake.joinCalls, fake.unjoinCalls)
+	}
+	if fake.joinCalls+fake.unjoinCalls != 0 {
+		t.Errorf("Update must not join/unjoin (join=%d unjoin=%d)", fake.joinCalls, fake.unjoinCalls)
 	}
 	var m windowsDomainMembershipModel
 	resp.State.Get(context.Background(), &m)
-	if m.ComputerName.ValueString() != "WIN01" {
-		t.Errorf("Update must preserve computed computer_name, got %q", m.ComputerName.ValueString())
+	if m.ComputerName.ValueString() != "WIN02" {
+		t.Errorf("Update must refresh computer_name from live, got %q", m.ComputerName.ValueString())
 	}
-	if m.Server.ValueString() != "dc00.corp.example.com" {
-		t.Errorf("Update must preserve prior server (create-only, no remote action), got %q", m.Server.ValueString())
+	if !m.PendingReboot.ValueBool() {
+		t.Error("Update must refresh pending_reboot from live (want true)")
 	}
-	if m.OUPath.ValueString() != "OU=Old,DC=corp,DC=example,DC=com" {
-		t.Errorf("Update must preserve prior ou_path (create-only, no remote action), got %q", m.OUPath.ValueString())
+	if m.SecureChannelOk.ValueBool() {
+		t.Error("Update must refresh secure_channel_ok from live (want false)")
+	}
+	if !m.Restart.ValueBool() {
+		t.Error("Update must apply the planned restart value")
+	}
+}
+
+func TestDomainMembershipUpdate_ReadError(t *testing.T) {
+	fake := &fakeDomainMembershipClient{
+		readErr: errors.New("transport down"),
+	}
+	r := &windowsDomainMembershipResource{dm: fake}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	raw := dmObj(map[string]tftypes.Value{
+		"domain":          tftypes.NewValue(tftypes.String, "corp.example.com"),
+		"join_credential": dmCredentialValue("joiner", "S3cret!", ""),
+	})
+	plan := tfsdk.Plan{Schema: schemaResp.Schema, Raw: raw}
+	priorState := tfsdk.State{Schema: schemaResp.Schema, Raw: raw.Copy()}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: raw.Copy()}}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: priorState}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("Update with a failing refresh Read must error")
 	}
 }
 
@@ -814,54 +847,32 @@ func TestDomainMembershipImportState_DomainMismatch(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// ModifyPlan (create-only ou_path warning)
+// Schema ForceNew (ou_path / server create-only)
 // -----------------------------------------------------------------------------
 
-func TestDomainMembershipModifyPlan_OUPathChangeWarns(t *testing.T) {
-	r := &windowsDomainMembershipResource{}
-	schemaResp := &resource.SchemaResponse{}
-	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
-	plan := tfsdk.Plan{Schema: schemaResp.Schema, Raw: dmObj(map[string]tftypes.Value{
-		"domain":  tftypes.NewValue(tftypes.String, "corp.example.com"),
-		"ou_path": tftypes.NewValue(tftypes.String, "OU=New,DC=corp,DC=example,DC=com"),
-	})}
-	prior := tfsdk.State{Schema: schemaResp.Schema, Raw: dmObj(map[string]tftypes.Value{
-		"domain":  tftypes.NewValue(tftypes.String, "corp.example.com"),
-		"ou_path": tftypes.NewValue(tftypes.String, "OU=Old,DC=corp,DC=example,DC=com"),
-	})}
-	resp := &resource.ModifyPlanResponse{
-		Plan: plan,
-	}
-	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{Plan: plan, State: prior}, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("ou_path change must warn, not error: %v", resp.Diagnostics)
-	}
-	var sawWarning bool
-	for _, d := range resp.Diagnostics {
-		if d.Severity() == diag.SeverityWarning && strings.Contains(d.Summary(), "create-only") {
-			sawWarning = true
+func TestDomainMembershipSchema_OUPathServerRequireReplace(t *testing.T) {
+	s := windowsDomainMembershipSchemaDefinition(context.Background())
+	requiresReplace := func(attr schema.Attribute) bool {
+		sa, ok := attr.(schema.StringAttribute)
+		if !ok {
+			return false
 		}
+		for _, m := range sa.PlanModifiers {
+			// RequiresReplace() describes itself as destroy-and-recreate.
+			if strings.Contains(strings.ToLower(m.Description(context.Background())), "recreate") {
+				return true
+			}
+		}
+		return false
 	}
-	if !sawWarning {
-		t.Error("expected a create-only warning for ou_path change")
-	}
-}
-
-func TestDomainMembershipModifyPlan_OUPathUnchangedNoWarning(t *testing.T) {
-	r := &windowsDomainMembershipResource{}
-	schemaResp := &resource.SchemaResponse{}
-	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
-	raw := dmObj(map[string]tftypes.Value{
-		"domain":  tftypes.NewValue(tftypes.String, "corp.example.com"),
-		"ou_path": tftypes.NewValue(tftypes.String, "OU=Same,DC=corp,DC=example,DC=com"),
-	})
-	resp := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: raw}}
-	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
-		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: raw.Copy()},
-		State: tfsdk.State{Schema: schemaResp.Schema, Raw: raw.Copy()},
-	}, resp)
-	if len(resp.Diagnostics) != 0 {
-		t.Errorf("unchanged ou_path must not warn: %v", resp.Diagnostics)
+	for _, name := range []string{"ou_path", "server"} {
+		a, ok := s.Attributes[name]
+		if !ok {
+			t.Fatalf("schema missing attribute %q", name)
+		}
+		if !requiresReplace(a) {
+			t.Errorf("%s must be ForceNew (RequiresReplace)", name)
+		}
 	}
 }
 

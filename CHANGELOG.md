@@ -448,6 +448,19 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_domain_membership`: `ou_path` and `server` are now
+  ForceNew (RequiresReplace) instead of warn-and-ignore (#327).
+  Changing either now plans a replacement (a new join) instead of
+  silently persisting unapplied desire as state, and the `ModifyPlan`
+  create-only warning is removed. `Update` now re-reads the live host
+  to refresh the Computed attributes (`computer_name`,
+  `pending_reboot`, `secure_channel_ok`) instead of copying prior
+  state, so an out-of-band reboot or drift is reflected after apply.
+  `Update` therefore requires host reachability: an unreachable host
+  fails the update instead of keeping prior values, and drift that
+  `Read` would drop from state (left domain, joined another domain
+  outside a pending reboot) is an `Update` error.
+
 - Secrets hardening (#323): `windows_registry_value` `value_string`
   and `value_binary` are now `Sensitive` (registry payloads may carry
   passwords, tokens or keys, so Terraform masks them in plans and
