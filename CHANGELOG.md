@@ -6,6 +6,33 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_eventlog` resource and `windows_eventlog` data source
+  (#289): manages the size and retention policy of an existing event log on
+  the target host (classic logs such as `Application`, `System`, `Security`,
+  and modern channels such as `Microsoft-Windows-PowerShell/Operational`)
+  through the .NET `EventLogConfiguration` API (`Get-WinEvent -ListLog`
+  plus `SaveChanges()`). The log name is matched literally (a `/` in a
+  channel name is part of the name, never a path or wildcard). `name` is
+  Required + ForceNew (the Terraform ID); `maximum_size_bytes` (multiple of
+  64 KiB, at least 1 MiB, plan-validated) and `retention` (`overwrite` /
+  `Circular`, `archive` / `AutoBackup`, `retain` / `Retain`), `enabled` and
+  `log_file_path` are Optional+Computed — only configured attributes are
+  assigned before `SaveChanges()`, and the re-read state verifies every
+  configured property took effect. Frequencies: `enabled = false` on a
+  classic log fails closed with `unsupported`; shrinking below the current
+  file size warns (Windows applies it after the next clear or archive);
+  sizes above 4 GiB on classic logs warn; `retain` on the `Security` log
+  warns at plan time (`CrashOnAuditFail` can halt the host); a Group Policy
+  `MaxSize` / `Retention` / `AutoBackupLogFiles` value is reported through
+  `policy_override` with a warning (the GPO value wins at the next refresh).
+  Read drops a log removed out-of-band from state (`not_found`);
+  `record_count` / `file_size_bytes` are Computed-only informational
+  counters that never drift. Delete is state-only by default; with
+  `restore_on_destroy` it re-applies the pre-existing values captured into
+  private state at creation (or import) time. Import by exact log name. The
+  data source looks up by `name` and reuses the sibling resource default for
+  `timeouts.read`. `timeouts` default to 5m.
+
 - New `windows_iis_binding` resource (#285): manages one IIS binding on a
   site on the target host (`New-WebBinding -SslFlags` / `Remove-WebBinding`,
   `AddSslCertificate` / `RemoveSslCertificate`). Identity is
