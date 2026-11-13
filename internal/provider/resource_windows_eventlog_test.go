@@ -476,10 +476,7 @@ func TestModelToEventLogSettings_OnlyConfigured(t *testing.T) {
 	if diags := elPlan(t, nil).Get(ctx, &m); diags.HasError() {
 		t.Fatalf("plan.Get: %v", diags)
 	}
-	s, diags := modelToEventLogSettings(ctx, m)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", elDiagSummaries(diags))
-	}
+	s := modelToEventLogSettings(m)
 	if s.EventLogConfigured() {
 		t.Errorf("all-null plan must produce no configured settings: %+v", s)
 	}
@@ -492,10 +489,7 @@ func TestModelToEventLogSettings_Configured(t *testing.T) {
 		Enabled:          types.BoolValue(true),
 		LogFilePath:      types.StringValue(`C:\Logs\app.evtx`),
 	}
-	s, diags := modelToEventLogSettings(context.Background(), m)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", elDiagSummaries(diags))
-	}
+	s := modelToEventLogSettings(m)
 	if s.MaximumSizeBytes == nil || *s.MaximumSizeBytes != 1073741824 {
 		t.Error("maximum_size_bytes must be forwarded")
 	}
@@ -518,12 +512,13 @@ func TestModelToEventLogSettings_Configured(t *testing.T) {
 func TestModelToEventLogSettings_UnknownDefers(t *testing.T) {
 	m := windowsEventLogModel{
 		MaximumSizeBytes: types.Int64Unknown(),
-		Retention:        types.StringNull(),
-		Enabled:          types.BoolNull(),
-		LogFilePath:      types.StringNull(),
+		Retention:        types.StringUnknown(),
+		Enabled:          types.BoolUnknown(),
+		LogFilePath:      types.StringUnknown(),
 	}
-	if _, diags := modelToEventLogSettings(context.Background(), m); !diags.HasError() {
-		t.Error("unknown attributes must abort with a deferring diagnostic")
+	s := modelToEventLogSettings(m)
+	if s.MaximumSizeBytes != nil || s.Retention != nil || s.Enabled != nil || s.LogFilePath != nil {
+		t.Errorf("unknown attributes must stay unmanaged (nil), got %+v", s)
 	}
 }
 
@@ -539,10 +534,7 @@ func TestModelToEventLogSettings_UnknownRetentionUnmanaged(t *testing.T) {
 		Enabled:          types.BoolNull(),
 		LogFilePath:      types.StringNull(),
 	}
-	s, diags := modelToEventLogSettings(context.Background(), m)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", elDiagSummaries(diags))
-	}
+	s := modelToEventLogSettings(m)
 	if s.Retention != nil {
 		t.Errorf("unknown observed retention must be unmanaged (nil), got %q", *s.Retention)
 	}

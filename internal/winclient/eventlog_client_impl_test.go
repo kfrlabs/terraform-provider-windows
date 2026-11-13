@@ -174,7 +174,7 @@ func TestBuildEventLogSetBlock_OnlyConfigured(t *testing.T) {
 	if !strings.Contains(block, "$c.LogMode = 'AutoBackup'") {
 		t.Errorf("retention must map to LogMode AutoBackup, got:\n%s", block)
 	}
-	for _, absent := range []string{"MaximumSizeInBytes", "IsEnabled", "LogFilePath"} {
+	for _, absent := range []string{"MaximumSizeInBytes", "IsEnabled", "FilePath"} {
 		if strings.Contains(block, absent) {
 			t.Errorf("unconfigured attribute %q must be omitted, got:\n%s", absent, block)
 		}
@@ -197,7 +197,7 @@ func TestBuildEventLogSetBlock_OnlyConfigured(t *testing.T) {
 		"$c.MaximumSizeInBytes = 20971520",
 		"$c.LogMode = 'AutoBackup'",
 		"$c.IsEnabled = $true",
-		"$c.LogFilePath = 'C:\\Logs\\app.evtx'",
+		"$c.FilePath = 'C:\\Logs\\app.evtx'",
 	} {
 		if !strings.Contains(block, want) {
 			t.Errorf("set block missing %q, got:\n%s", want, block)
@@ -674,7 +674,7 @@ func TestEventLogApply_HappyPath(t *testing.T) {
 	if !strings.Contains(gotScript, "$c.LogMode = 'AutoBackup'") {
 		t.Errorf("script must set the configured mode, got:\n%s", gotScript)
 	}
-	for _, absent := range []string{"$c.IsEnabled =", "$c.LogFilePath ="} {
+	for _, absent := range []string{"$c.IsEnabled =", "$c.FilePath ="} {
 		if strings.Contains(gotScript, absent) {
 			t.Errorf("script must not assign unconfigured property %q, got:\n%s", absent, gotScript)
 		}

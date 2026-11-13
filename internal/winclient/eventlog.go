@@ -139,14 +139,23 @@ function Read-EventLogState([object]$c, [string]$logName) {
   if ($null -eq $fs) { $fs = Get-EventLogProp $c 'FileSizeInBytes' }
   if ($null -eq $fs) { $fs = 0 }
 
+  # EventLogConfiguration exposes IsClassicLog (not IsClassic) and FilePath
+  # (not LogFilePath); fall back to the legacy spellings if present.
+  $isClassic = Get-EventLogProp $c 'IsClassicLog'
+  if ($null -eq $isClassic) { $isClassic = Get-EventLogProp $c 'IsClassic' }
+  if ($null -eq $isClassic) { $isClassic = $false }
+  $logFilePath = Get-EventLogProp $c 'FilePath'
+  if ($null -eq $logFilePath) { $logFilePath = Get-EventLogProp $c 'LogFilePath' }
+  if ($null -eq $logFilePath) { $logFilePath = '' }
+
   return [ordered]@{
     log_name           = [string]$c.LogName
     log_type           = $logType
-    is_classic         = [bool]$c.IsClassic
+    is_classic         = [bool]$isClassic
     is_enabled         = [bool]$c.IsEnabled
     log_mode           = [string]$c.LogMode
     maximum_size_bytes = [int64]$c.MaximumSizeInBytes
-    log_file_path      = [string]$c.LogFilePath
+    log_file_path      = [string]$logFilePath
     record_count       = [int64]$rc
     file_size_bytes    = [int64]$fs
     policy_override    = [bool]$policyOverride
@@ -307,7 +316,7 @@ func buildEventLogGuard(settings EventLogSettings) string {
 	if settings.Enabled == nil || *settings.Enabled {
 		return ""
 	}
-	return `if ([bool]$c.IsClassic) {
+	return `if ([bool]$c.IsClassicLog) {
     Emit-Err 'unsupported' ('Event log ' + $logName + ' is a classic log and cannot be disabled.') @{ log = $logName; step = 'guard' }
     return
   }`
@@ -341,7 +350,7 @@ func buildEventLogSetBlock(settings EventLogSettings) (string, error) {
 		}
 	}
 	if settings.LogFilePath != nil {
-		fmt.Fprintf(&sb, "    $c.LogFilePath = %s\n", psQuote(*settings.LogFilePath))
+		fmt.Fprintf(&sb, "    $c.FilePath = %s\n", psQuote(*settings.LogFilePath))
 	}
 	return sb.String(), nil
 }
@@ -358,7 +367,7 @@ func buildEventLogRestoreBlock(snap EventLogState) string {
 	} else {
 		sb.WriteString("    $c.IsEnabled = $false\n")
 	}
-	fmt.Fprintf(&sb, "    $c.LogFilePath = %s\n", psQuote(snap.LogFilePath))
+	fmt.Fprintf(&sb, "    $c.FilePath = %s\n", psQuote(snap.LogFilePath))
 	return sb.String()
 }
 

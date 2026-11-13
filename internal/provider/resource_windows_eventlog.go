@@ -391,11 +391,7 @@ func (r *windowsEventLogResource) Create(ctx context.Context, req resource.Creat
 		}
 	}
 
-	settings, diags := modelToEventLogSettings(ctx, plan)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	settings := modelToEventLogSettings(plan)
 
 	tflog.Debug(ctx, "Creating Windows event log (tuning in place)", map[string]any{
 		"name": name,
@@ -503,11 +499,7 @@ func (r *windowsEventLogResource) Update(ctx context.Context, req resource.Updat
 	// name is ForceNew so it never changes here.
 	name := plan.Name.ValueString()
 
-	settings, diags := modelToEventLogSettings(ctx, plan)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	settings := modelToEventLogSettings(plan)
 
 	tflog.Debug(ctx, "Updating Windows event log", map[string]any{
 		"name": name,
@@ -650,27 +642,17 @@ func (r *windowsEventLogResource) ImportState(ctx context.Context, req resource.
 // ---------------------------------------------------------------------------
 
 // modelToEventLogSettings converts a Terraform model to an
-// EventLogSettings delta: null (or unknown) attributes stay nil and are
-// never assigned before SaveChanges. An unknown attribute aborts with a
-// diagnostic so the run defers instead of converging on a guess.
-func modelToEventLogSettings(_ context.Context, m windowsEventLogModel) (winclient.EventLogSettings, diag.Diagnostics) {
-	var diags diag.Diagnostics
+// EventLogSettings delta: null or unknown attributes stay nil and are
+// never assigned before SaveChanges. Unknowns arise on first plan for
+// Optional+Computed attributes; the post-apply Read fills the state.
+func modelToEventLogSettings(m windowsEventLogModel) winclient.EventLogSettings {
 	var s winclient.EventLogSettings
 
-	if m.MaximumSizeBytes.IsUnknown() || m.Retention.IsUnknown() ||
-		m.Enabled.IsUnknown() || m.LogFilePath.IsUnknown() {
-		diags.AddError(
-			"Unknown Windows event log setting",
-			"One or more event log settings are unknown. Retry the apply once the referenced values are known instead of converging the log on a guess.",
-		)
-		return winclient.EventLogSettings{}, diags
-	}
-
-	if !m.MaximumSizeBytes.IsNull() {
+	if !m.MaximumSizeBytes.IsNull() && !m.MaximumSizeBytes.IsUnknown() {
 		v := m.MaximumSizeBytes.ValueInt64()
 		s.MaximumSizeBytes = &v
 	}
-	if !m.Retention.IsNull() {
+	if !m.Retention.IsNull() && !m.Retention.IsUnknown() {
 		v := m.Retention.ValueString()
 		// Only the three schema-known spellings are managed. The state
 		// projection passes an unknown future host LogMode through
@@ -684,16 +666,16 @@ func modelToEventLogSettings(_ context.Context, m windowsEventLogModel) (winclie
 			s.Retention = &v
 		}
 	}
-	if !m.Enabled.IsNull() {
+	if !m.Enabled.IsNull() && !m.Enabled.IsUnknown() {
 		v := m.Enabled.ValueBool()
 		s.Enabled = &v
 	}
-	if !m.LogFilePath.IsNull() {
+	if !m.LogFilePath.IsNull() && !m.LogFilePath.IsUnknown() {
 		v := m.LogFilePath.ValueString()
 		s.LogFilePath = &v
 	}
 
-	return s, diags
+	return s
 }
 
 // ---------------------------------------------------------------------------
