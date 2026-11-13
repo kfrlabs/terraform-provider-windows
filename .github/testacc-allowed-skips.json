@@ -90,6 +90,11 @@
       "pattern": "^TestAccWindowsDisk_",
       "reasons": ["WINDOWS_ACC_STORAGE"],
       "comment": "Storage tests attach a throwaway VHDX via diskpart and require opt-in WINDOWS_ACC_STORAGE=1, which is unset in CI, so the skip is expected."
+    },
+    {
+      "pattern": "^TestAccWindowsPartition_",
+      "reasons": ["WINDOWS_ACC_STORAGE"],
+      "comment": "Partition tests attach a throwaway VHDX via diskpart and require opt-in WINDOWS_ACC_STORAGE=1, which is unset in CI, so the skip is expected."
     }
   ]
 }
