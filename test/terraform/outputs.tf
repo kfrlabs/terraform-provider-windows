@@ -65,6 +65,7 @@ output "check_registry_value" {
     resource = windows_registry_value.app_version.value_string
     data     = data.windows_registry_value.app_version.value_string
   }
+  sensitive   = true
   description = "windows_registry_value resource vs data source value_string."
 }
 

@@ -331,7 +331,7 @@ func TestWindowsCertificateResource_Schema(t *testing.T) {
 	}
 
 	// ForceNew attributes.
-	for _, name := range []string{"store_location", "store_name", "certificate_pem", "pfx_base64_wo", "pfx_wo_version", "exportable"} {
+	for _, name := range []string{"store_location", "store_name", "certificate_pem", "pfx_base64_wo", "pfx_password_wo", "pfx_wo_version", "exportable"} {
 		if !requiresReplace(get(name)) {
 			t.Errorf("%s must be ForceNew (RequiresReplace)", name)
 		}
@@ -401,6 +401,31 @@ func TestWindowsCertificateResource_Schema(t *testing.T) {
 	}
 	if _, ok := s.Attributes["dns_names"]; !ok {
 		t.Error("schema must expose dns_names")
+	}
+}
+
+// TestSchema_CertificatePfxPasswordWO_AlsoRequiresBundle mirrors
+// TestSchema_ServicePasswordWO_AlsoRequiresVersion: a password without its
+// bundle is a misconfiguration rejected at plan time (a password alone
+// decrypts nothing, and an unprotected bundle legitimately omits it).
+func TestSchema_CertificatePfxPasswordWO_AlsoRequiresBundle(t *testing.T) {
+	s := windowsCertificateSchemaDefinition(context.Background())
+	a, ok := s.Attributes["pfx_password_wo"]
+	if !ok {
+		t.Fatal("schema missing pfx_password_wo")
+	}
+	wo, ok := a.(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("pfx_password_wo must be a StringAttribute, got %T", a)
+	}
+	found := false
+	for _, v := range wo.Validators {
+		if strings.Contains(v.Description(context.Background()), "pfx_base64_wo") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("pfx_password_wo must AlsoRequires pfx_base64_wo (pfx_base64_wo precedent)")
 	}
 }
 

@@ -178,7 +178,8 @@ func windowsRegistryValueSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 			"value_string": schema.StringAttribute{
 				Optional:    true,
-				Description: "String value for REG_SZ, REG_EXPAND_SZ, REG_DWORD (decimal uint32), REG_QWORD (decimal uint64).",
+				Sensitive:   true,
+				Description: "String value for REG_SZ, REG_EXPAND_SZ, REG_DWORD (decimal uint32), REG_QWORD (decimal uint64). Sensitive: registry values may carry secrets and Terraform displays/plans this attribute masked.",
 			},
 			"value_strings": schema.ListAttribute{
 				ElementType: types.StringType,
@@ -186,7 +187,8 @@ func windowsRegistryValueSchemaDefinition(ctx context.Context) schema.Schema {
 				Description: "Multi-string value for REG_MULTI_SZ. Empty list [] is valid (EC-10).",
 			},
 			"value_binary": schema.StringAttribute{
-				Optional: true,
+				Optional:  true,
+				Sensitive: true,
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
 						regexp.MustCompile("^[0-9a-f]*$"),
@@ -194,7 +196,7 @@ func windowsRegistryValueSchemaDefinition(ctx context.Context) schema.Schema {
 					),
 					hexEvenLengthValidator{},
 				},
-				Description: "Binary value for REG_BINARY/REG_NONE as a lowercase hex string (e.g. \"deadbeef\", \"\" for zero bytes).",
+				Description: "Binary value for REG_BINARY/REG_NONE as a lowercase hex string (e.g. \"deadbeef\", \"\" for zero bytes). Sensitive: registry values may carry secrets and Terraform displays/plans this attribute masked.",
 			},
 			"expand_environment_variables": schema.BoolAttribute{
 				Optional:    true,

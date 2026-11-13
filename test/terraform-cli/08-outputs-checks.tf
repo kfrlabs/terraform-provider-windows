@@ -64,6 +64,7 @@ output "check_registry_value" {
     resource = windows_registry_value.version.value_string
     data     = data.windows_registry_value.version.value_string
   }
+  sensitive = true
 }
 
 output "check_registry_dword" {
@@ -71,6 +72,7 @@ output "check_registry_dword" {
     resource = windows_registry_value.max_retries.value_string
     data     = data.windows_registry_value.max_retries.value_string
   }
+  sensitive = true
 }
 
 output "check_local_user_sid" {
