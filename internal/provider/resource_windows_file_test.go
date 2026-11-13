@@ -529,6 +529,83 @@ func fileSourceValidatorDiagsUnknownURL(t *testing.T, sha256 string, insecure bo
 	return resp.Diagnostics
 }
 
+// TestPlanContentSHA256_NoNetworkIO pins issue #325: plan-time hash
+// resolution must never fetch. The URL below targets a closed port on
+// loopback, so any download attempt would surface as a diagnostic; success
+// with zero diagnostics proves ModifyPlan performs no network I/O.
+func TestPlanContentSHA256_NoNetworkIO(t *testing.T) {
+	const unreachable = "http://127.0.0.1:1/unreachable.bin"
+	const digest = "9F2B1C1F0A7E4D3B8C6A5E4F3D2C1B0A9F8E7D6C5B4A39281706F5E4D3C2B1A0"
+
+	t.Run("unpinned terraform download leaves hash unknown with no diagnostics", func(t *testing.T) {
+		m := &windowsFileModel{
+			SourceURL:       types.StringValue(unreachable),
+			SourceURLSHA256: types.StringNull(),
+			DownloadOn:      types.StringValue(fileDownloadOnTerraform),
+		}
+		var diags diag.Diagnostics
+		sha, ok := planContentSHA256(m, &diags)
+		if ok {
+			t.Errorf("ok = true, want false (hash is unknowable without fetching)")
+		}
+		if sha != "" {
+			t.Errorf("sha = %q, want empty", sha)
+		}
+		if len(diags) != 0 {
+			t.Errorf("got %d diagnostics, want none (a fetch would warn): %v", len(diags), diags)
+		}
+	})
+
+	t.Run("unpinned target download leaves hash unknown with no diagnostics", func(t *testing.T) {
+		m := &windowsFileModel{
+			SourceURL:       types.StringValue(unreachable),
+			SourceURLSHA256: types.StringNull(),
+			DownloadOn:      types.StringValue(fileDownloadOnTarget),
+		}
+		var diags diag.Diagnostics
+		if sha, ok := planContentSHA256(m, &diags); ok || sha != "" {
+			t.Errorf("sha = %q, ok = %v; want empty/false", sha, ok)
+		}
+		if len(diags) != 0 {
+			t.Errorf("got %d diagnostics, want none: %v", len(diags), diags)
+		}
+	})
+
+	t.Run("unknown source_url leaves hash unknown with no diagnostics", func(t *testing.T) {
+		m := &windowsFileModel{
+			SourceURL:       types.StringUnknown(),
+			SourceURLSHA256: types.StringNull(),
+			DownloadOn:      types.StringValue(fileDownloadOnTerraform),
+		}
+		var diags diag.Diagnostics
+		if sha, ok := planContentSHA256(m, &diags); ok || sha != "" {
+			t.Errorf("sha = %q, ok = %v; want empty/false", sha, ok)
+		}
+		if len(diags) != 0 {
+			t.Errorf("got %d diagnostics, want none: %v", len(diags), diags)
+		}
+	})
+
+	t.Run("pinned digest is used as-is without touching the network", func(t *testing.T) {
+		m := &windowsFileModel{
+			SourceURL:       types.StringValue(unreachable),
+			SourceURLSHA256: types.StringValue(digest),
+			DownloadOn:      types.StringValue(fileDownloadOnTerraform),
+		}
+		var diags diag.Diagnostics
+		sha, ok := planContentSHA256(m, &diags)
+		if !ok {
+			t.Fatal("ok = false, want true for a pinned digest")
+		}
+		if sha != strings.ToLower(digest) {
+			t.Errorf("sha = %q, want %q", sha, strings.ToLower(digest))
+		}
+		if len(diags) != 0 {
+			t.Errorf("got %d diagnostics, want none: %v", len(diags), diags)
+		}
+	})
+}
+
 // TestWindowsFileAttributesSchemaEnum pins the #324 plan-time enum on the
 // attributes list: exactly the NormaliseFileAttributes keywords (lowercase).
 // The system/temporary mutual exclusion stays in the cross-field validator.

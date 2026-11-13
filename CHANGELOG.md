@@ -463,6 +463,18 @@ All notable changes to this project will be documented in this file.
   applying; legacy (state-persisted) passwords keep value-based
   rotation and do not require a version counter.
 
+- No network I/O in `windows_file` plan (#325): `ModifyPlan` never
+  downloads `source_url`. A pinned `source_url_sha256` is used as-is
+  for `content_sha256`; an unpinned URL leaves it unknown until apply
+  fetches the payload, so an unreachable mirror no longer breaks or
+  flaps `terraform plan`. Provider-side downloads (apply) now send
+  `User-Agent: terraform-provider-windows`, retry transient failures
+  (transport errors, HTTP 5xx) twice with a short backoff, fail fast on
+  permanent ones (bad URL, HTTP 4xx, oversized body), and stay bounded
+  by the resource `timeouts` (or the 10m download cap, whichever hits
+  first). Enabling `source_url_insecure_skip_verify` additionally warns
+  at apply time, where the download actually happens.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added

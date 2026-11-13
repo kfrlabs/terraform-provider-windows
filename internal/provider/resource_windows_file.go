@@ -207,10 +207,10 @@ func windowsFileSchemaDefinition(ctx context.Context) schema.Schema {
 				},
 				Description: "Expected SHA-256 of the downloaded payload. Required with an http:// source_url and when " +
 					"download_on = \"target\"; strongly recommended otherwise (see the source_url threat model). " +
-					"When pinned, plans stay local with no download at plan time and every payload is verified before it is written.",
+					"Plans never download: a pinned digest is used as-is for content_sha256 and every payload is verified before it is written.",
 				MarkdownDescription: "Expected SHA-256 of the downloaded payload.\n\n" +
 					"Required with an `http://` `source_url` and when `download_on = \"target\"`; strongly recommended otherwise " +
-					"(see the `source_url` threat model). When pinned, plans stay local with no download at plan time and every payload is verified before it is written.",
+					"(see the `source_url` threat model). Plans never download: a pinned digest is used as-is for `content_sha256` and every payload is verified before it is written.",
 			},
 			"source_url_headers": schema.MapAttribute{
 				Optional:    true,
@@ -493,6 +493,9 @@ func (r *windowsFileResource) Configure(_ context.Context, req resource.Configur
 // to a local `source` file, or an out-of-band edit on the host, shows up as a
 // diff at plan time.
 //
+// ModifyPlan performs no network I/O (#325): an unpinned `source_url` leaves
+// content_sha256 unknown and the download happens at apply time.
+//
 // Write-only content is invisible during plan by design, so the sha stays
 // unknown whenever content_wo_version changes and is carried over from state
 // otherwise.
@@ -537,14 +540,14 @@ func (r *windowsFileResource) ModifyPlan(ctx context.Context, req resource.Modif
 		return
 	}
 
-	sha, ok := r.planContentSHA256(ctx, &plan, &resp.Diagnostics)
+	sha, ok := planContentSHA256(&plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 	if !ok {
 		// The desired content cannot be resolved yet (unknown value, or an
-		// unpinned URL that could not be fetched): leave everything the write
-		// would change as unknown.
+		// unpinned source_url that is resolved at apply time): leave
+		// everything the write would change as unknown.
 		markFileObservedUnknown(&plan)
 		resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 		return
@@ -581,22 +584,17 @@ func markFileObservedUnknown(plan *windowsFileModel) {
 }
 
 // planContentSHA256 resolves the SHA-256 of the desired content without
-// necessarily materialising the bytes: a pinned source_url digest is used
-// as-is, so a pinned plan performs no network I/O at all.
-func (r *windowsFileResource) planContentSHA256(ctx context.Context, m *windowsFileModel, diags *diag.Diagnostics) (string, bool) {
+// performing any network I/O (#325): a pinned source_url digest is used
+// as-is, while an unpinned source_url leaves the hash unknown until apply
+// fetches and verifies the payload. Plans therefore stay local even when
+// the URL is unreachable.
+func planContentSHA256(m *windowsFileModel, diags *diag.Diagnostics) (string, bool) {
 	switch {
 	case !m.SourceURL.IsNull():
 		if !m.SourceURLSHA256.IsNull() && m.SourceURLSHA256.ValueString() != "" {
 			return strings.ToLower(m.SourceURLSHA256.ValueString()), true
 		}
-		if m.SourceURL.IsUnknown() || m.DownloadOn.ValueString() == fileDownloadOnTarget {
-			return "", false
-		}
-		bytes, err := r.fetchURL(ctx, m, diags)
-		if err != nil || bytes == nil {
-			return "", false
-		}
-		return sha256Hex(bytes), true
+		return "", false
 
 	default:
 		bytes, ok := resolveInlineBytes(m, diags)
@@ -605,23 +603,6 @@ func (r *windowsFileResource) planContentSHA256(ctx context.Context, m *windowsF
 		}
 		return sha256Hex(bytes), true
 	}
-}
-
-// fetchURL performs a provider-side download, tolerating plan-time failures by
-// downgrading them to a warning: a transient network error must not break
-// `terraform plan` for an unrelated change.
-func (r *windowsFileResource) fetchURL(ctx context.Context, m *windowsFileModel, diags *diag.Diagnostics) ([]byte, error) {
-	headers, ok := fileHeadersFromModel(ctx, m, diags)
-	if !ok {
-		return nil, fmt.Errorf("invalid headers")
-	}
-	body, err := downloadSource(ctx, m.SourceURL.ValueString(), headers, m.SourceURLInsecureSkipVerify.ValueBool())
-	if err != nil {
-		diags.AddAttributeWarning(path.Root("source_url"), "Could not download source_url during plan",
-			err.Error()+"\n\nThe download will be retried during apply.")
-		return nil, err
-	}
-	return body, nil
 }
 
 // resolveInlineBytes materialises content / content_base64 / source.
@@ -833,6 +814,13 @@ func (r *windowsFileResource) setFile(ctx context.Context, plan, config *windows
 		headers, ok := fileHeadersFromModel(ctx, plan, diags)
 		if !ok {
 			return
+		}
+		if plan.SourceURLInsecureSkipVerify.ValueBool() {
+			diags.AddAttributeWarning(path.Root("source_url_insecure_skip_verify"),
+				"TLS verification disabled",
+				"source_url_insecure_skip_verify = true disables certificate validation for this download. "+
+					"The payload is still verified against source_url_sha256 when pinned; pin the digest so a "+
+					"substituted payload cannot be written unnoticed.")
 		}
 		body, err := downloadSource(ctx, plan.SourceURL.ValueString(), headers, plan.SourceURLInsecureSkipVerify.ValueBool())
 		if err != nil {
