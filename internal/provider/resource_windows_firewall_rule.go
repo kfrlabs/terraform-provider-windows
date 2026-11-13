@@ -598,6 +598,11 @@ func (r *windowsFirewallRuleResource) ImportState(ctx context.Context, req resou
 		"policy_store": policyStore,
 	})
 
+	// No prior state exists at import time, so a configured timeouts.read
+	// cannot be honoured; bound the remote call with the resource default.
+	ctx, cancel := context.WithTimeout(ctx, firewallRuleDefaultTimeout)
+	defer cancel()
+
 	fwState, err := r.fw.Read(ctx, name, policyStore)
 	if err != nil {
 		addFirewallDiag(&resp.Diagnostics, "Error importing Windows Firewall rule", err)

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -78,6 +79,13 @@ var netbiosNameRegex = regexp.MustCompile(
 
 // pureNumericRegex matches a string composed only of digits.
 var pureNumericRegex = regexp.MustCompile("^[0-9]+$")
+
+// machineGUIDRegex validates the windows_hostname import ID shape: the
+// canonical 8-4-4-4-12 hex MachineGuid (case-insensitive, no braces), as
+// stored in HKLM:\SOFTWARE\Microsoft\Cryptography\MachineGuid.
+var machineGUIDRegex = regexp.MustCompile(
+	"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+)
 
 // netbiosNameValidator is the cross-rule validator for the `name` attribute.
 // It complements the regex/length validators by rejecting purely numeric
@@ -214,10 +222,56 @@ func (r *windowsHostnameResource) Configure(_ context.Context, req resource.Conf
 }
 
 // ImportState lets `terraform import windows_hostname.this <machine_guid>` work.
-// The resource is then refreshed via Read which verifies the live MachineGuid.
+// The ID must be the machine GUID (HKLM MachineGuid); it is validated for
+// shape and then verified against the live host under a timeout, so a typo
+// or an ID belonging to another machine fails the import instead of being
+// trusted blindly. The observed live state (not the raw ID) seeds the state.
 func (r *windowsHostnameResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("machine_id"), req.ID)...)
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"Import ID must be the machine GUID (HKLM:\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid), e.g. terraform import windows_hostname.this 11111111-2222-3333-4444-555555555555.",
+		)
+		return
+	}
+	if !machineGUIDRegex.MatchString(id) {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			fmt.Sprintf("Import ID %q is not a valid machine GUID (expected 8-4-4-4-12 hex digits).", req.ID),
+		)
+		return
+	}
+
+	tflog.Debug(ctx, "Importing windows_hostname", map[string]any{
+		"machine_id": id,
+	})
+
+	// No prior state exists at import time, so a configured timeouts.read
+	// cannot be honoured; bound the remote call with the resource default.
+	ctx, cancel := context.WithTimeout(ctx, hostnameDefaultTimeout)
+	defer cancel()
+
+	live, err := r.hn.Read(ctx, id)
+	if err != nil {
+		addHostnameDiag(&resp.Diagnostics, "Cannot import windows_hostname", err)
+		return
+	}
+	if live == nil {
+		resp.Diagnostics.AddError(
+			"Host not found",
+			fmt.Sprintf("The target host returned no state for machine GUID %q.", id),
+		)
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), types.StringValue(live.MachineID))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("machine_id"), types.StringValue(live.MachineID))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), types.StringValue(live.PendingName))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("current_name"), types.StringValue(live.CurrentName))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("pending_name"), types.StringValue(live.PendingName))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("reboot_pending"), types.BoolValue(live.RebootPending))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("force"), types.BoolValue(false))...)
 }
 
 // -----------------------------------------------------------------------------

@@ -1117,6 +1117,61 @@ func TestFirewallRuleImportState_SetsTypedNullTimeouts(t *testing.T) {
 	}
 }
 
+func TestFirewallRuleImportState_NotFound(t *testing.T) {
+	// A missing rule must fail the import with a NotFound diagnostic,
+	// not seed state for a rule that does not exist.
+	fake := &fakeFwClient{readOut: nil}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: fwObj(nil)},
+	}
+
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "gone-rule"}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("import of a missing firewall rule must fail")
+	}
+}
+
+// deadlineFwReadClient captures the ctx deadline seen by the import Read.
+type deadlineFwReadClient struct {
+	fakeFwClient
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineFwReadClient) Read(ctx context.Context, _, _ string) (*winclient.FirewallRuleState, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return f.readOut, f.readErr
+}
+
+func TestFirewallRuleImportState_BoundedByDefaultTimeout(t *testing.T) {
+	// The import verify Read runs under a deadline derived from the
+	// resource default (no prior state exists to carry timeouts.read).
+	fake := &deadlineFwReadClient{fakeFwClient: fakeFwClient{readOut: &winclient.FirewallRuleState{
+		Name: "fw-acc", DisplayName: "FW Acc", Enabled: true,
+		Direction: "Inbound", Action: "Allow", PolicyStore: "PersistentStore",
+	}}}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: fwObj(nil)},
+	}
+
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "fw-acc"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: unexpected diags: %v", resp.Diagnostics)
+	}
+	if !fake.ok {
+		t.Fatal("ImportState ran without a context deadline; the verify Read is not timeout-bound")
+	}
+	if remaining := time.Until(fake.deadline); remaining <= 0 || remaining > firewallRuleDefaultTimeout {
+		t.Errorf("ImportState deadline in %v, want (0, %v]", remaining, firewallRuleDefaultTimeout)
+	}
+}
+
 func TestFirewallRuleDelete_NotFound_Idempotent(t *testing.T) {
 	fake := &fakeFwClient{deleteErr: winclient.NewFirewallRuleError(
 		winclient.FirewallRuleErrorNotFound, "rule not found", nil, nil)}
