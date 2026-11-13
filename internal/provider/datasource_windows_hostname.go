@@ -64,11 +64,11 @@ func (d *windowsHostnameDataSource) Schema(ctx context.Context, _ datasource.Sch
 			"managing it. This is a **singleton** data source — no lookup keys are required.\n\n" +
 			"Exposes `current_name` (active name), `pending_name` (effective after next reboot), " +
 			"`reboot_pending`, and the stable `machine_id` (HKLM MachineGuid).\n\n" +
-			"The Terraform data source ID is always `\"current\"`.",
+			"The Terraform data source ID is the stable `machine_id` (HKLM MachineGuid).",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
-				Description: "Data source ID; always \"current\" (singleton).",
+				Description: "Data source ID; the stable machine ID (HKLM MachineGuid).",
 			},
 			"current_name": schema.StringAttribute{
 				Computed:            true,
@@ -140,8 +140,18 @@ func (d *windowsHostnameDataSource) Read(ctx context.Context, req datasource.Rea
 		return
 	}
 
+	// The ID is the stable machine ID. MachineGuid should always be
+	// present; an unreadable value is an error, never a placeholder ID.
+	if live.MachineID == "" {
+		resp.Diagnostics.AddError(
+			"Read windows_hostname data source failed",
+			"The host did not report a MachineGuid (HKLM\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid), so the stable singleton ID cannot be determined. Verify the host is reachable and the MachineGuid value is readable, then retry.",
+		)
+		return
+	}
+
 	state := windowsHostnameDataSourceModel{
-		ID:            types.StringValue("current"),
+		ID:            types.StringValue(live.MachineID),
 		CurrentName:   types.StringValue(live.CurrentName),
 		PendingName:   types.StringValue(live.PendingName),
 		RebootPending: types.BoolValue(live.RebootPending),

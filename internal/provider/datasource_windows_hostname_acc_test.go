@@ -31,7 +31,7 @@ func TestAccWindowsHostnameDataSource_Basic(t *testing.T) {
 			{
 				Config: `data "windows_hostname" "test" {}`,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.windows_hostname.test", "id", "current"),
+					resource.TestCheckResourceAttrPair("data.windows_hostname.test", "id", "data.windows_hostname.test", "machine_id"),
 					resource.TestCheckResourceAttrSet("data.windows_hostname.test", "current_name"),
 					resource.TestCheckResourceAttrSet("data.windows_hostname.test", "pending_name"),
 					resource.TestCheckResourceAttrSet("data.windows_hostname.test", "machine_id"),

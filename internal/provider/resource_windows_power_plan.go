@@ -846,13 +846,17 @@ func powerPlanStateToModel(state *winclient.PowerPlanState, prior windowsPowerPl
 	if state.MachineID == "" {
 		// The host must always report a MachineGuid. If it ever goes
 		// missing mid-life, keep the anchored ID rather than writing an
-		// empty one Terraform forbids; with no prior ID (Create with an
-		// unreadable MachineGuid) fall back to the singleton literal,
-		// mirroring the windows_ntp data source.
+		// empty one Terraform forbids. With no prior ID (Create with an
+		// unreadable MachineGuid) fail closed: never synthesize a
+		// placeholder ID.
 		if !prior.ID.IsNull() && !prior.ID.IsUnknown() && prior.ID.ValueString() != "" {
 			id = prior.ID
 		} else {
-			id = types.StringValue("current")
+			diags.AddError(
+				"Host MachineGuid is missing",
+				"The host did not report a MachineGuid (HKLM\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid), so the stable singleton ID cannot be determined. Verify the host is reachable and the MachineGuid value is readable, then retry.",
+			)
+			return windowsPowerPlanModel{}, diags
 		}
 	}
 	create := prior.CreateIfMissing

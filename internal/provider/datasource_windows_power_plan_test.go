@@ -194,6 +194,39 @@ func TestWindowsPowerPlanDataSource_ReadError(t *testing.T) {
 	}
 }
 
+func TestWindowsPowerPlanDataSource_EmptyMachineIDErrors(t *testing.T) {
+	listOut := okPowerPlanList()
+	listOut.MachineID = ""
+	d := &windowsPowerPlanDataSource{pp: &fakePowerPlanDataClient{listOut: listOut}}
+	var ds windowsPowerPlanDataSource
+	sreq := datasource.SchemaRequest{}
+	sresp := &datasource.SchemaResponse{}
+	ds.Schema(context.Background(), sreq, sresp)
+	if sresp.Diagnostics.HasError() {
+		t.Fatalf("schema diagnostics: %v", sresp.Diagnostics)
+	}
+	objType := ppDSObjType()
+	req := datasource.ReadRequest{Config: tfsdk.Config{
+		Schema: sresp.Schema,
+		Raw: tftypes.NewValue(objType, map[string]tftypes.Value{
+			"id":        tftypes.NewValue(tftypes.String, nil),
+			"plan_guid": tftypes.NewValue(tftypes.String, nil),
+			"plan_name": tftypes.NewValue(tftypes.String, nil),
+			"plans":     ppDSNullPlans(),
+			"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+				"read": tftypes.String,
+			}}, map[string]tftypes.Value{
+				"read": tftypes.NewValue(tftypes.String, nil),
+			}),
+		}),
+	}}
+	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: sresp.Schema}}
+	d.Read(context.Background(), req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic when MachineGuid is missing")
+	}
+}
+
 func TestWindowsPowerPlanDataSource_Configure(t *testing.T) {
 	d := &windowsPowerPlanDataSource{}
 	resp := &datasource.ConfigureResponse{}

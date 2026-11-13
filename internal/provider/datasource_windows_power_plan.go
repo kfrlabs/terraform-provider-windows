@@ -167,12 +167,15 @@ func (d *windowsPowerPlanDataSource) Read(ctx context.Context, req datasource.Re
 	}
 
 	// The ID is the stable machine ID. MachineGuid should always be
-	// present; fall back to the singleton literal instead of an empty ID,
-	// which Terraform forbids.
-	id := live.MachineID
-	if id == "" {
-		id = "current"
+	// present; an unreadable value is an error, never a placeholder ID.
+	if live.MachineID == "" {
+		resp.Diagnostics.AddError(
+			"Read windows_power_plan data source failed",
+			"The host did not report a MachineGuid (HKLM\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid), so the stable singleton ID cannot be determined. Verify the host is reachable and the MachineGuid value is readable, then retry.",
+		)
+		return
 	}
+	id := live.MachineID
 
 	elemType := types.ObjectType{AttrTypes: powerPlanInfoElementAttrTypes()}
 	vals := make([]attr.Value, 0, len(live.Plans))
