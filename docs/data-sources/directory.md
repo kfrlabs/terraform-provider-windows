@@ -4,7 +4,7 @@ page_title: "windows_directory Data Source - windows"
 subcategory: ""
 description: |-
   Reads the observed state of an existing directory on a remote Windows host without managing it.
-  Declarative attributes of the sibling resource (ensure, recursive_delete, create_parent_directories) are intentionally absent: the observed state is exposed read-only instead.
+  Declarative attributes of the sibling resource (recursive_delete, create_parent_directories) are intentionally absent: the observed state is exposed read-only instead.
   Returns an error when the directory does not exist on the target host.
 ---
 
@@ -12,7 +12,7 @@ description: |-
 
 Reads the observed state of an existing directory on a remote Windows host without managing it.
 
-Declarative attributes of the sibling resource (`ensure`, `recursive_delete`, `create_parent_directories`) are intentionally absent: the observed state is exposed read-only instead.
+Declarative attributes of the sibling resource (`recursive_delete`, `create_parent_directories`) are intentionally absent: the observed state is exposed read-only instead.
 
 Returns an error when the directory does not exist on the target host.
 

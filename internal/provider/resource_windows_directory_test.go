@@ -6,21 +6,19 @@
 // Edge cases covered (aligned with spec EC-* identifiers):
 //
 //	Metadata                 — returns "windows_directory"
-//	Schema                   — required/computed attributes present, defaults
+//	Schema                   — required/computed attributes present, no ensure
 //	Create (happy, present)  — directory created, state populated
-//	Create (ensure=absent)   — no client call, empty computed state
 //	Create (error)           — client error produces diagnostic
 //	Read (happy path)        — state refreshed from client
-//	Read (EC-1 not found)    — RemoveResource when ensure=present
-//	Read (converged absent)  — ensure=absent + (nil,nil) does not RemoveResource
+//	Read (EC-1 not found)    — always RemoveResource
 //	Read (error)             — client error produces diagnostic
 //	Update (attributes)      — in-place update via client.Update
-//	Update (ensure->absent)  — calls client.Delete
 //	Update (not_found drift) — falls back to Create
 //	Delete (happy path)      — Delete called with recursive flag
 //	Delete (error)           — client error produces diagnostic
 //	ImportState (happy)      — full model populated from client
 //	ImportState (not found)  — diagnostic error, not RemoveResource
+//	UpgradeState (v0 -> v1)  — drops ensure, preserves other fields
 package provider
 
 import (
@@ -93,7 +91,6 @@ func dirObjectType() tftypes.Object {
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 		"id":                        tftypes.String,
 		"path":                      tftypes.String,
-		"ensure":                    tftypes.String,
 		"recursive_delete":          tftypes.Bool,
 		"create_parent_directories": tftypes.Bool,
 		"attributes":                tftypes.List{ElementType: tftypes.String},
@@ -124,7 +121,6 @@ func dirObjBase() map[string]tftypes.Value {
 	return map[string]tftypes.Value{
 		"id":                        tftypes.NewValue(tftypes.String, `C:\app\logs`),
 		"path":                      tftypes.NewValue(tftypes.String, `C:\app\logs`),
-		"ensure":                    tftypes.NewValue(tftypes.String, "present"),
 		"recursive_delete":          tftypes.NewValue(tftypes.Bool, false),
 		"create_parent_directories": tftypes.NewValue(tftypes.Bool, true),
 		"attributes":                tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{}),
@@ -190,7 +186,7 @@ func TestWindowsDirectoryResource_Metadata(t *testing.T) {
 func TestWindowsDirectorySchemaDefinition(t *testing.T) {
 	s := windowsDirectorySchemaDefinition(context.Background())
 	for _, name := range []string{
-		"id", "path", "ensure", "recursive_delete", "create_parent_directories",
+		"id", "path", "recursive_delete", "create_parent_directories",
 		"attributes", "exists_children", "item_count", "last_write_time",
 		"timeouts",
 	} {
@@ -198,13 +194,12 @@ func TestWindowsDirectorySchemaDefinition(t *testing.T) {
 			t.Errorf("schema missing attribute %q", name)
 		}
 	}
+	if _, ok := s.Attributes["ensure"]; ok {
+		t.Error("schema must not contain ensure (removed in #319)")
+	}
 	pathAttr := s.Attributes["path"]
 	if !pathAttr.IsRequired() {
 		t.Error("path must be Required")
-	}
-	ensureAttr := s.Attributes["ensure"]
-	if ensureAttr.IsRequired() {
-		t.Error("ensure must be Optional, not Required")
 	}
 }
 
@@ -259,24 +254,6 @@ func TestWindowsDirectoryResource_Create_HappyPath(t *testing.T) {
 	}
 }
 
-func TestWindowsDirectoryResource_Create_EnsureAbsent_NoClientCall(t *testing.T) {
-	fc := &fakeDirectoryClient{}
-	r := &windowsDirectoryResource{client: fc}
-
-	req := resource.CreateRequest{Plan: dirPlan(t, map[string]tftypes.Value{
-		"ensure": tftypes.NewValue(tftypes.String, "absent"),
-	})}
-	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
-	r.Create(context.Background(), req, resp)
-
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", dirDiagSummaries(resp.Diagnostics))
-	}
-	if fc.createCalled {
-		t.Error("client.Create should not be called when ensure=absent")
-	}
-}
-
 func TestWindowsDirectoryResource_Create_Error(t *testing.T) {
 	fc := &fakeDirectoryClient{createErr: winclient.NewDirectoryError(winclient.DirectoryErrorTypeConflict, "is a file", nil, nil)}
 	r := &windowsDirectoryResource{client: fc}
@@ -322,24 +299,7 @@ func TestWindowsDirectoryResource_Read_NotFound_RemovesResource(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", dirDiagSummaries(resp.Diagnostics))
 	}
 	if !resp.State.Raw.IsNull() {
-		t.Error("expected state to be removed (null) when directory is absent and ensure=present")
-	}
-}
-
-func TestWindowsDirectoryResource_Read_ConvergedAbsent_NoRemove(t *testing.T) {
-	fc := &fakeDirectoryClient{readOut: nil}
-	r := &windowsDirectoryResource{client: fc}
-
-	overrides := map[string]tftypes.Value{"ensure": tftypes.NewValue(tftypes.String, "absent")}
-	req := resource.ReadRequest{State: dirState(t, overrides)}
-	resp := &resource.ReadResponse{State: dirState(t, overrides)}
-	r.Read(context.Background(), req, resp)
-
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", dirDiagSummaries(resp.Diagnostics))
-	}
-	if resp.State.Raw.IsNull() {
-		t.Error("state should not be removed when ensure=absent and directory is absent (converged)")
+		t.Error("expected state to be removed (null) when the directory is absent")
 	}
 }
 
@@ -373,24 +333,6 @@ func TestWindowsDirectoryResource_Update_Attributes(t *testing.T) {
 	}
 	if fc.lastUpdatePath != `C:\app\logs` {
 		t.Errorf("unexpected update path: %q", fc.lastUpdatePath)
-	}
-}
-
-func TestWindowsDirectoryResource_Update_EnsureToAbsent_CallsDelete(t *testing.T) {
-	fc := &fakeDirectoryClient{}
-	r := &windowsDirectoryResource{client: fc}
-
-	req := resource.UpdateRequest{Plan: dirPlan(t, map[string]tftypes.Value{
-		"ensure": tftypes.NewValue(tftypes.String, "absent"),
-	})}
-	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: windowsDirectorySchemaDefinition(context.Background())}}
-	r.Update(context.Background(), req, resp)
-
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", dirDiagSummaries(resp.Diagnostics))
-	}
-	if !fc.deleteCalled {
-		t.Error("expected client.Delete to be called when ensure flips to absent")
 	}
 }
 
@@ -468,9 +410,6 @@ func TestWindowsDirectoryResource_ImportState_HappyPath(t *testing.T) {
 	resp.Diagnostics.Append(resp.State.Get(context.Background(), &model)...)
 	if model.Path.ValueString() != `C:\app\logs` {
 		t.Errorf("unexpected path in imported state: %q", model.Path.ValueString())
-	}
-	if model.Ensure.ValueString() != directoryEnsurePresent {
-		t.Errorf("imported ensure should default to present, got %q", model.Ensure.ValueString())
 	}
 }
 
@@ -594,5 +533,123 @@ func TestWindowsDirectoryResource_Create_StalledTransportIsBounded(t *testing.T)
 	}
 	if elapsed > 30*time.Second {
 		t.Errorf("Create blocked for %v with a 200ms timeout", elapsed)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// State upgrade (issue #319: ensure removed)
+// -----------------------------------------------------------------------------
+
+func TestWindowsDirectoryResource_UpgradeState_V0ToV1_DropsEnsure(t *testing.T) {
+	ctx := context.Background()
+	r := &windowsDirectoryResource{}
+
+	upgraders := r.UpgradeState(ctx)
+	upgrader, ok := upgraders[0]
+	if !ok {
+		t.Fatal("expected state upgrader for prior version 0")
+	}
+	if upgrader.PriorSchema == nil {
+		t.Fatal("expected prior schema for version 0")
+	}
+	if _, ok := upgrader.PriorSchema.Attributes["ensure"]; !ok {
+		t.Fatal("prior schema must contain the removed ensure attribute")
+	}
+
+	currentSchema := windowsDirectorySchemaDefinition(ctx)
+	if currentSchema.Version != 1 {
+		t.Errorf("current schema Version = %d, want 1", currentSchema.Version)
+	}
+
+	priorObjectType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id":                        tftypes.String,
+		"path":                      tftypes.String,
+		"ensure":                    tftypes.String,
+		"recursive_delete":          tftypes.Bool,
+		"create_parent_directories": tftypes.Bool,
+		"attributes":                tftypes.List{ElementType: tftypes.String},
+		"exists_children":           tftypes.Bool,
+		"item_count":                tftypes.Number,
+		"last_write_time":           tftypes.String,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
+	}}
+
+	// Both historical ensure values must upgrade to the schema without it.
+	for _, ensure := range []string{"present", "absent"} {
+		priorRaw := tftypes.NewValue(priorObjectType, map[string]tftypes.Value{
+			"id":                        tftypes.NewValue(tftypes.String, `C:\app\logs`),
+			"path":                      tftypes.NewValue(tftypes.String, `C:\app\logs`),
+			"ensure":                    tftypes.NewValue(tftypes.String, ensure),
+			"recursive_delete":          tftypes.NewValue(tftypes.Bool, true),
+			"create_parent_directories": tftypes.NewValue(tftypes.Bool, true),
+			"attributes": tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{
+				tftypes.NewValue(tftypes.String, "hidden"),
+			}),
+			"exists_children": tftypes.NewValue(tftypes.Bool, true),
+			"item_count":      tftypes.NewValue(tftypes.Number, 3),
+			"last_write_time": tftypes.NewValue(tftypes.String, "2026-11-02T15:04:05Z"),
+			"timeouts":        dirTimeoutsRaw(map[string]string{"create": "5m"}),
+		})
+
+		req := resource.UpgradeStateRequest{State: &tfsdk.State{Schema: *upgrader.PriorSchema, Raw: priorRaw}}
+		resp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: currentSchema}}
+
+		upgrader.StateUpgrader(ctx, req, resp)
+
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("ensure=%q: unexpected diagnostics: %v", ensure, dirDiagSummaries(resp.Diagnostics))
+		}
+
+		var upgraded windowsDirectoryModel
+		resp.Diagnostics.Append(resp.State.Get(ctx, &upgraded)...)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("ensure=%q: upgraded state Get: %v", ensure, dirDiagSummaries(resp.Diagnostics))
+		}
+		if upgraded.Path.ValueString() != `C:\app\logs` {
+			t.Errorf("ensure=%q: path = %q, want %q", ensure, upgraded.Path.ValueString(), `C:\app\logs`)
+		}
+		if upgraded.ID.ValueString() != `C:\app\logs` {
+			t.Errorf("ensure=%q: id = %q, want %q", ensure, upgraded.ID.ValueString(), `C:\app\logs`)
+		}
+		if !upgraded.RecursiveDelete.ValueBool() {
+			t.Errorf("ensure=%q: recursive_delete = false, want true", ensure)
+		}
+		var attrs []string
+		resp.Diagnostics.Append(upgraded.Attributes.ElementsAs(ctx, &attrs, false)...)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("ensure=%q: attributes ElementsAs: %v", ensure, dirDiagSummaries(resp.Diagnostics))
+		}
+		if len(attrs) != 1 || attrs[0] != "hidden" {
+			t.Errorf("ensure=%q: attributes = %q, want [hidden]", ensure, attrs)
+		}
+		if !upgraded.ExistsChildren.ValueBool() {
+			t.Errorf("ensure=%q: exists_children = false, want true", ensure)
+		}
+		if upgraded.ItemCount.ValueInt64() != 3 {
+			t.Errorf("ensure=%q: item_count = %d, want 3", ensure, upgraded.ItemCount.ValueInt64())
+		}
+		if upgraded.LastWriteTime.ValueString() != "2026-11-02T15:04:05Z" {
+			t.Errorf("ensure=%q: last_write_time = %q, want %q", ensure, upgraded.LastWriteTime.ValueString(), "2026-11-02T15:04:05Z")
+		}
+		got, diags := upgraded.Timeouts.Create(ctx, directoryDefaultTimeout)
+		if diags.HasError() {
+			t.Fatalf("ensure=%q: Timeouts.Create: %v", ensure, diags)
+		}
+		if got != 5*time.Minute {
+			t.Errorf("ensure=%q: timeouts.create = %v, want 5m", ensure, got)
+		}
+
+		objType, ok := resp.State.Raw.Type().(tftypes.Object)
+		if !ok {
+			t.Fatalf("ensure=%q: upgraded raw type is %T, want tftypes.Object", ensure, resp.State.Raw.Type())
+		}
+		if _, ok := objType.AttributeTypes["ensure"]; ok {
+			t.Errorf("ensure=%q: upgraded state must not contain ensure", ensure)
+		}
 	}
 }

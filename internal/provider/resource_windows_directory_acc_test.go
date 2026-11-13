@@ -42,7 +42,6 @@ resource "windows_directory" "test" {
 				Config: cfg,
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("windows_directory.test", "path", `C:\TF_ACC_dir_basic`),
-					resource.TestCheckResourceAttr("windows_directory.test", "ensure", "present"),
 					resource.TestCheckResourceAttr("windows_directory.test", "id", `C:\TF_ACC_dir_basic`),
 					resource.TestCheckResourceAttr("windows_directory.test", "exists_children", "false"),
 					resource.TestCheckResourceAttr("windows_directory.test", "item_count", "0"),
@@ -76,7 +75,6 @@ resource "windows_directory" "brackets" {
 				Config: cfg,
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("windows_directory.brackets", "path", `C:\TF_ACC_dir_[brackets]`),
-					resource.TestCheckResourceAttr("windows_directory.brackets", "ensure", "present"),
 					resource.TestCheckResourceAttr("windows_directory.brackets", "id", `C:\TF_ACC_dir_[brackets]`),
 				),
 			},

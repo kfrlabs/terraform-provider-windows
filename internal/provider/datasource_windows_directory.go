@@ -1,10 +1,9 @@
 // Package provider: windows_directory data source implementation.
 //
 // Reads the observed state of an existing directory without managing it.
-// All declarative input attributes of the resource (ensure,
-// recursive_delete, create_parent_directories) are absent from this data
-// source: the observed state (attributes included) is exposed read-only
-// instead.
+// All declarative input attributes of the resource (recursive_delete,
+// create_parent_directories) are intentionally absent here: the observed
+// state (attributes included) is exposed read-only instead.
 package provider
 
 import (
@@ -66,7 +65,7 @@ func (d *windowsDirectoryDataSource) Schema(ctx context.Context, _ datasource.Sc
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the observed state of an existing directory on a remote " +
 			"Windows host without managing it.\n\n" +
-			"Declarative attributes of the sibling resource (`ensure`, `recursive_delete`, " +
+			"Declarative attributes of the sibling resource (`recursive_delete`, " +
 			"`create_parent_directories`) are intentionally absent: the observed state is exposed " +
 			"read-only instead.\n\n" +
 			"Returns an error when the directory does not exist on the target host.",

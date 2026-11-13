@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- `windows_directory`: the `ensure` attribute (`present`/`absent`) is
+  removed (#319). The resource always manages presence: create adopts an
+  existing directory, a directory removed out-of-band drops from state,
+  and removal is done by destroying the resource (with
+  `recursive_delete` controlling non-empty deletes). For
+  `ensure = "absent"`, delete the entire `windows_directory` resource
+  block and apply (or `terraform destroy -target
+  windows_directory.<name>`); do not just delete the `ensure` line.
+  State upgrade: prior state containing `ensure` is upgraded automatically
+  (the attribute is dropped). The common `ensure = "present"` case converges
+  on the next refresh/plan; if a stale state needs manual repair, use
+  `terraform state rm` followed by `import`.
+
 ### Added
 
 - New `windows_dsc_resource` resource (#293): generic gateway managing one

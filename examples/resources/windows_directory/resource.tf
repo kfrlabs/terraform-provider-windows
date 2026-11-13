@@ -32,10 +32,3 @@ resource "windows_directory" "strict_parent" {
   path                      = "C:\\ProgramData\\app\\strict"
   create_parent_directories = false
 }
-
-# Declaring a directory absent removes it (recursively, per recursive_delete)
-# if it exists, and is a no-op otherwise.
-resource "windows_directory" "decommissioned" {
-  path   = "C:\\ProgramData\\old_app"
-  ensure = "absent"
-}

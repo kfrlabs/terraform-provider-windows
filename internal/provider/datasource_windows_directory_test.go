@@ -179,7 +179,7 @@ func TestDirectoryDSSchema_NoDeclarativeInputs(t *testing.T) {
 	resp := &datasource.SchemaResponse{}
 	d.Schema(context.Background(), datasource.SchemaRequest{}, resp)
 	for _, k := range []string{
-		"ensure", "recursive_delete", "create_parent_directories",
+		"recursive_delete", "create_parent_directories",
 	} {
 		if _, ok := resp.Schema.Attributes[k]; ok {
 			t.Errorf("data source must NOT expose declarative input attribute %q", k)
