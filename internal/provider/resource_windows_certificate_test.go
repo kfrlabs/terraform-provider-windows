@@ -848,6 +848,34 @@ func TestWindowsCertificateResource_Delete_InvalidID(t *testing.T) {
 	}
 }
 
+func TestWindowsCertificateResource_Delete_NotFound_Idempotent(t *testing.T) {
+	fc := &fakeCertificateClient{deleteErr: winclient.NewCertificateError(
+		winclient.CertificateErrorNotFound, "certificate not found", nil, nil)}
+	r := &windowsCertificateResource{certs: fc}
+	state := certState(t, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.String, "LocalMachine/My/A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"),
+	})
+	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: windowsCertificateSchemaDefinition(context.Background())}}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Delete of a missing certificate should be a no-op, got: %v", certDiagSummaries(resp.Diagnostics))
+	}
+}
+
+func TestWindowsCertificateResource_Delete_PermissionDenied(t *testing.T) {
+	fc := &fakeCertificateClient{deleteErr: winclient.NewCertificateError(
+		winclient.CertificateErrorAccessDenied, "access denied", nil, nil)}
+	r := &windowsCertificateResource{certs: fc}
+	state := certState(t, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.String, "LocalMachine/My/A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"),
+	})
+	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: windowsCertificateSchemaDefinition(context.Background())}}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic for delete failure")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ImportState
 // ---------------------------------------------------------------------------

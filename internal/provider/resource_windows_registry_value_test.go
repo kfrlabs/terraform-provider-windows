@@ -1550,6 +1550,26 @@ func TestRegistryValueDelete_Error(t *testing.T) {
 	}
 }
 
+func TestRegistryValueDelete_NotFound_Idempotent(t *testing.T) {
+	fake := &fakeRegistryValueClient{
+		deleteErr: winclient.NewRegistryValueError(winclient.RegistryValueErrorNotFound,
+			"value not found", nil, nil),
+	}
+	r := &windowsRegistryValueResource{client: fake}
+	s := windowsRegistryValueSchemaDefinition(context.Background())
+
+	rawState := rvObj(map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.String, `HKLM\SOFTWARE\MyApp\Version`),
+	})
+	req := resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: rawState}}
+	resp := &resource.DeleteResponse{}
+
+	r.Delete(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Delete of a missing value should be a no-op, got: %v", rvDiagSummaries(resp.Diagnostics))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Timeouts (issue #139): a stalled registry operation must surface a bounded
 // diagnostic instead of blocking Terraform indefinitely.

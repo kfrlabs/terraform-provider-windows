@@ -518,6 +518,9 @@ func (r *windowsFirewallRuleResource) Delete(ctx context.Context, req resource.D
 	})
 
 	if err := r.fw.Delete(ctx, name, policyStore); err != nil {
+		if winclient.IsFirewallRuleError(err, winclient.FirewallRuleErrorNotFound) {
+			return // already gone
+		}
 		addFirewallDiag(&resp.Diagnostics, "Error deleting Windows Firewall rule", err)
 	}
 }

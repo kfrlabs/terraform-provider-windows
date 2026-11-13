@@ -1265,6 +1265,28 @@ func TestLocalUserDelete_EC2_BuiltinAccount(t *testing.T) {
 	}
 }
 
+func TestLocalUserDelete_NotFound_Idempotent(t *testing.T) {
+	fake := &fakeLocalUserClient{
+		deleteErr: winclient.NewLocalUserError(winclient.LocalUserErrorNotFound,
+			"user not found", nil, nil),
+	}
+	r := &windowsLocalUserResource{user: fake}
+	s := windowsLocalUserSchemaDefinition(context.Background())
+
+	rawState := luObj(map[string]tftypes.Value{
+		"sid": tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+	})
+	st := tfsdk.State{Schema: s, Raw: rawState}
+	req := resource.DeleteRequest{State: st}
+	resp := &resource.DeleteResponse{}
+
+	r.Delete(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Delete of a missing user should be a no-op, got: %v", luDiagDetails(resp.Diagnostics))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ImportState — EC-11 SID vs name detection
 // ---------------------------------------------------------------------------

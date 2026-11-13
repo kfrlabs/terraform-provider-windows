@@ -947,6 +947,7 @@ type fakeFwClient struct {
 	createErr error
 	readOut   *winclient.FirewallRuleState
 	readErr   error
+	deleteErr error
 }
 
 func (f *fakeFwClient) Create(_ context.Context, _ winclient.FirewallRuleInput) (*winclient.FirewallRuleState, error) {
@@ -961,7 +962,7 @@ func (f *fakeFwClient) Update(_ context.Context, _, _ string, _ winclient.Firewa
 	return nil, nil
 }
 
-func (f *fakeFwClient) Delete(_ context.Context, _, _ string) error { return nil }
+func (f *fakeFwClient) Delete(_ context.Context, _, _ string) error { return f.deleteErr }
 
 // hangFwClient simulates the stalled/severed transport from issue #122:
 // Create blocks until the passed context is done, then returns the context
@@ -1074,5 +1075,41 @@ func TestFirewallRuleImportState_SetsTypedNullTimeouts(t *testing.T) {
 	}
 	if !m.Timeouts.IsNull() {
 		t.Errorf("imported timeouts should be null, got %v", m.Timeouts.Object)
+	}
+}
+
+func TestFirewallRuleDelete_NotFound_Idempotent(t *testing.T) {
+	fake := &fakeFwClient{deleteErr: winclient.NewFirewallRuleError(
+		winclient.FirewallRuleErrorNotFound, "rule not found", nil, nil)}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	state := tfsdk.State{Schema: schemaDef, Raw: fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "gone-rule"),
+		"policy_store": tftypes.NewValue(tftypes.String, "PersistentStore"),
+	})}
+	resp := &resource.DeleteResponse{}
+
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Delete of a missing rule should be a no-op, got: %v", resp.Diagnostics)
+	}
+}
+
+func TestFirewallRuleDelete_PermissionDenied(t *testing.T) {
+	fake := &fakeFwClient{deleteErr: winclient.NewFirewallRuleError(
+		winclient.FirewallRuleErrorPermission, "access denied", nil, nil)}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	state := tfsdk.State{Schema: schemaDef, Raw: fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-acc"),
+		"policy_store": tftypes.NewValue(tftypes.String, "PersistentStore"),
+	})}
+	resp := &resource.DeleteResponse{}
+
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic for delete failure")
 	}
 }

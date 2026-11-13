@@ -664,6 +664,9 @@ func (r *windowsRegistryValueResource) Delete(ctx context.Context, req resource.
 	})
 
 	if err := r.client.Delete(ctx, state.Hive.ValueString(), state.Path.ValueString(), state.Name.ValueString()); err != nil {
+		if winclient.IsRegistryValueError(err, winclient.RegistryValueErrorNotFound) {
+			return // already gone
+		}
 		addRVDiag(&resp.Diagnostics, "Delete", err)
 	}
 }

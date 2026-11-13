@@ -954,6 +954,9 @@ func (r *windowsLocalUserResource) Delete(
 	})
 
 	if err := r.user.Delete(ctx, sid); err != nil {
+		if winclient.IsLocalUserError(err, winclient.LocalUserErrorNotFound) {
+			return // already gone
+		}
 		addLocalUserDiag(&resp.Diagnostics, "Delete windows_local_user failed", err)
 	}
 }
