@@ -166,7 +166,7 @@ $logName = @@NAME@@
 
 & {
   try {
-    $found = @(Get-WinEvent -ListLog -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
+    $found = @(Get-WinEvent -ListLog * -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
   } catch {
     Emit-Err (Classify-EventLog $_) ([string]$_.Exception.Message) @{ log = $logName; step = 'read' }
     return
@@ -194,7 +194,7 @@ $logName = @@NAME@@
 
 & {
   try {
-    $found = @(Get-WinEvent -ListLog -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
+    $found = @(Get-WinEvent -ListLog * -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
   } catch {
     Emit-Err (Classify-EventLog $_) ([string]$_.Exception.Message) @{ log = $logName; step = 'preflight' }
     return
@@ -216,7 +216,7 @@ $logName = @@NAME@@
   }
 
   try {
-    $back = @(Get-WinEvent -ListLog -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
+    $back = @(Get-WinEvent -ListLog * -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
   } catch {
     Emit-Err (Classify-EventLog $_) ([string]$_.Exception.Message) @{ log = $logName; step = 'readback' }
     return
@@ -241,7 +241,7 @@ $logName = @@NAME@@
 
 & {
   try {
-    $found = @(Get-WinEvent -ListLog -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
+    $found = @(Get-WinEvent -ListLog * -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
   } catch {
     Emit-Err (Classify-EventLog $_) ([string]$_.Exception.Message) @{ log = $logName; step = 'preflight' }
     return
@@ -261,7 +261,7 @@ $logName = @@NAME@@
   }
 
   try {
-    $back = @(Get-WinEvent -ListLog -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
+    $back = @(Get-WinEvent -ListLog * -ErrorAction Stop | Where-Object { $_.LogName -eq $logName })
   } catch {
     Emit-Err (Classify-EventLog $_) ([string]$_.Exception.Message) @{ log = $logName; step = 'readback' }
     return

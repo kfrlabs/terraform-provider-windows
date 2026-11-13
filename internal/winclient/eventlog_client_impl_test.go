@@ -473,6 +473,12 @@ func TestEventLogScript_LiteralMatchAndEnvelope(t *testing.T) {
 	if strings.Contains(gotScript, "-ListLog $logName") || strings.Contains(gotScript, "-ListLog '") {
 		t.Errorf("Get-WinEvent -ListLog must not take the raw name (wildcard risk); filter literally instead, got:\n%s", gotScript)
 	}
+	// -ListLog takes a String[] argument: a bare switch fails on the host
+	// with "Missing an argument for parameter 'ListLog'". List all logs and
+	// filter literally instead.
+	if !strings.Contains(gotScript, "-ListLog *") {
+		t.Errorf("Get-WinEvent -ListLog requires an argument; expected '-ListLog *', got:\n%s", gotScript)
+	}
 }
 
 func TestEventLogApply_DisableClassicGuardShips(t *testing.T) {
