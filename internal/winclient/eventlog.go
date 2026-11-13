@@ -139,13 +139,14 @@ function Read-EventLogState([object]$c, [string]$logName) {
   if ($null -eq $fs) { $fs = Get-EventLogProp $c 'FileSizeInBytes' }
   if ($null -eq $fs) { $fs = 0 }
 
-  # EventLogConfiguration exposes IsClassicLog (not IsClassic) and FilePath
-  # (not LogFilePath); fall back to the legacy spellings if present.
+  # EventLogConfiguration exposes IsClassicLog (not IsClassic). The file
+  # path property is LogFilePath (kept first with a FilePath fallback for
+  # forward-compatibility).
   $isClassic = Get-EventLogProp $c 'IsClassicLog'
   if ($null -eq $isClassic) { $isClassic = Get-EventLogProp $c 'IsClassic' }
   if ($null -eq $isClassic) { $isClassic = $false }
-  $logFilePath = Get-EventLogProp $c 'FilePath'
-  if ($null -eq $logFilePath) { $logFilePath = Get-EventLogProp $c 'LogFilePath' }
+  $logFilePath = Get-EventLogProp $c 'LogFilePath'
+  if ($null -eq $logFilePath) { $logFilePath = Get-EventLogProp $c 'FilePath' }
   if ($null -eq $logFilePath) { $logFilePath = '' }
 
   return [ordered]@{
@@ -350,7 +351,7 @@ func buildEventLogSetBlock(settings EventLogSettings) (string, error) {
 		}
 	}
 	if settings.LogFilePath != nil {
-		fmt.Fprintf(&sb, "    $c.FilePath = %s\n", psQuote(*settings.LogFilePath))
+		fmt.Fprintf(&sb, "    $c.LogFilePath = %s\n", psQuote(*settings.LogFilePath))
 	}
 	return sb.String(), nil
 }
@@ -367,7 +368,7 @@ func buildEventLogRestoreBlock(snap EventLogState) string {
 	} else {
 		sb.WriteString("    $c.IsEnabled = $false\n")
 	}
-	fmt.Fprintf(&sb, "    $c.FilePath = %s\n", psQuote(snap.LogFilePath))
+	fmt.Fprintf(&sb, "    $c.LogFilePath = %s\n", psQuote(snap.LogFilePath))
 	return sb.String()
 }
 
