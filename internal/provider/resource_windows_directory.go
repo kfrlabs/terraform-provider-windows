@@ -1,10 +1,11 @@
 // Package provider: windows_directory resource implementation.
 //
-// Manages the presence, attributes and absence of a directory on a remote
+// Manages the presence and attributes of a directory on a remote
 // Windows host over SSH + PowerShell. Content of the directory (files,
 // sub-directories) is never managed here; only the directory entry itself.
 //
-// Spec alignment: windows_directory spec v1 (2026-10-01).
+// Spec alignment: windows_directory spec v1 (2026-10-01) (#319: ensure
+// removed; absence is now managed by destroying the resource).
 package provider
 
 import (
@@ -22,7 +23,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -33,9 +33,10 @@ import (
 
 // Framework interface assertions.
 var (
-	_ resource.Resource                = (*windowsDirectoryResource)(nil)
-	_ resource.ResourceWithConfigure   = (*windowsDirectoryResource)(nil)
-	_ resource.ResourceWithImportState = (*windowsDirectoryResource)(nil)
+	_ resource.Resource                 = (*windowsDirectoryResource)(nil)
+	_ resource.ResourceWithConfigure    = (*windowsDirectoryResource)(nil)
+	_ resource.ResourceWithImportState  = (*windowsDirectoryResource)(nil)
+	_ resource.ResourceWithUpgradeState = (*windowsDirectoryResource)(nil)
 )
 
 // NewWindowsDirectoryResource is the constructor registered in provider.go.
@@ -52,7 +53,6 @@ type windowsDirectoryResource struct {
 type windowsDirectoryModel struct {
 	ID                      types.String `tfsdk:"id"`
 	Path                    types.String `tfsdk:"path"`
-	Ensure                  types.String `tfsdk:"ensure"`
 	RecursiveDelete         types.Bool   `tfsdk:"recursive_delete"`
 	CreateParentDirectories types.Bool   `tfsdk:"create_parent_directories"`
 	Attributes              types.List   `tfsdk:"attributes"`
@@ -68,12 +68,6 @@ type windowsDirectoryModel struct {
 // can take a while, but a stalled PowerShell/SSH session must never block
 // Terraform forever: every CRUD handler bounds its work with this default.
 const directoryDefaultTimeout = 10 * time.Minute
-
-// Ensure values for the `ensure` attribute.
-const (
-	directoryEnsurePresent = "present"
-	directoryEnsureAbsent  = "absent"
-)
 
 // windowsDirectoryPathRegex accepts a drive-letter path or a UNC path with at
 // least one path segment beyond the root, and rejects the characters Windows
@@ -96,8 +90,9 @@ func (r *windowsDirectoryResource) Schema(ctx context.Context, _ resource.Schema
 
 func windowsDirectorySchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
-		MarkdownDescription: "Manages a directory on a remote Windows host over SSH + PowerShell: presence, " +
-			"NTFS attributes, and absence.\n\n" +
+		Version: 1,
+		MarkdownDescription: "Manages a directory on a remote Windows host over SSH + PowerShell: presence and " +
+			"NTFS attributes.\n\n" +
 			"Content of the directory (files, sub-directories) is never managed here; this resource owns only " +
 			"the directory entry itself. Ownership and ACLs are intentionally **not** managed here either: use " +
 			"`windows_file_acl`, which already accepts a directory target.",
@@ -115,15 +110,6 @@ func windowsDirectorySchemaDefinition(ctx context.Context) schema.Schema {
 						`must be an absolute Windows path (C:\\dir\\subdir) or a UNC path (\\\\server\\share\\dir), and not a bare drive root`),
 				},
 				Description: "Absolute path of the directory on the target host. ForceNew.",
-			},
-			"ensure": schema.StringAttribute{
-				Optional: true,
-				Computed: true,
-				Default:  stringdefault.StaticString(directoryEnsurePresent),
-				Validators: []validator.String{
-					stringvalidator.OneOf(directoryEnsurePresent, directoryEnsureAbsent),
-				},
-				Description: "Whether the directory should be \"present\" (default) or \"absent\".",
 			},
 			"recursive_delete": schema.BoolAttribute{
 				Optional: true,
@@ -170,6 +156,71 @@ func windowsDirectorySchemaDefinition(ctx context.Context) schema.Schema {
 			}),
 		},
 	}
+}
+
+// ---------------------------------------------------------------------------
+// State upgrade (issue #319: ensure removed)
+// ---------------------------------------------------------------------------
+
+// windowsDirectoryModelV0 is the prior (v0) state shape, which still carries
+// the removed `ensure` attribute.
+type windowsDirectoryModelV0 struct {
+	ID                      types.String `tfsdk:"id"`
+	Path                    types.String `tfsdk:"path"`
+	Ensure                  types.String `tfsdk:"ensure"`
+	RecursiveDelete         types.Bool   `tfsdk:"recursive_delete"`
+	CreateParentDirectories types.Bool   `tfsdk:"create_parent_directories"`
+	Attributes              types.List   `tfsdk:"attributes"`
+
+	ExistsChildren types.Bool     `tfsdk:"exists_children"`
+	ItemCount      types.Int64    `tfsdk:"item_count"`
+	LastWriteTime  types.String   `tfsdk:"last_write_time"`
+	Timeouts       timeouts.Value `tfsdk:"timeouts"`
+}
+
+// windowsDirectoryPriorSchemaV0 returns the v0 schema: the current schema
+// plus the removed `ensure` attribute.
+func windowsDirectoryPriorSchemaV0(ctx context.Context) *schema.Schema {
+	s := windowsDirectorySchemaDefinition(ctx)
+	s.Version = 0
+	s.Attributes["ensure"] = schema.StringAttribute{
+		Optional: true,
+		Computed: true,
+	}
+	return &s
+}
+
+// UpgradeState drops the removed `ensure` attribute from prior state.
+func (r *windowsDirectoryResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			PriorSchema:   windowsDirectoryPriorSchemaV0(ctx),
+			StateUpgrader: upgradeWindowsDirectoryStateV0ToV1,
+		},
+	}
+}
+
+// upgradeWindowsDirectoryStateV0ToV1 copies every v0 field except `ensure`
+// into the current (v1) state shape.
+func upgradeWindowsDirectoryStateV0ToV1(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+	var prior windowsDirectoryModelV0
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	upgraded := windowsDirectoryModel{
+		ID:                      prior.ID,
+		Path:                    prior.Path,
+		RecursiveDelete:         prior.RecursiveDelete,
+		CreateParentDirectories: prior.CreateParentDirectories,
+		Attributes:              prior.Attributes,
+		ExistsChildren:          prior.ExistsChildren,
+		ItemCount:               prior.ItemCount,
+		LastWriteTime:           prior.LastWriteTime,
+		Timeouts:                prior.Timeouts,
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &upgraded)...)
 }
 
 // ---------------------------------------------------------------------------
@@ -274,10 +325,8 @@ func applyDirectoryState(m *windowsDirectoryModel, ds *winclient.DirectoryState,
 // CRUD handlers
 // ---------------------------------------------------------------------------
 
-// Create ensures the directory exists with the declared attributes.
-//
-// Idempotent on an already-present directory (EC-9): a pre-existing directory
-// is adopted rather than rejected, unlike windows_file.
+// Create creates the directory with the declared attributes and adopts
+// an already-present directory (EC-9).
 func (r *windowsDirectoryResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan windowsDirectoryModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -292,17 +341,6 @@ func (r *windowsDirectoryResource) Create(ctx context.Context, req resource.Crea
 	}
 	ctx, cancel := context.WithTimeout(ctx, createTimeout)
 	defer cancel()
-
-	if plan.Ensure.ValueString() == directoryEnsureAbsent {
-		// Nothing to create; a subsequent Read/Delete cycle will converge.
-		plan.ID = types.StringValue(plan.Path.ValueString())
-		plan.ExistsChildren = types.BoolValue(false)
-		plan.ItemCount = types.Int64Value(0)
-		plan.LastWriteTime = types.StringValue("")
-		plan.Attributes = types.ListNull(types.StringType)
-		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-		return
-	}
 
 	attrs := directoryAttributesFromModel(ctx, plan.Attributes, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -359,10 +397,6 @@ func (r *windowsDirectoryResource) Read(ctx context.Context, req resource.ReadRe
 		return
 	}
 	if ds == nil {
-		if state.Ensure.ValueString() == directoryEnsureAbsent {
-			// Converged: absent in config, absent on the host.
-			return
-		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -371,11 +405,10 @@ func (r *windowsDirectoryResource) Read(ctx context.Context, req resource.ReadRe
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update applies in-place changes to ensure/attributes.
+// Update applies in-place changes to attributes.
 //
-// path is ForceNew so it cannot change here. ensure flips between
-// present/absent by calling Create/Delete respectively; attributes are
-// applied via DirectoryClient.Update.
+// path is ForceNew so it cannot change here. Attributes are applied via
+// DirectoryClient.Update.
 func (r *windowsDirectoryResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan windowsDirectoryModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -392,21 +425,6 @@ func (r *windowsDirectoryResource) Update(ctx context.Context, req resource.Upda
 	defer cancel()
 
 	path := plan.Path.ValueString()
-
-	if plan.Ensure.ValueString() == directoryEnsureAbsent {
-		tflog.Debug(ctx, "windows_directory Update (ensure=absent)", map[string]interface{}{"path": path})
-		if err := r.client.Delete(ctx, path, plan.RecursiveDelete.ValueBool()); err != nil {
-			addDirectoryDiag(&resp.Diagnostics, "Update", err)
-			return
-		}
-		plan.ID = types.StringValue(path)
-		plan.ExistsChildren = types.BoolValue(false)
-		plan.ItemCount = types.Int64Value(0)
-		plan.LastWriteTime = types.StringValue("")
-		plan.Attributes = types.ListNull(types.StringType)
-		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-		return
-	}
 
 	attrs := directoryAttributesFromModel(ctx, plan.Attributes, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -498,7 +516,6 @@ func (r *windowsDirectoryResource) ImportState(ctx context.Context, req resource
 
 	model := windowsDirectoryModel{
 		Path:                    types.StringValue(path),
-		Ensure:                  types.StringValue(directoryEnsurePresent),
 		RecursiveDelete:         types.BoolValue(false),
 		CreateParentDirectories: types.BoolValue(true),
 		Timeouts:                dirNullTimeouts(),
