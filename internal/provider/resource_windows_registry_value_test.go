@@ -37,6 +37,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -194,6 +195,35 @@ func TestRegistryValueSchema_ResourceLevelCall(t *testing.T) {
 	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
 	if len(resp.Schema.Attributes) == 0 {
 		t.Error("Schema() produced empty schema")
+	}
+}
+
+// TestRegistryValueSchema_SecretValuesSensitive (issue #323): registry value
+// payloads may carry secrets (passwords, tokens, keys), so value_string and
+// value_binary are Sensitive and Terraform masks them in plans and state
+// displays. There is no WriteOnly variant: the value is read back on refresh.
+func TestRegistryValueSchema_SecretValuesSensitive(t *testing.T) {
+	r := &windowsRegistryValueResource{}
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Schema diagnostics: %v", resp.Diagnostics)
+	}
+	for _, name := range []string{"value_string", "value_binary"} {
+		attr, ok := resp.Schema.Attributes[name]
+		if !ok {
+			t.Fatalf("schema missing attribute %q", name)
+		}
+		strAttr, ok := attr.(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("attribute %q must be a StringAttribute, got %T", name, attr)
+		}
+		if !strAttr.Sensitive {
+			t.Errorf("attribute %q must be Sensitive (issue #323)", name)
+		}
+		if !strAttr.Optional {
+			t.Errorf("attribute %q must stay Optional", name)
+		}
 	}
 }
 

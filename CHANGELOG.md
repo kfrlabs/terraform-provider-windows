@@ -425,6 +425,23 @@ All notable changes to this project will be documented in this file.
   is adopted). The data source is the singleton read-only view (active
   plan plus the full `plans` list) with `timeouts.read`.
 
+### Fixed
+
+- Secrets hardening (#323): `windows_registry_value` `value_string`
+  and `value_binary` are now `Sensitive` (registry payloads may carry
+  passwords, tokens or keys, so Terraform masks them in plans and
+  state displays). There is no WriteOnly variant: values are read
+  back on refresh. `windows_certificate` `pfx_password_wo` now
+  `AlsoRequires` `pfx_base64_wo` (a password without its bundle is
+  rejected at plan time) and forces replacement like the bundle it
+  decrypts. Deliberately unchanged: account/user names stay
+  non-Sensitive (only password material is Sensitive); `*_wo_version`
+  counters keep their existing shapes (`windows_scheduled_task`
+  keeps `Computed` + default `0` with `AtLeast(0)`, the others stay
+  `Optional` + `AtLeast(1)`) so existing configurations keep
+  applying; legacy (state-persisted) passwords keep value-based
+  rotation and do not require a version counter.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added

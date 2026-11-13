@@ -208,7 +208,14 @@ func windowsCertificateSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:  true,
 				Sensitive: true,
 				WriteOnly: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 				Validators: []validator.String{
+					// A password without its bundle is a misconfiguration:
+					// the bundle is what the password decrypts (pfx_base64_wo
+					// already requires the version counter in the other direction).
+					stringvalidator.AlsoRequires(path.MatchRoot("pfx_base64_wo")),
 					secretNoLineBreakValidator{},
 				},
 				Description: "Write-only password decrypting the PFX bundle (TPF v1.14+ WriteOnly). Omit for an unprotected bundle. The value must not contain carriage return or line feed characters (rejected at plan time): secrets are read with `ReadLine()`, so anything from the first line break on would be silently truncated. If the value comes from `file()`, wrap it with `trimspace()` to strip the trailing newline.",
