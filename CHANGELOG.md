@@ -6,6 +6,39 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New `windows_dsc_resource` resource (#293): generic gateway managing one
+  instance of any DSC resource on the target host through
+  `Invoke-DscResource` (`Test`/`Set`/`Get`). Every operation first checks
+  the Local Configuration Manager (`Get-DscLocalConfigurationManager`) and
+  fails closed with `lcm_conflict` (with remediation text) when the node
+  uses Pull refresh mode or reports a busy/pending LCM state; LCM settings
+  are never changed. The resource schema is fetched per operation with a
+  scoped `Get-DscResource -Name -Module` query (never unfiltered) and
+  property values are coerced and validated pure-Go (string/int/bool/list,
+  one-level embedded objects, ValueMap allow-lists, mandatory/Key checks).
+  Convergence is Test-driven (`Set` only on drift, verified by a follow-up
+  `Test`, else `not_converged`). Property values travel on stdin as a JSON
+  document plus a separate credential line rebuilt server-side into
+  `PSCredential` objects; only module/resource names reach the script body
+  (via `psQuote`). Credential `Get` output is redacted (null-dropped) into
+  the informational `current_state_json`, which never drifts.
+  `module_name`/`resource_name` are Required + ForceNew, `module_version`
+  pins an exact version (else the highest installed, reported in
+  `resolved_module_version`), `properties` is a Required dynamic object,
+  `credential_properties_wo` is an Optional Sensitive WriteOnly map keyed by
+  property name (+ `credential_properties_wo_version` rotation counter,
+  mirroring `windows_service`), `destroy_properties` is an Optional dynamic
+  object applied with `Set` on destroy (full replacement, e.g.
+  `Ensure = "Absent"`; unset means state-only destroy).
+  `in_desired_state` reports the last `Test` outcome and is always planned
+  as true so a failed Test produces an update plan; `reboot_required` warns
+  (the provider schedules no reboot). The ID is
+  `<module>|<resource>|<sha256 of the canonical key-properties JSON>` (Key
+  properties, else mandatory, else sorted-all). Import is unsupported (the
+  gateway cannot reconstruct property authorship; write matching config and
+  let the first apply adopt the state). `timeouts` default to 30m
+  (create/update/delete) and 10m (read). No data source in v1.
+
 - New `windows_ntp` resource and `windows_ntp` data source (#287):
   manages the Windows Time service (W32Time) time source singleton on the
   target host — sync `type` (`NTP`, `NT5DS`, `AllSync`, `NoSync`), the
