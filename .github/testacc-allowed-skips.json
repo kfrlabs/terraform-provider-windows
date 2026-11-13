@@ -115,6 +115,11 @@
       "pattern": "^TestAccWindowsNTP",
       "reasons": ["W32Time"],
       "comment": "Containers share the host clock and typically ship no W32Time service, so the mutability probe skips instead of failing; the TypeServersMatrix plan-time tests match the pattern but never skip. The needle names the W32Time condition in every skip message."
+    },
+    {
+      "pattern": "^TestAccWindowsPowerPlan",
+      "reasons": ["unsupported", "immutable"],
+      "comment": "Power plans are unavailable where the target shares the host power policy (lab container): the mutability probe skips instead of failing, naming the typed unsupported kind or the immutable condition. The InvalidPlan plan-time test matches the pattern but never skips."
     }
   ]
 }

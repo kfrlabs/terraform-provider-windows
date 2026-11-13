@@ -350,6 +350,33 @@ All notable changes to this project will be documented in this file.
   there. `timeouts.read` defaults to 10m like the other
   collection-family data sources.
 
+- New `windows_power_plan` resource and `windows_power_plan` data
+  source (#288): manages the active power plan singleton on the target
+  host — `plan` (a GUID or an alias: `balanced`, `high_performance`,
+  `power_saver`, `ultimate_performance`, normalised to the canonical
+  GUID at plan time) plus optional per-setting AC/DC overrides
+  (`settings` of `subgroup`/`setting` GUIDs or `powercfg` aliases such
+  as `SUB_DISK`/`DISKIDLE`, at least one of `ac_value`/`dc_value`,
+  `>= 0`). Aliases resolve in Go (plan) and on the host via
+  `powercfg /aliases` (subgroup/setting, cached per call); existence
+  checks read WMI `root\cimv2\power` (`Win32_PowerPlan` `IsActive`),
+  values are written with `powercfg /setacvalueindex|/setdcvalueindex`
+  and the plan is activated with `powercfg /setactive` (exit-code
+  gated; `Win32_PowerPlan.Activate()` is never called), then verified
+  by re-reading `Win32_PowerPlan` + `Win32_PowerSettingDataIndex`.
+  `powercfg /query` text is never parsed and GUID-only identity never
+  touches the localised `ElementName` (surfaced as informational
+  `plan_name`). Missing plans are a `plan_not_found` error unless
+  `create_if_missing` duplicates the template
+  (`powercfg /duplicatescheme`); DC values are stored even on hosts
+  without a battery. The resource ID is the host MachineGuid; delete
+  is state-only unless `restore_on_destroy` re-activates the snapshot
+  plan and values captured at creation (or import) time, and a
+  duplicated plan is deleted on destroy only when inactive.
+  `timeouts` default to 5m. Import by any non-empty ID (the live plan
+  is adopted). The data source is the singleton read-only view (active
+  plan plus the full `plans` list) with `timeouts.read`.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
