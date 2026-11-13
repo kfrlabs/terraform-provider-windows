@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -265,6 +266,14 @@ func windowsFileSchemaDefinition(ctx context.Context) schema.Schema {
 				Computed:    true,
 				ElementType: types.StringType,
 				Description: "File attributes to enforce: hidden, readonly, archive, system, temporary.",
+				Validators: []validator.List{
+					// Attribute-level enum (#324): duplicates the cross-field
+					// NormaliseFileAttributes check (which also enforces the
+					// system/temporary exclusion) with a per-element diagnostic.
+					listvalidator.ValueStringsAre(
+						stringvalidator.OneOf("hidden", "readonly", "archive", "system", "temporary"),
+					),
+				},
 			},
 
 			"content_sha256": schema.StringAttribute{
