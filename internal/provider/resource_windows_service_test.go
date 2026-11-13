@@ -18,6 +18,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -28,6 +29,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -100,6 +104,46 @@ func TestSchema_ResourceLevelCall(t *testing.T) {
 	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
 	if len(resp.Schema.Attributes) == 0 {
 		t.Error("Schema() produced empty schema")
+	}
+}
+
+// TestSchema_OptionalComputedPlanModifiers (issue #322): display_name is
+// observed from Windows (its create-time default is the service name, which
+// no static Default can express) and dependencies are observed from
+// sc.exe, so both carry UseStateForUnknown. service_account defaults to
+// LocalSystem on Create (winclient.ServiceInput), expressed as a static
+// Default.
+func TestSchema_OptionalComputedPlanModifiers(t *testing.T) {
+	s := windowsServiceSchemaDefinition(context.Background())
+	displayAttr, ok := s.Attributes["display_name"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("display_name: expected schema.StringAttribute, got %T", s.Attributes["display_name"])
+	}
+	if !displayAttr.Optional || !displayAttr.Computed {
+		t.Error("display_name must be Optional+Computed")
+	}
+	if len(displayAttr.PlanModifiers) != 1 || !reflect.DeepEqual(displayAttr.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
+		t.Errorf("display_name must carry exactly UseStateForUnknown, got %v", displayAttr.PlanModifiers)
+	}
+	accountAttr, ok := s.Attributes["service_account"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("service_account: expected schema.StringAttribute, got %T", s.Attributes["service_account"])
+	}
+	if !accountAttr.Optional || !accountAttr.Computed {
+		t.Error("service_account must be Optional+Computed")
+	}
+	if !reflect.DeepEqual(accountAttr.Default, stringdefault.StaticString("LocalSystem")) {
+		t.Errorf("service_account must default to LocalSystem, got %v", accountAttr.Default)
+	}
+	depsAttr, ok := s.Attributes["dependencies"].(schema.ListAttribute)
+	if !ok {
+		t.Fatalf("dependencies: expected schema.ListAttribute, got %T", s.Attributes["dependencies"])
+	}
+	if !depsAttr.Optional || !depsAttr.Computed {
+		t.Error("dependencies must be Optional+Computed")
+	}
+	if len(depsAttr.PlanModifiers) != 1 || !reflect.DeepEqual(depsAttr.PlanModifiers[0], listplanmodifier.UseStateForUnknown()) {
+		t.Errorf("dependencies must carry exactly UseStateForUnknown, got %v", depsAttr.PlanModifiers)
 	}
 }
 

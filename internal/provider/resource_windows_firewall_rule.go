@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -193,6 +194,9 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Network profiles the rule applies to. Valid elements: " +
 					"`Any`, `Domain`, `Private`, `Public`, `NotApplicable`. " +
 					"`Any` must appear alone (enforced in ConfigValidators CV-1).",
@@ -204,8 +208,11 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"edge_traversal_policy": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Edge-traversal behaviour. One of: `Block`, `Allow`, `DeferToUser`, `DeferToApp`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("Block", "Allow", "DeferToUser", "DeferToApp"),
@@ -245,6 +252,9 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 			"protocol": schema.StringAttribute{
 				Optional: true,
 				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "IP protocol keyword (`TCP`, `UDP`, `ICMPv4`, `ICMPv6`, `IGMP`, `Any`) " +
 					"or numeric string 0-255. Populated from Get-NetFirewallPortFilter.",
 				Validators: []validator.String{
@@ -256,6 +266,9 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Local TCP/UDP port(s). Accepts numeric ports, ranges, and keywords. " +
 					"Valid only when protocol is `TCP` or `UDP` (CV-2). Populated from Get-NetFirewallPortFilter.",
 			},
@@ -264,6 +277,9 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Remote TCP/UDP port(s). Same constraints as local_port. " +
 					"Populated from Get-NetFirewallPortFilter.",
 			},
@@ -272,6 +288,9 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Local IP addresses, CIDR ranges, or address keywords. " +
 					"Populated from Get-NetFirewallAddressFilter.",
 			},
@@ -280,25 +299,37 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Remote addresses. Same constraints as local_address. " +
 					"Populated from Get-NetFirewallAddressFilter.",
 			},
 
 			"program": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Full path to the matched program executable, or `\"Any\"`. Populated from Get-NetFirewallApplicationFilter.",
 			},
 
 			"service": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Short name of the matched Windows service, or `\"Any\"`. Populated from Get-NetFirewallServiceFilter.",
 			},
 
 			"interface_type": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Interface type. One of: `Any`, `Wireless`, `Wired`, `RemoteAccess`. Populated from Get-NetFirewallInterfaceTypeFilter.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("Any", "Wireless", "Wired", "RemoteAccess"),

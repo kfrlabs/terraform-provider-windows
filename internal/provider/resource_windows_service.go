@@ -25,6 +25,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -136,8 +137,11 @@ func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 				},
 			},
 			"display_name": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Human-readable display name shown in services.msc. Defaults to name if omitted.",
 			},
 			"description": schema.StringAttribute{
@@ -177,6 +181,7 @@ func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 			"service_account": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString("LocalSystem"),
 				Description: "Account under which the service runs. Defaults to LocalSystem.",
 			},
 			"service_password": schema.StringAttribute{
@@ -242,6 +247,9 @@ func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Ordered list of short service names this service depends on.",
 			},
 			// Per-operation timeouts (terraform-plugin-framework-timeouts).

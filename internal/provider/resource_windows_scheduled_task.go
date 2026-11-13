@@ -492,6 +492,7 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 			},
 			"state": schema.StringAttribute{
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				MarkdownDescription: "Current operational state: Ready|Disabled|Running|Queued|Unknown.",
 			},
 			"last_run_time": schema.StringAttribute{

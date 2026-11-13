@@ -444,6 +444,10 @@ func windowsLocalUserSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 			"account_expires": schema.StringAttribute{
 				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				MarkdownDescription: "RFC3339 timestamp at which the account expires " +
 					"(e.g. `\"2027-12-31T23:59:59Z\"`). When set, `account_never_expires` must " +
 					"be `false`. Must be in the future at Create time (EC-13). " +

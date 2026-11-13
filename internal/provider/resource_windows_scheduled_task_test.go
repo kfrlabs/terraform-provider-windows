@@ -23,6 +23,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -141,6 +143,30 @@ func TestSTResource_Schema_PrincipalPasswordSensitive(t *testing.T) {
 	// Principal is a SingleNestedAttribute; check it exists
 	if _, ok := resp.Schema.Attributes["principal"]; !ok {
 		t.Fatal("schema missing principal attribute")
+	}
+}
+
+// TestSTResource_Schema_StateUseStateForUnknown (issue #322): state is a
+// Computed-only observed value (the live Ready/Disabled/Running/Queued/
+// Unknown operational state) and must carry UseStateForUnknown like its
+// computed neighbours, so plans never go unknown on it.
+func TestSTResource_Schema_StateUseStateForUnknown(t *testing.T) {
+	r := &windowsScheduledTaskResource{}
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	stateAttr, ok := resp.Schema.Attributes["state"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("state: expected schema.StringAttribute, got %T", resp.Schema.Attributes["state"])
+	}
+	if !stateAttr.Computed {
+		t.Error("state must be Computed")
+	}
+	if stateAttr.Optional || stateAttr.Required {
+		t.Error("state must be Computed-only (not configurable)")
+	}
+	if len(stateAttr.PlanModifiers) != 1 || !reflect.DeepEqual(stateAttr.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
+		t.Errorf("state must carry exactly UseStateForUnknown, got %v", stateAttr.PlanModifiers)
 	}
 }
 
