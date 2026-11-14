@@ -13,6 +13,7 @@ Index:
 - [ADR-0010](ADR-0010-ssh-transport.md) — SSH transport (persistent PowerShell session, stdin secrets).
 - [ADR-0011](ADR-0011-host-key-verification.md) — host key verification (fail-closed, known-hosts).
 - [ADR-0012](ADR-0012-partial-failure-contract.md) — provider-wide partial-failure contract (persist partial state, taint by default).
+- [ADR-0013](ADR-0013-winclient-shared-prelude.md) — shared winclient envelope prelude, generic error and input conventions (issue #348, batch 1: hostname pilot).
 
 These records live outside `docs/` on purpose: `docs/` is generated from
 schemas + examples by `make docs` and guarded by the blocking drift gate,
