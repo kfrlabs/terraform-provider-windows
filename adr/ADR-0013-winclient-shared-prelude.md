@@ -71,19 +71,26 @@ bytes; rendering-only, see rule 4).
    decision, never drive-by. Where a payload needs deeper serialisation
    than `-Depth 8` (e.g. `file`/`registry_value` at 16, `legacy_package`
    at 10, `scheduled_task_scripts` at 12, plus other Depth-10 headers),
-   the migrated header keeps its own
-   depth at the call site until a batch canonicalises it with fixture
-   proof. v2 (batch 3) adds the InvariantCulture thread pins, following
+   the migrated header keeps its own depth at the call site only until a
+   batch proves a lower depth safe. Proven on the Windows fixture
+   (PS 5.1, fr-FR Server 2025): Depth 16/12/10 vs 8 produce
+   byte-identical JSON for the deepest realistic payloads of every
+   migrated family (dicts, string lists, task payloads to depth 4, DSC
+   File/Registry Test+Get at depth <= 3, deepest documented generic DSC
+   shape at depth 6 — all below the ceiling of 8). v2 (batch 3) adds the
+   InvariantCulture thread pins, following
    the IIS/storage precedent: error text and .NET formatting stay stable
    regardless of host locale, which is the point of a machine-parseable
    envelope. The batch-1/2 headers gain the two lines through composition
    (benign: invariant formatting affects rendering only, never logic).
 5. Guard test. `TestPSEnvelopePrelude_NoNewDefinitions` scans non-test
    `internal/winclient/*.go` for `function Emit-(OK|Err)` definitions
-   (leading whitespace tolerated) outside `envelope_prelude.go` against an explicit allowlist of not-yet-
-   migrated files. Each migration batch shrinks the allowlist. The two
-   pre-existing shared headers (`iis_common.go`, `storage_common.go`) are
-   grandfathered in the allowlist until they migrate to the prelude.
+   (leading whitespace tolerated) outside `envelope_prelude.go` against an
+   explicit allowlist. Batch 4c migrated the last entry
+   (`dsc_resource_scripts.go`); the allowlist is intentionally empty.
+   Later batches (generic classifier design, per-resource error aliases,
+   stdin conversions) each get their own plan against this ADR; none may
+   change wire behaviour without fixture proof.
 6. Batch 1 (this ADR). ADR text + prelude const + `ResourceError`
    scaffolding + pilot migration of `hostname` (small, string classifier,
    no stdin secrets; its header is byte-identical after composition) +
@@ -100,6 +107,8 @@ bytes; rendering-only, see rule 4).
 - `docs/` stays generated (`make docs`); this record lives in `adr/` on
   purpose, outside the drift gate.
 - Later batches (generic classifier design, per-resource error aliases,
-  `iis_common` / `storage_common` migration, stdin conversions) each get
-  their own plan against this ADR; none may change wire behaviour without
-  fixture proof.
+  stdin conversions) each get their own plan against this ADR; none may
+  change wire behaviour without fixture proof. Batches 2-4 migrated every
+  header whose Emit pair was byte-identical or provably equivalent
+  (32 files share the prelude; the DSC depth downgrade was proven on the
+  Windows fixture).

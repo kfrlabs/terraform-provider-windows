@@ -36,25 +36,10 @@ package winclient
 // Note: Go raw-string literals (backtick-delimited) must not contain PS
 // backtick sequences (`n, `t). None are needed here; single-quoted PS
 // literals avoid all expansion.
-const dscPsHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
-[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+const dscPsHeader = psEnvelopePrelude + dscPsHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj  = [ordered]@{ ok = $true; data = $Data }
-  $json = ($obj | ConvertTo-Json -Depth 10 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj  = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
+// dscPsHeaderRemainder holds Classify-DscResource, the LCM/property helpers and the Test/Set/Get bodies; envelope emitters come from the prelude. Emit depth 10->8: live DSC outputs measured at depth <= 3 on the Windows fixture (File/Registry Test+Get), deepest documented generic shape at depth 6; gains WarningPreference (suppression only).
+const dscPsHeaderRemainder = `
 function Classify-DscResource([object]$Rec, [string]$Method) {
   $msg = ''
   try { $msg = [string]$Rec.Exception.Message } catch { $msg = [string]$Rec }
