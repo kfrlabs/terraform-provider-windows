@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -29,6 +30,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -92,6 +94,7 @@ var (
 	_ resource.ResourceWithConfigure        = (*windowsScheduledTaskResource)(nil)
 	_ resource.ResourceWithImportState      = (*windowsScheduledTaskResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsScheduledTaskResource)(nil)
+	_ resource.ResourceWithUpgradeState     = (*windowsScheduledTaskResource)(nil)
 )
 
 // NewWindowsScheduledTaskResource is the constructor registered in provider.go.
@@ -129,7 +132,7 @@ var scheduledTaskTriggerAttrTypes = map[string]attr.Type{
 	"execution_time_limit": types.StringType,
 	"delay":                types.StringType,
 	"days_interval":        types.Int64Type,
-	"days_of_week":         types.ListType{ElemType: types.StringType},
+	"days_of_week":         types.SetType{ElemType: types.StringType},
 	"weeks_interval":       types.Int64Type,
 	"user_id":              types.StringType,
 	"subscription":         subscriptionXMLType{},
@@ -178,7 +181,7 @@ type windowsScheduledTaskTriggerModel struct {
 	ExecutionTimeLimit types.String         `tfsdk:"execution_time_limit"`
 	Delay              types.String         `tfsdk:"delay"`
 	DaysInterval       types.Int64          `tfsdk:"days_interval"`
-	DaysOfWeek         types.List           `tfsdk:"days_of_week"`
+	DaysOfWeek         types.Set            `tfsdk:"days_of_week"`
 	WeeksInterval      types.Int64          `tfsdk:"weeks_interval"`
 	UserID             types.String         `tfsdk:"user_id"`
 	Subscription       subscriptionXMLValue `tfsdk:"subscription"`
@@ -209,7 +212,7 @@ type windowsScheduledTaskModel struct {
 	NextRunTime    types.String   `tfsdk:"next_run_time"`
 	Principal      types.Object   `tfsdk:"principal"`
 	Actions        types.List     `tfsdk:"actions"`
-	Triggers       types.List     `tfsdk:"triggers"`
+	Triggers       types.Set      `tfsdk:"triggers"`
 	Settings       types.Object   `tfsdk:"settings"`
 	Timeouts       timeouts.Value `tfsdk:"timeouts"`
 }
@@ -370,8 +373,11 @@ func (v scheduledTaskTriggerCrossFieldValidator) ValidateResource(
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	for i, t := range triggers {
-		trigPath := path.Root("triggers").AtListIndex(i)
+	// Triggers is a Set: elements have no stable index, so diagnostics are
+	// reported against the collection plus the offending attribute name
+	// rather than a per-element index path.
+	trigPath := path.Root("triggers")
+	for _, t := range triggers {
 		if t.Type.IsNull() || t.Type.IsUnknown() {
 			continue
 		}
@@ -458,6 +464,7 @@ func (r *windowsScheduledTaskResource) Metadata(_ context.Context, req resource.
 // Schema returns the full TPF schema.
 func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version:             1,
 		MarkdownDescription: "Manages a Windows Scheduled Task via SSH + PowerShell (ScheduledTasks module, Windows 2012+).",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -592,9 +599,9 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 					},
 				},
 			},
-			"triggers": schema.ListNestedAttribute{
+			"triggers": schema.SetNestedAttribute{
 				Required:            true,
-				Validators:          []validator.List{listvalidator.SizeBetween(1, 48)},
+				Validators:          []validator.Set{setvalidator.SizeBetween(1, 48)},
 				MarkdownDescription: "One or more triggers (1-48). `OnEvent` uses XML injection (ADR-ST-5).",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
@@ -616,15 +623,21 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						},
 						"end_boundary": schema.StringAttribute{
 							Optional:            true,
+							Computed:            true,
+							PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 							MarkdownDescription: "RFC 3339 deactivation datetime.",
 						},
 						"execution_time_limit": schema.StringAttribute{
 							Optional:            true,
+							Computed:            true,
+							PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 							Validators:          []validator.String{stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)},
 							MarkdownDescription: "ISO 8601 per-trigger time cap. Assigned to Windows as an XSD string and compared verbatim.",
 						},
 						"delay": schema.StringAttribute{
 							Optional:            true,
+							Computed:            true,
+							PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 							Validators:          []validator.String{stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)},
 							MarkdownDescription: "ISO 8601 delay before task start (AtStartup/AtLogon/OnEvent). Assigned to Windows as an XSD string and compared verbatim.",
 						},
@@ -634,11 +647,15 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 							PlanModifiers:       []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
 							MarkdownDescription: "Daily recurrence interval. Only valid for `Daily`. Windows default: 1.",
 						},
-						"days_of_week": schema.ListAttribute{
-							Optional:    true,
+						"days_of_week": schema.SetAttribute{
+							Optional: true,
+							Computed: true,
+							PlanModifiers: []planmodifier.Set{
+								setplanmodifier.UseStateForUnknown(),
+							},
 							ElementType: types.StringType,
-							Validators: []validator.List{
-								listvalidator.ValueStringsAre(
+							Validators: []validator.Set{
+								setvalidator.ValueStringsAre(
 									stringvalidator.OneOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
 								),
 							},
@@ -652,10 +669,16 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						},
 						"user_id": schema.StringAttribute{
 							Optional:            true,
+							Computed:            true,
+							PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 							MarkdownDescription: "Restrict `AtLogon` trigger to a specific user.",
 						},
 						"subscription": schema.StringAttribute{
 							Optional: true,
+							Computed: true,
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.UseStateForUnknown(),
+							},
 							// CustomType gives this attribute semantic-equality XML comparison
 							// (see subscriptionXMLValue), so Windows re-serializing this value's
 							// whitespace on round-trip doesn't trip TPF's plan/apply consistency
@@ -706,6 +729,181 @@ func (r *windowsScheduledTaskResource) ConfigValidators(_ context.Context) []res
 		scheduledTaskPrincipalCrossFieldValidator{},
 		scheduledTaskTriggerCrossFieldValidator{},
 	}
+}
+
+// ---------------------------------------------------------------------------
+// State upgrade (issue #324: triggers/days_of_week List -> Set)
+// ---------------------------------------------------------------------------
+
+// windowsScheduledTaskTriggerModelV0 is the prior (v0) trigger shape, which
+// still carries `days_of_week` as a List.
+type windowsScheduledTaskTriggerModelV0 struct {
+	Type               types.String         `tfsdk:"type"`
+	Enabled            types.Bool           `tfsdk:"enabled"`
+	StartBoundary      types.String         `tfsdk:"start_boundary"`
+	EndBoundary        types.String         `tfsdk:"end_boundary"`
+	ExecutionTimeLimit types.String         `tfsdk:"execution_time_limit"`
+	Delay              types.String         `tfsdk:"delay"`
+	DaysInterval       types.Int64          `tfsdk:"days_interval"`
+	DaysOfWeek         types.List           `tfsdk:"days_of_week"`
+	WeeksInterval      types.Int64          `tfsdk:"weeks_interval"`
+	UserID             types.String         `tfsdk:"user_id"`
+	Subscription       subscriptionXMLValue `tfsdk:"subscription"`
+}
+
+// windowsScheduledTaskModelV0 is the prior (v0) state shape, which still
+// carries `triggers` as a List of the V0 trigger objects.
+type windowsScheduledTaskModelV0 struct {
+	ID             types.String   `tfsdk:"id"`
+	Name           types.String   `tfsdk:"name"`
+	Path           types.String   `tfsdk:"path"`
+	Description    types.String   `tfsdk:"description"`
+	Enabled        types.Bool     `tfsdk:"enabled"`
+	State          types.String   `tfsdk:"state"`
+	LastRunTime    types.String   `tfsdk:"last_run_time"`
+	LastTaskResult types.Int64    `tfsdk:"last_task_result"`
+	NextRunTime    types.String   `tfsdk:"next_run_time"`
+	Principal      types.Object   `tfsdk:"principal"`
+	Actions        types.List     `tfsdk:"actions"`
+	Triggers       types.List     `tfsdk:"triggers"`
+	Settings       types.Object   `tfsdk:"settings"`
+	Timeouts       timeouts.Value `tfsdk:"timeouts"`
+}
+
+// windowsScheduledTaskPriorSchemaV0 returns the v0 schema: the current schema
+// with `triggers` (and its nested `days_of_week`) as List collections.
+func windowsScheduledTaskPriorSchemaV0(ctx context.Context) *schema.Schema {
+	r := &windowsScheduledTaskResource{}
+	resp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, resp)
+	s := resp.Schema
+	s.Version = 0
+	triggersAttr, ok := s.Attributes["triggers"].(schema.SetNestedAttribute)
+	if !ok {
+		return &s
+	}
+	nestedAttrs := map[string]schema.Attribute{}
+	for k, a := range triggersAttr.NestedObject.Attributes {
+		nestedAttrs[k] = a
+	}
+	nestedAttrs["days_of_week"] = schema.ListAttribute{
+		Optional:    true,
+		ElementType: types.StringType,
+	}
+	s.Attributes["triggers"] = schema.ListNestedAttribute{
+		Required:            true,
+		Validators:          []validator.List{listvalidator.SizeBetween(1, 48)},
+		MarkdownDescription: "One or more triggers (1-48). `OnEvent` uses XML injection (ADR-ST-5).",
+		NestedObject:        schema.NestedAttributeObject{Attributes: nestedAttrs},
+	}
+	return &s
+}
+
+// UpgradeState maps the v0 List-based state to the v1 Set-based state.
+func (r *windowsScheduledTaskResource) UpgradeState(_ context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			PriorSchema:   windowsScheduledTaskPriorSchemaV0(context.Background()),
+			StateUpgrader: upgradeWindowsScheduledTaskStateV0ToV1,
+		},
+	}
+}
+
+// upgradeWindowsScheduledTaskStateV0ToV1 copies every v0 field into the
+// current (v1) shape, converting the `triggers` list and each nested
+// `days_of_week` list into sets. Element values are preserved; only the
+// collection kind changes, so order no longer matters.
+func upgradeWindowsScheduledTaskStateV0ToV1(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+	var prior windowsScheduledTaskModelV0
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var priorTriggers []windowsScheduledTaskTriggerModelV0
+	triggersNull := prior.Triggers.IsNull()
+	triggersUnknown := prior.Triggers.IsUnknown()
+	if !triggersNull && !triggersUnknown {
+		resp.Diagnostics.Append(prior.Triggers.ElementsAs(ctx, &priorTriggers, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	// Null stays null (safer for hand-edited state: Required triggers means
+	// a null list is a user hand-edit, not a value the provider would write);
+	// unknown stays unknown; otherwise convert each element.
+	var trigSet types.Set
+	switch {
+	case triggersNull:
+		trigSet = types.SetNull(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes})
+	case triggersUnknown:
+		trigSet = types.SetUnknown(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes})
+	default:
+		trigElems := make([]attr.Value, len(priorTriggers))
+		for i, pt := range priorTriggers {
+			var dows types.Set
+			switch {
+			case pt.DaysOfWeek.IsNull():
+				dows = types.SetNull(types.StringType)
+			case pt.DaysOfWeek.IsUnknown():
+				dows = types.SetUnknown(types.StringType)
+			default:
+				var days []string
+				resp.Diagnostics.Append(pt.DaysOfWeek.ElementsAs(ctx, &days, false)...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+				v, d := types.SetValueFrom(ctx, types.StringType, days)
+				resp.Diagnostics.Append(d...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+				dows = v
+			}
+			obj, d := types.ObjectValueFrom(ctx, scheduledTaskTriggerAttrTypes, windowsScheduledTaskTriggerModel{
+				Type:               pt.Type,
+				Enabled:            pt.Enabled,
+				StartBoundary:      pt.StartBoundary,
+				EndBoundary:        pt.EndBoundary,
+				ExecutionTimeLimit: pt.ExecutionTimeLimit,
+				Delay:              pt.Delay,
+				DaysInterval:       pt.DaysInterval,
+				DaysOfWeek:         dows,
+				WeeksInterval:      pt.WeeksInterval,
+				UserID:             pt.UserID,
+				Subscription:       pt.Subscription,
+			})
+			resp.Diagnostics.Append(d...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			trigElems[i] = obj
+		}
+		v, d := types.SetValue(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, trigElems)
+		resp.Diagnostics.Append(d...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		trigSet = v
+	}
+
+	upgraded := windowsScheduledTaskModel{
+		ID:             prior.ID,
+		Name:           prior.Name,
+		Path:           prior.Path,
+		Description:    prior.Description,
+		Enabled:        prior.Enabled,
+		State:          prior.State,
+		LastRunTime:    prior.LastRunTime,
+		LastTaskResult: prior.LastTaskResult,
+		NextRunTime:    prior.NextRunTime,
+		Principal:      prior.Principal,
+		Actions:        prior.Actions,
+		Triggers:       trigSet,
+		Settings:       prior.Settings,
+		Timeouts:       prior.Timeouts,
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &upgraded)...)
 }
 
 // Configure wires the winclient.Client and creates the ScheduledTaskClient.
@@ -1066,7 +1264,13 @@ func modelToInput(ctx context.Context, m *windowsScheduledTaskModel) (winclient.
 	input.Triggers = make([]winclient.ScheduledTaskTriggerInput, len(triggers))
 	for i, t := range triggers {
 		var dows []string
-		diags.Append(t.DaysOfWeek.ElementsAs(ctx, &dows, false)...)
+		// days_of_week is Optional+Computed: on a first plan with no prior
+		// state the value is Unknown. ElementsAs rejects unknowns, and an
+		// unset weekday set means "no restriction" to winclient either way,
+		// so only extract when known.
+		if !t.DaysOfWeek.IsNull() && !t.DaysOfWeek.IsUnknown() {
+			diags.Append(t.DaysOfWeek.ElementsAs(ctx, &dows, false)...)
+		}
 		enabled := true
 		if !t.Enabled.IsNull() && !t.Enabled.IsUnknown() {
 			enabled = t.Enabled.ValueBool()
@@ -1308,22 +1512,41 @@ func stateToModel(ctx context.Context, s *winclient.ScheduledTaskState, priorMod
 	m.Actions = actList
 
 	// Triggers
+	var priorTriggersAlign []windowsScheduledTaskTriggerModel
+	var priorUsed []bool
+	if priorModel != nil && !priorModel.Triggers.IsNull() && !priorModel.Triggers.IsUnknown() {
+		var pts []windowsScheduledTaskTriggerModel
+		if d2 := priorModel.Triggers.ElementsAs(ctx, &pts, false); !d2.HasError() {
+			priorTriggersAlign = pts
+			priorUsed = make([]bool, len(pts))
+		}
+	}
 	trigElems := make([]attr.Value, len(s.Triggers))
 	for i, t := range s.Triggers {
+		// Sets have no stable index: align each live trigger with the first
+		// still-unused prior trigger of the same type, so a reorder of the
+		// trigger set cannot attach the wrong prior days/weeks interval to
+		// a trigger. Each prior element is consumed at most once: a second
+		// duplicate with no unused match left falls back to nil, which
+		// resolves a Windows 0 interval to null — the correct create-path outcome.
 		var priorTrigger *windowsScheduledTaskTriggerModel
-		if priorModel != nil && !priorModel.Triggers.IsNull() {
-			var pts []windowsScheduledTaskTriggerModel
-			if d2 := priorModel.Triggers.ElementsAs(ctx, &pts, false); !d2.HasError() && i < len(pts) {
-				priorTrigger = &pts[i]
+		for j := range priorTriggersAlign {
+			if priorUsed[j] {
+				continue
+			}
+			if !priorTriggersAlign[j].Type.IsNull() && !priorTriggersAlign[j].Type.IsUnknown() && priorTriggersAlign[j].Type.ValueString() == t.Type {
+				priorTrigger = &priorTriggersAlign[j]
+				priorUsed[j] = true
+				break
 			}
 		}
 		obj, d2 := buildTriggerObject(ctx, t, priorTrigger)
 		diags.Append(d2...)
 		trigElems[i] = obj
 	}
-	trigList, d2 := types.ListValue(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, trigElems)
+	trigSet, d2 := types.SetValue(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, trigElems)
 	diags.Append(d2...)
-	m.Triggers = trigList
+	m.Triggers = trigSet
 
 	// Settings
 	if s.Settings != nil && priorModel != nil && !priorModel.Settings.IsNull() {
@@ -1450,36 +1673,56 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 
 	var dows attr.Value
 	if len(t.DaysOfWeek) > 0 {
-		v, d := types.ListValueFrom(ctx, types.StringType, t.DaysOfWeek)
+		v, d := types.SetValueFrom(ctx, types.StringType, t.DaysOfWeek)
 		diags.Append(d...)
 		dows = v
 	} else {
-		dows = types.ListNull(types.StringType)
+		dows = types.SetNull(types.StringType)
 	}
 
 	// days_interval / weeks_interval: Computed — use Windows value; 0 -> null.
 	// Only preserve a prior value when it is known: on a create prior == plan,
 	// and an unset Optional+Computed interval is Unknown there. A Computed
 	// attribute must never stay Unknown after apply, so resolve those to null.
+	//
+	// Windows-default suppression (plan-clean, issue #324): a Daily trigger
+	// created without -DaysInterval reports DaysInterval 1 (likewise
+	// WeeksInterval 1 for a Weekly trigger created without -WeeksInterval),
+	// because Create omits empty fields and Windows applies its own default.
+	// The minimal acc-test Daily shape omits both, so the create plan carries
+	// Null; writing the live default into state breaks Set element
+	// correlation ("planned set element does not correlate with any element
+	// in actual") on first create, where there is no prior state for
+	// UseStateForUnknown to copy. When the prior value is Null and live
+	// equals the Windows default, keep Null so plan == state. Explicitly
+	// configured or drifted non-default values are still surfaced, and the
+	// import path (prior == nil) always reports live values.
 	var di, wi types.Int64
-	if t.DaysInterval > 0 {
-		di = types.Int64Value(t.DaysInterval)
+	diLive, wiLive := t.DaysInterval, t.WeeksInterval
+	if t.Type == "Daily" && diLive == 1 && prior != nil && prior.DaysInterval.IsNull() {
+		diLive = 0
+	}
+	if t.Type == "Weekly" && wiLive == 1 && prior != nil && prior.WeeksInterval.IsNull() {
+		wiLive = 0
+	}
+	if diLive > 0 {
+		di = types.Int64Value(diLive)
 	} else if prior != nil && !prior.DaysInterval.IsUnknown() {
 		di = prior.DaysInterval // preserve known null/value from state
 	} else {
 		di = types.Int64Null()
 	}
-	if t.WeeksInterval > 0 {
-		wi = types.Int64Value(t.WeeksInterval)
+	if wiLive > 0 {
+		wi = types.Int64Value(wiLive)
 	} else if prior != nil && !prior.WeeksInterval.IsUnknown() {
 		wi = prior.WeeksInterval
 	} else {
 		wi = types.Int64Null()
 	}
 
-	dowsList, ok := dows.(types.List)
+	dowsSet, ok := dows.(types.Set)
 	if !ok {
-		diags.Append(diag.NewErrorDiagnostic("Unexpected days-of-week value", fmt.Sprintf("Expected days-of-week to be a list of strings, got %T.", dows)))
+		diags.Append(diag.NewErrorDiagnostic("Unexpected days-of-week value", fmt.Sprintf("Expected days-of-week to be a set of strings, got %T.", dows)))
 		return types.ObjectNull(scheduledTaskTriggerAttrTypes), diags
 	}
 
@@ -1491,7 +1734,7 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 		ExecutionTimeLimit: strOrNull(t.ExecutionTimeLimit),
 		Delay:              strOrNull(t.Delay),
 		DaysInterval:       di,
-		DaysOfWeek:         dowsList,
+		DaysOfWeek:         dowsSet,
 		WeeksInterval:      wi,
 		UserID:             strOrNull(t.UserID),
 		Subscription:       subscriptionXMLValueOrNull(t.Subscription),

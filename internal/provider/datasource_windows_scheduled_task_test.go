@@ -406,7 +406,7 @@ func stDSObjType() tftypes.Object {
 			"arguments":         tftypes.String,
 			"working_directory": tftypes.String,
 		}}},
-		"triggers": tftypes.List{ElementType: tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"triggers": tftypes.Set{ElementType: tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 			"type":                 tftypes.String,
 			"enabled":              tftypes.Bool,
 			"start_boundary":       tftypes.String,
@@ -414,7 +414,7 @@ func stDSObjType() tftypes.Object {
 			"execution_time_limit": tftypes.String,
 			"delay":                tftypes.String,
 			"days_interval":        tftypes.Number,
-			"days_of_week":         tftypes.List{ElementType: tftypes.String},
+			"days_of_week":         tftypes.Set{ElementType: tftypes.String},
 			"weeks_interval":       tftypes.Number,
 			"user_id":              tftypes.String,
 			"subscription":         tftypes.String,

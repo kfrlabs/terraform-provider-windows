@@ -62,7 +62,7 @@ data "windows_scheduled_task" "backup_info" {
 - `principal` (Attributes) Security context under which the task runs. (see [below for nested schema](#nestedatt--principal))
 - `settings` (Attributes) Task-level execution settings. (see [below for nested schema](#nestedatt--settings))
 - `state` (String) Current operational state.
-- `triggers` (Attributes List) Task triggers. (see [below for nested schema](#nestedatt--triggers))
+- `triggers` (Attributes Set) Task triggers. (see [below for nested schema](#nestedatt--triggers))
 
 <a id="nestedatt--timeouts"></a>
 ### Nested Schema for `timeouts`
@@ -115,7 +115,7 @@ Read-Only:
 Read-Only:
 
 - `days_interval` (Number)
-- `days_of_week` (List of String)
+- `days_of_week` (Set of String)
 - `delay` (String)
 - `enabled` (Boolean)
 - `end_boundary` (String)

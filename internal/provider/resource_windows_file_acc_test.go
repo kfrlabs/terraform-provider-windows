@@ -244,8 +244,8 @@ resource "windows_file" "ro" {
 				Config: cfg("v1"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("windows_file.ro", "attributes.#", "2"),
-					resource.TestCheckResourceAttr("windows_file.ro", "attributes.0", "hidden"),
-					resource.TestCheckResourceAttr("windows_file.ro", "attributes.1", "readonly"),
+					resource.TestCheckTypeSetElemAttr("windows_file.ro", "attributes.*", "hidden"),
+					resource.TestCheckTypeSetElemAttr("windows_file.ro", "attributes.*", "readonly"),
 				),
 			},
 			{

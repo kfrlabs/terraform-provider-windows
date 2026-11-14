@@ -220,7 +220,15 @@ resource "windows_scheduled_task" "weekly" {
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("windows_scheduled_task.weekly", "triggers.0.type", "Weekly"),
+					resource.TestCheckResourceAttr("windows_scheduled_task.weekly", "triggers.#", "1"),
+					resource.TestCheckTypeSetElemNestedAttrs("windows_scheduled_task.weekly", "triggers.*", map[string]string{
+						"type":           "Weekly",
+						"start_boundary": "2026-01-05T08:00:00Z",
+						"weeks_interval": "1",
+					}),
+					resource.TestCheckTypeSetElemAttr("windows_scheduled_task.weekly", "triggers.*.days_of_week.*", "Monday"),
+					resource.TestCheckTypeSetElemAttr("windows_scheduled_task.weekly", "triggers.*.days_of_week.*", "Wednesday"),
+					resource.TestCheckTypeSetElemAttr("windows_scheduled_task.weekly", "triggers.*.days_of_week.*", "Friday"),
 				),
 			},
 		},
@@ -387,7 +395,10 @@ resource "windows_scheduled_task" "on_event" {
 }
 `,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("windows_scheduled_task.on_event", "triggers.0.type", "OnEvent"),
+					resource.TestCheckResourceAttr("windows_scheduled_task.on_event", "triggers.#", "1"),
+					resource.TestCheckTypeSetElemNestedAttrs("windows_scheduled_task.on_event", "triggers.*", map[string]string{
+						"type": "OnEvent",
+					}),
 				),
 			},
 		},
