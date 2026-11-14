@@ -13,6 +13,37 @@ description: |-
 
 Terraform >= 1.11 is required (Write-only arguments require Terraform 1.11 and later).
 
+## Compatibility and requirements
+
+### Target host
+
+| OS | Status |
+| --- | --- |
+| Windows Server 2025 (`windows-latest` CI runners plus a `windows-2025` lab host) | Supported (tested in 2025) |
+| Windows Server 2022 / 2019 / 2016, Windows 10 / 11 client SKUs | Best-effort, untested |
+
+### PowerShell
+
+The provider opens one persistent PowerShell 7 (`pwsh.exe`) session per SSH
+connection and multiplexes operations over it. Hosts without `pwsh.exe` fall
+back to one `powershell.exe` process per call (slower, same semantics).
+Carve-out: `windows_dsc_resource` requires Windows PowerShell 5.1
+(`Invoke-DscResource`, DSC 1.1) and does not support PowerShell 7 / DSCv3.
+
+### Privileges
+
+Most resources manage machine state and need an administrator connection.
+Elevation failures surface generically (typically `permission_denied`); the
+join credential for `windows_domain_membership` additionally needs domain
+rights to create/move the computer account in the target OU.
+
+### SSH server limits
+
+`max_sessions` (default `4`) stays under the OpenSSH default `MaxSessions 10`.
+Servers enforcing stricter `MaxStartups` / `ClientAliveInterval` policies may
+need operator-side review; connection-scale behaviour is tracked in #342
+(no tuning values are recommended here).
+
 ## Example Usage
 
 {{ tffile "examples/provider/provider.tf" }}

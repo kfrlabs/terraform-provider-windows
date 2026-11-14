@@ -9,6 +9,7 @@ description: |-
   ou_path and server are create-only: they are used for the initial Add-Computer call and never read back. Changing either later forces replacement (a new join) — the computer account is never moved in place.
   Destroy semantics: by default destroy is a no-op (the host stays domain-joined). With unjoin_on_destroy = true the host is unjoined into unjoin_workgroup_name on destroy. The unjoin credential must come from the state-persisted join_credential.password: password_wo is WriteOnly and unavailable at destroy time, so that combination is rejected at plan time.
   Update re-reads the live host to refresh the Computed attributes (computer_name, pending_reboot, secure_channel_ok) and therefore requires the host to be reachable — an unreachable host fails the update instead of silently keeping prior values.
+  The join credential needs domain rights to create or move the computer account in the target OU; without them the join is refused by the domain.
 ---
 
 # windows_domain_membership (Resource)
@@ -24,6 +25,8 @@ A domain join only takes full effect after a reboot: `Add-Computer` is invoked *
 **Destroy semantics:** by default destroy is a no-op (the host stays domain-joined). With `unjoin_on_destroy = true` the host is unjoined into `unjoin_workgroup_name` on destroy. The unjoin credential must come from the state-persisted `join_credential.password`: `password_wo` is WriteOnly and unavailable at destroy time, so that combination is rejected at plan time.
 
 `Update` re-reads the live host to refresh the Computed attributes (`computer_name`, `pending_reboot`, `secure_channel_ok`) and therefore requires the host to be reachable — an unreachable host fails the update instead of silently keeping prior values.
+
+The join credential needs domain rights to create or move the computer account in the target OU; without them the join is refused by the domain.
 
 ## Example Usage
 

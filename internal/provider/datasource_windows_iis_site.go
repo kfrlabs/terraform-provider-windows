@@ -76,7 +76,8 @@ func (d *windowsIISSiteDataSource) Schema(ctx context.Context, _ datasource.Sche
 			"seconds, converted server-side. The `bindings` view (`protocol` plus " +
 			"`binding_information`) is read-only here and managed by " +
 			"`windows_iis_binding`.\n\n" +
-			"Requires IIS on the target host (`windows_feature` `Web-Server`).\n\n" +
+			"Requires IIS on the target host: install it with the `windows_feature` resource (`Web-Server`; " +
+			"add `Web-Mgmt-Console` / `Web-Scripting-Tools` for the `WebAdministration` module on Server Core).\n\n" +
 			"Returns an error when the site does not exist on the target host.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{

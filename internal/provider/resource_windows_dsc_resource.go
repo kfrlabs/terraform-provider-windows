@@ -121,7 +121,8 @@ func windowsDSCResourceSchemaDefinition(ctx context.Context) schema.Schema {
 			"and is state-only otherwise.\n\n" +
 			"Import is not supported: a generic gateway cannot reconstruct the original property " +
 			"authorship from live state. Write configuration matching the live state and let the first " +
-			"apply adopt it (no-op when already in the desired state).",
+			"apply adopt it (no-op when already in the desired state).\n\n" +
+			"Windows PowerShell 5.1 only (`Invoke-DscResource`, DSC 1.1): PowerShell 7 / DSCv3 is not supported.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
