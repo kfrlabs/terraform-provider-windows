@@ -153,7 +153,9 @@ func windowsDomainMembershipSchemaDefinition(ctx context.Context) schema.Schema 
 			"unavailable at destroy time, so that combination is rejected at plan time.\n\n" +
 			"`Update` re-reads the live host to refresh the Computed attributes (`computer_name`, `pending_reboot`, " +
 			"`secure_channel_ok`) and therefore requires the host to be reachable — an unreachable host fails the update " +
-			"instead of silently keeping prior values.",
+			"instead of silently keeping prior values.\n\n" +
+			"The join credential needs domain rights to create or move the computer account in the target OU; " +
+			"without them the join is refused by the domain.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,

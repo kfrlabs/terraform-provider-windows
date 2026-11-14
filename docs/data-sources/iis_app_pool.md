@@ -4,7 +4,7 @@ page_title: "windows_iis_app_pool Data Source - windows"
 subcategory: ""
 description: |-
   Reads the observed state of an existing IIS application pool by name on a remote Windows host without managing it. Durations surface as whole minutes and cpu.limit thousandths as whole percent, converted server-side.
-  Requires IIS on the target host (windows_feature Web-Server).
+  Requires IIS on the target host: install it with the windows_feature resource (Web-Server; add Web-Mgmt-Console / Web-Scripting-Tools for the WebAdministration module on Server Core).
   Returns an error when the pool does not exist on the target host. The SpecificUser password is never returned.
 ---
 
@@ -12,7 +12,7 @@ description: |-
 
 Reads the observed state of an existing IIS application pool by `name` on a remote Windows host without managing it. Durations surface as whole minutes and `cpu.limit` thousandths as whole percent, converted server-side.
 
-Requires IIS on the target host (`windows_feature` `Web-Server`).
+Requires IIS on the target host: install it with the `windows_feature` resource (`Web-Server`; add `Web-Mgmt-Console` / `Web-Scripting-Tools` for the `WebAdministration` module on Server Core).
 
 Returns an error when the pool does not exist on the target host. The `SpecificUser` password is never returned.
 

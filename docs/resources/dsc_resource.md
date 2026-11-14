@@ -7,6 +7,7 @@ description: |-
   Every operation first checks the Local Configuration Manager and fails closed with lcm_conflict when the node uses Pull refresh mode or reports a busy/pending LCM state. The provider never changes LCM settings.
   Convergence is Test-driven: Set runs only on drift and a follow-up Test verifies it (not_converged otherwise). in_desired_state reports the last Test outcome. Delete applies destroy_properties when configured (full replacement, e.g. Ensure = "Absent"), and is state-only otherwise.
   Import is not supported: a generic gateway cannot reconstruct the original property authorship from live state. Write configuration matching the live state and let the first apply adopt it (no-op when already in the desired state).
+  Windows PowerShell 5.1 only (Invoke-DscResource, DSC 1.1): PowerShell 7 / DSCv3 is not supported.
 ---
 
 # windows_dsc_resource (Resource)
@@ -18,6 +19,8 @@ Every operation first checks the Local Configuration Manager and fails closed wi
 Convergence is Test-driven: `Set` runs only on drift and a follow-up `Test` verifies it (`not_converged` otherwise). `in_desired_state` reports the last `Test` outcome. Delete applies `destroy_properties` when configured (full replacement, e.g. `Ensure = "Absent"`), and is state-only otherwise.
 
 Import is not supported: a generic gateway cannot reconstruct the original property authorship from live state. Write configuration matching the live state and let the first apply adopt it (no-op when already in the desired state).
+
+Windows PowerShell 5.1 only (`Invoke-DscResource`, DSC 1.1): PowerShell 7 / DSCv3 is not supported.
 
 ## Example Usage
 

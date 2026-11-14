@@ -17,6 +17,15 @@ the target host's OpenSSH Server and executes PowerShell there.
 - A Windows target running **OpenSSH Server**, reachable from the machine
   running Terraform, with PowerShell as the SSH login shell
 
+Windows Server 2025 is the tested target (`windows-latest` CI plus a
+`windows-2025` lab host); 2022 / 2019 / 2016 and client SKUs are
+best-effort and untested. Operations run over a persistent PowerShell 7
+(`pwsh.exe`) session with a one-shot `powershell.exe` fallback, except
+`windows_dsc_resource` which requires Windows PowerShell 5.1. Most resources
+need an administrator connection. See the
+[provider docs](https://registry.terraform.io/providers/kfrlabs/windows/latest/docs#compatibility-and-requirements)
+for the full compatibility notes.
+
 Enabling OpenSSH Server on the target (once, as an administrator):
 
 ```powershell
@@ -46,7 +55,7 @@ terraform {
   required_providers {
     windows = {
       source  = "kfrlabs/windows"
-      version = "~> 0.1"
+      version = "~> 0.4"
     }
   }
 }
