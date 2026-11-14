@@ -124,11 +124,11 @@ func (d *windowsNetworkAdaptersDataSource) Schema(ctx context.Context, _ datasou
 			"owning the address of the current SSH session (advisory inventory; never asserted in " +
 			"automation because it is host-dependent). Unbound MTUs report `null` (the host has no " +
 			"family address to size); unreported strings report `\"\"`.\n\n" +
-			"The Terraform data source ID is the hex SHA-256 of the normalised filter set.",
+			"The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
-				Description: "Data source ID; hex SHA-256 of the normalised filter set (sorted lower-case names, regex, normalised MAC, upper-case status, bools).",
+				Description: "Data source ID (query-ID); hex SHA-256 of the normalised filter set (sorted lower-case names, regex, normalised MAC, upper-case status, bools).",
 			},
 			"names": schema.SetAttribute{
 				ElementType: types.StringType,

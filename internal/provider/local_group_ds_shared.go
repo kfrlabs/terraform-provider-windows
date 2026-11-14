@@ -17,6 +17,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -87,8 +88,11 @@ func localGroupMemberNestedAttributes() map[string]schema.Attribute {
 }
 
 // localGroupNestedAttributes returns the per-group schema attributes for the
-// collection `groups` ListNestedAttribute (all Computed).
-func localGroupNestedAttributes() map[string]schema.Attribute {
+// collection `groups` ListNestedAttribute (all Computed). An unsupported
+// definition type surfaces as an error diagnostic instead of panicking, so
+// a future attribute addition fails closed at schema build time.
+func localGroupNestedAttributes() (map[string]schema.Attribute, diag.Diagnostics) {
+	var diags diag.Diagnostics
 	defs := localGroupNestedAttrDefs()
 	attrs := make(map[string]schema.Attribute, len(defs)+1)
 	for _, d := range defs {
@@ -104,7 +108,10 @@ func localGroupNestedAttributes() map[string]schema.Attribute {
 				Description: d.desc,
 			}
 		default:
-			panic("localGroupNestedAttributes: unsupported attribute type for " + d.name)
+			diags.AddError(
+				"Unsupported local group attribute type",
+				fmt.Sprintf("localGroupNestedAttributes: unsupported attribute type %T for %q; expected types.StringType or types.BoolType.", d.typ, d.name),
+			)
 		}
 	}
 	attrs["members"] = schema.ListNestedAttribute{
@@ -114,7 +121,7 @@ func localGroupNestedAttributes() map[string]schema.Attribute {
 		},
 		Description: "Members of the group, sorted by member SID. Null when membership was not requested (include_members false); empty when the group has no members.",
 	}
-	return attrs
+	return attrs, diags
 }
 
 // localGroupsObjectType is the element type of the collection `groups` list:

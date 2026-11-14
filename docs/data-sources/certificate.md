@@ -4,14 +4,14 @@ page_title: "windows_certificate Data Source - windows"
 subcategory: ""
 description: |-
   Reads the observed state of a certificate in a Windows certificate store on a remote Windows host without managing it.
-  Lookup is by thumbprint or by subject (exactly one of the two), optionally narrowed by store_location and store_name. A subject lookup matching several certificates resolves deterministically to the most recently issued one when most_recent is true (the default); with most_recent = false several matches are an error. Zero matches are always an error. The subject must match the host-reported Subject verbatim (order, spacing and escaping must match; no DN normalisation is applied).
+  Lookup is by thumbprint or by subject (exactly one of the two), optionally narrowed by store_location and store_name. A subject lookup matching several certificates resolves deterministically to the most recently issued one only when most_recent is true; with most_recent = false (the default) several matches are an error. Zero matches are always an error. The subject must match the host-reported Subject verbatim (order, spacing and escaping must match; no DN normalisation is applied).
 ---
 
 # windows_certificate (Data Source)
 
 Reads the observed state of a certificate in a Windows certificate store on a remote Windows host without managing it.
 
-Lookup is by `thumbprint` or by `subject` (exactly one of the two), optionally narrowed by `store_location` and `store_name`. A subject lookup matching several certificates resolves deterministically to the most recently issued one when `most_recent` is true (the default); with `most_recent = false` several matches are an error. Zero matches are always an error. The subject must match the host-reported Subject verbatim (order, spacing and escaping must match; no DN normalisation is applied).
+Lookup is by `thumbprint` or by `subject` (exactly one of the two), optionally narrowed by `store_location` and `store_name`. A subject lookup matching several certificates resolves deterministically to the most recently issued one only when `most_recent` is true; with `most_recent = false` (the default) several matches are an error. Zero matches are always an error. The subject must match the host-reported Subject verbatim (order, spacing and escaping must match; no DN normalisation is applied).
 
 ## Example Usage
 
@@ -37,8 +37,8 @@ data "windows_certificate" "web" {
 }
 
 # Lookup by subject, narrowed to the Personal store. When several certificates
-# share the subject, the most recently issued one wins (most_recent defaults
-# to true).
+# share the subject, the most recently issued one wins (most_recent must be
+# set explicitly: it defaults to false and several matches are an error).
 data "windows_certificate" "by_subject" {
   subject     = "CN=example.com"
   store_name  = "My"
@@ -56,7 +56,7 @@ output "web_not_after" {
 
 ### Optional
 
-- `most_recent` (Boolean) When a subject lookup matches several certificates, pick the most recently issued one (latest not_before). Defaults to true; with false several matches are an error. Ignored for thumbprint lookups.
+- `most_recent` (Boolean) When a subject lookup matches several certificates, pick the most recently issued one (latest not_before). Defaults to false; with false several matches are an error. Ignored for thumbprint lookups.
 - `store_location` (String) Certificate store location to search: LocalMachine or CurrentUser. Defaults to LocalMachine.
 - `store_name` (String) Certificate store name to search. Defaults to My. Must not contain '/' or '\'.
 - `subject` (String) Distinguished name of the subject (e.g. "CN=example.com"). Matched exactly and case-insensitively against the host-reported Subject verbatim: copy the value from the observed subject attribute (order, spacing and escaping must match). Exactly one of thumbprint or subject must be specified.

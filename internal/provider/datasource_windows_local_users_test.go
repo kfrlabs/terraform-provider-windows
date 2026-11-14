@@ -261,7 +261,10 @@ func TestLocalUsersSchema_ParityWithSingular(t *testing.T) {
 	single := &windowsLocalUserDataSource{}
 	sResp := &datasource.SchemaResponse{}
 	single.Schema(ctx, datasource.SchemaRequest{}, sResp)
-	nested := localUserNestedAttributes()
+	nested, nestedDiags := localUserNestedAttributes()
+	if nestedDiags.HasError() {
+		t.Fatalf("localUserNestedAttributes must be panic-free and diag-free for the static definition set, got: %v", nestedDiags)
+	}
 	for name, collectionAttr := range nested {
 		singularAttr, ok := sResp.Schema.Attributes[name]
 		if !ok {

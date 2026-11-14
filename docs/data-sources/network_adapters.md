@@ -6,7 +6,7 @@ description: |-
   Reads the network adapter inventory of the remote Windows host without managing it. This is a standalone collection data source — no sibling resource exists.
   Optional filters narrow the result: names (exact, case-insensitive), name_regex (RE2 match on the adapter name), mac_address (any common spelling), status (Up, Disconnected, Disabled or NotPresent, case-insensitive), physical_only (pass -Physical to Get-NetAdapter) and include_hidden (pass -IncludeHidden). Omitted filters match everything.
   adapters carries one object per matching adapter, sorted by interface_index; an empty match is a valid empty list, never an error. is_management marks the adapter owning the address of the current SSH session (advisory inventory; never asserted in automation because it is host-dependent). Unbound MTUs report null (the host has no family address to size); unreported strings report "".
-  The Terraform data source ID is the hex SHA-256 of the normalised filter set.
+  The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.
 ---
 
 # windows_network_adapters (Data Source)
@@ -17,7 +17,7 @@ Optional filters narrow the result: `names` (exact, case-insensitive), `name_reg
 
 `adapters` carries one object per matching adapter, sorted by `interface_index`; an empty match is a valid empty list, never an error. `is_management` marks the adapter owning the address of the current SSH session (advisory inventory; never asserted in automation because it is host-dependent). Unbound MTUs report `null` (the host has no family address to size); unreported strings report `""`.
 
-The Terraform data source ID is the hex SHA-256 of the normalised filter set.
+The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.
 
 ## Example Usage
 
@@ -79,7 +79,7 @@ resource "windows_net_ip_address" "storage" {
 ### Read-Only
 
 - `adapters` (Attributes List) Matching adapters, sorted by interface_index. Empty when no adapter matches the filters. (see [below for nested schema](#nestedatt--adapters))
-- `id` (String) Data source ID; hex SHA-256 of the normalised filter set (sorted lower-case names, regex, normalised MAC, upper-case status, bools).
+- `id` (String) Data source ID (query-ID); hex SHA-256 of the normalised filter set (sorted lower-case names, regex, normalised MAC, upper-case status, bools).
 
 <a id="nestedatt--timeouts"></a>
 ### Nested Schema for `timeouts`

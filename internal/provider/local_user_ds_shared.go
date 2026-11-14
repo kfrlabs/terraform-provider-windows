@@ -16,6 +16,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -58,8 +59,11 @@ func localUserNestedAttrDefs() []localUserNestedAttrDef {
 }
 
 // localUserNestedAttributes returns the per-user schema attributes for the
-// collection `users` ListNestedAttribute (all Computed).
-func localUserNestedAttributes() map[string]schema.Attribute {
+// collection `users` ListNestedAttribute (all Computed). An unsupported
+// definition type surfaces as an error diagnostic instead of panicking, so
+// a future attribute addition fails closed at schema build time.
+func localUserNestedAttributes() (map[string]schema.Attribute, diag.Diagnostics) {
+	var diags diag.Diagnostics
 	defs := localUserNestedAttrDefs()
 	attrs := make(map[string]schema.Attribute, len(defs))
 	for _, d := range defs {
@@ -75,10 +79,13 @@ func localUserNestedAttributes() map[string]schema.Attribute {
 				Description: d.desc,
 			}
 		default:
-			panic("localUserNestedAttributes: unsupported attribute type for " + d.name)
+			diags.AddError(
+				"Unsupported local user attribute type",
+				fmt.Sprintf("localUserNestedAttributes: unsupported attribute type %T for %q; expected types.StringType or types.BoolType.", d.typ, d.name),
+			)
 		}
 	}
-	return attrs
+	return attrs, diags
 }
 
 // localUsersObjectType is the element type of the collection `users` list:

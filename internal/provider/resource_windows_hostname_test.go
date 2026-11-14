@@ -36,6 +36,9 @@ type fakeHostnameClient struct {
 	updateOut *winclient.HostnameState
 	updateErr error
 	deleteErr error
+	// deleteCalls counts Delete invocations so the EC-7 pure-no-op test can
+	// assert the handler never touches the client.
+	deleteCalls int
 }
 
 func (f *fakeHostnameClient) Create(_ context.Context, _ winclient.HostnameInput) (*winclient.HostnameState, error) {
@@ -48,6 +51,7 @@ func (f *fakeHostnameClient) Update(_ context.Context, _ string, _ winclient.Hos
 	return f.updateOut, f.updateErr
 }
 func (f *fakeHostnameClient) Delete(_ context.Context, _ string) error {
+	f.deleteCalls++
 	return f.deleteErr
 }
 
@@ -772,6 +776,9 @@ func TestHostnameDelete_NoOp(t *testing.T) {
 	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Errorf("EC-7: Delete should be a no-op, got: %v", resp.Diagnostics)
+	}
+	if fake.deleteCalls != 0 {
+		t.Errorf("EC-7: Delete must be a pure no-op without client I/O, client Delete called %d times", fake.deleteCalls)
 	}
 }
 

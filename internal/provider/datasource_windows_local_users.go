@@ -69,6 +69,11 @@ func (d *windowsLocalUsersDataSource) Metadata(_ context.Context, req datasource
 
 // Schema returns the TPF schema for the windows_local_users data source.
 func (d *windowsLocalUsersDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	nestedAttrs, nestedDiags := localUserNestedAttributes()
+	resp.Diagnostics.Append(nestedDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the local user inventory of the remote Windows host without " +
 			"managing it. This is a **sibling collection** of `windows_local_user` — every `users` " +
@@ -79,11 +84,11 @@ func (d *windowsLocalUsersDataSource) Schema(ctx context.Context, _ datasource.S
 			"`users` carries one object per matching account, sorted by name (case-insensitive); " +
 			"`names` and `sids` carry the same accounts in the same order. An empty match is a " +
 			"valid empty list, never an error.\n\n" +
-			"The Terraform data source ID is the hex SHA-256 of the normalised filter set.",
+			"The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
-				Description: "Data source ID; hex SHA-256 of the normalised filter set (raw regex, enabled tri-state, include_builtin).",
+				Description: "Data source ID (query-ID); hex SHA-256 of the normalised filter set (raw regex, enabled tri-state, include_builtin).",
 			},
 			"name_regex": schema.StringAttribute{
 				Optional:    true,
@@ -100,7 +105,7 @@ func (d *windowsLocalUsersDataSource) Schema(ctx context.Context, _ datasource.S
 			"users": schema.ListNestedAttribute{
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{
-					Attributes: localUserNestedAttributes(),
+					Attributes: nestedAttrs,
 				},
 				Description: "Matching local users, sorted by name (case-insensitive). Empty when no user matches the filters.",
 			},

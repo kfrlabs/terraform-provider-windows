@@ -6,7 +6,7 @@ description: |-
   Reads the local user inventory of the remote Windows host without managing it. This is a sibling collection of windows_local_user — every users element carries the same attributes as the singular data source, plus is_builtin.
   Optional filters narrow the result: name_regex (RE2 match on the SAM account name), enabled (keep only enabled or only disabled accounts) and include_builtin (drop built-in accounts such as Administrator and Guest). Omitted filters match everything.
   users carries one object per matching account, sorted by name (case-insensitive); names and sids carry the same accounts in the same order. An empty match is a valid empty list, never an error.
-  The Terraform data source ID is the hex SHA-256 of the normalised filter set.
+  The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.
 ---
 
 # windows_local_users (Data Source)
@@ -17,7 +17,7 @@ Optional filters narrow the result: `name_regex` (RE2 match on the SAM account n
 
 `users` carries one object per matching account, sorted by name (case-insensitive); `names` and `sids` carry the same accounts in the same order. An empty match is a valid empty list, never an error.
 
-The Terraform data source ID is the hex SHA-256 of the normalised filter set.
+The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.
 
 ## Example Usage
 
@@ -67,7 +67,7 @@ check "no_unexpected_admins" {
 
 ### Read-Only
 
-- `id` (String) Data source ID; hex SHA-256 of the normalised filter set (raw regex, enabled tri-state, include_builtin).
+- `id` (String) Data source ID (query-ID); hex SHA-256 of the normalised filter set (raw regex, enabled tri-state, include_builtin).
 - `names` (List of String) SAM account names of the matching users, in the same order as users. Empty when no user matches the filters.
 - `sids` (List of String) SIDs of the matching users, in the same order as users. Empty when no user matches the filters.
 - `users` (Attributes List) Matching local users, sorted by name (case-insensitive). Empty when no user matches the filters. (see [below for nested schema](#nestedatt--users))

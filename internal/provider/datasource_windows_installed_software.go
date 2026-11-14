@@ -119,11 +119,11 @@ func (d *windowsInstalledSoftwareDataSource) Schema(ctx context.Context, _ datas
 			"`skipped_entries` counts registry keys skipped because their values were unreadable " +
 			"(keys without a DisplayName are silently omitted and not counted). `Win32_Product` is " +
 			"never queried.\n\n" +
-			"The Terraform data source ID is the hex SHA-256 of the normalised filter set.",
+			"The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
-				Description: "Data source ID; hex SHA-256 of the normalised filter set (regexes, normalised product code, bools).",
+				Description: "Data source ID (query-ID); hex SHA-256 of the normalised filter set (regexes, normalised product code, bools).",
 			},
 			"name_regex": schema.StringAttribute{
 				Optional:    true,

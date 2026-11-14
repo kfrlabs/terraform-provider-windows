@@ -6,7 +6,7 @@ description: |-
   Reads the installed software inventory of the remote Windows host without managing it. This is a standalone collection data source — no sibling resource exists.
   Inventory comes from the machine-wide Uninstall registry hives (the same hives windows_legacy_package reads), plus the loaded per-user hives under HKU when include_user_installs is set. Optional filters narrow the result: name_regex and publisher_regex (RE2 matches on the DisplayName and Publisher), product_code (an MSI ProductCode GUID in any common spelling), include_system_components (keep entries with SystemComponent=1, hidden from Programs and Features), include_updates (keep update entries) and include_user_installs. Omitted filters match everything.
   packages carries one object per matching entry, sorted by name (case-insensitive), then version, then registry key; an empty match is a valid empty list, never an error. skipped_entries counts registry keys skipped because their values were unreadable (keys without a DisplayName are silently omitted and not counted). Win32_Product is never queried.
-  The Terraform data source ID is the hex SHA-256 of the normalised filter set.
+  The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.
 ---
 
 # windows_installed_software (Data Source)
@@ -17,7 +17,7 @@ Inventory comes from the machine-wide Uninstall registry hives (the same hives `
 
 `packages` carries one object per matching entry, sorted by name (case-insensitive), then version, then registry key; an empty match is a valid empty list, never an error. `skipped_entries` counts registry keys skipped because their values were unreadable (keys without a DisplayName are silently omitted and not counted). `Win32_Product` is never queried.
 
-The Terraform data source ID is the hex SHA-256 of the normalised filter set.
+The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.
 
 ## Example Usage
 
@@ -87,7 +87,7 @@ output "skipped_entries" {
 
 ### Read-Only
 
-- `id` (String) Data source ID; hex SHA-256 of the normalised filter set (regexes, normalised product code, bools).
+- `id` (String) Data source ID (query-ID); hex SHA-256 of the normalised filter set (regexes, normalised product code, bools).
 - `packages` (Attributes List) Matching installed packages, sorted by name, version and registry key. Empty when no package matches the filters. (see [below for nested schema](#nestedatt--packages))
 - `skipped_entries` (Number) Number of registry keys skipped because their values were unreadable.
 
