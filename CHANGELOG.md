@@ -601,7 +601,13 @@ All notable changes to this project will be documented in this file.
   "Unknown Windows Firewall profile setting". Only values known at
   plan time are sent to `Set-NetFirewallProfile`, matching the
   documented partial-management contract and the `ntp` / `timezone` /
-  `power_plan` convention. Found by a manual lab run: a profile tuning
+  `power_plan` convention. The configured `GpoBoolean` settings
+  (`Enabled`, `AllowInboundRules`, `NotifyOnListen`, `LogBlocked`, ...)
+  are now sent as quoted `'True'` / `'False'` strings: on current
+  Windows builds these parameters reject a splatted `$true` / `$false`
+  ("Invalid cast from 'System.Boolean' to 'GpoBoolean'"). The restore
+  path (`restore_on_destroy`) used the same unquoted tokens and is
+  fixed as well. Both found by a manual lab run: a profile tuning
   only `log_blocked` + `log_max_size_kilobytes` could never converge.
 
 ## [0.4.0] - 2026-11-11

@@ -353,22 +353,30 @@ func buildFirewallProfileReplacer(name string) *strings.Replacer {
 	)
 }
 
-// psBoolToken renders a Go bool as a PowerShell boolean literal.
-func psBoolToken(b bool) string {
+// psGpoBoolToken renders a Go bool as a quoted PowerShell string for
+// Set-NetFirewallProfile parameters typed GpoBoolean (Enabled,
+// AllowInboundRules, AllowLocalFirewallRules, AllowLocalIPsecRules,
+// AllowUnicastResponseToMulticast, NotifyOnListen, LogAllowed, LogBlocked,
+// LogIgnored on current Windows builds). A splatted $true/$false fails to
+// bind ("Invalid cast from 'System.Boolean' to 'GpoBoolean'"); the
+// strings 'True'/'False' bind on GpoBoolean hosts and still convert on
+// older hosts where the parameters are plain bool.
+func psGpoBoolToken(b bool) string {
 	if b {
-		return "$true"
+		return "'True'"
 	}
-	return "$false"
+	return "'False'"
 }
 
 // triToken renders a tri-state host spelling as a PowerShell token:
-// True/False become booleans, anything else (NotConfigured) stays quoted.
+// True/False become quoted GpoBoolean-compatible strings (see
+// psGpoBoolToken), anything else (NotConfigured) stays quoted verbatim.
 func triToken(v string) string {
 	switch v {
 	case "True":
-		return "$true"
+		return "'True'"
 	case "False":
-		return "$false"
+		return "'False'"
 	default:
 		return psQuote(v)
 	}
@@ -385,7 +393,7 @@ func buildFirewallProfileParams(name string, s FirewallProfileSettings) string {
 	fmt.Fprintf(&sb, "  Name        = %s\n", psQuote(name))
 	sb.WriteString("  PolicyStore = 'PersistentStore'\n")
 	if s.Enabled != nil {
-		fmt.Fprintf(&sb, "  Enabled = %s\n", psBoolToken(*s.Enabled))
+		fmt.Fprintf(&sb, "  Enabled = %s\n", psGpoBoolToken(*s.Enabled))
 	}
 	if s.DefaultInboundAction != nil {
 		fmt.Fprintf(&sb, "  DefaultInboundAction = %s\n", psQuote(*s.DefaultInboundAction))
@@ -394,19 +402,19 @@ func buildFirewallProfileParams(name string, s FirewallProfileSettings) string {
 		fmt.Fprintf(&sb, "  DefaultOutboundAction = %s\n", psQuote(*s.DefaultOutboundAction))
 	}
 	if s.AllowInboundRules != nil {
-		fmt.Fprintf(&sb, "  AllowInboundRules = %s\n", psBoolToken(*s.AllowInboundRules))
+		fmt.Fprintf(&sb, "  AllowInboundRules = %s\n", psGpoBoolToken(*s.AllowInboundRules))
 	}
 	if s.AllowLocalFirewallRules != nil {
-		fmt.Fprintf(&sb, "  AllowLocalFirewallRules = %s\n", psBoolToken(*s.AllowLocalFirewallRules))
+		fmt.Fprintf(&sb, "  AllowLocalFirewallRules = %s\n", psGpoBoolToken(*s.AllowLocalFirewallRules))
 	}
 	if s.AllowLocalIPsecRules != nil {
-		fmt.Fprintf(&sb, "  AllowLocalIPsecRules = %s\n", psBoolToken(*s.AllowLocalIPsecRules))
+		fmt.Fprintf(&sb, "  AllowLocalIPsecRules = %s\n", psGpoBoolToken(*s.AllowLocalIPsecRules))
 	}
 	if s.AllowUnicastResponseToMulticast != nil {
-		fmt.Fprintf(&sb, "  AllowUnicastResponseToMulticast = %s\n", psBoolToken(*s.AllowUnicastResponseToMulticast))
+		fmt.Fprintf(&sb, "  AllowUnicastResponseToMulticast = %s\n", psGpoBoolToken(*s.AllowUnicastResponseToMulticast))
 	}
 	if s.NotifyOnListen != nil {
-		fmt.Fprintf(&sb, "  NotifyOnListen = %s\n", psBoolToken(*s.NotifyOnListen))
+		fmt.Fprintf(&sb, "  NotifyOnListen = %s\n", psGpoBoolToken(*s.NotifyOnListen))
 	}
 	if s.LogFileName != nil {
 		fmt.Fprintf(&sb, "  LogFileName = %s\n", psQuote(*s.LogFileName))
@@ -415,13 +423,13 @@ func buildFirewallProfileParams(name string, s FirewallProfileSettings) string {
 		fmt.Fprintf(&sb, "  LogMaxSizeKilobytes = %d\n", *s.LogMaxSizeKilobytes)
 	}
 	if s.LogAllowed != nil {
-		fmt.Fprintf(&sb, "  LogAllowed = %s\n", psBoolToken(*s.LogAllowed))
+		fmt.Fprintf(&sb, "  LogAllowed = %s\n", psGpoBoolToken(*s.LogAllowed))
 	}
 	if s.LogBlocked != nil {
-		fmt.Fprintf(&sb, "  LogBlocked = %s\n", psBoolToken(*s.LogBlocked))
+		fmt.Fprintf(&sb, "  LogBlocked = %s\n", psGpoBoolToken(*s.LogBlocked))
 	}
 	if s.LogIgnored != nil {
-		fmt.Fprintf(&sb, "  LogIgnored = %s\n", psBoolToken(*s.LogIgnored))
+		fmt.Fprintf(&sb, "  LogIgnored = %s\n", psGpoBoolToken(*s.LogIgnored))
 	}
 	if s.DisabledInterfaceAliasesSet {
 		fmt.Fprintf(&sb, "  DisabledInterfaceAliases = %s\n", psQuoteList(s.DisabledInterfaceAliases))
@@ -438,14 +446,14 @@ func buildFirewallProfileRestoreParams(name string, snap FirewallProfileState) s
 	sb.WriteString("$params = @{\n")
 	fmt.Fprintf(&sb, "  Name        = %s\n", psQuote(name))
 	sb.WriteString("  PolicyStore = 'PersistentStore'\n")
-	fmt.Fprintf(&sb, "  Enabled = %s\n", psBoolToken(snap.Enabled))
+	fmt.Fprintf(&sb, "  Enabled = %s\n", psGpoBoolToken(snap.Enabled))
 	fmt.Fprintf(&sb, "  DefaultInboundAction = %s\n", psQuote(snap.DefaultInboundAction))
 	fmt.Fprintf(&sb, "  DefaultOutboundAction = %s\n", psQuote(snap.DefaultOutboundAction))
 	fmt.Fprintf(&sb, "  AllowInboundRules = %s\n", triToken(snap.AllowInboundRules))
 	fmt.Fprintf(&sb, "  AllowLocalFirewallRules = %s\n", triToken(snap.AllowLocalFirewallRules))
 	fmt.Fprintf(&sb, "  AllowLocalIPsecRules = %s\n", triToken(snap.AllowLocalIPsecRules))
 	fmt.Fprintf(&sb, "  AllowUnicastResponseToMulticast = %s\n", triToken(snap.AllowUnicastResponseToMulticast))
-	fmt.Fprintf(&sb, "  NotifyOnListen = %s\n", psBoolToken(snap.NotifyOnListen))
+	fmt.Fprintf(&sb, "  NotifyOnListen = %s\n", psGpoBoolToken(snap.NotifyOnListen))
 	fmt.Fprintf(&sb, "  LogFileName = %s\n", psQuote(snap.LogFileName))
 	fmt.Fprintf(&sb, "  LogMaxSizeKilobytes = %d\n", snap.LogMaxSizeKilobytes)
 	fmt.Fprintf(&sb, "  LogAllowed = %s\n", triToken(snap.LogAllowed))
