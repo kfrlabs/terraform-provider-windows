@@ -427,7 +427,113 @@ func lpDiagCounts(diags diag.Diagnostics) (errors, warnings int) {
 	return errors, warnings
 }
 
+func TestLegacyPackageSourceValidator_StrictChecksumMode(t *testing.T) {
+	t.Run("https without checksum errors in strict mode", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "1")
+		diags := lpSourceValidatorDiags(t, "https://mirror.internal/pkg.msi", "")
+		gotErr, gotWarn := lpDiagCounts(diags)
+		if gotErr != 1 || gotWarn != 0 {
+			t.Fatalf("errors=%d warnings=%d, want errors=1 warnings=0 (diags: %v)", gotErr, gotWarn, diags)
+		}
+	})
+	t.Run("whitespace-only checksum counts as missing in strict mode", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "1")
+		diags := lpSourceValidatorDiags(t, "https://mirror.internal/pkg.msi", "   ")
+		gotErr, gotWarn := lpDiagCounts(diags)
+		if gotErr != 1 || gotWarn != 0 {
+			t.Fatalf("errors=%d warnings=%d, want errors=1 warnings=0 (diags: %v)", gotErr, gotWarn, diags)
+		}
+	})
+	t.Run("padded sha256 checksum parses cleanly in strict mode", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "1")
+		diags := lpSourceValidatorDiags(t, "https://mirror.internal/pkg.msi", " sha256:deadbeef")
+		gotErr, gotWarn := lpDiagCounts(diags)
+		if gotErr != 0 || gotWarn != 0 {
+			t.Fatalf("errors=%d warnings=%d, want errors=0 warnings=0 (diags: %v)", gotErr, gotWarn, diags)
+		}
+	})
+	t.Run("https with sha256 is clean in strict mode", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "true")
+		diags := lpSourceValidatorDiags(t, "https://mirror.internal/pkg.msi", "sha256:deadbeef")
+		gotErr, gotWarn := lpDiagCounts(diags)
+		if gotErr != 0 || gotWarn != 0 {
+			t.Fatalf("errors=%d warnings=%d, want errors=0 warnings=0 (diags: %v)", gotErr, gotWarn, diags)
+		}
+	})
+	t.Run("md5 errors in strict mode", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "YES")
+		diags := lpSourceValidatorDiags(t, "https://mirror.internal/pkg.msi", "md5:abcd")
+		gotErr, _ := lpDiagCounts(diags)
+		if gotErr != 1 {
+			t.Fatalf("expected 1 error for md5 in strict mode, got errors=%d (diags: %v)", gotErr, diags)
+		}
+	})
+	t.Run("http without checksum errors in strict mode", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "1")
+		diags := lpSourceValidatorDiags(t, "http://mirror.internal/pkg.msi", "")
+		gotErr, gotWarn := lpDiagCounts(diags)
+		if gotErr != 1 || gotWarn != 0 {
+			t.Fatalf("errors=%d warnings=%d, want errors=1 warnings=0 (diags: %v)", gotErr, gotWarn, diags)
+		}
+	})
+	t.Run("http with md5 errors without warning in strict mode", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "1")
+		diags := lpSourceValidatorDiags(t, "http://mirror.internal/pkg.msi", "md5:abcd")
+		gotErr, gotWarn := lpDiagCounts(diags)
+		if gotErr != 1 || gotWarn != 0 {
+			t.Fatalf("errors=%d warnings=%d, want errors=1 warnings=0 (diags: %v)", gotErr, gotWarn, diags)
+		}
+	})
+	t.Run("https without checksum warns only when non-strict", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "")
+		diags := lpSourceValidatorDiags(t, "https://mirror.internal/pkg.msi", "")
+		gotErr, gotWarn := lpDiagCounts(diags)
+		if gotErr != 0 || gotWarn != 1 {
+			t.Fatalf("errors=%d warnings=%d, want errors=0 warnings=1 (diags: %v)", gotErr, gotWarn, diags)
+		}
+	})
+	t.Run("unset env preserves non-strict behavior", func(t *testing.T) {
+		t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "")
+		if strictChecksumMode() {
+			t.Fatal("strictChecksumMode should be false when WINDOWS_REQUIRE_CHECKSUM is empty (unset-equivalent)")
+		}
+		diags := lpSourceValidatorDiags(t, "https://mirror.internal/pkg.msi", "")
+		gotErr, gotWarn := lpDiagCounts(diags)
+		if gotErr != 0 || gotWarn != 1 {
+			t.Fatalf("errors=%d warnings=%d, want errors=0 warnings=1 (diags: %v)", gotErr, gotWarn, diags)
+		}
+	})
+}
+
+func TestStrictChecksumMode(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"1", true},
+		{"true", true},
+		{"TRUE", true},
+		{" True ", true},
+		{"yes", true},
+		{"YES", true},
+		{" yes ", true},
+		{"", false},
+		{"0", false},
+		{"false", false},
+		{"no", false},
+		{"strict", false},
+	}
+	for _, tc := range cases {
+		t.Run("value="+tc.value, func(t *testing.T) {
+			t.Setenv("WINDOWS_REQUIRE_CHECKSUM", tc.value)
+			if got := strictChecksumMode(); got != tc.want {
+				t.Errorf("strictChecksumMode() = %v, want %v for value %q", got, tc.want, tc.value)
+			}
+		})
+	}
+}
 func TestLegacyPackageSourceValidator(t *testing.T) {
+	t.Setenv("WINDOWS_REQUIRE_CHECKSUM", "")
 	cases := []struct {
 		name       string
 		sourceURL  string
@@ -439,6 +545,8 @@ func TestLegacyPackageSourceValidator(t *testing.T) {
 		{"http without checksum fails", "http://mirror.internal/pkg.msi", "", 1, 0, "checksum is required"},
 		{"HTTP uppercase scheme without checksum fails", "HTTP://mirror.internal/pkg.msi", "", 1, 0, "checksum is required"},
 		{"https without checksum warns", "https://mirror.internal/pkg.msi", "", 0, 1, "Unpinned"},
+		{"https with whitespace-only checksum warns as missing", "https://mirror.internal/pkg.msi", "   ", 0, 1, "Unpinned"},
+		{"https with padded sha256 is clean", "https://mirror.internal/pkg.msi", " sha256:deadbeef", 0, 0, ""},
 		{"https with sha256 is clean", "https://mirror.internal/pkg.msi", "sha256:deadbeef", 0, 0, ""},
 		{"https with sha512 is clean", "https://mirror.internal/pkg.msi", "sha512:deadbeef", 0, 0, ""},
 		{"http with sha256 is clean", "http://mirror.internal/pkg.msi", "sha256:deadbeef", 0, 0, ""},
