@@ -41,26 +41,10 @@ import (
 //
 // NOTE: this constant uses a Go raw string (backtick-delimited). PowerShell
 // backtick escape sequences (`n, `t) MUST NOT appear in this body.
-const psIISHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
-[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
-[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+const psIISHeader = psEnvelopePrelude + psIISHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj  = [ordered]@{ ok = $true; data = $Data }
-  $json = ($obj | ConvertTo-Json -Depth 10 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj  = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
+// psIISHeaderRemainder Shared IIS header: Classify-IIS + Ensure-IIS stay here; envelope emitters come from the prelude. Emit depth 10->8: app-pool/site payloads are flat dicts.
+const psIISHeaderRemainder = `
 function Classify-IIS([string]$Msg) {
   if ($Msg -match '0x8007052e' -or $Msg -match 'unknown user name or bad password' -or $Msg -match 'Logon failure') { return 'invalid_identity' }
   if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or $Msg -match 'UnauthorizedAccess' -or $Msg -match '0x80070005') { return 'access_denied' }

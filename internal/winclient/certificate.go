@@ -216,26 +216,10 @@ func validateCertificateInput(input CertificateInput) (location, store string, e
 // Classify-Certificate prefers Win32 HResult codes over localized message
 // substrings (hosts are not all English); substring matches remain as a
 // backstop where no stable code exists.
-const psCertificateHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
-[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
-[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+const psCertificateHeader = psEnvelopePrelude + psCertificateHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj  = [ordered]@{ ok = $true; data = $Data }
-  $json = ($obj | ConvertTo-Json -Depth 10 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj  = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
+// psCertificateHeaderRemainder Classify + ConvertTo-CertificateJson stay here; envelope emitters come from the prelude. Emit depth 10->8: payloads are flat dicts and string lists.
+const psCertificateHeaderRemainder = `
 function Classify-Certificate([object]$Rec) {
   $msg = ''
   try { $msg = [string]$Rec.Exception.Message } catch { $msg = [string]$Rec }

@@ -63,18 +63,18 @@ func NewWingetPackageClient(c *Client) *WingetPackageClientImpl {
 // PowerShell header — shared across all winget package scripts
 // ---------------------------------------------------------------------------
 
-// wpHeader is prepended to every winget script. It defines:
-//   - Emit-OK / Emit-Err   : JSON envelope emitters.
+// wpHeader is prepended to every winget script. It composes the shared
+// envelope prelude (Emit-OK / Emit-Err) and defines:
 //   - $WG_* constants      : winget exit codes (signed 32-bit HRESULTs).
 //   - Classify-WG          : maps an exit code to a WingetPackageErrorKind string.
 //   - Resolve-WingetPath   : finds the real winget.exe (works for SYSTEM).
 //   - Assert-Winget        : pre-flight; emits 'module_missing' + returns $false (EC-1).
 //   - Invoke-Winget        : runs winget.exe, captures stdout/stderr/exit code.
 //   - Get-WPState          : reads the installed state of one package.
-const wpHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
+const wpHeader = psEnvelopePrelude + wpHeaderRemainder
 
+// wpHeaderRemainder holds the winget exit-code table, Classify-WG and helpers; envelope emitters come from the prelude ($Msg renamed to the canonical $Message; all call sites are positional). Gains WarningPreference + InvariantCulture (suppression/locale-stability only).
+const wpHeaderRemainder = `
 # winget exit codes as signed 32-bit integers.
 # Reference: https://github.com/microsoft/winget-cli/blob/master/doc/windows/package-manager/winget/returnCodes.md
 $WG_NO_APPS       = -1978335212            # 0x8A150014 NO_APPLICATIONS_FOUND
@@ -87,17 +87,6 @@ $WG_BUSY          = @(-1978334975, -1978334974, -1978334973)  # INSTALL_PACKAGE_
 $WG_ALREADY       = @(-1978335135, -1978334963)  # PACKAGE_ALREADY_INSTALLED, INSTALL_ALREADY_INSTALLED
 $WG_REBOOT_OK     = @(-1978334967, -1978334965)  # REBOOT_REQUIRED_TO_FINISH, REBOOT_INITIATED (operation succeeded)
 $WG_NO_UPDATE     = @(-1978335189, -1978335153)  # UPDATE_NOT_APPLICABLE, UPGRADE_VERSION_NOT_NEWER
-
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-
-function Emit-Err([string]$Kind, [string]$Msg, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Msg; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
 
 function Classify-WG([int]$Code, [bool]$HasVersion) {
   if ($Code -eq $WG_NO_INSTALLER)  { return 'version_not_available' }
