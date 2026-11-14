@@ -38,20 +38,10 @@ func NewRegistryValueClient(c *Client) *RegistryValueClientImpl {
 // psRegistryValueHeader defines all PowerShell helper functions used by the
 // registry value scripts. Kept in a single constant so all three operations
 // (Set/Read/Delete) share identical helpers.
-const psRegistryValueHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
+const psRegistryValueHeader = psEnvelopePrelude + psRegistryValueHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 16 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Get-RegHive([string]$Hive) {
+// psRegistryValueHeaderRemainder Hive helpers stay here; envelope emitters come from the prelude. Emit-OK depth 16->8: payloads are flat dicts and string lists (depth <= 3).
+const psRegistryValueHeaderRemainder = `function Get-RegHive([string]$Hive) {
   switch ($Hive) {
     'HKLM' { return [Microsoft.Win32.Registry]::LocalMachine }
     'HKCU' { return [Microsoft.Win32.Registry]::CurrentUser }

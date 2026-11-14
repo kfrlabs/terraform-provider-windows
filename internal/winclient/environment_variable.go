@@ -56,20 +56,10 @@ func registryPathForScope(scope EnvVarScope) (hiveIdent string, subkeyPath strin
 // (user32.dll) and broadcasts WM_SETTINGCHANGE. Compilation failure and
 // broadcast failure are both caught and returned as a warning string so that
 // the overall operation is never failed solely due to broadcast issues (ADR-EV-2).
-const psEnvVarHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
+const psEnvVarHeader = psEnvelopePrelude + psEnvVarHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Send-EnvBroadcast {
+// psEnvVarHeaderRemainder Broadcast helpers stay here; envelope emitters come from the prelude.
+const psEnvVarHeaderRemainder = `function Send-EnvBroadcast {
   try {
     if (-not ([System.Management.Automation.PSTypeName]'Win32EnvBroadcast').Type) {
       $cs = 'using System; using System.Runtime.InteropServices; public class Win32EnvBroadcast { [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult); }'

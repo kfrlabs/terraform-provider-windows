@@ -62,23 +62,10 @@ var runPSInput = func(ctx context.Context, c *Client, script, stdin string) (str
 //
 // NOTE: this constant uses a Go raw string (backtick-delimited). PowerShell
 // backtick escape sequences (`n, `t) MUST NOT appear in this body.
-const luPsHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
+const luPsHeader = psEnvelopePrelude + luPsHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
+// luPsHeaderRemainder Classify-LU, Format-PSDate and user helpers stay here; envelope emitters come from the prelude.
+const luPsHeaderRemainder = `
 function Classify-LU([string]$Msg, [string]$FQEI) {
   if ($FQEI -match 'UserNotFound' -or $Msg -match 'was not found') { return 'not_found' }
   if ($FQEI -match 'UserExists' -or $Msg -match 'already exists') { return 'already_exists' }

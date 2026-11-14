@@ -52,23 +52,10 @@ func NewLocalGroupClient(c *Client) *LocalGroupClient {
 // Note: this constant is a raw Go backtick string. PowerShell backtick escape
 // sequences (`n, `t) are NOT used in this script body, so the raw string form
 // is safe (ADR-LG-9).
-const lgPsHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
+const lgPsHeader = psEnvelopePrelude + lgPsHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
+// lgPsHeaderRemainder Classify-LG and group helpers stay here; envelope emitters come from the prelude.
+const lgPsHeaderRemainder = `
 function Classify-LG([string]$Msg, [string]$FQEI) {
   if ($FQEI -match 'GroupNotFound'    -or $Msg -match 'was not found')          { return 'not_found' }
   if ($FQEI -match 'GroupNameExists'  -or $Msg -match 'not unique')             { return 'name_conflict' }

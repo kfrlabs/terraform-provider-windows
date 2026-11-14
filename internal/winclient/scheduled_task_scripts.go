@@ -29,21 +29,10 @@ import (
 // all helper functions used by Read-TaskState, Ensure-TaskFolder, etc.
 // NOTE: Go raw strings cannot contain backtick; we avoid PS backtick-escapes
 // by using explicit PS techniques (e.g. [char]10, [char]39 or [Environment]::NewLine).
-const psSTHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psSTHeader = psEnvelopePrelude + psSTHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 12 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-
+// psSTHeaderRemainder Date helpers, envelope structs and runners stay here; envelope emitters come from the prelude. Emit-OK depth 12->8: task payloads nest at most 4 levels (task->triggers->days_of_week).
+const psSTHeaderRemainder = `
 function Format-DT([string]$dt) {
   if ([string]::IsNullOrEmpty($dt)) { return '' }
   try {

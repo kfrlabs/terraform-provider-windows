@@ -58,21 +58,10 @@ var runFileACLPowerShell = func(ctx context.Context, c *Client, script, stdin st
 }
 
 // psFileACLHeader holds every PowerShell helper shared by the ACL scripts.
-const psFileACLHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psFileACLHeader = psEnvelopePrelude + psFileACLHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 16 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-
+// psFileACLHeaderRemainder Classify helpers stay here; envelope emitters come from the prelude. Emit-OK depth 16->8: ACL payloads are flat dicts in a list (depth <= 3).
+const psFileACLHeaderRemainder = `
 # Classify-FileACLError maps a .NET exception to a FileACLErrorKind. Win32 codes
 # come from HResult rather than from message text so the mapping is immune to
 # the locale of the target host.
