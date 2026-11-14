@@ -87,26 +87,19 @@ type hostnameStatePayload struct {
 	Domain        string `json:"domain"`
 }
 
-// psHostnameHeader prepends Emit-OK/Emit-Err and Classify-Hostname.
+// psHostnameHeader prepends the shared envelope prelude (Emit-OK/Emit-Err,
+// issue #348) plus Classify-Hostname.
 //
 // Classify-Hostname maps Rename-Computer / SSH error substrings to
 // HostnameErrorKind values. Detection is best-effort and substring-based
 // because Windows error messages are localised.
-const psHostnameHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psHostnameHeader = psEnvelopePrelude + psHostnameRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Classify-Hostname([string]$Msg) {
+// psHostnameRemainder holds the hostname-specific half of the header: the
+// string classifier and the state reader. Classifiers stay per-resource in
+// batch 1 (see envelope_prelude.go): their input shapes differ too much
+// for one generic table.
+const psHostnameRemainder = `function Classify-Hostname([string]$Msg) {
   if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or $Msg -match 'RenameComputerNotAuthorized' -or $Msg -match 'not authorized') { return 'permission_denied' }
   if ($Msg -match 'computer name' -and ($Msg -match 'invalid' -or $Msg -match 'not valid')) { return 'invalid_name' }
   return 'unknown'
