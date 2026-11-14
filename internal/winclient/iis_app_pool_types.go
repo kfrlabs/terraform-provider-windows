@@ -9,8 +9,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,38 +22,38 @@ const (
 	// IISAppPoolErrorNotFound is returned when the pool does not exist.
 	// Read maps it to (nil, nil) for drift removal; Delete treats it as
 	// already absent.
-	IISAppPoolErrorNotFound IISAppPoolErrorKind = "not_found"
+	IISAppPoolErrorNotFound = "not_found"
 
 	// IISAppPoolErrorAlreadyExists is returned by Create when a pool with
 	// the same name already exists. The message suggests terraform import.
-	IISAppPoolErrorAlreadyExists IISAppPoolErrorKind = "already_exists"
+	IISAppPoolErrorAlreadyExists = "already_exists"
 
 	// IISAppPoolErrorInUse is returned by Delete when sites or applications
 	// still reference the pool. The message lists them.
-	IISAppPoolErrorInUse IISAppPoolErrorKind = "in_use"
+	IISAppPoolErrorInUse = "in_use"
 
 	// IISAppPoolErrorIISNotInstalled is returned when the W3SVC/WAS
 	// services or the WebAdministration module are missing. The message
 	// points at the windows_feature resource (Web-Server).
-	IISAppPoolErrorIISNotInstalled IISAppPoolErrorKind = "iis_not_installed"
+	IISAppPoolErrorIISNotInstalled = "iis_not_installed"
 
 	// IISAppPoolErrorInvalidIdentity is returned when a SpecificUser
 	// identity fails logon (0x8007052e). The message never echoes the
 	// password.
-	IISAppPoolErrorInvalidIdentity IISAppPoolErrorKind = "invalid_identity"
+	IISAppPoolErrorInvalidIdentity = "invalid_identity"
 
 	// IISAppPoolErrorAccessDenied is returned when the SSH user lacks the
 	// privilege to manage IIS configuration.
-	IISAppPoolErrorAccessDenied IISAppPoolErrorKind = "access_denied"
+	IISAppPoolErrorAccessDenied = "access_denied"
 
 	// IISAppPoolErrorConfigLocked is returned when applicationHost.config
 	// cannot be committed (locked section, or the concurrent-writer flake
 	// persisting past retries).
-	IISAppPoolErrorConfigLocked IISAppPoolErrorKind = "config_locked"
+	IISAppPoolErrorConfigLocked = "config_locked"
 
 	// IISAppPoolErrorUnknown is the catch-all for unrecognised PowerShell
 	// errors or SSH transport failures.
-	IISAppPoolErrorUnknown IISAppPoolErrorKind = "unknown"
+	IISAppPoolErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -66,57 +64,28 @@ const (
 // WindowsIISAppPoolClient methods. Message and Context MUST NOT contain the
 // SpecificUser password: it travels on stdin and is never interpolated into
 // script text or diagnostics.
-type IISAppPoolError struct {
-	Kind    IISAppPoolErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements error.
-func (e *IISAppPoolError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_iis_app_pool [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_iis_app_pool [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *IISAppPoolError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *IISAppPoolError) Is(target error) bool {
-	t, ok := target.(*IISAppPoolError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type IISAppPoolError = ResourceError
 
 // NewIISAppPoolError constructs a *IISAppPoolError.
 func NewIISAppPoolError(kind IISAppPoolErrorKind, message string, cause error, ctx map[string]string) *IISAppPoolError {
-	return &IISAppPoolError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_iis_app_pool", string(kind), message, cause, ctx)
 }
 
 // IsIISAppPoolError reports whether err is a *IISAppPoolError with the given kind.
 func IsIISAppPoolError(err error, kind IISAppPoolErrorKind) bool {
-	var ae *IISAppPoolError
-	if errors.As(err, &ae) {
-		return ae.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_iis_app_pool", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrIISAppPoolNotFound        = &IISAppPoolError{Kind: IISAppPoolErrorNotFound}
-	ErrIISAppPoolAlreadyExists   = &IISAppPoolError{Kind: IISAppPoolErrorAlreadyExists}
-	ErrIISAppPoolInUse           = &IISAppPoolError{Kind: IISAppPoolErrorInUse}
-	ErrIISAppPoolIISNotInstalled = &IISAppPoolError{Kind: IISAppPoolErrorIISNotInstalled}
-	ErrIISAppPoolInvalidIdentity = &IISAppPoolError{Kind: IISAppPoolErrorInvalidIdentity}
-	ErrIISAppPoolAccessDenied    = &IISAppPoolError{Kind: IISAppPoolErrorAccessDenied}
-	ErrIISAppPoolConfigLocked    = &IISAppPoolError{Kind: IISAppPoolErrorConfigLocked}
-	ErrIISAppPoolUnknown         = &IISAppPoolError{Kind: IISAppPoolErrorUnknown}
+	ErrIISAppPoolNotFound        = &IISAppPoolError{Resource: "windows_iis_app_pool", Kind: IISAppPoolErrorNotFound}
+	ErrIISAppPoolAlreadyExists   = &IISAppPoolError{Resource: "windows_iis_app_pool", Kind: IISAppPoolErrorAlreadyExists}
+	ErrIISAppPoolInUse           = &IISAppPoolError{Resource: "windows_iis_app_pool", Kind: IISAppPoolErrorInUse}
+	ErrIISAppPoolIISNotInstalled = &IISAppPoolError{Resource: "windows_iis_app_pool", Kind: IISAppPoolErrorIISNotInstalled}
+	ErrIISAppPoolInvalidIdentity = &IISAppPoolError{Resource: "windows_iis_app_pool", Kind: IISAppPoolErrorInvalidIdentity}
+	ErrIISAppPoolAccessDenied    = &IISAppPoolError{Resource: "windows_iis_app_pool", Kind: IISAppPoolErrorAccessDenied}
+	ErrIISAppPoolConfigLocked    = &IISAppPoolError{Resource: "windows_iis_app_pool", Kind: IISAppPoolErrorConfigLocked}
+	ErrIISAppPoolUnknown         = &IISAppPoolError{Resource: "windows_iis_app_pool", Kind: IISAppPoolErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

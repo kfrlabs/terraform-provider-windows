@@ -14,8 +14,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,27 +28,27 @@ const (
 	// FirewallProfileErrorInvalidProfile is returned when the profile name is
 	// not one of Domain, Private or Public, or when Get-NetFirewallProfile
 	// reports the profile does not exist.
-	FirewallProfileErrorInvalidProfile FirewallProfileErrorKind = "invalid_profile"
+	FirewallProfileErrorInvalidProfile = "invalid_profile"
 
 	// FirewallProfileErrorAccessDenied is returned when the SSH user lacks
 	// the privilege to read or write firewall configuration (typically a
 	// non-administrator connection).
-	FirewallProfileErrorAccessDenied FirewallProfileErrorKind = "access_denied"
+	FirewallProfileErrorAccessDenied = "access_denied"
 
 	// FirewallProfileErrorWouldLockOut is returned, fail-closed, when applying
 	// the requested settings to the profile that carries the current SSH
 	// session would block inbound traffic without an enabled inbound Allow
 	// rule for the provider port — or when the guard cannot determine the SSH
 	// profile while the change is risky. Nothing is applied.
-	FirewallProfileErrorWouldLockOut FirewallProfileErrorKind = "would_lock_out"
+	FirewallProfileErrorWouldLockOut = "would_lock_out"
 
 	// FirewallProfileErrorServiceUnavailable is returned when the Windows
 	// Firewall service (MpsSvc) is stopped on the target host.
-	FirewallProfileErrorServiceUnavailable FirewallProfileErrorKind = "firewall_service_unavailable"
+	FirewallProfileErrorServiceUnavailable = "firewall_service_unavailable"
 
 	// FirewallProfileErrorUnknown is returned for unexpected PowerShell
 	// errors or SSH transport failures.
-	FirewallProfileErrorUnknown FirewallProfileErrorKind = "unknown"
+	FirewallProfileErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -59,54 +57,25 @@ const (
 
 // FirewallProfileError is the structured error type returned by all
 // WindowsFirewallProfileClient methods.
-type FirewallProfileError struct {
-	Kind    FirewallProfileErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *FirewallProfileError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_firewall_profile [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_firewall_profile [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *FirewallProfileError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *FirewallProfileError) Is(target error) bool {
-	t, ok := target.(*FirewallProfileError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type FirewallProfileError = ResourceError
 
 // NewFirewallProfileError constructs a *FirewallProfileError.
 func NewFirewallProfileError(kind FirewallProfileErrorKind, message string, cause error, ctx map[string]string) *FirewallProfileError {
-	return &FirewallProfileError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_firewall_profile", string(kind), message, cause, ctx)
 }
 
 // IsFirewallProfileError reports whether err is a *FirewallProfileError with the given kind.
 func IsFirewallProfileError(err error, kind FirewallProfileErrorKind) bool {
-	var fe *FirewallProfileError
-	if errors.As(err, &fe) {
-		return fe.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_firewall_profile", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrFirewallProfileInvalidProfile     = &FirewallProfileError{Kind: FirewallProfileErrorInvalidProfile}
-	ErrFirewallProfileAccessDenied       = &FirewallProfileError{Kind: FirewallProfileErrorAccessDenied}
-	ErrFirewallProfileWouldLockOut       = &FirewallProfileError{Kind: FirewallProfileErrorWouldLockOut}
-	ErrFirewallProfileServiceUnavailable = &FirewallProfileError{Kind: FirewallProfileErrorServiceUnavailable}
-	ErrFirewallProfileUnknown            = &FirewallProfileError{Kind: FirewallProfileErrorUnknown}
+	ErrFirewallProfileInvalidProfile     = &FirewallProfileError{Resource: "windows_firewall_profile", Kind: FirewallProfileErrorInvalidProfile}
+	ErrFirewallProfileAccessDenied       = &FirewallProfileError{Resource: "windows_firewall_profile", Kind: FirewallProfileErrorAccessDenied}
+	ErrFirewallProfileWouldLockOut       = &FirewallProfileError{Resource: "windows_firewall_profile", Kind: FirewallProfileErrorWouldLockOut}
+	ErrFirewallProfileServiceUnavailable = &FirewallProfileError{Resource: "windows_firewall_profile", Kind: FirewallProfileErrorServiceUnavailable}
+	ErrFirewallProfileUnknown            = &FirewallProfileError{Resource: "windows_firewall_profile", Kind: FirewallProfileErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

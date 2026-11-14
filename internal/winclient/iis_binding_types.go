@@ -10,7 +10,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -29,40 +28,40 @@ const (
 	// IISBindingErrorNotFound is returned when the binding does not exist
 	// on the site. Read maps it to (nil, nil) for drift removal; Delete
 	// treats it as already absent; Update surfaces it.
-	IISBindingErrorNotFound IISBindingErrorKind = "not_found"
+	IISBindingErrorNotFound = "not_found"
 
 	// IISBindingErrorSiteNotFound is returned when the owning site does
 	// not exist on the host. The site is managed by windows_iis_site and
 	// is never created implicitly.
-	IISBindingErrorSiteNotFound IISBindingErrorKind = "site_not_found"
+	IISBindingErrorSiteNotFound = "site_not_found"
 
 	// IISBindingErrorAlreadyExists is returned by Create when the same
 	// protocol plus bindingInformation already exists on the site. The
 	// message suggests terraform import.
-	IISBindingErrorAlreadyExists IISBindingErrorKind = "already_exists"
+	IISBindingErrorAlreadyExists = "already_exists"
 
 	// IISBindingErrorConflict is returned by Create when the same protocol
 	// plus bindingInformation already exists on a DIFFERENT site. One
 	// listener cannot serve two sites; the message names the conflicting
 	// site.
-	IISBindingErrorConflict IISBindingErrorKind = "conflict"
+	IISBindingErrorConflict = "conflict"
 
 	// IISBindingErrorSSLBindingConflict is returned by Create/Update when
 	// the HTTP.sys SSL binding for the same IP:port carries a different
 	// certificate (or a non-SNI binding already owns the IP:port). The
 	// message names the expected remediation.
-	IISBindingErrorSSLBindingConflict IISBindingErrorKind = "ssl_binding_conflict"
+	IISBindingErrorSSLBindingConflict = "ssl_binding_conflict"
 
 	// IISBindingErrorCertificateNotFound is returned by Create/Update when
 	// the configured certificate thumbprint is absent from
 	// Cert:\LocalMachine\<store>. Certificates are managed by
 	// windows_certificate and are never created implicitly.
-	IISBindingErrorCertificateNotFound IISBindingErrorKind = "certificate_not_found"
+	IISBindingErrorCertificateNotFound = "certificate_not_found"
 
 	// IISBindingErrorCertificateNoPrivateKey is returned by Create/Update
 	// when the configured certificate has no private key
 	// (HasPrivateKey is false): HTTP.sys cannot serve TLS without one.
-	IISBindingErrorCertificateNoPrivateKey IISBindingErrorKind = "certificate_no_private_key"
+	IISBindingErrorCertificateNoPrivateKey = "certificate_no_private_key"
 
 	// IISBindingErrorWouldLockOut is returned by Create when the binding
 	// port equals the SSH management port (the provider-configured port
@@ -71,20 +70,20 @@ const (
 	// management connection, so the operation is refused fail-closed
 	// before anything is applied. An undeterminable management path also
 	// fails closed with this kind.
-	IISBindingErrorWouldLockOut IISBindingErrorKind = "would_lock_out"
+	IISBindingErrorWouldLockOut = "would_lock_out"
 
 	// IISBindingErrorIISNotInstalled is returned when the W3SVC/WAS
 	// services or the WebAdministration module are missing. The message
 	// points at the windows_feature resource (Web-Server).
-	IISBindingErrorIISNotInstalled IISBindingErrorKind = "iis_not_installed"
+	IISBindingErrorIISNotInstalled = "iis_not_installed"
 
 	// IISBindingErrorAccessDenied is returned when the SSH user lacks the
 	// privilege to manage IIS configuration.
-	IISBindingErrorAccessDenied IISBindingErrorKind = "access_denied"
+	IISBindingErrorAccessDenied = "access_denied"
 
 	// IISBindingErrorUnknown is the catch-all for unrecognised PowerShell
 	// errors or SSH transport failures.
-	IISBindingErrorUnknown IISBindingErrorKind = "unknown"
+	IISBindingErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -93,60 +92,31 @@ const (
 
 // IISBindingError is the structured error type returned by all
 // WindowsIISBindingClient methods.
-type IISBindingError struct {
-	Kind    IISBindingErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements error.
-func (e *IISBindingError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_iis_binding [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_iis_binding [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *IISBindingError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *IISBindingError) Is(target error) bool {
-	t, ok := target.(*IISBindingError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type IISBindingError = ResourceError
 
 // NewIISBindingError constructs a *IISBindingError.
 func NewIISBindingError(kind IISBindingErrorKind, message string, cause error, ctx map[string]string) *IISBindingError {
-	return &IISBindingError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_iis_binding", string(kind), message, cause, ctx)
 }
 
 // IsIISBindingError reports whether err is a *IISBindingError with the given kind.
 func IsIISBindingError(err error, kind IISBindingErrorKind) bool {
-	var ae *IISBindingError
-	if errors.As(err, &ae) {
-		return ae.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_iis_binding", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrIISBindingNotFound            = &IISBindingError{Kind: IISBindingErrorNotFound}
-	ErrIISBindingSiteNotFound        = &IISBindingError{Kind: IISBindingErrorSiteNotFound}
-	ErrIISBindingAlreadyExists       = &IISBindingError{Kind: IISBindingErrorAlreadyExists}
-	ErrIISBindingConflict            = &IISBindingError{Kind: IISBindingErrorConflict}
-	ErrIISBindingSSLBindingConflict  = &IISBindingError{Kind: IISBindingErrorSSLBindingConflict}
-	ErrIISBindingCertificateNotFound = &IISBindingError{Kind: IISBindingErrorCertificateNotFound}
-	ErrIISBindingCertificateNoKey    = &IISBindingError{Kind: IISBindingErrorCertificateNoPrivateKey}
-	ErrIISBindingWouldLockOut        = &IISBindingError{Kind: IISBindingErrorWouldLockOut}
-	ErrIISBindingIISNotInstalled     = &IISBindingError{Kind: IISBindingErrorIISNotInstalled}
-	ErrIISBindingAccessDenied        = &IISBindingError{Kind: IISBindingErrorAccessDenied}
-	ErrIISBindingUnknown             = &IISBindingError{Kind: IISBindingErrorUnknown}
+	ErrIISBindingNotFound            = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorNotFound}
+	ErrIISBindingSiteNotFound        = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorSiteNotFound}
+	ErrIISBindingAlreadyExists       = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorAlreadyExists}
+	ErrIISBindingConflict            = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorConflict}
+	ErrIISBindingSSLBindingConflict  = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorSSLBindingConflict}
+	ErrIISBindingCertificateNotFound = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorCertificateNotFound}
+	ErrIISBindingCertificateNoKey    = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorCertificateNoPrivateKey}
+	ErrIISBindingWouldLockOut        = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorWouldLockOut}
+	ErrIISBindingIISNotInstalled     = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorIISNotInstalled}
+	ErrIISBindingAccessDenied        = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorAccessDenied}
+	ErrIISBindingUnknown             = &IISBindingError{Resource: "windows_iis_binding", Kind: IISBindingErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

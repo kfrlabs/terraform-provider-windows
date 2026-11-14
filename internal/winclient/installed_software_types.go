@@ -13,8 +13,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,20 +28,20 @@ type InstalledSoftwareErrorKind string
 const (
 	// InstalledSoftwareErrorAccessDenied is returned when the SSH user
 	// lacks the privilege to read the Uninstall registry hives.
-	InstalledSoftwareErrorAccessDenied InstalledSoftwareErrorKind = "access_denied"
+	InstalledSoftwareErrorAccessDenied = "access_denied"
 
 	// InstalledSoftwareErrorInvalidParameter is returned when a filter
 	// fails client-side validation (uncompilable regex, malformed product
 	// code). No host call is made.
-	InstalledSoftwareErrorInvalidParameter InstalledSoftwareErrorKind = "invalid_parameter"
+	InstalledSoftwareErrorInvalidParameter = "invalid_parameter"
 
 	// InstalledSoftwareErrorTimeout is returned when the operation timed
 	// out or was cancelled.
-	InstalledSoftwareErrorTimeout InstalledSoftwareErrorKind = "timeout"
+	InstalledSoftwareErrorTimeout = "timeout"
 
 	// InstalledSoftwareErrorUnknown is the catch-all for unmapped
 	// PowerShell or SSH failures.
-	InstalledSoftwareErrorUnknown InstalledSoftwareErrorKind = "unknown"
+	InstalledSoftwareErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,65 +52,26 @@ const (
 // WindowsInstalledSoftwareClient methods. Use errors.Is(err,
 // ErrInstalledSoftware*) for kind matching, or errors.As(err, &ie) to
 // inspect Context.
-type InstalledSoftwareError struct {
-	// Kind is the machine-readable error category.
-	Kind InstalledSoftwareErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It must not contain SSH credentials.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport"). All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *InstalledSoftwareError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_installed_software [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_installed_software [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *InstalledSoftwareError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *InstalledSoftwareError) Is(target error) bool {
-	t, ok := target.(*InstalledSoftwareError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type InstalledSoftwareError = ResourceError
 
 // NewInstalledSoftwareError constructs an *InstalledSoftwareError. Pass a nil
 // cause when no underlying error exists. The ctx map may be nil.
 func NewInstalledSoftwareError(kind InstalledSoftwareErrorKind, message string, cause error, ctx map[string]string) *InstalledSoftwareError {
-	return &InstalledSoftwareError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_installed_software", string(kind), message, cause, ctx)
 }
 
 // IsInstalledSoftwareError reports whether err is an *InstalledSoftwareError
 // of the given kind.
 func IsInstalledSoftwareError(err error, kind InstalledSoftwareErrorKind) bool {
-	var ie *InstalledSoftwareError
-	if errors.As(err, &ie) {
-		return ie.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_installed_software", string(kind))
 }
 
 // Sentinel errors — use with errors.Is.
 var (
-	ErrInstalledSoftwareAccessDenied     = &InstalledSoftwareError{Kind: InstalledSoftwareErrorAccessDenied}
-	ErrInstalledSoftwareInvalidParameter = &InstalledSoftwareError{Kind: InstalledSoftwareErrorInvalidParameter}
-	ErrInstalledSoftwareTimeout          = &InstalledSoftwareError{Kind: InstalledSoftwareErrorTimeout}
-	ErrInstalledSoftwareUnknown          = &InstalledSoftwareError{Kind: InstalledSoftwareErrorUnknown}
+	ErrInstalledSoftwareAccessDenied     = &InstalledSoftwareError{Resource: "windows_installed_software", Kind: InstalledSoftwareErrorAccessDenied}
+	ErrInstalledSoftwareInvalidParameter = &InstalledSoftwareError{Resource: "windows_installed_software", Kind: InstalledSoftwareErrorInvalidParameter}
+	ErrInstalledSoftwareTimeout          = &InstalledSoftwareError{Resource: "windows_installed_software", Kind: InstalledSoftwareErrorTimeout}
+	ErrInstalledSoftwareUnknown          = &InstalledSoftwareError{Resource: "windows_installed_software", Kind: InstalledSoftwareErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

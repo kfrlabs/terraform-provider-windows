@@ -58,14 +58,16 @@ bytes; rendering-only, see rule 4).
    `ResourceError{Resource, Kind, Message, Context, Cause}` with
    `Error()` (`"<resource> [<kind>]: <message>[: <cause>]"`, matching the
    existing per-resource strings), `Unwrap()`, `(Resource, Kind)`-only
-   `Is()`, plus `NewResourceError` / `IsResourceError` helpers. Later
-   batches re-express each `*Error` as an alias or thin wrapper over
-   `ResourceError` so provider handlers, `errors.Is` sentinels and `Is*`
-   helpers keep compiling and behaving identically. Batch 5 pilots the
-   alias pattern on `hostname` (`type HostnameError = ResourceError`,
-   untyped kind constants so all call sites compile unchanged, sentinels
-   carry the `windows_hostname` resource key to preserve `errors.Is`
-   matching).
+   `Is()`, plus `NewResourceError` / `IsResourceError` helpers. Batch 5
+   piloted the alias pattern on `hostname` (`type HostnameError =
+   ResourceError`, untyped kind constants so all call sites compile
+   unchanged, sentinels carry the `windows_hostname` resource key to
+   preserve `errors.Is` matching); batch 6 rolled it out to all 37
+   remaining per-resource types (`ManagementPathError` uses
+   `"management_path"`) plus `LegacyPackageError` (whose Kind was
+   already a plain string). Wire format is byte-identical everywhere;
+   `errors.Is` matching is preserved because every constructor and every
+   struct literal now carries the resource key.
 3. Input convention. JSON on stdin is the recommended channel for
    structured, large, or secret inputs (it removes quoting from the
    attack surface and avoids the UTF-16 base64 script-size blow-up);
@@ -114,10 +116,10 @@ bytes; rendering-only, see rule 4).
   such edit because no hostname test pins the Emit bytes.
 - `docs/` stays generated (`make docs`); this record lives in `adr/` on
   purpose, outside the drift gate.
-- Later batches (per-resource error aliases, stdin conversions, rolling
-  out `Classify-ByPatterns` to the remaining string classifiers) each get
-  their own plan against this ADR; none may change wire behaviour
-  without fixture proof. Batches 2-4 migrated every
+- Later batches (stdin conversions, rolling out `Classify-ByPatterns`
+  to the remaining string classifiers) each get their own plan against
+  this ADR; none may change wire behaviour without fixture proof.
+  Batches 2-4 migrated every
   header whose Emit pair was byte-identical or provably equivalent
   (32 files share the prelude; the DSC depth downgrade was proven on the
   Windows fixture).

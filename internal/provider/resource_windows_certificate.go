@@ -656,7 +656,7 @@ func addCertificateDiag(d *diag.Diagnostics, summary string, err error) {
 		if ce.Cause != nil {
 			detail += "\n\nCause: " + ce.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(ce.Kind)+"]", detail)
+		d.AddError(summary+" ["+ce.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

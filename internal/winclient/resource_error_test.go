@@ -44,13 +44,21 @@ func TestIsResourceError(t *testing.T) {
 	if !IsResourceError(err, "windows_hostname", "unknown") {
 		t.Error("must match wrapped *ResourceError")
 	}
-	wrapped := &FileError{Kind: FileErrorNotFound, Message: "boom"}
-	if IsResourceError(wrapped, "windows_file", "not_found") {
-		t.Error("non-migrated per-resource errors are not *ResourceError")
+	// After the batch-5 migration every per-resource error is a
+	// ResourceError alias, so a migrated FileError matches too.
+	wrapped := &FileError{Resource: "windows_file", Kind: FileErrorNotFound, Message: "boom"}
+	if !IsResourceError(wrapped, "windows_file", "not_found") {
+		t.Error("migrated alias FileError must match as *ResourceError")
 	}
 	aliased := &HostnameError{Resource: "windows_hostname", Kind: "unknown", Message: "boom"}
 	if !IsResourceError(aliased, "windows_hostname", "unknown") {
 		t.Error("migrated alias HostnameError must match as *ResourceError")
+	}
+	if IsResourceError(aliased, "windows_file", "unknown") {
+		t.Error("resource mismatch must not match")
+	}
+	if IsResourceError(aliased, "windows_hostname", "other") {
+		t.Error("kind mismatch must not match")
 	}
 	other := errors.New("plain")
 	if IsResourceError(other, "windows_hostname", "unknown") {

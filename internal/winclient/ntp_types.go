@@ -15,7 +15,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -34,23 +33,23 @@ const (
 	// not registered (or not startable) on the target host — the usual
 	// outcome on containers, which typically share the host clock and ship
 	// no W32Time service.
-	NTPErrorServiceUnavailable NTPErrorKind = "service_unavailable"
+	NTPErrorServiceUnavailable = "service_unavailable"
 
 	// NTPErrorAccessDenied is returned when the SSH user lacks the
 	// privilege to read or write the W32Time registry keys or to
 	// reconfigure the W32Time service.
-	NTPErrorAccessDenied NTPErrorKind = "access_denied"
+	NTPErrorAccessDenied = "access_denied"
 
 	// NTPErrorInvalidPeer is returned when a configured NTP peer is
 	// rejected: an empty address, an address containing whitespace or a
 	// comma, or flags outside the 0x1-0xF range. The primary gate is the
 	// plan validator; this kind is the defence-in-depth host-side and
 	// client-side check.
-	NTPErrorInvalidPeer NTPErrorKind = "invalid_peer"
+	NTPErrorInvalidPeer = "invalid_peer"
 
 	// NTPErrorUnknown is returned for unexpected PowerShell errors or SSH
 	// transport failures.
-	NTPErrorUnknown NTPErrorKind = "unknown"
+	NTPErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -59,53 +58,24 @@ const (
 
 // NTPError is the structured error type returned by all WindowsNTPClient
 // methods.
-type NTPError struct {
-	Kind    NTPErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *NTPError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_ntp [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_ntp [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *NTPError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *NTPError) Is(target error) bool {
-	t, ok := target.(*NTPError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type NTPError = ResourceError
 
 // NewNTPError constructs a *NTPError.
 func NewNTPError(kind NTPErrorKind, message string, cause error, ctx map[string]string) *NTPError {
-	return &NTPError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_ntp", string(kind), message, cause, ctx)
 }
 
 // IsNTPError reports whether err is a *NTPError with the given kind.
 func IsNTPError(err error, kind NTPErrorKind) bool {
-	var ne *NTPError
-	if errors.As(err, &ne) {
-		return ne.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_ntp", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrNTPServiceUnavailable = &NTPError{Kind: NTPErrorServiceUnavailable}
-	ErrNTPAccessDenied       = &NTPError{Kind: NTPErrorAccessDenied}
-	ErrNTPInvalidPeer        = &NTPError{Kind: NTPErrorInvalidPeer}
-	ErrNTPUnknown            = &NTPError{Kind: NTPErrorUnknown}
+	ErrNTPServiceUnavailable = &NTPError{Resource: "windows_ntp", Kind: NTPErrorServiceUnavailable}
+	ErrNTPAccessDenied       = &NTPError{Resource: "windows_ntp", Kind: NTPErrorAccessDenied}
+	ErrNTPInvalidPeer        = &NTPError{Resource: "windows_ntp", Kind: NTPErrorInvalidPeer}
+	ErrNTPUnknown            = &NTPError{Resource: "windows_ntp", Kind: NTPErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

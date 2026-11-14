@@ -19,7 +19,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 )
 
@@ -35,28 +34,28 @@ const (
 	// EventLogErrorNotFound is returned when the named log does not exist
 	// on the target host (for example a feature log whose role or
 	// application was uninstalled).
-	EventLogErrorNotFound EventLogErrorKind = "not_found"
+	EventLogErrorNotFound = "not_found"
 
 	// EventLogErrorAccessDenied is returned when the SSH user lacks the
 	// privilege to read or write the log configuration. Reading or writing
 	// the Security log additionally requires administrator rights and the
 	// SeSecurityPrivilege privilege.
-	EventLogErrorAccessDenied EventLogErrorKind = "access_denied"
+	EventLogErrorAccessDenied = "access_denied"
 
 	// EventLogErrorUnsupported is returned when the requested change is not
 	// supported by the log type — in v1, disabling a classic log
 	// (IsEnabled = false on a log with IsClassic = true). Classic logs are
 	// always enabled and cannot be turned off.
-	EventLogErrorUnsupported EventLogErrorKind = "unsupported"
+	EventLogErrorUnsupported = "unsupported"
 
 	// EventLogErrorInvalidSize is returned when maximum_size_bytes is below
 	// 1 MiB or is not a multiple of 64 KiB. The primary gate is the plan
 	// validator; this kind is the defence-in-depth host-side check.
-	EventLogErrorInvalidSize EventLogErrorKind = "invalid_size"
+	EventLogErrorInvalidSize = "invalid_size"
 
 	// EventLogErrorUnknown is returned for unexpected PowerShell errors or
 	// SSH transport failures.
-	EventLogErrorUnknown EventLogErrorKind = "unknown"
+	EventLogErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -65,54 +64,25 @@ const (
 
 // EventLogError is the structured error type returned by all
 // WindowsEventLogClient methods.
-type EventLogError struct {
-	Kind    EventLogErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *EventLogError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_eventlog [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_eventlog [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *EventLogError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *EventLogError) Is(target error) bool {
-	t, ok := target.(*EventLogError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type EventLogError = ResourceError
 
 // NewEventLogError constructs a *EventLogError.
 func NewEventLogError(kind EventLogErrorKind, message string, cause error, ctx map[string]string) *EventLogError {
-	return &EventLogError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_eventlog", string(kind), message, cause, ctx)
 }
 
 // IsEventLogError reports whether err is a *EventLogError with the given kind.
 func IsEventLogError(err error, kind EventLogErrorKind) bool {
-	var ee *EventLogError
-	if errors.As(err, &ee) {
-		return ee.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_eventlog", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrEventLogNotFound     = &EventLogError{Kind: EventLogErrorNotFound}
-	ErrEventLogAccessDenied = &EventLogError{Kind: EventLogErrorAccessDenied}
-	ErrEventLogUnsupported  = &EventLogError{Kind: EventLogErrorUnsupported}
-	ErrEventLogInvalidSize  = &EventLogError{Kind: EventLogErrorInvalidSize}
-	ErrEventLogUnknown      = &EventLogError{Kind: EventLogErrorUnknown}
+	ErrEventLogNotFound     = &EventLogError{Resource: "windows_eventlog", Kind: EventLogErrorNotFound}
+	ErrEventLogAccessDenied = &EventLogError{Resource: "windows_eventlog", Kind: EventLogErrorAccessDenied}
+	ErrEventLogUnsupported  = &EventLogError{Resource: "windows_eventlog", Kind: EventLogErrorUnsupported}
+	ErrEventLogInvalidSize  = &EventLogError{Resource: "windows_eventlog", Kind: EventLogErrorInvalidSize}
+	ErrEventLogUnknown      = &EventLogError{Resource: "windows_eventlog", Kind: EventLogErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

@@ -10,8 +10,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,40 +24,40 @@ type WingetPackageErrorKind string
 const (
 	// WingetPackageErrorModuleMissing is returned when winget.exe is not
 	// found on the host (EC-1). The kind name is kept for compatibility.
-	WingetPackageErrorModuleMissing WingetPackageErrorKind = "module_missing"
+	WingetPackageErrorModuleMissing = "module_missing"
 
 	// WingetPackageErrorAlreadyInstalled is returned when Install detects a
 	// pre-existing package via the pre-flight "winget list" (EC-2).
-	WingetPackageErrorAlreadyInstalled WingetPackageErrorKind = "already_installed"
+	WingetPackageErrorAlreadyInstalled = "already_installed"
 
 	// WingetPackageErrorVersionNotAvailable is returned when "winget
 	// install/upgrade" reports NO_APPLICABLE_INSTALLER, or NO_MANIFEST_FOUND
 	// for a pinned version (EC-4).
-	WingetPackageErrorVersionNotAvailable WingetPackageErrorKind = "version_not_available"
+	WingetPackageErrorVersionNotAvailable = "version_not_available"
 
 	// WingetPackageErrorBlockedByPolicy is returned when the source requires
 	// interactive MSA authentication or is policy-blocked (EC-5).
-	WingetPackageErrorBlockedByPolicy WingetPackageErrorKind = "blocked_by_policy"
+	WingetPackageErrorBlockedByPolicy = "blocked_by_policy"
 
 	// WingetPackageErrorPermission is returned when the SSH session lacks
 	// Local Administrator privileges (EC-7).
-	WingetPackageErrorPermission WingetPackageErrorKind = "permission_denied"
+	WingetPackageErrorPermission = "permission_denied"
 
 	// WingetPackageErrorSourceUnreachable is returned after one retry for a
 	// transient network failure contacting the winget source (EC-8).
-	WingetPackageErrorSourceUnreachable WingetPackageErrorKind = "source_unreachable"
+	WingetPackageErrorSourceUnreachable = "source_unreachable"
 
 	// WingetPackageErrorCatalogError is returned when the package ID has been
 	// renamed or removed from the catalog (EC-9).
-	WingetPackageErrorCatalogError WingetPackageErrorKind = "catalog_error"
+	WingetPackageErrorCatalogError = "catalog_error"
 
 	// WingetPackageErrorResourceInUse is returned when winget's per-machine
 	// mutex is held after 3 back-off retries (EC-10).
-	WingetPackageErrorResourceInUse WingetPackageErrorKind = "resource_in_use"
+	WingetPackageErrorResourceInUse = "resource_in_use"
 
 	// WingetPackageErrorUnknown is returned for unexpected PowerShell errors
 	// or SSH transport failures not matching any of the above categories.
-	WingetPackageErrorUnknown WingetPackageErrorKind = "unknown"
+	WingetPackageErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -71,63 +69,18 @@ const (
 //
 // Use errors.Is(err, ErrWingetPackage*) for kind matching, or
 // errors.As(err, &we) to access the full Context map for diagnostics.
-type WingetPackageError struct {
-	// Kind is the machine-readable error category.
-	Kind WingetPackageErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs.
-	// All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any.
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *WingetPackageError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_winget_package [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_winget_package [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *WingetPackageError) Unwrap() error {
-	return e.Cause
-}
-
-// Is implements errors.Is comparison by Kind only.
-func (e *WingetPackageError) Is(target error) bool {
-	t, ok := target.(*WingetPackageError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type WingetPackageError = ResourceError
 
 // NewWingetPackageError constructs a *WingetPackageError. Pass nil for cause
 // when no underlying error exists. The ctx map may be nil.
 func NewWingetPackageError(kind WingetPackageErrorKind, message string, cause error, ctx map[string]string) *WingetPackageError {
-	return &WingetPackageError{
-		Kind:    kind,
-		Message: message,
-		Cause:   cause,
-		Context: ctx,
-	}
+	return NewResourceError("windows_winget_package", string(kind), message, cause, ctx)
 }
 
 // IsWingetPackageError reports whether err is a *WingetPackageError with the
 // given kind.
 func IsWingetPackageError(err error, kind WingetPackageErrorKind) bool {
-	var we *WingetPackageError
-	if errors.As(err, &we) {
-		return we.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_winget_package", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -139,15 +92,15 @@ func IsWingetPackageError(err error, kind WingetPackageErrorKind) bool {
 // errors.Is(returnedErr, ErrWingetPackageModuleMissing) returns true for any
 // *WingetPackageError{Kind: WingetPackageErrorModuleMissing}.
 var (
-	ErrWingetPackageModuleMissing       = &WingetPackageError{Kind: WingetPackageErrorModuleMissing}
-	ErrWingetPackageAlreadyInstalled    = &WingetPackageError{Kind: WingetPackageErrorAlreadyInstalled}
-	ErrWingetPackageVersionNotAvailable = &WingetPackageError{Kind: WingetPackageErrorVersionNotAvailable}
-	ErrWingetPackageBlockedByPolicy     = &WingetPackageError{Kind: WingetPackageErrorBlockedByPolicy}
-	ErrWingetPackagePermission          = &WingetPackageError{Kind: WingetPackageErrorPermission}
-	ErrWingetPackageSourceUnreachable   = &WingetPackageError{Kind: WingetPackageErrorSourceUnreachable}
-	ErrWingetPackageCatalogError        = &WingetPackageError{Kind: WingetPackageErrorCatalogError}
-	ErrWingetPackageResourceInUse       = &WingetPackageError{Kind: WingetPackageErrorResourceInUse}
-	ErrWingetPackageUnknown             = &WingetPackageError{Kind: WingetPackageErrorUnknown}
+	ErrWingetPackageModuleMissing       = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorModuleMissing}
+	ErrWingetPackageAlreadyInstalled    = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorAlreadyInstalled}
+	ErrWingetPackageVersionNotAvailable = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorVersionNotAvailable}
+	ErrWingetPackageBlockedByPolicy     = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorBlockedByPolicy}
+	ErrWingetPackagePermission          = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorPermission}
+	ErrWingetPackageSourceUnreachable   = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorSourceUnreachable}
+	ErrWingetPackageCatalogError        = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorCatalogError}
+	ErrWingetPackageResourceInUse       = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorResourceInUse}
+	ErrWingetPackageUnknown             = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

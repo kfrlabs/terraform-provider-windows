@@ -1058,7 +1058,7 @@ func addPowerPlanDiag(d *diag.Diagnostics, summary string, err error) {
 		if pe.Cause != nil {
 			detail += "\n\nCause: " + pe.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(pe.Kind)+"]", detail)
+		d.AddError(summary+" ["+pe.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

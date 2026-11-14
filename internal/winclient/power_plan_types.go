@@ -15,7 +15,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -34,33 +33,33 @@ const (
 	// GUID is absent from the host (Get-CimInstance Win32_PowerPlan finds
 	// no InstanceID Microsoft:PowerPlan\{guid}) and create_if_missing is
 	// false — or when the duplicatescheme template itself is unavailable.
-	PowerPlanErrorPlanNotFound PowerPlanErrorKind = "plan_not_found"
+	PowerPlanErrorPlanNotFound = "plan_not_found"
 
 	// PowerPlanErrorSettingNotFound is returned when a configured
 	// subgroup or setting alias cannot be resolved (powercfg /aliases
 	// carries no such entry) or the setting GUID is unknown to the host
 	// (no Win32_PowerSetting instance).
-	PowerPlanErrorSettingNotFound PowerPlanErrorKind = "setting_not_found"
+	PowerPlanErrorSettingNotFound = "setting_not_found"
 
 	// PowerPlanErrorInvalidValue is returned when a configured AC/DC
 	// value is rejected by the host: out of the setting's range (from
 	// Win32_PowerSettingDefinitionRangeData where available) or a
 	// powercfg /setacvalueindex|/setdcvalueindex exit-code failure.
-	PowerPlanErrorInvalidValue PowerPlanErrorKind = "invalid_value"
+	PowerPlanErrorInvalidValue = "invalid_value"
 
 	// PowerPlanErrorUnsupported is returned when power plans are
 	// unavailable on the target host: powercfg.exe is missing (typically
 	// containers, which share the host power policy) or no active plan
 	// can be observed.
-	PowerPlanErrorUnsupported PowerPlanErrorKind = "unsupported"
+	PowerPlanErrorUnsupported = "unsupported"
 
 	// PowerPlanErrorAccessDenied is returned when the SSH user lacks the
 	// privilege to read or change the power configuration.
-	PowerPlanErrorAccessDenied PowerPlanErrorKind = "access_denied"
+	PowerPlanErrorAccessDenied = "access_denied"
 
 	// PowerPlanErrorUnknown is returned for unexpected PowerShell errors
 	// or SSH transport failures.
-	PowerPlanErrorUnknown PowerPlanErrorKind = "unknown"
+	PowerPlanErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -69,60 +68,31 @@ const (
 
 // PowerPlanError is the structured error type returned by all
 // WindowsPowerPlanClient methods.
-type PowerPlanError struct {
-	Kind    PowerPlanErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *PowerPlanError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_power_plan [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_power_plan [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *PowerPlanError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *PowerPlanError) Is(target error) bool {
-	t, ok := target.(*PowerPlanError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type PowerPlanError = ResourceError
 
 // NewPowerPlanError constructs a *PowerPlanError.
 func NewPowerPlanError(kind PowerPlanErrorKind, message string, cause error, ctx map[string]string) *PowerPlanError {
-	return &PowerPlanError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_power_plan", string(kind), message, cause, ctx)
 }
 
 // IsPowerPlanError reports whether err is a *PowerPlanError with the given kind.
 func IsPowerPlanError(err error, kind PowerPlanErrorKind) bool {
-	var pe *PowerPlanError
-	if errors.As(err, &pe) {
-		return pe.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_power_plan", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrPowerPlanNotFound = &PowerPlanError{Kind: PowerPlanErrorPlanNotFound}
+	ErrPowerPlanNotFound = &PowerPlanError{Resource: "windows_power_plan", Kind: PowerPlanErrorPlanNotFound}
 	// ErrPowerPlanSettingNotFound is returned when a subgroup/setting
 	// reference cannot be resolved.
-	ErrPowerPlanSettingNotFound = &PowerPlanError{Kind: PowerPlanErrorSettingNotFound}
+	ErrPowerPlanSettingNotFound = &PowerPlanError{Resource: "windows_power_plan", Kind: PowerPlanErrorSettingNotFound}
 	// ErrPowerPlanSettingFound is deprecated: use ErrPowerPlanSettingNotFound.
 	// Kept for compatibility; it aliases the same error.
 	ErrPowerPlanSettingFound = ErrPowerPlanSettingNotFound
-	ErrPowerPlanInvalidValue = &PowerPlanError{Kind: PowerPlanErrorInvalidValue}
-	ErrPowerPlanUnsupported  = &PowerPlanError{Kind: PowerPlanErrorUnsupported}
-	ErrPowerPlanAccessDenied = &PowerPlanError{Kind: PowerPlanErrorAccessDenied}
-	ErrPowerPlanUnknown      = &PowerPlanError{Kind: PowerPlanErrorUnknown}
+	ErrPowerPlanInvalidValue = &PowerPlanError{Resource: "windows_power_plan", Kind: PowerPlanErrorInvalidValue}
+	ErrPowerPlanUnsupported  = &PowerPlanError{Resource: "windows_power_plan", Kind: PowerPlanErrorUnsupported}
+	ErrPowerPlanAccessDenied = &PowerPlanError{Resource: "windows_power_plan", Kind: PowerPlanErrorAccessDenied}
+	ErrPowerPlanUnknown      = &PowerPlanError{Resource: "windows_power_plan", Kind: PowerPlanErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

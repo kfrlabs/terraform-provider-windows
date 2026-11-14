@@ -5,8 +5,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // RegistryValueKind is the Windows registry value type.
@@ -27,62 +25,33 @@ const (
 type RegistryValueErrorKind string
 
 const (
-	RegistryValueErrorNotFound     RegistryValueErrorKind = "not_found"
-	RegistryValueErrorTypeConflict RegistryValueErrorKind = "type_conflict"
-	RegistryValueErrorPermission   RegistryValueErrorKind = "permission_denied"
-	RegistryValueErrorInvalidInput RegistryValueErrorKind = "invalid_input"
-	RegistryValueErrorUnknown      RegistryValueErrorKind = "unknown"
+	RegistryValueErrorNotFound     = "not_found"
+	RegistryValueErrorTypeConflict = "type_conflict"
+	RegistryValueErrorPermission   = "permission_denied"
+	RegistryValueErrorInvalidInput = "invalid_input"
+	RegistryValueErrorUnknown      = "unknown"
 )
 
 // RegistryValueError is the structured error type returned by all RegistryValueClient methods.
-type RegistryValueError struct {
-	Kind    RegistryValueErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *RegistryValueError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_registry_value [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_registry_value [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *RegistryValueError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *RegistryValueError) Is(target error) bool {
-	t, ok := target.(*RegistryValueError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type RegistryValueError = ResourceError
 
 // NewRegistryValueError constructs a *RegistryValueError.
 func NewRegistryValueError(kind RegistryValueErrorKind, message string, cause error, ctx map[string]string) *RegistryValueError {
-	return &RegistryValueError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_registry_value", string(kind), message, cause, ctx)
 }
 
 // IsRegistryValueError reports whether err is a *RegistryValueError with the given kind.
 func IsRegistryValueError(err error, kind RegistryValueErrorKind) bool {
-	var rve *RegistryValueError
-	if errors.As(err, &rve) {
-		return rve.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_registry_value", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrRegistryValueNotFound     = &RegistryValueError{Kind: RegistryValueErrorNotFound}
-	ErrRegistryValueTypeConflict = &RegistryValueError{Kind: RegistryValueErrorTypeConflict}
-	ErrRegistryValuePermission   = &RegistryValueError{Kind: RegistryValueErrorPermission}
-	ErrRegistryValueInvalidInput = &RegistryValueError{Kind: RegistryValueErrorInvalidInput}
-	ErrRegistryValueUnknown      = &RegistryValueError{Kind: RegistryValueErrorUnknown}
+	ErrRegistryValueNotFound     = &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorNotFound}
+	ErrRegistryValueTypeConflict = &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorTypeConflict}
+	ErrRegistryValuePermission   = &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorPermission}
+	ErrRegistryValueInvalidInput = &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput}
+	ErrRegistryValueUnknown      = &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorUnknown}
 )
 
 // RegistryValueInput carries the parameters for a RegistryValueClient.Set call.

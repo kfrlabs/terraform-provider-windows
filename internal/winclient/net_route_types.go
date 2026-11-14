@@ -15,8 +15,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,53 +30,53 @@ const (
 	// NetRouteErrorInterfaceNotFound is returned when no interface matches
 	// the requested alias (exact, case-insensitive comparison — never
 	// wildcard semantics). The message lists the valid aliases.
-	NetRouteErrorInterfaceNotFound NetRouteErrorKind = "interface_not_found"
+	NetRouteErrorInterfaceNotFound = "interface_not_found"
 
 	// NetRouteErrorNotFound is returned when the requested route triplet is
 	// not present (read of a missing route, update/delete pre-flight,
 	// unimportable lookup).
-	NetRouteErrorNotFound NetRouteErrorKind = "not_found"
+	NetRouteErrorNotFound = "not_found"
 
 	// NetRouteErrorAlreadyExists is returned when the exact triplet is
 	// already present with protocol NetMgmt (suggest terraform import).
-	NetRouteErrorAlreadyExists NetRouteErrorKind = "already_exists"
+	NetRouteErrorAlreadyExists = "already_exists"
 
 	// NetRouteErrorOwnedByOtherProtocol is returned when the exact triplet
 	// is present with a non-NetMgmt protocol (Dhcp, Local, ...): Windows
 	// would otherwise create a competing duplicate.
-	NetRouteErrorOwnedByOtherProtocol NetRouteErrorKind = "route_owned_by_other_protocol"
+	NetRouteErrorOwnedByOtherProtocol = "route_owned_by_other_protocol"
 
 	// NetRouteErrorInvalidRoute is returned when the prefix/next-hop
 	// combination is rejected by client-side validation (unmasked prefix,
 	// family disagreement, multicast/loopback next hop) or by the host.
-	NetRouteErrorInvalidRoute NetRouteErrorKind = "invalid_route"
+	NetRouteErrorInvalidRoute = "invalid_route"
 
 	// NetRouteErrorNextHopUnreachable is returned when the gateway is not
 	// on-link on the given interface.
-	NetRouteErrorNextHopUnreachable NetRouteErrorKind = "next_hop_unreachable"
+	NetRouteErrorNextHopUnreachable = "next_hop_unreachable"
 
 	// NetRouteErrorPermission is returned when the SSH user lacks the
 	// privilege to manage routes (typically a non-administrator
 	// connection).
-	NetRouteErrorPermission NetRouteErrorKind = "permission_denied"
+	NetRouteErrorPermission = "permission_denied"
 
 	// NetRouteErrorMgmtAtRisk is returned, fail-closed, when the operation
 	// would remove or alter the management route or hijack the SSH
 	// session's return path. Nothing is applied.
-	NetRouteErrorMgmtAtRisk NetRouteErrorKind = "management_path_at_risk"
+	NetRouteErrorMgmtAtRisk = "management_path_at_risk"
 
 	// NetRouteErrorMgmtUnknown is returned, fail-closed, when the
 	// management path cannot be determined. Nothing is applied.
-	NetRouteErrorMgmtUnknown NetRouteErrorKind = "management_path_unknown"
+	NetRouteErrorMgmtUnknown = "management_path_unknown"
 
 	// NetRouteErrorUnreachable is returned when SSH cannot be contacted
 	// (connection refused, auth failure, timeout). Context SHOULD include
 	// host, port and transport.
-	NetRouteErrorUnreachable NetRouteErrorKind = "unreachable"
+	NetRouteErrorUnreachable = "unreachable"
 
 	// NetRouteErrorUnknown is the catch-all for unmapped PowerShell or SSH
 	// failures.
-	NetRouteErrorUnknown NetRouteErrorKind = "unknown"
+	NetRouteErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -88,59 +86,17 @@ const (
 // NetRouteError is the structured error type returned by all
 // NetRouteClient methods. Use errors.Is(err, ErrNetRoute*) for kind
 // matching, or errors.As(err, &ne) to inspect Context.
-type NetRouteError struct {
-	// Kind is the machine-readable error category.
-	Kind NetRouteErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It must not contain SSH credentials. Guard refusals name
-	// the route, say why (the SSH session's client IP and current best
-	// route), and point at the unsafe_skip_management_check escape hatch.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "interface_alias", "destination_prefix",
-	// "next_hop"). All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *NetRouteError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_net_route [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_net_route [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *NetRouteError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *NetRouteError) Is(target error) bool {
-	t, ok := target.(*NetRouteError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type NetRouteError = ResourceError
 
 // NewNetRouteError constructs a *NetRouteError. Pass a nil cause when no
 // underlying error exists. The ctx map may be nil.
 func NewNetRouteError(kind NetRouteErrorKind, message string, cause error, ctx map[string]string) *NetRouteError {
-	return &NetRouteError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_net_route", string(kind), message, cause, ctx)
 }
 
 // IsNetRouteError reports whether err is a *NetRouteError of the given kind.
 func IsNetRouteError(err error, kind NetRouteErrorKind) bool {
-	var ne *NetRouteError
-	if errors.As(err, &ne) {
-		return ne.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_net_route", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -148,17 +104,17 @@ func IsNetRouteError(err error, kind NetRouteErrorKind) bool {
 // ---------------------------------------------------------------------------
 
 var (
-	ErrNetRouteInterfaceNotFound    = &NetRouteError{Kind: NetRouteErrorInterfaceNotFound}
-	ErrNetRouteNotFound             = &NetRouteError{Kind: NetRouteErrorNotFound}
-	ErrNetRouteAlreadyExists        = &NetRouteError{Kind: NetRouteErrorAlreadyExists}
-	ErrNetRouteOwnedByOtherProtocol = &NetRouteError{Kind: NetRouteErrorOwnedByOtherProtocol}
-	ErrNetRouteInvalidRoute         = &NetRouteError{Kind: NetRouteErrorInvalidRoute}
-	ErrNetRouteNextHopUnreachable   = &NetRouteError{Kind: NetRouteErrorNextHopUnreachable}
-	ErrNetRoutePermission           = &NetRouteError{Kind: NetRouteErrorPermission}
-	ErrNetRouteMgmtAtRisk           = &NetRouteError{Kind: NetRouteErrorMgmtAtRisk}
-	ErrNetRouteMgmtUnknown          = &NetRouteError{Kind: NetRouteErrorMgmtUnknown}
-	ErrNetRouteUnreachable          = &NetRouteError{Kind: NetRouteErrorUnreachable}
-	ErrNetRouteUnknown              = &NetRouteError{Kind: NetRouteErrorUnknown}
+	ErrNetRouteInterfaceNotFound    = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorInterfaceNotFound}
+	ErrNetRouteNotFound             = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorNotFound}
+	ErrNetRouteAlreadyExists        = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorAlreadyExists}
+	ErrNetRouteOwnedByOtherProtocol = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorOwnedByOtherProtocol}
+	ErrNetRouteInvalidRoute         = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorInvalidRoute}
+	ErrNetRouteNextHopUnreachable   = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorNextHopUnreachable}
+	ErrNetRoutePermission           = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorPermission}
+	ErrNetRouteMgmtAtRisk           = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorMgmtAtRisk}
+	ErrNetRouteMgmtUnknown          = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorMgmtUnknown}
+	ErrNetRouteUnreachable          = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorUnreachable}
+	ErrNetRouteUnknown              = &NetRouteError{Resource: "windows_net_route", Kind: NetRouteErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

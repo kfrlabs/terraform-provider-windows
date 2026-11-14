@@ -182,14 +182,14 @@ func (r *RegistryKeyClientImpl) runScript(ctx context.Context, op, script string
 		return resp, nil
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		return nil, &RegistryKeyError{
+		return nil, &RegistryKeyError{Resource: "windows_registry_key",
 			Kind:    RegistryKeyErrorUnknown,
 			Message: eerr.Message,
 			Cause:   eerr.Cause,
 			Context: eerr.Context,
 		}
 	}
-	return resp, &RegistryKeyError{Kind: mapRegistryKeyErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
+	return resp, &RegistryKeyError{Resource: "windows_registry_key", Kind: string(mapRegistryKeyErrorKind(eerr.RemoteKind)), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapRegistryKeyErrorKind translates the PS-side "kind" string to a typed RegistryKeyErrorKind.
@@ -208,12 +208,12 @@ func mapRegistryKeyErrorKind(k string) RegistryKeyErrorKind {
 // into a *RegistryKeyState. found=false yields a state with Found=false.
 func (r *RegistryKeyClientImpl) parseListPayload(raw json.RawMessage, hive, regPath string) (*RegistryKeyState, error) {
 	if raw == nil || string(raw) == "null" {
-		return nil, &RegistryKeyError{Kind: RegistryKeyErrorUnknown,
+		return nil, &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorUnknown,
 			Message: "empty registry key payload"}
 	}
 	var payload rkListPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, &RegistryKeyError{Kind: RegistryKeyErrorUnknown,
+		return nil, &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorUnknown,
 			Message: "failed to parse registry key payload", Cause: err}
 	}
 	state := &RegistryKeyState{
@@ -229,16 +229,16 @@ func (r *RegistryKeyClientImpl) parseListPayload(raw json.RawMessage, hive, regP
 
 	names, err := parseMultiStringPayload(payload.ValueNames)
 	if err != nil {
-		return nil, &RegistryKeyError{Kind: RegistryKeyErrorUnknown,
+		return nil, &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorUnknown,
 			Message: "cannot parse value_names: " + err.Error()}
 	}
 	kinds, err := parseMultiStringPayload(payload.ValueKinds)
 	if err != nil {
-		return nil, &RegistryKeyError{Kind: RegistryKeyErrorUnknown,
+		return nil, &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorUnknown,
 			Message: "cannot parse value_kinds: " + err.Error()}
 	}
 	if len(names) != len(kinds) {
-		return nil, &RegistryKeyError{Kind: RegistryKeyErrorUnknown,
+		return nil, &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorUnknown,
 			Message: fmt.Sprintf("value_names (%d) and value_kinds (%d) length mismatch", len(names), len(kinds))}
 	}
 
@@ -270,7 +270,7 @@ func registryKeyPSPath(hive string) (string, error) {
 	case "HKCC":
 		full = "HKEY_CURRENT_CONFIG"
 	default:
-		return "", &RegistryKeyError{Kind: RegistryKeyErrorInvalidInput,
+		return "", &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorInvalidInput,
 			Message: fmt.Sprintf("unknown hive %q; must be one of HKLM, HKCU, HKCR, HKU, HKCC", hive)}
 	}
 	return `Microsoft.PowerShell.Core\Registry::` + full, nil
@@ -282,12 +282,12 @@ func registryKeyPSPath(hive string) (string, error) {
 // the Terraform-side registryPathValidator.
 func validateRegistryKeyPath(regPath string) error {
 	if strings.TrimSpace(regPath) == "" {
-		return &RegistryKeyError{Kind: RegistryKeyErrorInvalidInput,
+		return &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorInvalidInput,
 			Message: "registry key path must not be empty (the hive root cannot be managed)"}
 	}
 	for _, seg := range strings.Split(regPath, "\\") {
 		if t := strings.TrimSpace(seg); t == "" || t == "." || t == ".." {
-			return &RegistryKeyError{Kind: RegistryKeyErrorInvalidInput,
+			return &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorInvalidInput,
 				Message: fmt.Sprintf("invalid path segment %q in registry key path %q", seg, regPath)}
 		}
 	}

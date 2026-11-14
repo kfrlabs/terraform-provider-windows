@@ -106,7 +106,7 @@ func lpStateMap(id, version string) map[string]any {
 
 func TestLPError_ErrorWithCause(t *testing.T) {
 	cause := errors.New("network down")
-	e := &LegacyPackageError{
+	e := &LegacyPackageError{Resource: "windows_legacy_package",
 		Kind: "timeout", Message: "ssh cancelled",
 		Cause: cause, Context: map[string]string{"host": "winlp01"},
 	}
@@ -119,7 +119,7 @@ func TestLPError_ErrorWithCause(t *testing.T) {
 }
 
 func TestLPError_ErrorNoCause(t *testing.T) {
-	e := &LegacyPackageError{Kind: "checksum_mismatch", Message: "hash differs"}
+	e := &LegacyPackageError{Resource: "windows_legacy_package", Kind: "checksum_mismatch", Message: "hash differs"}
 	msg := e.Error()
 	if strings.Contains(msg, "<nil>") {
 		t.Errorf("nil cause should not appear: %q", msg)
@@ -131,25 +131,25 @@ func TestLPError_ErrorNoCause(t *testing.T) {
 
 func TestLPError_Unwrap(t *testing.T) {
 	cause := errors.New("boom")
-	e := &LegacyPackageError{Kind: "unknown", Message: "x", Cause: cause}
+	e := &LegacyPackageError{Resource: "windows_legacy_package", Kind: "unknown", Message: "x", Cause: cause}
 	if e.Unwrap() != cause {
 		t.Error("Unwrap should return cause")
 	}
-	e2 := &LegacyPackageError{Kind: "unknown", Message: "x"}
+	e2 := &LegacyPackageError{Resource: "windows_legacy_package", Kind: "unknown", Message: "x"}
 	if e2.Unwrap() != nil {
 		t.Error("Unwrap with no cause should return nil")
 	}
 }
 
 func TestIsLegacyPackageError_Match(t *testing.T) {
-	e := &LegacyPackageError{Kind: "timeout", Message: "x"}
+	e := &LegacyPackageError{Resource: "windows_legacy_package", Kind: "timeout", Message: "x"}
 	if !IsLegacyPackageError(e, "timeout") {
 		t.Error("should match on kind")
 	}
 }
 
 func TestIsLegacyPackageError_WrongKind(t *testing.T) {
-	e := &LegacyPackageError{Kind: "timeout", Message: "x"}
+	e := &LegacyPackageError{Resource: "windows_legacy_package", Kind: "timeout", Message: "x"}
 	if IsLegacyPackageError(e, "permission_denied") {
 		t.Error("should NOT match different kind")
 	}
@@ -165,7 +165,7 @@ func TestIsLegacyPackageError_PlainAndNil(t *testing.T) {
 }
 
 func TestIsLegacyPackageError_Wrapped(t *testing.T) {
-	inner := &LegacyPackageError{Kind: "checksum_mismatch", Message: "x"}
+	inner := &LegacyPackageError{Resource: "windows_legacy_package", Kind: "checksum_mismatch", Message: "x"}
 	wrapped := fmt.Errorf("outer: %w", inner)
 	if !IsLegacyPackageError(wrapped, "checksum_mismatch") {
 		t.Error("errors.As traversal must find wrapped *LegacyPackageError")

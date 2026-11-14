@@ -513,7 +513,7 @@ func parseSmbSharePayload(raw json.RawMessage, name string) (*SmbShareInfo, erro
 	}
 	var payload smbShareDataPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, &SmbShareError{Kind: SmbShareErrorUnknown, Message: "failed to parse SMB share payload", Cause: err}
+		return nil, &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorUnknown, Message: "failed to parse SMB share payload", Cause: err}
 	}
 	if !payload.Found {
 		return nil, nil
@@ -565,12 +565,12 @@ func parseSmbShareTrustees(raw json.RawMessage) ([]SmbShareTrustee, error) {
 	var decoded []smbShareTrusteePayload
 	if strings.HasPrefix(trimmed, "[") {
 		if err := json.Unmarshal(raw, &decoded); err != nil {
-			return nil, &SmbShareError{Kind: SmbShareErrorUnknown, Message: "failed to parse share access list", Cause: err}
+			return nil, &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorUnknown, Message: "failed to parse share access list", Cause: err}
 		}
 	} else {
 		var single smbShareTrusteePayload
 		if err := json.Unmarshal(raw, &single); err != nil {
-			return nil, &SmbShareError{Kind: SmbShareErrorUnknown, Message: "failed to parse share access entry", Cause: err}
+			return nil, &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorUnknown, Message: "failed to parse share access entry", Cause: err}
 		}
 		decoded = []smbShareTrusteePayload{single}
 	}

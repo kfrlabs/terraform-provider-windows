@@ -225,14 +225,14 @@ func (e *EnvVarClientImpl) runScript(ctx context.Context, op, script string) (*e
 		return resp, nil
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		return nil, &EnvVarError{
+		return nil, &EnvVarError{Resource: "windows_environment_variable",
 			Kind:    EnvVarErrorUnknown,
 			Message: eerr.Message,
 			Cause:   eerr.Cause,
 			Context: eerr.Context,
 		}
 	}
-	return resp, &EnvVarError{Kind: mapEnvVarErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
+	return resp, &EnvVarError{Resource: "windows_environment_variable", Kind: string(mapEnvVarErrorKind(eerr.RemoteKind)), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapEnvVarErrorKind translates the PS-side "kind" string to a typed EnvVarErrorKind.
@@ -256,7 +256,7 @@ func mapEnvVarErrorKind(k string) EnvVarErrorKind {
 func (e *EnvVarClientImpl) Set(ctx context.Context, input EnvVarInput) (*EnvVarState, error) {
 	hiveIdent, subkey, err := registryPathForScope(input.Scope)
 	if err != nil {
-		return nil, &EnvVarError{Kind: EnvVarErrorInvalidInput, Message: err.Error()}
+		return nil, &EnvVarError{Resource: "windows_environment_variable", Kind: EnvVarErrorInvalidInput, Message: err.Error()}
 	}
 
 	repl := strings.NewReplacer(
@@ -278,7 +278,7 @@ func (e *EnvVarClientImpl) Set(ctx context.Context, input EnvVarInput) (*EnvVarS
 
 	var data evSetData
 	if jerr := json.Unmarshal(resp.Data, &data); jerr != nil {
-		return nil, &EnvVarError{
+		return nil, &EnvVarError{Resource: "windows_environment_variable",
 			Kind:    EnvVarErrorUnknown,
 			Message: "failed to parse set response data",
 			Cause:   jerr,
@@ -302,7 +302,7 @@ func (e *EnvVarClientImpl) Set(ctx context.Context, input EnvVarInput) (*EnvVarS
 func (e *EnvVarClientImpl) Read(ctx context.Context, scope EnvVarScope, name string) (*EnvVarState, error) {
 	hiveIdent, subkey, err := registryPathForScope(scope)
 	if err != nil {
-		return nil, &EnvVarError{Kind: EnvVarErrorInvalidInput, Message: err.Error()}
+		return nil, &EnvVarError{Resource: "windows_environment_variable", Kind: EnvVarErrorInvalidInput, Message: err.Error()}
 	}
 
 	repl := strings.NewReplacer(
@@ -320,7 +320,7 @@ func (e *EnvVarClientImpl) Read(ctx context.Context, scope EnvVarScope, name str
 
 	var data evReadData
 	if jerr := json.Unmarshal(resp.Data, &data); jerr != nil {
-		return nil, &EnvVarError{
+		return nil, &EnvVarError{Resource: "windows_environment_variable",
 			Kind:    EnvVarErrorUnknown,
 			Message: "failed to parse read response data",
 			Cause:   jerr,
@@ -347,7 +347,7 @@ func (e *EnvVarClientImpl) Read(ctx context.Context, scope EnvVarScope, name str
 func (e *EnvVarClientImpl) Delete(ctx context.Context, scope EnvVarScope, name string) error {
 	hiveIdent, subkey, err := registryPathForScope(scope)
 	if err != nil {
-		return &EnvVarError{Kind: EnvVarErrorInvalidInput, Message: err.Error()}
+		return &EnvVarError{Resource: "windows_environment_variable", Kind: EnvVarErrorInvalidInput, Message: err.Error()}
 	}
 
 	repl := strings.NewReplacer(

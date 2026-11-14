@@ -6,8 +6,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -20,27 +18,27 @@ type FirewallRuleErrorKind string
 
 const (
 	// FirewallRuleErrorNotFound is returned when the target rule does not exist.
-	FirewallRuleErrorNotFound FirewallRuleErrorKind = "not_found"
+	FirewallRuleErrorNotFound = "not_found"
 
 	// FirewallRuleErrorAlreadyExists is returned when Create detects a
 	// pre-existing rule with the same Name.
-	FirewallRuleErrorAlreadyExists FirewallRuleErrorKind = "already_exists"
+	FirewallRuleErrorAlreadyExists = "already_exists"
 
 	// FirewallRuleErrorPermission is returned when SSH or NetSecurity
 	// refuses the operation due to insufficient privileges.
-	FirewallRuleErrorPermission FirewallRuleErrorKind = "permission_denied"
+	FirewallRuleErrorPermission = "permission_denied"
 
 	// FirewallRuleErrorReadOnlyStore is returned when Create, Update or Delete
 	// is attempted against a read-only policy store (GroupPolicy or RSOP).
-	FirewallRuleErrorReadOnlyStore FirewallRuleErrorKind = "read_only_store"
+	FirewallRuleErrorReadOnlyStore = "read_only_store"
 
 	// FirewallRuleErrorInvalidInput is returned when PowerShell rejects a
 	// parameter value.
-	FirewallRuleErrorInvalidInput FirewallRuleErrorKind = "invalid_input"
+	FirewallRuleErrorInvalidInput = "invalid_input"
 
 	// FirewallRuleErrorUnknown is returned for unexpected PowerShell errors
 	// or SSH transport failures.
-	FirewallRuleErrorUnknown FirewallRuleErrorKind = "unknown"
+	FirewallRuleErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -49,45 +47,16 @@ const (
 
 // FirewallRuleError is the structured error type returned by all
 // WindowsFirewallRuleClient methods.
-type FirewallRuleError struct {
-	Kind    FirewallRuleErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *FirewallRuleError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_firewall_rule [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_firewall_rule [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *FirewallRuleError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *FirewallRuleError) Is(target error) bool {
-	t, ok := target.(*FirewallRuleError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type FirewallRuleError = ResourceError
 
 // NewFirewallRuleError constructs a *FirewallRuleError.
 func NewFirewallRuleError(kind FirewallRuleErrorKind, message string, cause error, ctx map[string]string) *FirewallRuleError {
-	return &FirewallRuleError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_firewall_rule", string(kind), message, cause, ctx)
 }
 
 // IsFirewallRuleError reports whether err is a *FirewallRuleError with the given kind.
 func IsFirewallRuleError(err error, kind FirewallRuleErrorKind) bool {
-	var fe *FirewallRuleError
-	if errors.As(err, &fe) {
-		return fe.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_firewall_rule", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -96,12 +65,12 @@ func IsFirewallRuleError(err error, kind FirewallRuleErrorKind) bool {
 
 // Pre-constructed sentinel *FirewallRuleError values for errors.Is.
 var (
-	ErrFirewallRuleNotFound      = &FirewallRuleError{Kind: FirewallRuleErrorNotFound}
-	ErrFirewallRuleAlreadyExists = &FirewallRuleError{Kind: FirewallRuleErrorAlreadyExists}
-	ErrFirewallRulePermission    = &FirewallRuleError{Kind: FirewallRuleErrorPermission}
-	ErrFirewallRuleReadOnlyStore = &FirewallRuleError{Kind: FirewallRuleErrorReadOnlyStore}
-	ErrFirewallRuleInvalidInput  = &FirewallRuleError{Kind: FirewallRuleErrorInvalidInput}
-	ErrFirewallRuleUnknown       = &FirewallRuleError{Kind: FirewallRuleErrorUnknown}
+	ErrFirewallRuleNotFound      = &FirewallRuleError{Resource: "windows_firewall_rule", Kind: FirewallRuleErrorNotFound}
+	ErrFirewallRuleAlreadyExists = &FirewallRuleError{Resource: "windows_firewall_rule", Kind: FirewallRuleErrorAlreadyExists}
+	ErrFirewallRulePermission    = &FirewallRuleError{Resource: "windows_firewall_rule", Kind: FirewallRuleErrorPermission}
+	ErrFirewallRuleReadOnlyStore = &FirewallRuleError{Resource: "windows_firewall_rule", Kind: FirewallRuleErrorReadOnlyStore}
+	ErrFirewallRuleInvalidInput  = &FirewallRuleError{Resource: "windows_firewall_rule", Kind: FirewallRuleErrorInvalidInput}
+	ErrFirewallRuleUnknown       = &FirewallRuleError{Resource: "windows_firewall_rule", Kind: FirewallRuleErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

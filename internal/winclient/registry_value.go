@@ -258,14 +258,14 @@ func (r *RegistryValueClientImpl) runScript(ctx context.Context, op, script stri
 		return resp, nil
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		return nil, &RegistryValueError{
+		return nil, &RegistryValueError{Resource: "windows_registry_value",
 			Kind:    RegistryValueErrorUnknown,
 			Message: eerr.Message,
 			Cause:   eerr.Cause,
 			Context: eerr.Context,
 		}
 	}
-	return resp, &RegistryValueError{Kind: mapRegistryValueErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
+	return resp, &RegistryValueError{Resource: "windows_registry_value", Kind: string(mapRegistryValueErrorKind(eerr.RemoteKind)), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapRegistryValueErrorKind translates the PS-side "kind" string to a typed RegistryValueErrorKind.
@@ -290,19 +290,19 @@ func buildPSValueExpr(input RegistryValueInput) (string, error) {
 	switch input.Kind {
 	case RegistryValueKindString, RegistryValueKindExpandString:
 		if input.ValueString == nil {
-			return "", &RegistryValueError{Kind: RegistryValueErrorInvalidInput,
+			return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
 				Message: fmt.Sprintf("ValueString is required for %s", input.Kind)}
 		}
 		return psQuote(*input.ValueString), nil
 
 	case RegistryValueKindDWord:
 		if input.ValueString == nil {
-			return "", &RegistryValueError{Kind: RegistryValueErrorInvalidInput,
+			return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
 				Message: "ValueString is required for REG_DWORD"}
 		}
 		u32, err := strconv.ParseUint(*input.ValueString, 10, 32)
 		if err != nil {
-			return "", &RegistryValueError{Kind: RegistryValueErrorInvalidInput,
+			return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
 				Message: fmt.Sprintf("invalid REG_DWORD value %q", *input.ValueString), Cause: err}
 		}
 		// Convert to int32 bit-pattern for .NET SetValue(name, int32, DWord).
@@ -310,12 +310,12 @@ func buildPSValueExpr(input RegistryValueInput) (string, error) {
 
 	case RegistryValueKindQWord:
 		if input.ValueString == nil {
-			return "", &RegistryValueError{Kind: RegistryValueErrorInvalidInput,
+			return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
 				Message: "ValueString is required for REG_QWORD"}
 		}
 		u64, err := strconv.ParseUint(*input.ValueString, 10, 64)
 		if err != nil {
-			return "", &RegistryValueError{Kind: RegistryValueErrorInvalidInput,
+			return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
 				Message: fmt.Sprintf("invalid REG_QWORD value %q", *input.ValueString), Cause: err}
 		}
 		// Use ::Parse to avoid PS literal overflow for values > Int64.MaxValue.
@@ -343,7 +343,7 @@ func buildPSValueExpr(input RegistryValueInput) (string, error) {
 		return fmt.Sprintf("(Hex-To-Bytes %s)", psQuote(hex)), nil
 
 	default:
-		return "", &RegistryValueError{Kind: RegistryValueErrorInvalidInput,
+		return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
 			Message: fmt.Sprintf("unknown RegistryValueKind: %s", input.Kind)}
 	}
 }
@@ -376,7 +376,7 @@ func (r *RegistryValueClientImpl) parseDataPayload(raw json.RawMessage, hive, re
 	}
 	var payload rvDataPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, &RegistryValueError{Kind: RegistryValueErrorUnknown,
+		return nil, &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorUnknown,
 			Message: "failed to parse registry value payload", Cause: err}
 	}
 	if !payload.Found {
@@ -394,7 +394,7 @@ func (r *RegistryValueClientImpl) parseDataPayload(raw json.RawMessage, hive, re
 	case RegistryValueKindMultiString:
 		strs, err := parseMultiStringPayload(payload.ValueStrings)
 		if err != nil {
-			return nil, &RegistryValueError{Kind: RegistryValueErrorUnknown, Message: err.Error()}
+			return nil, &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorUnknown, Message: err.Error()}
 		}
 		state.ValueStrings = strs
 

@@ -12,8 +12,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,38 +26,38 @@ type CertificateErrorKind string
 const (
 	// CertificateErrorStoreNotFound is returned when the certificate store
 	// cannot be opened (unknown store location, missing provider path).
-	CertificateErrorStoreNotFound CertificateErrorKind = "store_not_found"
+	CertificateErrorStoreNotFound = "store_not_found"
 
 	// CertificateErrorInvalidPassword is returned when a PFX bundle cannot
 	// be decrypted with the supplied password.
-	CertificateErrorInvalidPassword CertificateErrorKind = "invalid_password"
+	CertificateErrorInvalidPassword = "invalid_password"
 
 	// CertificateErrorCorruptCertificate is returned when the PEM or PFX
 	// payload cannot be decoded (bad base64, truncated blob, ASN.1 errors).
-	CertificateErrorCorruptCertificate CertificateErrorKind = "corrupt_certificate"
+	CertificateErrorCorruptCertificate = "corrupt_certificate"
 
 	// CertificateErrorAccessDenied is returned when the SSH user lacks the
 	// privilege for the store operation (typically writing LocalMachine
 	// without elevation).
-	CertificateErrorAccessDenied CertificateErrorKind = "access_denied"
+	CertificateErrorAccessDenied = "access_denied"
 
 	// CertificateErrorAlreadyExists is returned when a certificate with the
 	// same thumbprint is already present in the store (suggest terraform
 	// import).
-	CertificateErrorAlreadyExists CertificateErrorKind = "already_exists"
+	CertificateErrorAlreadyExists = "already_exists"
 
 	// CertificateErrorNotFound is returned when no certificate with the
 	// requested thumbprint (or subject) is present.
-	CertificateErrorNotFound CertificateErrorKind = "not_found"
+	CertificateErrorNotFound = "not_found"
 
 	// CertificateErrorInteractiveUIRequired is returned when the host
 	// demands user interaction (smart-card prompt, consent UI) to complete
 	// a PFX import. Nothing is applied.
-	CertificateErrorInteractiveUIRequired CertificateErrorKind = "interactive_ui_required"
+	CertificateErrorInteractiveUIRequired = "interactive_ui_required"
 
 	// CertificateErrorUnknown is the catch-all for unmapped PowerShell or
 	// SSH failures.
-	CertificateErrorUnknown CertificateErrorKind = "unknown"
+	CertificateErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -69,59 +67,18 @@ const (
 // CertificateError is the structured error type returned by all
 // CertificateClient methods. Use errors.Is(err, ErrCertificate*) for kind
 // matching, or errors.As(err, &ce) to inspect Context.
-type CertificateError struct {
-	// Kind is the machine-readable error category.
-	Kind CertificateErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It must not contain secrets: payloads travel on stdin
-	// and are never interpolated into messages.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "store_location", "store_name", "thumbprint").
-	// All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *CertificateError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_certificate [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_certificate [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *CertificateError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *CertificateError) Is(target error) bool {
-	t, ok := target.(*CertificateError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type CertificateError = ResourceError
 
 // NewCertificateError constructs a *CertificateError. Pass a nil cause when
 // no underlying error exists. The ctx map may be nil.
 func NewCertificateError(kind CertificateErrorKind, message string, cause error, ctx map[string]string) *CertificateError {
-	return &CertificateError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_certificate", string(kind), message, cause, ctx)
 }
 
 // IsCertificateError reports whether err is a *CertificateError of the given
 // kind.
 func IsCertificateError(err error, kind CertificateErrorKind) bool {
-	var ce *CertificateError
-	if errors.As(err, &ce) {
-		return ce.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_certificate", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -129,14 +86,14 @@ func IsCertificateError(err error, kind CertificateErrorKind) bool {
 // ---------------------------------------------------------------------------
 
 var (
-	ErrCertificateStoreNotFound      = &CertificateError{Kind: CertificateErrorStoreNotFound}
-	ErrCertificateInvalidPassword    = &CertificateError{Kind: CertificateErrorInvalidPassword}
-	ErrCertificateCorruptCertificate = &CertificateError{Kind: CertificateErrorCorruptCertificate}
-	ErrCertificateAccessDenied       = &CertificateError{Kind: CertificateErrorAccessDenied}
-	ErrCertificateAlreadyExists      = &CertificateError{Kind: CertificateErrorAlreadyExists}
-	ErrCertificateNotFound           = &CertificateError{Kind: CertificateErrorNotFound}
-	ErrCertificateInteractiveUI      = &CertificateError{Kind: CertificateErrorInteractiveUIRequired}
-	ErrCertificateUnknown            = &CertificateError{Kind: CertificateErrorUnknown}
+	ErrCertificateStoreNotFound      = &CertificateError{Resource: "windows_certificate", Kind: CertificateErrorStoreNotFound}
+	ErrCertificateInvalidPassword    = &CertificateError{Resource: "windows_certificate", Kind: CertificateErrorInvalidPassword}
+	ErrCertificateCorruptCertificate = &CertificateError{Resource: "windows_certificate", Kind: CertificateErrorCorruptCertificate}
+	ErrCertificateAccessDenied       = &CertificateError{Resource: "windows_certificate", Kind: CertificateErrorAccessDenied}
+	ErrCertificateAlreadyExists      = &CertificateError{Resource: "windows_certificate", Kind: CertificateErrorAlreadyExists}
+	ErrCertificateNotFound           = &CertificateError{Resource: "windows_certificate", Kind: CertificateErrorNotFound}
+	ErrCertificateInteractiveUI      = &CertificateError{Resource: "windows_certificate", Kind: CertificateErrorInteractiveUIRequired}
+	ErrCertificateUnknown            = &CertificateError{Resource: "windows_certificate", Kind: CertificateErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

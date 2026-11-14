@@ -377,14 +377,14 @@ func (f *FileClientImpl) runScript(ctx context.Context, op, script, stdin string
 		return resp, nil
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		return nil, &FileError{
+		return nil, &FileError{Resource: "windows_file",
 			Kind:    FileErrorUnknown,
 			Message: eerr.Message,
 			Cause:   eerr.Cause,
 			Context: eerr.Context,
 		}
 	}
-	return resp, &FileError{Kind: mapFileErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
+	return resp, &FileError{Resource: "windows_file", Kind: string(mapFileErrorKind(eerr.RemoteKind)), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapFileErrorKind translates the PS-side "kind" string to a typed FileErrorKind.
@@ -427,14 +427,14 @@ func parseFileDataPayload(raw json.RawMessage, path string) (*FileState, error) 
 	}
 	var payload fileDataPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, &FileError{Kind: FileErrorUnknown, Message: "failed to parse file payload", Cause: err}
+		return nil, &FileError{Resource: "windows_file", Kind: FileErrorUnknown, Message: "failed to parse file payload", Cause: err}
 	}
 	if !payload.Found {
 		return nil, nil
 	}
 	attrs, err := parseMultiStringPayload(payload.Attributes)
 	if err != nil {
-		return nil, &FileError{Kind: FileErrorUnknown, Message: err.Error()}
+		return nil, &FileError{Resource: "windows_file", Kind: FileErrorUnknown, Message: err.Error()}
 	}
 	return &FileState{
 		Path:          path,
@@ -449,7 +449,7 @@ func parseFileDataPayload(raw json.RawMessage, path string) (*FileState, error) 
 // stdin payload (empty when the target host performs the download itself).
 func buildFileSetScript(input FileInput) (script, stdin string, err error) {
 	if strings.TrimSpace(input.Path) == "" {
-		return "", "", &FileError{Kind: FileErrorInvalidInput, Message: "path must not be empty"}
+		return "", "", &FileError{Resource: "windows_file", Kind: FileErrorInvalidInput, Message: "path must not be empty"}
 	}
 	attrs, err := NormaliseFileAttributes(input.Attributes)
 	if err != nil {
@@ -461,11 +461,11 @@ func buildFileSetScript(input FileInput) (script, stdin string, err error) {
 
 	if input.DownloadOnTarget {
 		if input.SourceURL == "" {
-			return "", "", &FileError{Kind: FileErrorInvalidInput,
+			return "", "", &FileError{Resource: "windows_file", Kind: FileErrorInvalidInput,
 				Message: `download_on = "target" requires source_url`}
 		}
 		if expectSHA == "" {
-			return "", "", &FileError{Kind: FileErrorInvalidInput,
+			return "", "", &FileError{Resource: "windows_file", Kind: FileErrorInvalidInput,
 				Message: `download_on = "target" requires source_url_sha256: without a pinned checksum the provider cannot verify what the host downloaded`}
 		}
 		acquire = psFileAcquireDownloadBody(
@@ -508,7 +508,7 @@ func (f *FileClientImpl) Set(ctx context.Context, input FileInput) (*FileState, 
 		return nil, err
 	}
 	if state == nil {
-		return nil, &FileError{Kind: FileErrorUnknown,
+		return nil, &FileError{Resource: "windows_file", Kind: FileErrorUnknown,
 			Message: "set reported success but returned no file state",
 			Context: map[string]string{"path": input.Path}}
 	}
@@ -555,7 +555,7 @@ func (f *FileClientImpl) ReadContent(ctx context.Context, path string, maxBytes 
 	}
 	var payload fileDataPayload
 	if jerr := json.Unmarshal(resp.Data, &payload); jerr != nil {
-		return nil, &FileError{Kind: FileErrorUnknown, Message: "failed to parse file content payload", Cause: jerr}
+		return nil, &FileError{Resource: "windows_file", Kind: FileErrorUnknown, Message: "failed to parse file content payload", Cause: jerr}
 	}
 	if !payload.Found {
 		return nil, nil

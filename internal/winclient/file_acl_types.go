@@ -14,7 +14,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -23,70 +22,41 @@ import (
 type FileACLErrorKind string
 
 const (
-	FileACLErrorNotFound         FileACLErrorKind = "not_found"
-	FileACLErrorPathNotFound     FileACLErrorKind = "path_not_found"
-	FileACLErrorTypeConflict     FileACLErrorKind = "type_conflict"
-	FileACLErrorPermission       FileACLErrorKind = "permission_denied"
-	FileACLErrorPrivilegeNotHeld FileACLErrorKind = "privilege_not_held"
-	FileACLErrorIdentityNotFound FileACLErrorKind = "identity_not_found"
-	FileACLErrorInvalidInput     FileACLErrorKind = "invalid_input"
-	FileACLErrorLocked           FileACLErrorKind = "file_locked"
-	FileACLErrorUnknown          FileACLErrorKind = "unknown"
+	FileACLErrorNotFound         = "not_found"
+	FileACLErrorPathNotFound     = "path_not_found"
+	FileACLErrorTypeConflict     = "type_conflict"
+	FileACLErrorPermission       = "permission_denied"
+	FileACLErrorPrivilegeNotHeld = "privilege_not_held"
+	FileACLErrorIdentityNotFound = "identity_not_found"
+	FileACLErrorInvalidInput     = "invalid_input"
+	FileACLErrorLocked           = "file_locked"
+	FileACLErrorUnknown          = "unknown"
 )
 
 // FileACLError is the structured error type returned by all FileACLClient methods.
-type FileACLError struct {
-	Kind    FileACLErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *FileACLError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_file_acl [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_file_acl [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *FileACLError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *FileACLError) Is(target error) bool {
-	t, ok := target.(*FileACLError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type FileACLError = ResourceError
 
 // NewFileACLError constructs a *FileACLError.
 func NewFileACLError(kind FileACLErrorKind, message string, cause error, ctx map[string]string) *FileACLError {
-	return &FileACLError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_file_acl", string(kind), message, cause, ctx)
 }
 
 // IsFileACLError reports whether err is a *FileACLError with the given kind.
 func IsFileACLError(err error, kind FileACLErrorKind) bool {
-	var fe *FileACLError
-	if errors.As(err, &fe) {
-		return fe.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_file_acl", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrFileACLNotFound         = &FileACLError{Kind: FileACLErrorNotFound}
-	ErrFileACLPathNotFound     = &FileACLError{Kind: FileACLErrorPathNotFound}
-	ErrFileACLTypeConflict     = &FileACLError{Kind: FileACLErrorTypeConflict}
-	ErrFileACLPermission       = &FileACLError{Kind: FileACLErrorPermission}
-	ErrFileACLPrivilegeNotHeld = &FileACLError{Kind: FileACLErrorPrivilegeNotHeld}
-	ErrFileACLIdentityNotFound = &FileACLError{Kind: FileACLErrorIdentityNotFound}
-	ErrFileACLInvalidInput     = &FileACLError{Kind: FileACLErrorInvalidInput}
-	ErrFileACLLocked           = &FileACLError{Kind: FileACLErrorLocked}
-	ErrFileACLUnknown          = &FileACLError{Kind: FileACLErrorUnknown}
+	ErrFileACLNotFound         = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorNotFound}
+	ErrFileACLPathNotFound     = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorPathNotFound}
+	ErrFileACLTypeConflict     = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorTypeConflict}
+	ErrFileACLPermission       = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorPermission}
+	ErrFileACLPrivilegeNotHeld = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorPrivilegeNotHeld}
+	ErrFileACLIdentityNotFound = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorIdentityNotFound}
+	ErrFileACLInvalidInput     = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorInvalidInput}
+	ErrFileACLLocked           = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorLocked}
+	ErrFileACLUnknown          = &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorUnknown}
 )
 
 // Schema enums.
@@ -179,7 +149,7 @@ func FileACLValidRights() []string {
 // nothing is always a configuration mistake.
 func NormaliseFileACLRights(rights []string) ([]string, int64, error) {
 	if len(rights) == 0 {
-		return nil, 0, &FileACLError{
+		return nil, 0, &FileACLError{Resource: "windows_file_acl",
 			Kind:    FileACLErrorInvalidInput,
 			Message: "an access rule must declare at least one right",
 		}
@@ -189,7 +159,7 @@ func NormaliseFileACLRights(rights []string) ([]string, int64, error) {
 	for _, r := range rights {
 		canonical, ok := CanonicalFileACLRight(r)
 		if !ok {
-			return nil, 0, &FileACLError{
+			return nil, 0, &FileACLError{Resource: "windows_file_acl",
 				Kind: FileACLErrorInvalidInput,
 				Message: fmt.Sprintf("unknown right %q: accepted values are %s",
 					r, strings.Join(fileACLRightOrder, ", ")),
@@ -326,14 +296,14 @@ type FileACLClient interface {
 // an operator from locking themselves out of a path.
 func ValidateFileACLInput(input *FileACLInput) error {
 	if strings.TrimSpace(input.Path) == "" {
-		return &FileACLError{Kind: FileACLErrorInvalidInput, Message: "path must not be empty"}
+		return &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorInvalidInput, Message: "path must not be empty"}
 	}
 	switch input.Mode {
 	case FileACLModeAuthoritative, FileACLModeAdditive:
 	case "":
 		input.Mode = FileACLModeAuthoritative
 	default:
-		return &FileACLError{
+		return &FileACLError{Resource: "windows_file_acl",
 			Kind:    FileACLErrorInvalidInput,
 			Message: fmt.Sprintf("unknown mode %q: expected %q or %q", input.Mode, FileACLModeAuthoritative, FileACLModeAdditive),
 		}
@@ -355,7 +325,7 @@ func ValidateFileACLInput(input *FileACLInput) error {
 	}
 
 	if input.Mode == FileACLModeAuthoritative && len(input.AccessRules) == 0 {
-		return &FileACLError{
+		return &FileACLError{Resource: "windows_file_acl",
 			Kind: FileACLErrorInvalidInput,
 			Message: "authoritative mode requires at least one access_rule: applying an empty " +
 				"DACL would strip every explicit permission from the target",
@@ -377,7 +347,7 @@ func ValidateFileACLInput(input *FileACLInput) error {
 		// silently wins in authoritative mode.
 		key := strings.ToLower(rule.Identity) + "|" + rule.Type + "|" + rule.Inheritance + "|" + rule.Propagation
 		if seen[key] {
-			return &FileACLError{
+			return &FileACLError{Resource: "windows_file_acl",
 				Kind: FileACLErrorInvalidInput,
 				Message: fmt.Sprintf("duplicate access_rule for identity %q (type %q, inheritance %q, propagation %q): "+
 					"merge the rights into a single rule", rule.Identity, rule.Type, rule.Inheritance, rule.Propagation),
@@ -390,7 +360,7 @@ func ValidateFileACLInput(input *FileACLInput) error {
 	// unreachable to everyone including its owner, recoverable only by taking
 	// ownership. Refuse rather than brick the path.
 	if !input.InheritanceEnabled && allow == 0 {
-		return &FileACLError{
+		return &FileACLError{Resource: "windows_file_acl",
 			Kind: FileACLErrorInvalidInput,
 			Message: "inheritance_enabled = false with no allow access_rule would leave the target " +
 				"with an empty effective DACL, denying access to everyone including the owner",
@@ -413,7 +383,7 @@ func ValidateFileACLInput(input *FileACLInput) error {
 // which is the only place where the target type is actually known.
 func normaliseFileACLRule(rule FileACLAccessRule) (FileACLAccessRule, error) {
 	if strings.TrimSpace(rule.Identity) == "" {
-		return rule, &FileACLError{Kind: FileACLErrorInvalidInput, Message: "access_rule identity must not be empty"}
+		return rule, &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorInvalidInput, Message: "access_rule identity must not be empty"}
 	}
 
 	switch rule.Type {
@@ -421,7 +391,7 @@ func normaliseFileACLRule(rule FileACLAccessRule) (FileACLAccessRule, error) {
 	case "":
 		rule.Type = FileACLTypeAllow
 	default:
-		return rule, &FileACLError{
+		return rule, &FileACLError{Resource: "windows_file_acl",
 			Kind:    FileACLErrorInvalidInput,
 			Message: fmt.Sprintf("unknown access_rule type %q: expected %q or %q", rule.Type, FileACLTypeAllow, FileACLTypeDeny),
 		}
@@ -431,7 +401,7 @@ func normaliseFileACLRule(rule FileACLAccessRule) (FileACLAccessRule, error) {
 	case "", FileACLInheritanceNone, FileACLInheritanceObject,
 		FileACLInheritanceContainer, FileACLInheritanceContainerObject:
 	default:
-		return rule, &FileACLError{
+		return rule, &FileACLError{Resource: "windows_file_acl",
 			Kind:    FileACLErrorInvalidInput,
 			Message: fmt.Sprintf("unknown inheritance %q", rule.Inheritance),
 		}
@@ -440,7 +410,7 @@ func normaliseFileACLRule(rule FileACLAccessRule) (FileACLAccessRule, error) {
 	switch rule.Propagation {
 	case "", FileACLPropagationNone, FileACLPropagationInheritOnly, FileACLPropagationNoPropagate:
 	default:
-		return rule, &FileACLError{
+		return rule, &FileACLError{Resource: "windows_file_acl",
 			Kind:    FileACLErrorInvalidInput,
 			Message: fmt.Sprintf("unknown propagation %q", rule.Propagation),
 		}
@@ -453,7 +423,7 @@ func normaliseFileACLRule(rule FileACLAccessRule) (FileACLAccessRule, error) {
 	// silently not do what the operator wrote.
 	if rule.Propagation != FileACLPropagationNone &&
 		(rule.Inheritance == FileACLInheritanceNone || rule.Inheritance == "") {
-		return rule, &FileACLError{
+		return rule, &FileACLError{Resource: "windows_file_acl",
 			Kind: FileACLErrorInvalidInput,
 			Message: fmt.Sprintf("propagation %q requires an inheritance flag other than %q",
 				rule.Propagation, FileACLInheritanceNone),

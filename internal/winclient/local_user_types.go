@@ -17,8 +17,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,46 +31,46 @@ type LocalUserErrorKind string
 const (
 	// LocalUserErrorNotFound is returned when Get-LocalUser raises UserNotFound
 	// for the given SID. In Read, this triggers RemoveResource() (EC-3).
-	LocalUserErrorNotFound LocalUserErrorKind = "not_found"
+	LocalUserErrorNotFound = "not_found"
 
 	// LocalUserErrorAlreadyExists is returned when Create detects a pre-existing
 	// user with the same name (EC-1). Hard error — use terraform import.
-	LocalUserErrorAlreadyExists LocalUserErrorKind = "already_exists"
+	LocalUserErrorAlreadyExists = "already_exists"
 
 	// LocalUserErrorBuiltinAccount is returned when Delete detects a built-in
 	// RID (500/501/503/504, ADR-LU-2, EC-2). Hard error — not a warning.
-	LocalUserErrorBuiltinAccount LocalUserErrorKind = "builtin_account"
+	LocalUserErrorBuiltinAccount = "builtin_account"
 
 	// LocalUserErrorRenameConflict is returned when Rename-LocalUser fails
 	// because the target name is already used by another local user (EC-5).
-	LocalUserErrorRenameConflict LocalUserErrorKind = "rename_conflict"
+	LocalUserErrorRenameConflict = "rename_conflict"
 
 	// LocalUserErrorPasswordPolicy is returned when New-LocalUser or
 	// Set-LocalUser -Password violates the local password policy (EC-7).
-	LocalUserErrorPasswordPolicy LocalUserErrorKind = "password_policy"
+	LocalUserErrorPasswordPolicy = "password_policy"
 
 	// LocalUserErrorPermission is returned when a mutating cmdlet is
 	// rejected with AccessDenied (EC-9).
-	LocalUserErrorPermission LocalUserErrorKind = "permission_denied"
+	LocalUserErrorPermission = "permission_denied"
 
 	// LocalUserErrorInvalidName is returned when a user name fails
 	// Windows-side validation — defence-in-depth (EC-10).
-	LocalUserErrorInvalidName LocalUserErrorKind = "invalid_name"
+	LocalUserErrorInvalidName = "invalid_name"
 
 	// LocalUserErrorInvalidParameter is returned when a List filter fails
 	// Go-side validation (e.g. name_regex does not compile). No host call
 	// is made.
-	LocalUserErrorInvalidParameter LocalUserErrorKind = "invalid_parameter"
+	LocalUserErrorInvalidParameter = "invalid_parameter"
 
 	// LocalUserErrorUnsupportedOnDC is returned when List runs on a domain
 	// controller (Win32_ComputerSystem DomainRole >= 4), where the
 	// LocalAccounts cmdlets address the domain database instead of local
 	// user accounts.
-	LocalUserErrorUnsupportedOnDC LocalUserErrorKind = "unsupported_on_domain_controller"
+	LocalUserErrorUnsupportedOnDC = "unsupported_on_domain_controller"
 
 	// LocalUserErrorUnknown is the catch-all for unrecognised PowerShell
 	// errors or unexpected SSH transport failures.
-	LocalUserErrorUnknown LocalUserErrorKind = "unknown"
+	LocalUserErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -84,41 +82,7 @@ const (
 //
 // Callers should use errors.Is(err, ErrLocalUser*) for kind matching, or
 // errors.As(err, &lue) to access the full Context map for diagnostics.
-type LocalUserError struct {
-	// Kind is the machine-readable error category.
-	Kind LocalUserErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics and provider logs. MUST NOT contain the plaintext password.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (host, sid, name,
-	// operation, output, exit_code). MUST NOT contain passwords or secrets.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (SSH transport error, etc.).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *LocalUserError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_local_user [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_local_user [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *LocalUserError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *LocalUserError) Is(target error) bool {
-	t, ok := target.(*LocalUserError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type LocalUserError = ResourceError
 
 // NewLocalUserError constructs a *LocalUserError. Pass nil cause when no
 // underlying error exists. The ctx map may be nil.
@@ -128,16 +92,12 @@ func NewLocalUserError(
 	cause error,
 	ctx map[string]string,
 ) *LocalUserError {
-	return &LocalUserError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_local_user", string(kind), message, cause, ctx)
 }
 
 // IsLocalUserError reports whether err is a *LocalUserError with the given kind.
 func IsLocalUserError(err error, kind LocalUserErrorKind) bool {
-	var lue *LocalUserError
-	if errors.As(err, &lue) {
-		return lue.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_local_user", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -145,34 +105,34 @@ func IsLocalUserError(err error, kind LocalUserErrorKind) bool {
 // ---------------------------------------------------------------------------
 
 // ErrLocalUserNotFound is a sentinel for UserNotFound (EC-3, EC-11).
-var ErrLocalUserNotFound = &LocalUserError{Kind: LocalUserErrorNotFound}
+var ErrLocalUserNotFound = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorNotFound}
 
 // ErrLocalUserAlreadyExists is a sentinel for name collision at Create (EC-1).
-var ErrLocalUserAlreadyExists = &LocalUserError{Kind: LocalUserErrorAlreadyExists}
+var ErrLocalUserAlreadyExists = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorAlreadyExists}
 
 // ErrLocalUserBuiltinAccount is a sentinel for built-in RID deletion (EC-2).
-var ErrLocalUserBuiltinAccount = &LocalUserError{Kind: LocalUserErrorBuiltinAccount}
+var ErrLocalUserBuiltinAccount = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorBuiltinAccount}
 
 // ErrLocalUserRenameConflict is a sentinel for rename target already taken (EC-5).
-var ErrLocalUserRenameConflict = &LocalUserError{Kind: LocalUserErrorRenameConflict}
+var ErrLocalUserRenameConflict = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorRenameConflict}
 
 // ErrLocalUserPasswordPolicy is a sentinel for password policy violation (EC-7).
-var ErrLocalUserPasswordPolicy = &LocalUserError{Kind: LocalUserErrorPasswordPolicy}
+var ErrLocalUserPasswordPolicy = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorPasswordPolicy}
 
 // ErrLocalUserPermission is a sentinel for AccessDenied (EC-9).
-var ErrLocalUserPermission = &LocalUserError{Kind: LocalUserErrorPermission}
+var ErrLocalUserPermission = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorPermission}
 
 // ErrLocalUserInvalidName is a sentinel for invalid name (EC-10).
-var ErrLocalUserInvalidName = &LocalUserError{Kind: LocalUserErrorInvalidName}
+var ErrLocalUserInvalidName = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorInvalidName}
 
 // ErrLocalUserInvalidParameter is a sentinel for List filter validation.
-var ErrLocalUserInvalidParameter = &LocalUserError{Kind: LocalUserErrorInvalidParameter}
+var ErrLocalUserInvalidParameter = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorInvalidParameter}
 
 // ErrLocalUserUnsupportedOnDC is a sentinel for List on a domain controller.
-var ErrLocalUserUnsupportedOnDC = &LocalUserError{Kind: LocalUserErrorUnsupportedOnDC}
+var ErrLocalUserUnsupportedOnDC = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorUnsupportedOnDC}
 
 // ErrLocalUserUnknown is a sentinel for unexpected errors.
-var ErrLocalUserUnknown = &LocalUserError{Kind: LocalUserErrorUnknown}
+var ErrLocalUserUnknown = &LocalUserError{Resource: "windows_local_user", Kind: LocalUserErrorUnknown}
 
 // ---------------------------------------------------------------------------
 // UserInput — input parameters for Create and Update

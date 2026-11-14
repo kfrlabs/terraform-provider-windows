@@ -15,8 +15,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,44 +30,44 @@ const (
 	// ServiceErrorNotFound is returned when the target service does not exist
 	// in the Windows SCM (Win32 error 1060).  In Read it triggers
 	// RemoveResource() (EC-2); in Delete it is treated as success (idempotency).
-	ServiceErrorNotFound ServiceErrorKind = "not_found"
+	ServiceErrorNotFound = "not_found"
 
 	// ServiceErrorAlreadyExists is returned when Create detects a pre-existing
 	// service with the same name before calling New-Service (EC-1).
 	// This is a hard error — not transient, must not be retried.
-	ServiceErrorAlreadyExists ServiceErrorKind = "already_exists"
+	ServiceErrorAlreadyExists = "already_exists"
 
 	// ServiceErrorPermission is returned when the SCM refuses the operation
 	// with Win32 error 5 "Access is denied" (EC-3).
-	ServiceErrorPermission ServiceErrorKind = "permission_denied"
+	ServiceErrorPermission = "permission_denied"
 
 	// ServiceErrorTimeout is returned when a Start/Stop/Delete operation
 	// exceeds the provider-level timeout or context deadline (EC-7).
 	// Includes structured context: service name, operation, elapsed time,
 	// host, port.
-	ServiceErrorTimeout ServiceErrorKind = "timeout"
+	ServiceErrorTimeout = "timeout"
 
 	// ServiceErrorInvalidParameter is returned for Win32 error 87
 	// "The parameter is incorrect" — most commonly caused by passing a
 	// password for a built-in account (EC-11).
-	ServiceErrorInvalidParameter ServiceErrorKind = "invalid_parameter"
+	ServiceErrorInvalidParameter = "invalid_parameter"
 
 	// ServiceErrorRunning is returned when Start-Service is called on a
 	// service that is already Running (Win32 error 1056).
-	ServiceErrorRunning ServiceErrorKind = "already_running"
+	ServiceErrorRunning = "already_running"
 
 	// ServiceErrorNotRunning is returned when Stop-Service is called on a
 	// service that is already Stopped (Win32 error 1062).
-	ServiceErrorNotRunning ServiceErrorKind = "not_running"
+	ServiceErrorNotRunning = "not_running"
 
 	// ServiceErrorDisabled is returned when Start-Service is called on a
 	// Disabled service (Win32 error 1058).
-	ServiceErrorDisabled ServiceErrorKind = "disabled"
+	ServiceErrorDisabled = "disabled"
 
 	// ServiceErrorUnknown is returned for generic sc.exe non-zero exit codes
 	// or unrecognised PowerShell errors.  The full sc.exe stdout/stderr is
 	// captured in ServiceError.Context["output"] for diagnostics.
-	ServiceErrorUnknown ServiceErrorKind = "unknown"
+	ServiceErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -84,67 +82,18 @@ const (
 //
 // SECURITY: service_password MUST NEVER appear in Message, Context, or
 // anywhere the error might be surfaced in provider logs or Terraform output.
-type ServiceError struct {
-	// Kind is the machine-readable error category.
-	Kind ServiceErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics.  Must not contain service_password or other secrets.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "operation", "elapsed", "exit_code", "output").
-	// All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (e.g. a SSH transport error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *ServiceError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_service [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_service [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *ServiceError) Unwrap() error {
-	return e.Cause
-}
-
-// Is implements errors.Is comparison by Kind only.
-// This allows:
-//
-//	errors.Is(err, ErrServiceNotFound) // true when err.Kind == ServiceErrorNotFound
-func (e *ServiceError) Is(target error) bool {
-	t, ok := target.(*ServiceError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type ServiceError = ResourceError
 
 // NewServiceError constructs a *ServiceError.  Pass a nil cause when no
 // underlying error exists.  The ctx map may be nil.
 func NewServiceError(kind ServiceErrorKind, message string, cause error, ctx map[string]string) *ServiceError {
-	return &ServiceError{
-		Kind:    kind,
-		Message: message,
-		Cause:   cause,
-		Context: ctx,
-	}
+	return NewResourceError("windows_service", string(kind), message, cause, ctx)
 }
 
 // IsServiceError reports whether err is a *ServiceError with the given kind.
 // Equivalent to errors.Is(err, &ServiceError{Kind: kind}) but more readable.
 func IsServiceError(err error, kind ServiceErrorKind) bool {
-	var se *ServiceError
-	if errors.As(err, &se) {
-		return se.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_service", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -156,15 +105,15 @@ func IsServiceError(err error, kind ServiceErrorKind) bool {
 // for any *ServiceError{Kind: ServiceErrorNotFound}, regardless of Message or
 // Context.
 var (
-	ErrServiceNotFound         = &ServiceError{Kind: ServiceErrorNotFound}
-	ErrServiceAlreadyExists    = &ServiceError{Kind: ServiceErrorAlreadyExists}
-	ErrServicePermission       = &ServiceError{Kind: ServiceErrorPermission}
-	ErrServiceTimeout          = &ServiceError{Kind: ServiceErrorTimeout}
-	ErrServiceInvalidParameter = &ServiceError{Kind: ServiceErrorInvalidParameter}
-	ErrServiceRunning          = &ServiceError{Kind: ServiceErrorRunning}
-	ErrServiceNotRunning       = &ServiceError{Kind: ServiceErrorNotRunning}
-	ErrServiceDisabled         = &ServiceError{Kind: ServiceErrorDisabled}
-	ErrServiceUnknown          = &ServiceError{Kind: ServiceErrorUnknown}
+	ErrServiceNotFound         = &ServiceError{Resource: "windows_service", Kind: ServiceErrorNotFound}
+	ErrServiceAlreadyExists    = &ServiceError{Resource: "windows_service", Kind: ServiceErrorAlreadyExists}
+	ErrServicePermission       = &ServiceError{Resource: "windows_service", Kind: ServiceErrorPermission}
+	ErrServiceTimeout          = &ServiceError{Resource: "windows_service", Kind: ServiceErrorTimeout}
+	ErrServiceInvalidParameter = &ServiceError{Resource: "windows_service", Kind: ServiceErrorInvalidParameter}
+	ErrServiceRunning          = &ServiceError{Resource: "windows_service", Kind: ServiceErrorRunning}
+	ErrServiceNotRunning       = &ServiceError{Resource: "windows_service", Kind: ServiceErrorNotRunning}
+	ErrServiceDisabled         = &ServiceError{Resource: "windows_service", Kind: ServiceErrorDisabled}
+	ErrServiceUnknown          = &ServiceError{Resource: "windows_service", Kind: ServiceErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

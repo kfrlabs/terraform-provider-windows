@@ -941,7 +941,7 @@ func addDNSClientDiag(d *diag.Diagnostics, summary string, err error) {
 		if de.Cause != nil {
 			detail += "\n\nCause: " + de.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(de.Kind)+"]", detail)
+		d.AddError(summary+" ["+de.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

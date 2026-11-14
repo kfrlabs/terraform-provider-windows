@@ -259,48 +259,28 @@ const (
 	// could not be determined (no SSH_CONNECTION, ambiguous TCP fallback,
 	// unresolvable interface or route, transport failure). Risky operations
 	// must be refused when this occurs.
-	ManagementPathErrorUnknown ManagementPathErrorKind = "unknown"
+	ManagementPathErrorUnknown = "unknown"
 )
 
 // ManagementPathError is the structured error returned by
 // Client.ManagementPath. Resources map it to their own
 // management_path_unknown kind.
-type ManagementPathError struct {
-	Kind    ManagementPathErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *ManagementPathError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("management_path [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("management_path [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *ManagementPathError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *ManagementPathError) Is(target error) bool {
-	t, ok := target.(*ManagementPathError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type ManagementPathError = ResourceError
 
 // NewManagementPathError constructs a *ManagementPathError.
 func NewManagementPathError(kind ManagementPathErrorKind, message string, cause error, ctx map[string]string) *ManagementPathError {
-	return &ManagementPathError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("management_path", string(kind), message, cause, ctx)
+}
+
+// IsManagementPathError reports whether err is a *ManagementPathError with the given kind.
+func IsManagementPathError(err error, kind ManagementPathErrorKind) bool {
+	return IsResourceError(err, "management_path", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
 	// ErrManagementPathUnknown matches any undeterminable-path failure.
-	ErrManagementPathUnknown = &ManagementPathError{Kind: ManagementPathErrorUnknown}
+	ErrManagementPathUnknown = &ManagementPathError{Resource: "management_path", Kind: ManagementPathErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

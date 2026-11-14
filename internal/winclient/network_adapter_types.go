@@ -14,8 +14,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,25 +30,25 @@ const (
 	// NetworkAdapterErrorAccessDenied is returned when the SSH user lacks
 	// the privilege to read adapter state (typically a non-administrator
 	// connection).
-	NetworkAdapterErrorAccessDenied NetworkAdapterErrorKind = "access_denied"
+	NetworkAdapterErrorAccessDenied = "access_denied"
 
 	// NetworkAdapterErrorCIMUnavailable is returned when the CIM/WMI stack
 	// itself is unavailable (winmgmt service stopped, repository
 	// corruption, provider load failure).
-	NetworkAdapterErrorCIMUnavailable NetworkAdapterErrorKind = "cim_unavailable"
+	NetworkAdapterErrorCIMUnavailable = "cim_unavailable"
 
 	// NetworkAdapterErrorTimeout is returned when the operation timed out
 	// or was cancelled.
-	NetworkAdapterErrorTimeout NetworkAdapterErrorKind = "timeout"
+	NetworkAdapterErrorTimeout = "timeout"
 
 	// NetworkAdapterErrorInvalidParameter is returned when a filter fails
 	// client-side validation (unknown status, malformed MAC, uncompilable
 	// name regex). No host call is made.
-	NetworkAdapterErrorInvalidParameter NetworkAdapterErrorKind = "invalid_parameter"
+	NetworkAdapterErrorInvalidParameter = "invalid_parameter"
 
 	// NetworkAdapterErrorUnknown is the catch-all for unmapped PowerShell
 	// or SSH failures.
-	NetworkAdapterErrorUnknown NetworkAdapterErrorKind = "unknown"
+	NetworkAdapterErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -61,66 +59,27 @@ const (
 // WindowsNetworkAdaptersClient methods. Use errors.Is(err,
 // ErrNetworkAdapter*) for kind matching, or errors.As(err, &ne) to inspect
 // Context.
-type NetworkAdapterError struct {
-	// Kind is the machine-readable error category.
-	Kind NetworkAdapterErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It must not contain SSH credentials.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport"). All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *NetworkAdapterError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_network_adapters [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_network_adapters [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *NetworkAdapterError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *NetworkAdapterError) Is(target error) bool {
-	t, ok := target.(*NetworkAdapterError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type NetworkAdapterError = ResourceError
 
 // NewNetworkAdapterError constructs a *NetworkAdapterError. Pass a nil cause
 // when no underlying error exists. The ctx map may be nil.
 func NewNetworkAdapterError(kind NetworkAdapterErrorKind, message string, cause error, ctx map[string]string) *NetworkAdapterError {
-	return &NetworkAdapterError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_network_adapters", string(kind), message, cause, ctx)
 }
 
 // IsNetworkAdapterError reports whether err is a *NetworkAdapterError of the
 // given kind.
 func IsNetworkAdapterError(err error, kind NetworkAdapterErrorKind) bool {
-	var ne *NetworkAdapterError
-	if errors.As(err, &ne) {
-		return ne.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_network_adapters", string(kind))
 }
 
 // Sentinel errors — use with errors.Is.
 var (
-	ErrNetworkAdapterAccessDenied     = &NetworkAdapterError{Kind: NetworkAdapterErrorAccessDenied}
-	ErrNetworkAdapterCIMUnavailable   = &NetworkAdapterError{Kind: NetworkAdapterErrorCIMUnavailable}
-	ErrNetworkAdapterTimeout          = &NetworkAdapterError{Kind: NetworkAdapterErrorTimeout}
-	ErrNetworkAdapterInvalidParameter = &NetworkAdapterError{Kind: NetworkAdapterErrorInvalidParameter}
-	ErrNetworkAdapterUnknown          = &NetworkAdapterError{Kind: NetworkAdapterErrorUnknown}
+	ErrNetworkAdapterAccessDenied     = &NetworkAdapterError{Resource: "windows_network_adapters", Kind: NetworkAdapterErrorAccessDenied}
+	ErrNetworkAdapterCIMUnavailable   = &NetworkAdapterError{Resource: "windows_network_adapters", Kind: NetworkAdapterErrorCIMUnavailable}
+	ErrNetworkAdapterTimeout          = &NetworkAdapterError{Resource: "windows_network_adapters", Kind: NetworkAdapterErrorTimeout}
+	ErrNetworkAdapterInvalidParameter = &NetworkAdapterError{Resource: "windows_network_adapters", Kind: NetworkAdapterErrorInvalidParameter}
+	ErrNetworkAdapterUnknown          = &NetworkAdapterError{Resource: "windows_network_adapters", Kind: NetworkAdapterErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

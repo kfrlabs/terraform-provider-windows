@@ -8,76 +8,45 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // FeatureErrorKind categorises errors returned by WindowsFeatureClient.
 type FeatureErrorKind string
 
 const (
-	FeatureErrorNotFound          FeatureErrorKind = "not_found"
-	FeatureErrorPermission        FeatureErrorKind = "permission_denied"
-	FeatureErrorSourceMissing     FeatureErrorKind = "source_missing"
-	FeatureErrorDependencyMissing FeatureErrorKind = "dependency_missing"
-	FeatureErrorUnsupportedSKU    FeatureErrorKind = "unsupported_sku"
-	FeatureErrorTimeout           FeatureErrorKind = "timeout"
-	FeatureErrorInvalidParameter  FeatureErrorKind = "invalid_parameter"
-	FeatureErrorUnknown           FeatureErrorKind = "unknown"
+	FeatureErrorNotFound          = "not_found"
+	FeatureErrorPermission        = "permission_denied"
+	FeatureErrorSourceMissing     = "source_missing"
+	FeatureErrorDependencyMissing = "dependency_missing"
+	FeatureErrorUnsupportedSKU    = "unsupported_sku"
+	FeatureErrorTimeout           = "timeout"
+	FeatureErrorInvalidParameter  = "invalid_parameter"
+	FeatureErrorUnknown           = "unknown"
 )
 
 // FeatureError is the structured error type returned by WindowsFeatureClient.
-type FeatureError struct {
-	Kind    FeatureErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements error.
-func (e *FeatureError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_feature [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_feature [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *FeatureError) Unwrap() error { return e.Cause }
-
-// Is matches by Kind only.
-func (e *FeatureError) Is(target error) bool {
-	t, ok := target.(*FeatureError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type FeatureError = ResourceError
 
 // NewFeatureError constructs a *FeatureError.
 func NewFeatureError(kind FeatureErrorKind, msg string, cause error, ctx map[string]string) *FeatureError {
-	return &FeatureError{Kind: kind, Message: msg, Cause: cause, Context: ctx}
+	return NewResourceError("windows_feature", string(kind), msg, cause, ctx)
 }
 
 // IsFeatureError reports whether err is a *FeatureError of the given kind.
 func IsFeatureError(err error, kind FeatureErrorKind) bool {
-	var fe *FeatureError
-	if errors.As(err, &fe) {
-		return fe.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_feature", string(kind))
 }
 
 // Sentinel errors usable with errors.Is.
 var (
-	ErrFeatureNotFound          = &FeatureError{Kind: FeatureErrorNotFound}
-	ErrFeaturePermission        = &FeatureError{Kind: FeatureErrorPermission}
-	ErrFeatureSourceMissing     = &FeatureError{Kind: FeatureErrorSourceMissing}
-	ErrFeatureDependencyMissing = &FeatureError{Kind: FeatureErrorDependencyMissing}
-	ErrFeatureUnsupportedSKU    = &FeatureError{Kind: FeatureErrorUnsupportedSKU}
-	ErrFeatureTimeout           = &FeatureError{Kind: FeatureErrorTimeout}
-	ErrFeatureInvalidParameter  = &FeatureError{Kind: FeatureErrorInvalidParameter}
-	ErrFeatureUnknown           = &FeatureError{Kind: FeatureErrorUnknown}
+	ErrFeatureNotFound          = &FeatureError{Resource: "windows_feature", Kind: FeatureErrorNotFound}
+	ErrFeaturePermission        = &FeatureError{Resource: "windows_feature", Kind: FeatureErrorPermission}
+	ErrFeatureSourceMissing     = &FeatureError{Resource: "windows_feature", Kind: FeatureErrorSourceMissing}
+	ErrFeatureDependencyMissing = &FeatureError{Resource: "windows_feature", Kind: FeatureErrorDependencyMissing}
+	ErrFeatureUnsupportedSKU    = &FeatureError{Resource: "windows_feature", Kind: FeatureErrorUnsupportedSKU}
+	ErrFeatureTimeout           = &FeatureError{Resource: "windows_feature", Kind: FeatureErrorTimeout}
+	ErrFeatureInvalidParameter  = &FeatureError{Resource: "windows_feature", Kind: FeatureErrorInvalidParameter}
+	ErrFeatureUnknown           = &FeatureError{Resource: "windows_feature", Kind: FeatureErrorUnknown}
 )
 
 // FeatureInfo is the observed state of a Windows feature on a host.

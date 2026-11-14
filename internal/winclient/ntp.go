@@ -357,7 +357,7 @@ func (n *NTPClient) runNTPEnvelope(ctx context.Context, op, script string, baseC
 		return resp, nil
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		kind := NTPErrorUnknown
+		kind := NTPErrorKind(NTPErrorUnknown)
 		if eerr.Stage == EnvelopeStageTimeout {
 			return nil, NewNTPError(kind,
 				fmt.Sprintf("operation %q on W32Time timed out or was cancelled", op),

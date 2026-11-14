@@ -305,7 +305,7 @@ func addLocalGroupsDiag(diags *diag.Diagnostics, summary string, err error) {
 			detail += "\n\nCause: " + lge.Cause.Error()
 		}
 		if lge.Kind != "" {
-			detail += "\n\nKind: " + string(lge.Kind)
+			detail += "\n\nKind: " + lge.Kind
 		}
 		diags.AddError(summary, detail)
 		return
