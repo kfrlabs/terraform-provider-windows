@@ -70,26 +70,10 @@ var runInstalledSoftwarePowerShell = func(ctx context.Context, c *Client, script
 // Classify-InstalledSoftware maps access-denied substrings to access_denied
 // and degrades everything else to unknown: registry reads fail with plain
 // .NET/PSDrive errors, so there is no CIM-style token family to anchor on.
-const psInstalledSoftwareHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
-[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
-[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+const psInstalledSoftwareHeader = psEnvelopePrelude + psInstalledSoftwareHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj  = [ordered]@{ ok = $true; data = $Data }
-  $json = ($obj | ConvertTo-Json -Depth 10 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj  = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
+// psInstalledSoftwareHeaderRemainder Classify + software enumeration stay here; envelope emitters come from the prelude. Emit depth 10->8: package entries are flat dicts in a list.
+const psInstalledSoftwareHeaderRemainder = `
 function Classify-InstalledSoftware([object]$Rec) {
   $msg = ''
   try { $msg = [string]$Rec.Exception.Message } catch { $msg = [string]$Rec }

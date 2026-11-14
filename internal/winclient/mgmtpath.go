@@ -307,30 +307,14 @@ var (
 // PowerShell probe
 // ---------------------------------------------------------------------------
 
-// mgmtPathPSHeader is prepended to the management-path probe. It pins the
-// session culture to InvariantCulture so enum .ToString() values are always
-// English regardless of the host locale, and defines the shared Emit-OK /
-// Emit-Err helpers.
-const mgmtPathPSHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
-[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
-[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+// mgmtPathPSHeader is prepended to the management-path probe. It composes
+// the shared envelope prelude (Emit-OK / Emit-Err, InvariantCulture pins
+// so enum .ToString() values are always English regardless of the host
+// locale).
+const mgmtPathPSHeader = psEnvelopePrelude + mgmtPathPSHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj  = [ordered]@{ ok = $true; data = $Data }
-  $json = ($obj | ConvertTo-Json -Depth 10 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj  = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-`
+// mgmtPathPSHeaderRemainder is intentionally empty: this header held only the envelope emitters (the probe lives in mgmtPathPSBody).
+const mgmtPathPSHeaderRemainder = ``
 
 // mgmtPathPSBody resolves the SSH session's management path and emits it.
 // Placeholders: @@SSHPORT@@ (sshd port, int, rendered by

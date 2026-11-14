@@ -52,27 +52,13 @@ func TestPSEnvelopePrelude_Contents(t *testing.T) {
 var envelopeDefRe = regexp.MustCompile(`(?m)^\s*function Emit-(OK|Err)\b`)
 
 // envelopePreludeAllowlist names the non-test winclient files still
-// permitted to define their own Emit-OK / Emit-Err pair: every resource
-// not yet migrated to psEnvelopePrelude, plus the two pre-existing
-// shared headers (iis_common.go, storage_common.go) which migrate in a
-// later batch. Each migration batch MUST shrink this list; the guard
-// fails on any definition outside it. Pure file splits (issue #349) move
-// an entry to the new scripts filename without shrinking the list.
+// permitted to define their own Emit-OK / Emit-Err pair. Only
+// dsc_resource_scripts.go remains: Invoke-DscResource returns arbitrary
+// resource state whose depth cannot be bounded statically, so its Depth-10
+// Emit-OK stays until a fixture proves a lower depth safe for real DSC
+// resources. The guard fails on any definition outside this list.
 var envelopePreludeAllowlist = map[string]bool{
-	"certificate.go":            true,
-	"dns_client.go":             true,
-	"dsc_resource_scripts.go":   true,
-	"eventlog.go":               true,
-	"firewall_profile.go":       true,
-	"firewall_rule.go":          true,
-	"iis_common.go":             true,
-	"installed_software.go":     true,
-	"mgmtpath.go":               true,
-	"net_ip_address_scripts.go": true,
-	"net_route.go":              true,
-	"network_adapter.go":        true,
-	"storage_common.go":         true,
-	"winget_package.go":         true,
+	"dsc_resource_scripts.go": true,
 }
 
 // findEnvelopeViolations scans dir for non-test .go files defining
@@ -139,24 +125,37 @@ func TestPSEnvelopePrelude_NoNewDefinitions(t *testing.T) {
 
 func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 	headers := map[string]string{
-		"psHostnameHeader":         psHostnameHeader,
-		"psDirectoryHeader":        psDirectoryHeader,
-		"psDomainMembershipHeader": psDomainMembershipHeader,
-		"psFeatureHeader":          psFeatureHeader,
-		"psOSInfoHeader":           psOSInfoHeader,
-		"psSmbShareHeader":         psSmbShareHeader,
-		"psNTPHeader":              psNTPHeader,
-		"psPowerPlanHeader":        psPowerPlanHeader,
-		"psTimezoneHeader":         psTimezoneHeader,
-		"psHeader":                 psHeader,
-		"lgPsHeader":               lgPsHeader,
-		"luPsHeader":               luPsHeader,
-		"psEnvVarHeader":           psEnvVarHeader,
-		"psRegistryValueHeader":    psRegistryValueHeader,
-		"psFileHeader":             psFileHeader,
-		"psFileACLHeader":          psFileACLHeader,
-		"lpHeader":                 lpHeader,
-		"psSTHeader":               psSTHeader,
+		"psHostnameHeader":          psHostnameHeader,
+		"psDirectoryHeader":         psDirectoryHeader,
+		"psDomainMembershipHeader":  psDomainMembershipHeader,
+		"psFeatureHeader":           psFeatureHeader,
+		"psOSInfoHeader":            psOSInfoHeader,
+		"psSmbShareHeader":          psSmbShareHeader,
+		"psNTPHeader":               psNTPHeader,
+		"psPowerPlanHeader":         psPowerPlanHeader,
+		"psTimezoneHeader":          psTimezoneHeader,
+		"psHeader":                  psHeader,
+		"lgPsHeader":                lgPsHeader,
+		"luPsHeader":                luPsHeader,
+		"psEnvVarHeader":            psEnvVarHeader,
+		"psRegistryValueHeader":     psRegistryValueHeader,
+		"psFileHeader":              psFileHeader,
+		"psFileACLHeader":           psFileACLHeader,
+		"lpHeader":                  lpHeader,
+		"psSTHeader":                psSTHeader,
+		"psCertificateHeader":       psCertificateHeader,
+		"psDnsClientHeader":         psDnsClientHeader,
+		"elPsHeader":                elPsHeader,
+		"fpPsHeader":                fpPsHeader,
+		"frPsHeader":                frPsHeader,
+		"psIISHeader":               psIISHeader,
+		"psInstalledSoftwareHeader": psInstalledSoftwareHeader,
+		"mgmtPathPSHeader":          mgmtPathPSHeader,
+		"psNetIPAddressHeader":      psNetIPAddressHeader,
+		"psNetRouteHeader":          psNetRouteHeader,
+		"psNetworkAdaptersHeader":   psNetworkAdaptersHeader,
+		"psStorageHeader":           psStorageHeader,
+		"wpHeader":                  wpHeader,
 	}
 	for name, h := range headers {
 		if !strings.HasPrefix(h, psEnvelopePrelude) {
@@ -189,6 +188,18 @@ func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 		"function Read-LpInput",
 		"function Read-TaskState",
 		"function Send-EnvBroadcast",
+		"function ConvertTo-CertificateJson",
+		"function ConvertTo-DnsClientJson",
+		"function Read-EventLogState",
+		"function Classify-FirewallProfile",
+		"function Classify-FR",
+		"function Classify-IIS",
+		"function Classify-InstalledSoftware",
+		"function Classify-NetIpAddress",
+		"function ConvertTo-NetRouteJson",
+		"function Classify-NetworkAdapters",
+		"function Classify-Storage",
+		"function Classify-WG",
 	} {
 		found := false
 		for _, h := range headers {
