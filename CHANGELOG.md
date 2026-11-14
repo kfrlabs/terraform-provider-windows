@@ -503,6 +503,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Transport: a parked SSH/pwsh session is now probed
+  (`keepalive@openssh.com` channel request, 5s deadline) before it is
+  reused (#342). A session dropped while idle (sshd `ClientAlive*`, NAT or
+  firewall idle timeout, host reboot) is replaced by a fresh one before any
+  byte of the request is sent, instead of failing with "outcome unknown" or
+  hanging until the operation timeout on a half-open connection. On a
+  failed probe every parked session is discarded, since they share the
+  host's fate. This also makes `TestTransportRecoversFromDroppedSession`
+  deterministic (#343).
+
 - `windows_domain_membership`: `ou_path` and `server` are now
   ForceNew (RequiresReplace) instead of warn-and-ignore (#327).
   Changing either now plans a replacement (a new join) instead of

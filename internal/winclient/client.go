@@ -60,6 +60,9 @@ type Client struct {
 	// per call (see above). Set when establishing a persistent session
 	// fails; only touched with mu held.
 	oneShot bool
+	// probeTimeout bounds the liveness probe sent to a parked session
+	// before it is reused (#342). Set to defaultProbeTimeout by New.
+	probeTimeout time.Duration
 	// agentConn owns the ssh-agent socket dialled by agentAuthMethod. It
 	// stays open across dials and retries (every handshake reuses it) and
 	// is closed exactly once by Close. Nil when no agent is used.
@@ -108,11 +111,12 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		cfg:       cfg,
-		sshCfg:    sshCfg,
-		address:   net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
-		sem:       make(chan struct{}, cfg.MaxSessions),
-		agentConn: agentConn,
+		cfg:          cfg,
+		sshCfg:       sshCfg,
+		address:      net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+		sem:          make(chan struct{}, cfg.MaxSessions),
+		probeTimeout: defaultProbeTimeout,
+		agentConn:    agentConn,
 	}, nil
 }
 
@@ -223,6 +227,27 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 	}
 
 	ps := c.borrow()
+	if ps != nil {
+		// A parked session may have been dropped while idle (sshd
+		// ClientAlive*, NAT/firewall idle timeout, host reboot). Probe it
+		// before writing: no byte of the request has been sent yet, so
+		// replacing a dead session here is always safe (#342).
+		if err := ps.probe(ctx, c.probeTimeout); err != nil {
+			_ = ps.Close()
+			ps = nil
+			if ctx.Err() != nil {
+				return "", "", fmt.Errorf("winclient: powershell call aborted: %w", ctx.Err())
+			}
+			// Parked sessions share the host's fate: after a reboot or a
+			// network cut they are all dead, and probing each one in turn
+			// would cost up to probeTimeout per session.
+			discarded := c.drainIdle()
+			tflog.Debug(ctx, "Parked PowerShell session failed its liveness probe, reconnecting", map[string]interface{}{
+				"reason":           err.Error(),
+				"discarded_parked": discarded,
+			})
+		}
+	}
 	if ps == nil {
 		var err error
 		ps, err = newPersistentSession(ctx, c)
@@ -359,6 +384,18 @@ func (c *Client) park(ps *persistentSession) {
 		return
 	}
 	c.idle = append(c.idle, ps)
+}
+
+// drainIdle closes every parked session and reports how many were dropped.
+func (c *Client) drainIdle() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := len(c.idle)
+	for _, ps := range c.idle {
+		_ = ps.Close()
+	}
+	c.idle = nil
+	return n
 }
 
 // pinOneShot permanently switches the client to the fallback transport and
@@ -769,6 +806,48 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 			return r.stdout, r.stderr, &replScriptError{}
 		}
 		return r.stdout, r.stderr, nil
+	}
+}
+
+// keepaliveRequest is the channel request used as a liveness probe. OpenSSH
+// (Win32-OpenSSH included) answers an unknown channel request that wants a
+// reply with SSH_MSG_CHANNEL_FAILURE, which still proves the channel is
+// alive; sshd itself sends the same request on session channels for
+// ClientAliveInterval.
+const keepaliveRequest = "keepalive@openssh.com"
+
+// defaultProbeTimeout bounds the liveness probe of a parked session (#342).
+const defaultProbeTimeout = 5 * time.Second
+
+// probe checks that the session's channel is still open before it is
+// reused. The request goes on the session channel rather than the
+// connection: a channel closed by the server (crashed pwsh, idle drop of
+// the channel only) must fail the probe too. SSH messages are ordered on a
+// connection, so a close sent by the server before the reply is processed
+// first, which makes the probe deterministic. A server that stays silent
+// (half-open connection) fails it after timeout. On error the caller must
+// Close the session, which also unblocks the pending request.
+func (ps *persistentSession) probe(ctx context.Context, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := ps.session.SendRequest(keepaliveRequest, true, nil)
+		done <- err
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("winclient: session liveness probe failed: %w", err)
+		}
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("winclient: session liveness probe got no reply within %s", timeout)
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
