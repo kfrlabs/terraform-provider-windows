@@ -370,21 +370,10 @@ func (l *LegacyPackageClientImpl) Delete(ctx context.Context, id string, in Lega
 //     ISO-8601 (YYYY-MM-DD); pass-through for unknown formats.
 //   - Invoke-LpProcess    : runs an executable with a hard timeout, killing
 //     the entire process tree on expiry.
-const lpHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
+const lpHeader = psEnvelopePrelude + lpRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 10 -Compress))
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 10 -Compress))
-}
-
+// lpRemainder Input readers, uninstall lookup, date and process helpers stay here; envelope emitters come from the prelude. Emit depth 10->8: payloads are flat install states and string-map contexts.
+const lpRemainder = `
 function Read-LpInput {
   $raw = [Console]::In.ReadToEnd()
   if ([string]::IsNullOrWhiteSpace($raw)) { return [pscustomobject]@{} }

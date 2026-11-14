@@ -41,21 +41,10 @@ func NewFileClient(c *Client) *FileClientImpl {
 }
 
 // psFileHeader holds every PowerShell helper shared by the file scripts.
-const psFileHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psFileHeader = psEnvelopePrelude + psFileHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 16 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-
+// psFileHeaderRemainder Classify-FileError, retry and hash helpers stay here; envelope emitters come from the prelude. Emit-OK depth 16->8: payloads are flat dicts and string lists (depth <= 3).
+const psFileHeaderRemainder = `
 # Classify-FileError maps a .NET exception to a FileErrorKind. Win32 codes are
 # read from HResult rather than from message text so the mapping is immune to
 # the locale of the target host.

@@ -56,23 +56,10 @@ func NewServiceClient(c *Client) *ServiceClient { return &ServiceClient{c: c} }
 //   - Classify            : maps Win32 error codes (5/87/1056/1058/1060/1062)
 //     to ServiceErrorKind strings for robust, locale-independent error
 //     handling (SS12).
-const psHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
+const psHeader = psEnvelopePrelude + psHeaderRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  $json = ($obj | ConvertTo-Json -Depth 8 -Compress)
-  [Console]::Out.WriteLine($json)
-}
-
+// psHeaderRemainder Classify and service helpers stay here; envelope emitters come from the prelude.
+const psHeaderRemainder = `
 function Classify([string]$Msg) {
   if ($Msg -match '\b1060\b')                        { return 'not_found' }
   if ($Msg -match '\b5\b.*[Dd]enied' -or $Msg -match '[Aa]ccess is denied') { return 'permission_denied' }
