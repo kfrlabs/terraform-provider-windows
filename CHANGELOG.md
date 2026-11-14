@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- `windows_legacy_package`: installer logs no longer persist secrets in
+  clear text on the host by default (#346). A verbose MSI log records
+  public property values, so secrets passed via `install_args` were
+  written to `$env:TEMP\windows_legacy_package\` (or `log_path`) and kept
+  there, while `install_args` itself was visible in plan output and state.
+  New WriteOnly `install_args_wo` (+ `install_args_wo_version` rotation
+  counter, following the `*_wo_version` convention) is concatenated after
+  `install_args` at exec time and never persisted in state; new `keep_log`
+  (bool, default `false`, updatable in place) deletes the installer log
+  after a successful run and keeps it after failure for troubleshooting.
+  Set `keep_log = true` to preserve the previous behaviour. Note:
+  `uninstall_args` stays a plain persisted attribute (WriteOnly values are
+  unavailable at destroy time), so never put secrets there — and the MSI
+  uninstall log honors `keep_log` the same way.
+
 ### Breaking
 
 - `windows_scheduled_task`: `triggers` is now a Set of trigger objects

@@ -450,7 +450,7 @@ func TestLPDelete_Happy(t *testing.T) {
 		return lpOK(t, nil), "", nil
 	})()
 
-	if err := lp.Delete(context.Background(), "{ABC}"); err != nil {
+	if err := lp.Delete(context.Background(), "{ABC}", LegacyPackageInput{}); err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
 }
@@ -461,7 +461,7 @@ func TestLPDelete_EmitErr(t *testing.T) {
 		return lpErr(t, "exit_code_invalid", "1603"), "", nil
 	})()
 
-	err := lp.Delete(context.Background(), "{ABC}")
+	err := lp.Delete(context.Background(), "{ABC}", LegacyPackageInput{})
 	if !IsLegacyPackageError(err, "exit_code_invalid") {
 		t.Errorf("kind = %v", err)
 	}
