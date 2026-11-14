@@ -108,7 +108,7 @@ func (d *windowsScheduledTaskDataSource) Schema(ctx context.Context, _ datasourc
 					},
 				},
 			},
-			"triggers": schema.ListNestedAttribute{
+			"triggers": schema.SetNestedAttribute{
 				Computed:            true,
 				MarkdownDescription: "Task triggers.",
 				NestedObject: schema.NestedAttributeObject{
@@ -120,7 +120,7 @@ func (d *windowsScheduledTaskDataSource) Schema(ctx context.Context, _ datasourc
 						"execution_time_limit": schema.StringAttribute{Computed: true},
 						"delay":                schema.StringAttribute{Computed: true},
 						"days_interval":        schema.Int64Attribute{Computed: true},
-						"days_of_week": schema.ListAttribute{
+						"days_of_week": schema.SetAttribute{
 							Computed:    true,
 							ElementType: types.StringType,
 						},
@@ -260,15 +260,15 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 	for i, t := range s.Triggers {
 		var dows attr.Value
 		if len(t.DaysOfWeek) > 0 {
-			v, d2 := types.ListValueFrom(ctx, types.StringType, t.DaysOfWeek)
+			v, d2 := types.SetValueFrom(ctx, types.StringType, t.DaysOfWeek)
 			allDiags.Append(d2...)
 			dows = v
 		} else {
-			dows = types.ListValueMust(types.StringType, []attr.Value{})
+			dows = types.SetValueMust(types.StringType, []attr.Value{})
 		}
-		daysOfWeek, ok := dows.(types.List)
+		daysOfWeek, ok := dows.(types.Set)
 		if !ok {
-			allDiags.AddError("Unexpected days-of-week value", fmt.Sprintf("Expected days-of-week to be a list of strings, got %T.", dows))
+			allDiags.AddError("Unexpected days-of-week value", fmt.Sprintf("Expected days-of-week to be a set of strings, got %T.", dows))
 			trigElems[i] = types.ObjectNull(scheduledTaskTriggerAttrTypes)
 			continue
 		}
@@ -288,9 +288,9 @@ func dsStateToModel(ctx context.Context, s *winclient.ScheduledTaskState) (*wind
 		allDiags.Append(d2...)
 		trigElems[i] = obj
 	}
-	trigList, d2 := types.ListValue(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, trigElems)
+	trigSet, d2 := types.SetValue(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, trigElems)
 	allDiags.Append(d2...)
-	m.Triggers = trigList
+	m.Triggers = trigSet
 
 	// Settings
 	if s.Settings != nil {
@@ -341,7 +341,7 @@ type windowsScheduledTaskDSModel struct {
 	NextRunTime    types.String     `tfsdk:"next_run_time"`
 	Principal      types.Object     `tfsdk:"principal"`
 	Actions        types.List       `tfsdk:"actions"`
-	Triggers       types.List       `tfsdk:"triggers"`
+	Triggers       types.Set        `tfsdk:"triggers"`
 	Settings       types.Object     `tfsdk:"settings"`
 	Timeouts       dstimeouts.Value `tfsdk:"timeouts"`
 }

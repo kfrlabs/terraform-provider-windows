@@ -117,7 +117,7 @@ resource "windows_scheduled_task" "disk_alert" {
 
 - `actions` (Attributes List) One or more executable actions (1-32). Executed sequentially. (see [below for nested schema](#nestedatt--actions))
 - `name` (String) Task leaf name. No backslash; max 238 chars. **ForceNew**.
-- `triggers` (Attributes List) One or more triggers (1-48). `OnEvent` uses XML injection (ADR-ST-5). (see [below for nested schema](#nestedatt--triggers))
+- `triggers` (Attributes Set) One or more triggers (1-48). `OnEvent` uses XML injection (ADR-ST-5). (see [below for nested schema](#nestedatt--triggers))
 
 ### Optional
 
@@ -159,7 +159,7 @@ Required:
 Optional:
 
 - `days_interval` (Number) Daily recurrence interval. Only valid for `Daily`. Windows default: 1.
-- `days_of_week` (List of String) Weekday names. Required non-empty for `Weekly`.
+- `days_of_week` (Set of String) Weekday names. Required non-empty for `Weekly`.
 - `delay` (String) ISO 8601 delay before task start (AtStartup/AtLogon/OnEvent). Assigned to Windows as an XSD string and compared verbatim.
 - `enabled` (Boolean) Whether this trigger is enabled. Defaults to `true`.
 - `end_boundary` (String) RFC 3339 deactivation datetime.

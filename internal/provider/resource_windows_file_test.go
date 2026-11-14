@@ -7,6 +7,7 @@ package provider
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 
@@ -273,7 +274,7 @@ func fileSourceTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, sou
 		"encoding":                        str,
 		"overwrite":                       b,
 		"create_parents":                  b,
-		"attributes":                      tftypes.List{ElementType: str},
+		"attributes":                      tftypes.Set{ElementType: str},
 		"content_sha256":                  str,
 		"size_bytes":                      num,
 		"last_write_time":                 str,
@@ -300,7 +301,7 @@ func fileSourceTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, sou
 		"encoding":                        tftypes.NewValue(str, nil),
 		"overwrite":                       tftypes.NewValue(b, nil),
 		"create_parents":                  tftypes.NewValue(b, nil),
-		"attributes":                      tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"attributes":                      tftypes.NewValue(tftypes.Set{ElementType: str}, nil),
 		"content_sha256":                  tftypes.NewValue(str, nil),
 		"size_bytes":                      tftypes.NewValue(num, nil),
 		"last_write_time":                 tftypes.NewValue(str, nil),
@@ -484,7 +485,7 @@ func fileSourceValidatorDiagsUnknownURL(t *testing.T, sha256 string, insecure bo
 		"encoding":                        str,
 		"overwrite":                       b,
 		"create_parents":                  b,
-		"attributes":                      tftypes.List{ElementType: str},
+		"attributes":                      tftypes.Set{ElementType: str},
 		"content_sha256":                  str,
 		"size_bytes":                      num,
 		"last_write_time":                 str,
@@ -511,7 +512,7 @@ func fileSourceValidatorDiagsUnknownURL(t *testing.T, sha256 string, insecure bo
 		"encoding":                        tftypes.NewValue(str, nil),
 		"overwrite":                       tftypes.NewValue(b, nil),
 		"create_parents":                  tftypes.NewValue(b, nil),
-		"attributes":                      tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"attributes":                      tftypes.NewValue(tftypes.Set{ElementType: str}, nil),
 		"content_sha256":                  tftypes.NewValue(str, nil),
 		"size_bytes":                      tftypes.NewValue(num, nil),
 		"last_write_time":                 tftypes.NewValue(str, nil),
@@ -607,13 +608,13 @@ func TestPlanContentSHA256_NoNetworkIO(t *testing.T) {
 }
 
 // TestWindowsFileAttributesSchemaEnum pins the #324 plan-time enum on the
-// attributes list: exactly the NormaliseFileAttributes keywords (lowercase).
+// attributes set: exactly the NormaliseFileAttributes keywords (lowercase).
 // The system/temporary mutual exclusion stays in the cross-field validator.
 func TestWindowsFileAttributesSchemaEnum(t *testing.T) {
 	s := fileSchema(t)
-	a, ok := s.Attributes["attributes"].(schema.ListAttribute)
+	a, ok := s.Attributes["attributes"].(schema.SetAttribute)
 	if !ok {
-		t.Fatalf("attributes: expected schema.ListAttribute, got %T", s.Attributes["attributes"])
+		t.Fatalf("attributes: expected schema.SetAttribute, got %T", s.Attributes["attributes"])
 	}
 	if len(a.Validators) == 0 {
 		t.Fatal("attributes must carry an enum validator (#324)")
@@ -625,17 +626,17 @@ func TestWindowsFileAttributesSchemaEnum(t *testing.T) {
 		}
 		// Empty config (no attributes declared) is valid: the attribute is
 		// Optional+Computed.
-		lst := types.ListValueMust(types.StringType, elems)
+		set := types.SetValueMust(types.StringType, elems)
 		if len(vals) == 0 {
-			lst = types.ListNull(types.StringType)
+			set = types.SetNull(types.StringType)
 		}
-		req := validator.ListRequest{
+		req := validator.SetRequest{
 			Path:        path.Root("attributes"),
-			ConfigValue: lst,
+			ConfigValue: set,
 		}
-		resp := &validator.ListResponse{}
+		resp := &validator.SetResponse{}
 		for _, v := range a.Validators {
-			v.ValidateList(context.Background(), req, resp)
+			v.ValidateSet(context.Background(), req, resp)
 		}
 		return resp.Diagnostics
 	}
@@ -654,5 +655,210 @@ func TestWindowsFileAttributesSchemaEnum(t *testing.T) {
 		if d := run(bad); !d.HasError() {
 			t.Errorf("attributes %q should be rejected", bad)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// State upgrade (issue #324: attributes List -> Set)
+// ---------------------------------------------------------------------------
+
+// assertAttrKeys pins an exact attribute key set so schema drift fails fast.
+func assertAttrKeys(t *testing.T, attrs map[string]schema.Attribute, want []string) {
+	t.Helper()
+	if len(attrs) != len(want) {
+		t.Errorf("attribute count = %d, want %d (got %v, want %v)", len(attrs), len(want), attrKeyList(attrs), want)
+		return
+	}
+	for _, k := range want {
+		if _, ok := attrs[k]; !ok {
+			t.Errorf("attribute %q missing (got %v, want %v)", k, attrKeyList(attrs), want)
+		}
+	}
+}
+
+func attrKeyList(attrs map[string]schema.Attribute) []string {
+	out := make([]string, 0, len(attrs))
+	for k := range attrs {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestWindowsFileResource_UpgradeState_V0ToV1(t *testing.T) {
+	ctx := context.Background()
+	r, ok := NewWindowsFileResource().(*windowsFileResource)
+	if !ok {
+		t.Fatalf("expected *windowsFileResource, got %T", r)
+	}
+
+	upgraders := r.UpgradeState(ctx)
+	upgrader, ok := upgraders[0]
+	if !ok {
+		t.Fatal("expected state upgrader for prior version 0")
+	}
+	if upgrader.PriorSchema == nil {
+		t.Fatal("expected prior schema for version 0")
+	}
+	if _, ok := upgrader.PriorSchema.Attributes["attributes"].(schema.ListAttribute); !ok {
+		t.Fatalf("prior attributes must be schema.ListAttribute, got %T", upgrader.PriorSchema.Attributes["attributes"])
+	}
+
+	currentSchema := windowsFileSchemaDefinition(ctx)
+	if currentSchema.Version != 1 {
+		t.Errorf("current schema Version = %d, want 1", currentSchema.Version)
+	}
+	if _, ok := currentSchema.Attributes["attributes"].(schema.SetAttribute); !ok {
+		t.Fatalf("current attributes must be schema.SetAttribute, got %T", currentSchema.Attributes["attributes"])
+	}
+
+	str, b, num := tftypes.String, tftypes.Bool, tftypes.Number
+	timeoutsType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": str, "read": str, "update": str, "delete": str,
+	}}
+	objType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id": str, "path": str, "content": str, "content_base64": str,
+		"content_wo": str, "content_base64_wo": str, "content_wo_version": str,
+		"source": str, "source_url": str, "source_url_sha256": str,
+		"source_url_headers":              tftypes.Map{ElementType: str},
+		"source_url_insecure_skip_verify": b,
+		"download_on":                     str,
+		"encoding":                        str,
+		"overwrite":                       b,
+		"create_parents":                  b,
+		"attributes":                      tftypes.List{ElementType: str},
+		"content_sha256":                  str,
+		"size_bytes":                      num,
+		"last_write_time":                 str,
+		"timeouts":                        timeoutsType,
+	}}
+	mkRaw := func(attrs []string) tftypes.Value {
+		var attrsVal tftypes.Value
+		if attrs == nil {
+			attrsVal = tftypes.NewValue(tftypes.List{ElementType: str}, nil)
+		} else {
+			elems := make([]tftypes.Value, len(attrs))
+			for i, a := range attrs {
+				elems[i] = tftypes.NewValue(str, a)
+			}
+			attrsVal = tftypes.NewValue(tftypes.List{ElementType: str}, elems)
+		}
+		vals := map[string]tftypes.Value{
+			"id":                              tftypes.NewValue(str, `C:\Temp\file.bin`),
+			"path":                            tftypes.NewValue(str, `C:\Temp\file.bin`),
+			"content":                         tftypes.NewValue(str, "hello"),
+			"content_base64":                  tftypes.NewValue(str, nil),
+			"content_wo":                      tftypes.NewValue(str, nil),
+			"content_base64_wo":               tftypes.NewValue(str, nil),
+			"content_wo_version":              tftypes.NewValue(str, nil),
+			"source":                          tftypes.NewValue(str, nil),
+			"source_url":                      tftypes.NewValue(str, nil),
+			"source_url_sha256":               tftypes.NewValue(str, nil),
+			"source_url_headers":              tftypes.NewValue(tftypes.Map{ElementType: str}, nil),
+			"source_url_insecure_skip_verify": tftypes.NewValue(b, false),
+			"download_on":                     tftypes.NewValue(str, fileDownloadOnTerraform),
+			"encoding":                        tftypes.NewValue(str, fileEncodingUTF8),
+			"overwrite":                       tftypes.NewValue(b, true),
+			"create_parents":                  tftypes.NewValue(b, true),
+			"attributes":                      attrsVal,
+			"content_sha256":                  tftypes.NewValue(str, "abc"),
+			"size_bytes":                      tftypes.NewValue(num, 5),
+			"last_write_time":                 tftypes.NewValue(str, "2026-11-02T15:04:05Z"),
+			"timeouts":                        tftypes.NewValue(timeoutsType, nil),
+		}
+		return tftypes.NewValue(objType, vals)
+	}
+	upgrade := func(attrs []string) windowsFileModel {
+		t.Helper()
+		req := resource.UpgradeStateRequest{State: &tfsdk.State{Schema: *upgrader.PriorSchema, Raw: mkRaw(attrs)}}
+		upResp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: currentSchema}}
+		upgrader.StateUpgrader(ctx, req, upResp)
+		if upResp.Diagnostics.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", upResp.Diagnostics)
+		}
+		var upgraded windowsFileModel
+		upResp.Diagnostics.Append(upResp.State.Get(ctx, &upgraded)...)
+		if upResp.Diagnostics.HasError() {
+			t.Fatalf("upgraded state Get: %v", upResp.Diagnostics)
+		}
+		return upgraded
+	}
+
+	first := upgrade([]string{"readonly", "hidden"})
+	// Reordered v0 list must upgrade to an equal v1 set (reorder-only = clean).
+	second := upgrade([]string{"hidden", "readonly"})
+	if !first.Attributes.Equal(second.Attributes) {
+		t.Error("reordered v0 attributes must upgrade to equal v1 attribute sets")
+	}
+
+	var names []string
+	if d := first.Attributes.ElementsAs(ctx, &names, false); d.HasError() {
+		t.Fatalf("Attributes ElementsAs: %v", d)
+	}
+	got := map[string]bool{}
+	for _, n := range names {
+		got[n] = true
+	}
+	if len(got) != 2 || !got["hidden"] || !got["readonly"] {
+		t.Errorf("upgraded attributes = %v, want {hidden readonly}", names)
+	}
+	if first.Path.ValueString() != `C:\Temp\file.bin` {
+		t.Errorf("path = %q, want %q", first.Path.ValueString(), `C:\Temp\file.bin`)
+	}
+	if first.Content.ValueString() != "hello" {
+		t.Errorf("content = %q, want %q", first.Content.ValueString(), "hello")
+	}
+	if first.ContentSHA256.ValueString() != "abc" {
+		t.Errorf("content_sha256 = %q, want %q", first.ContentSHA256.ValueString(), "abc")
+	}
+
+	// Null stays null (not an empty set).
+	nullUpgraded := upgrade(nil)
+	if !nullUpgraded.Attributes.IsNull() {
+		t.Errorf("null attributes must upgrade to SetNull, got %v", nullUpgraded.Attributes)
+	}
+
+	// Empty list upgrades to an empty non-null set, equal to a fresh build.
+	emptyUpgraded := upgrade([]string{})
+	if emptyUpgraded.Attributes.IsNull() {
+		t.Error("empty attributes must upgrade to an empty set, not null")
+	}
+	if !emptyUpgraded.Attributes.Equal(types.SetValueMust(types.StringType, []attr.Value{})) {
+		t.Errorf("empty attributes must equal a fresh empty set, got %v", emptyUpgraded.Attributes)
+	}
+
+	// Pin the exact v0 attribute key sets so a future attribute addition
+	// fails fast instead of silently bypassing the hand-written V0 models.
+	assertAttrKeys(t, upgrader.PriorSchema.Attributes, []string{
+		"id", "path", "content", "content_base64", "content_wo", "content_base64_wo",
+		"content_wo_version", "source", "source_url", "source_url_sha256",
+		"source_url_headers", "source_url_insecure_skip_verify", "download_on",
+		"encoding", "overwrite", "create_parents", "attributes",
+		"content_sha256", "size_bytes", "last_write_time", "timeouts",
+	})
+	assertAttrKeys(t, currentSchema.Attributes, []string{
+		"id", "path", "content", "content_base64", "content_wo", "content_base64_wo",
+		"content_wo_version", "source", "source_url", "source_url_sha256",
+		"source_url_headers", "source_url_insecure_skip_verify", "download_on",
+		"encoding", "overwrite", "create_parents", "attributes",
+		"content_sha256", "size_bytes", "last_write_time", "timeouts",
+	})
+}
+
+// TestWindowsFileSetSemantics_ReorderIsClean pins the property the #324
+// migration relies on: two sets holding the same elements in a different
+// order compare equal, so a reorder alone produces no diff.
+func TestWindowsFileSetSemantics_ReorderIsClean(t *testing.T) {
+	ctx := context.Background()
+	a, d := types.SetValueFrom(ctx, types.StringType, []string{"hidden", "readonly"})
+	if d.HasError() {
+		t.Fatalf("SetValueFrom: %v", d)
+	}
+	b, d := types.SetValueFrom(ctx, types.StringType, []string{"readonly", "hidden"})
+	if d.HasError() {
+		t.Fatalf("SetValueFrom: %v", d)
+	}
+	if !a.Equal(b) {
+		t.Error("attribute sets with the same elements in a different order must be equal")
 	}
 }

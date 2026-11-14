@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 
 ### Breaking
 
+- `windows_scheduled_task`: `triggers` is now a Set of trigger objects
+  (was a List), and the nested `days_of_week` is now a Set of strings
+  (was a List) (#324). Configurations need no change — HCL list literals
+  convert to sets — but a reorder of triggers or weekdays no longer
+  produces a diff. Element references such as `triggers[0].type` no longer
+  work on sets: use `tolist(triggers)[0].type` or `one(triggers).type`
+  (the data source likewise exposes `triggers` as a set). Two triggers with
+  identical attribute values now collapse to a single set element, so
+  duplicate identical triggers must be disambiguated (e.g. distinct
+  `start_boundary`) instead of listed twice. The `windows_scheduled_task`
+  data source exposes the same shapes as sets. State upgrade: prior state containing List values is
+  upgraded automatically (v0 -> v1: element values are preserved, only the
+  collection kind changes). If a stale state needs manual repair, use
+  `terraform state rm` followed by `import`.
+
+- `windows_file`: `attributes` is now a Set of strings (was a List)
+  (#324). Configurations need no change and a reorder of attributes no
+  longer produces a diff. State upgrade: prior state containing a List is
+  upgraded automatically (v0 -> v1, values preserved). If a stale state
+  needs manual repair, remove it (`terraform state rm`) and re-import the
+  file (content below the import ceiling is read back; otherwise the first
+  apply rewrites the file and converges).
+
 - `windows_directory`: the `ensure` attribute (`present`/`absent`) is
   removed (#319). The resource always manages presence: create adopts an
   existing directory, a directory removed out-of-band drops from state,
@@ -69,10 +92,8 @@ All notable changes to this project will be documented in this file.
     (`user@domain`), or a bare local name.
   - `windows_scheduled_task` already validates `days_of_week` against the
     weekday enum and `triggers` size at plan time; no change there.
-  - The `List` -> `Set` migration for `windows_scheduled_task.triggers`,
-    `days_of_week`, and `windows_file.attributes` (unordered collections that
-    currently show reorder-only diffs) is deferred: it is breaking (state
-    migration) and stays out of this release.
+  - `windows_scheduled_task.triggers`, its nested `days_of_week`, and
+    `windows_file.attributes` are now Sets (see Breaking above).
 
 ### Added
 

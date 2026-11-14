@@ -112,7 +112,7 @@ variable "license" { sensitive = true }
 
 > **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
 
-- `attributes` (List of String) File attributes to enforce: hidden, readonly, archive, system, temporary.
+- `attributes` (Set of String) File attributes to enforce: hidden, readonly, archive, system, temporary.
 - `content` (String) Inline text content, written using `encoding`. Stored in state.
 - `content_base64` (String) Base64-encoded binary content. Stored in state.
 - `content_base64_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only base64 content: never persisted to state or plan. Requires `content_wo_version`.

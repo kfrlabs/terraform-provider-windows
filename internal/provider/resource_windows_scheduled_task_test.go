@@ -849,7 +849,7 @@ func TestStateToModel_EmptyDescription_IsNull(t *testing.T) {
 }
 
 func TestStateToModel_WeeklyTrigger_DaysOfWeek(t *testing.T) {
-	// EC-5: weekly trigger days_of_week preserved as list
+	// EC-5: weekly trigger days_of_week preserved as a set
 	ctx := context.Background()
 	s := &winclient.ScheduledTaskState{
 		Name: "T", Path: `\`,
@@ -897,7 +897,7 @@ func TestStateToModel_PrincipalPasswordPreserved(t *testing.T) {
 	})
 	prior := &windowsScheduledTaskModel{
 		Principal: priorPrincipal,
-		Triggers:  types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, []attr.Value{}),
+		Triggers:  types.SetValueMust(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, []attr.Value{}),
 		Actions:   types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskActionAttrTypes}, []attr.Value{}),
 		Settings:  types.ObjectNull(scheduledTaskSettingsAttrTypes),
 	}
@@ -1015,6 +1015,87 @@ func TestBuildTriggerObject_UnknownIntervalResolvesToNull(t *testing.T) {
 	})
 }
 
+// TestStateToModel_PriorTriggersConsumeOnce pins the consume-once alignment
+// for same-type triggers: each prior trigger backs at most one live trigger,
+// so when Windows reports the interval as unset (0) for two same-type live
+// triggers, only one may inherit the first prior interval — the other falls
+// back to null instead of duplicating it.
+func TestStateToModel_PriorTriggersConsumeOnce(t *testing.T) {
+	ctx := context.Background()
+
+	mkPrior := func(di types.Int64) attr.Value {
+		t.Helper()
+		v, d := types.ObjectValueFrom(ctx, scheduledTaskTriggerAttrTypes, windowsScheduledTaskTriggerModel{
+			Type:               types.StringValue("Daily"),
+			Enabled:            types.BoolValue(true),
+			StartBoundary:      types.StringValue("2026-01-01T00:00:00Z"),
+			EndBoundary:        types.StringNull(),
+			ExecutionTimeLimit: types.StringNull(),
+			Delay:              types.StringNull(),
+			DaysInterval:       di,
+			DaysOfWeek:         types.SetNull(types.StringType),
+			WeeksInterval:      types.Int64Null(),
+			UserID:             types.StringNull(),
+			Subscription:       subscriptionXMLValueOrNull(""),
+		})
+		if d.HasError() {
+			t.Fatalf("ObjectValueFrom: %v", d)
+		}
+		return v
+	}
+	// Two same-type prior triggers with distinct intervals: one set, one null.
+	priorSet, d := types.SetValue(
+		types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes},
+		[]attr.Value{mkPrior(types.Int64Value(3)), mkPrior(types.Int64Null())},
+	)
+	if d.HasError() {
+		t.Fatalf("SetValue: %v", d)
+	}
+	prior := &windowsScheduledTaskModel{
+		Principal: types.ObjectNull(scheduledTaskPrincipalAttrTypes),
+		Actions:   types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskActionAttrTypes}, []attr.Value{}),
+		Triggers:  priorSet,
+		Settings:  types.ObjectNull(scheduledTaskSettingsAttrTypes),
+	}
+
+	// Windows reports both live intervals as unset (0).
+	live := &winclient.ScheduledTaskState{
+		Name:    "T",
+		Path:    `\`,
+		Actions: []winclient.ScheduledTaskActionState{{Execute: "cmd.exe"}},
+		Triggers: []winclient.ScheduledTaskTriggerState{
+			{Type: "Daily", Enabled: true, StartBoundary: "2026-01-01T00:00:00Z", DaysInterval: 0},
+			{Type: "Daily", Enabled: true, StartBoundary: "2026-01-01T00:00:00Z", DaysInterval: 0},
+		},
+	}
+	m, diags := stateToModel(ctx, live, prior)
+	if diags.HasError() {
+		t.Fatalf("stateToModel diags: %v", diags)
+	}
+	var triggers []windowsScheduledTaskTriggerModel
+	if d := m.Triggers.ElementsAs(ctx, &triggers, false); d.HasError() {
+		t.Fatalf("ElementsAs: %v", d)
+	}
+	if len(triggers) != 2 {
+		t.Fatalf("expected 2 triggers, got %d", len(triggers))
+	}
+	// Sets have no stable order: assert the multiset, not positions.
+	var withValue, withNull int
+	for _, tr := range triggers {
+		switch {
+		case tr.DaysInterval.IsNull():
+			withNull++
+		case tr.DaysInterval.ValueInt64() == 3:
+			withValue++
+		default:
+			t.Errorf("unexpected days_interval = %v, want 3 or null", tr.DaysInterval)
+		}
+	}
+	if withValue != 1 || withNull != 1 {
+		t.Errorf("days_interval distribution = (%d x 3, %d x null), want (1 x 3, 1 x null): first prior must not be duplicated", withValue, withNull)
+	}
+}
+
 // stNullTimeouts must carry exactly the attribute types the schema declares.
 // A null timeouts value whose object has no attribute types is what made
 // ImportState fail with a framework Value Conversion Error (#83): the framework
@@ -1078,9 +1159,9 @@ func TestSubscriptionXMLType_SchemaWiring(t *testing.T) {
 	if !ok {
 		t.Fatal("schema has no triggers attribute")
 	}
-	nested, ok := trigAttr.(schema.ListNestedAttribute)
+	nested, ok := trigAttr.(schema.SetNestedAttribute)
 	if !ok {
-		t.Fatalf("triggers attribute is %T, want schema.ListNestedAttribute", trigAttr)
+		t.Fatalf("triggers attribute is %T, want schema.SetNestedAttribute", trigAttr)
 	}
 	subAttr, ok := nested.NestedObject.Attributes["subscription"]
 	if !ok {
@@ -1257,7 +1338,7 @@ func TestModelToInput_DurationAttributesUseSchemaType(t *testing.T) {
 		"execution_time_limit": types.StringValue("PT5M"),
 		"delay":                types.StringValue("PT1M"),
 		"days_interval":        types.Int64Value(1),
-		"days_of_week":         types.ListValueMust(types.StringType, []attr.Value{}),
+		"days_of_week":         types.SetValueMust(types.StringType, []attr.Value{}),
 		"weeks_interval":       types.Int64Null(),
 		"user_id":              types.StringNull(),
 		"subscription":         subscriptionXMLValueOrNull(""),
@@ -1269,7 +1350,7 @@ func TestModelToInput_DurationAttributesUseSchemaType(t *testing.T) {
 		Enabled:     types.BoolValue(true),
 		Principal:   types.ObjectNull(scheduledTaskPrincipalAttrTypes),
 		Actions:     types.ListNull(types.ObjectType{AttrTypes: scheduledTaskActionAttrTypes}),
-		Triggers:    types.ListValueMust(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, []attr.Value{trigger}),
+		Triggers:    types.SetValueMust(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}, []attr.Value{trigger}),
 		Settings:    settings,
 	}
 	in, diags := modelToInput(ctx, m)
@@ -1452,5 +1533,305 @@ func TestScheduledTaskUpdate_PwBumpedFailClosed(t *testing.T) {
 				t.Errorf("diag path = %q, want %q", gotPath.String(), wantPath.String())
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// State upgrade (issue #324: triggers/days_of_week List -> Set)
+// ---------------------------------------------------------------------------
+
+// stV0TriggerObjType is the tftypes mirror of the v0 trigger object
+// (days_of_week as List).
+func stV0TriggerObjType() tftypes.Object {
+	str, b, num := tftypes.String, tftypes.Bool, tftypes.Number
+	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"type":                 str,
+		"enabled":              b,
+		"start_boundary":       str,
+		"end_boundary":         str,
+		"execution_time_limit": str,
+		"delay":                str,
+		"days_interval":        num,
+		"days_of_week":         tftypes.List{ElementType: str},
+		"weeks_interval":       num,
+		"user_id":              str,
+		"subscription":         str,
+	}}
+}
+
+// stV0Raw builds a v0 raw state value: every attribute null except name,
+// path, triggers (each a raw value for stV0TriggerObjType) and timeouts.
+// A nil triggers slice encodes a null list (hand-edited state edge).
+func stV0Raw(triggers []tftypes.Value) tftypes.Value {
+	str, b, num := tftypes.String, tftypes.Bool, tftypes.Number
+	trigType := tftypes.List{ElementType: stV0TriggerObjType()}
+	var trigVal tftypes.Value
+	if triggers == nil {
+		trigVal = tftypes.NewValue(trigType, nil)
+	} else {
+		trigVal = tftypes.NewValue(trigType, triggers)
+	}
+	timeoutsType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": str, "read": str, "update": str, "delete": str,
+	}}
+	timeoutsVal := tftypes.NewValue(timeoutsType, map[string]tftypes.Value{
+		"create": tftypes.NewValue(str, nil),
+		"read":   tftypes.NewValue(str, nil),
+		"update": tftypes.NewValue(str, nil),
+		"delete": tftypes.NewValue(str, nil),
+	})
+	principalType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"user_id": str, "password": str, "password_wo": str,
+		"password_wo_version": num, "logon_type": str, "run_level": str,
+	}}
+	actionType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"execute": str, "arguments": str, "working_directory": str,
+	}}
+	settingsType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"allow_demand_start": b, "allow_hard_terminate": b,
+		"start_when_available": b, "run_only_if_network_available": b,
+		"execution_time_limit": str, "multiple_instances": str,
+		"disallow_start_if_on_batteries": b, "stop_if_going_on_batteries": b,
+		"wake_to_run": b, "run_only_if_idle": b,
+	}}
+	objType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id": str, "name": str, "path": str, "description": str, "enabled": b,
+		"state": str, "last_run_time": str, "last_task_result": num, "next_run_time": str,
+		"principal": principalType,
+		"actions":   tftypes.List{ElementType: actionType},
+		"triggers":  trigType,
+		"settings":  settingsType,
+		"timeouts":  timeoutsType,
+	}}
+	nullStr := tftypes.NewValue(str, nil)
+	return tftypes.NewValue(objType, map[string]tftypes.Value{
+		"id":               nullStr,
+		"name":             tftypes.NewValue(str, "T"),
+		"path":             tftypes.NewValue(str, `\`),
+		"description":      nullStr,
+		"enabled":          tftypes.NewValue(b, true),
+		"state":            nullStr,
+		"last_run_time":    nullStr,
+		"last_task_result": tftypes.NewValue(num, nil),
+		"next_run_time":    nullStr,
+		"principal":        tftypes.NewValue(principalType, nil),
+		"actions":          tftypes.NewValue(tftypes.List{ElementType: actionType}, []tftypes.Value{}),
+		"triggers":         trigVal,
+		"settings":         tftypes.NewValue(settingsType, nil),
+		"timeouts":         timeoutsVal,
+	})
+}
+
+func TestWindowsScheduledTaskResource_UpgradeState_V0ToV1(t *testing.T) {
+	ctx := context.Background()
+	r := &windowsScheduledTaskResource{}
+
+	upgraders := r.UpgradeState(ctx)
+	upgrader, ok := upgraders[0]
+	if !ok {
+		t.Fatal("expected state upgrader for prior version 0")
+	}
+	if upgrader.PriorSchema == nil {
+		t.Fatal("expected prior schema for version 0")
+	}
+	if _, ok := upgrader.PriorSchema.Attributes["triggers"].(schema.ListNestedAttribute); !ok {
+		t.Fatalf("prior triggers must be schema.ListNestedAttribute, got %T", upgrader.PriorSchema.Attributes["triggers"])
+	}
+
+	resp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, resp)
+	if resp.Schema.Version != 1 {
+		t.Errorf("current schema Version = %d, want 1", resp.Schema.Version)
+	}
+	if _, ok := resp.Schema.Attributes["triggers"].(schema.SetNestedAttribute); !ok {
+		t.Fatalf("current triggers must be schema.SetNestedAttribute, got %T", resp.Schema.Attributes["triggers"])
+	}
+
+	str, b, num := tftypes.String, tftypes.Bool, tftypes.Number
+	mkTrigger := func(typ string, days []string) tftypes.Value {
+		vals := map[string]tftypes.Value{
+			"type":                 tftypes.NewValue(str, typ),
+			"enabled":              tftypes.NewValue(b, true),
+			"start_boundary":       tftypes.NewValue(str, "2026-01-01T00:00:00Z"),
+			"end_boundary":         tftypes.NewValue(str, nil),
+			"execution_time_limit": tftypes.NewValue(str, nil),
+			"delay":                tftypes.NewValue(str, nil),
+			"days_interval":        tftypes.NewValue(num, nil),
+			"weeks_interval":       tftypes.NewValue(num, nil),
+			"user_id":              tftypes.NewValue(str, nil),
+			"subscription":         tftypes.NewValue(str, nil),
+		}
+		if days == nil {
+			vals["days_of_week"] = tftypes.NewValue(tftypes.List{ElementType: str}, nil)
+		} else {
+			elems := make([]tftypes.Value, len(days))
+			for i, d := range days {
+				elems[i] = tftypes.NewValue(str, d)
+			}
+			vals["days_of_week"] = tftypes.NewValue(tftypes.List{ElementType: str}, elems)
+		}
+		if typ == "Daily" {
+			vals["days_interval"] = tftypes.NewValue(num, 1)
+		}
+		if typ == "Weekly" {
+			vals["weeks_interval"] = tftypes.NewValue(num, 1)
+		}
+		return tftypes.NewValue(stV0TriggerObjType(), vals)
+	}
+
+	upgrade := func(triggers []tftypes.Value) windowsScheduledTaskModel {
+		t.Helper()
+		priorRaw := stV0Raw(triggers)
+		req := resource.UpgradeStateRequest{State: &tfsdk.State{Schema: *upgrader.PriorSchema, Raw: priorRaw}}
+		upResp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: resp.Schema}}
+		upgrader.StateUpgrader(ctx, req, upResp)
+		if upResp.Diagnostics.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", upResp.Diagnostics)
+		}
+		var upgraded windowsScheduledTaskModel
+		upResp.Diagnostics.Append(upResp.State.Get(ctx, &upgraded)...)
+		if upResp.Diagnostics.HasError() {
+			t.Fatalf("upgraded state Get: %v", upResp.Diagnostics)
+		}
+		return upgraded
+	}
+
+	first := upgrade([]tftypes.Value{
+		mkTrigger("Weekly", []string{"Wednesday", "Monday"}),
+		mkTrigger("Daily", nil),
+	})
+	// Same logical state with both the trigger order and the weekday order
+	// reversed: the upgraded sets must compare equal (reorder-only = clean).
+	second := upgrade([]tftypes.Value{
+		mkTrigger("Daily", nil),
+		mkTrigger("Weekly", []string{"Monday", "Wednesday"}),
+	})
+	if !first.Triggers.Equal(second.Triggers) {
+		t.Error("reordered v0 triggers must upgrade to equal v1 trigger sets")
+	}
+
+	var triggers []windowsScheduledTaskTriggerModel
+	if d := first.Triggers.ElementsAs(ctx, &triggers, false); d.HasError() {
+		t.Fatalf("Triggers ElementsAs: %v", d)
+	}
+	if len(triggers) != 2 {
+		t.Fatalf("expected 2 upgraded triggers, got %d", len(triggers))
+	}
+	byType := map[string]windowsScheduledTaskTriggerModel{}
+	for _, tr := range triggers {
+		byType[tr.Type.ValueString()] = tr
+	}
+	weekly, ok := byType["Weekly"]
+	if !ok {
+		t.Fatal("upgraded triggers must contain the Weekly trigger")
+	}
+	var days []string
+	if d := weekly.DaysOfWeek.ElementsAs(ctx, &days, false); d.HasError() {
+		t.Fatalf("DaysOfWeek ElementsAs: %v", d)
+	}
+	got := map[string]bool{}
+	for _, d := range days {
+		got[d] = true
+	}
+	if len(got) != 2 || !got["Monday"] || !got["Wednesday"] {
+		t.Errorf("upgraded days_of_week = %v, want {Monday Wednesday}", days)
+	}
+	if daily, ok := byType["Daily"]; !ok {
+		t.Fatal("upgraded triggers must contain the Daily trigger")
+	} else if !daily.DaysOfWeek.IsNull() {
+		t.Errorf("Daily days_of_week must stay null, got %v", daily.DaysOfWeek)
+	}
+	if first.Name.ValueString() != "T" || first.Path.ValueString() != `\` {
+		t.Errorf("scalar fields must survive the upgrade, got name=%q path=%q", first.Name.ValueString(), first.Path.ValueString())
+	}
+	objType, ok := first.Triggers.Type(context.Background()).(types.SetType)
+	if !ok || !objType.ElementType().Equal(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes}) {
+		t.Errorf("upgraded triggers element type = %v, want the trigger object type", first.Triggers.Type(context.Background()))
+	}
+
+	// Null triggers stay null (hand-edited state edge), not an empty set.
+	nullUpgraded := upgrade(nil)
+	if !nullUpgraded.Triggers.IsNull() {
+		t.Errorf("null triggers must upgrade to SetNull, got %v", nullUpgraded.Triggers)
+	}
+
+	// Pin the exact v0 attribute key sets so a future attribute addition
+	// fails fast instead of silently bypassing the hand-written V0 models.
+	assertAttrKeys(t, upgrader.PriorSchema.Attributes, []string{
+		"id", "name", "path", "description", "enabled", "state",
+		"last_run_time", "last_task_result", "next_run_time",
+		"principal", "actions", "triggers", "settings", "timeouts",
+	})
+	assertAttrKeys(t, resp.Schema.Attributes, []string{
+		"id", "name", "path", "description", "enabled", "state",
+		"last_run_time", "last_task_result", "next_run_time",
+		"principal", "actions", "triggers", "settings", "timeouts",
+	})
+	priorNested, ok := upgrader.PriorSchema.Attributes["triggers"].(schema.ListNestedAttribute)
+	if !ok {
+		t.Fatalf("prior triggers must be schema.ListNestedAttribute, got %T", upgrader.PriorSchema.Attributes["triggers"])
+	}
+	assertAttrKeys(t, priorNested.NestedObject.Attributes, []string{
+		"type", "enabled", "start_boundary", "end_boundary",
+		"execution_time_limit", "delay", "days_interval", "days_of_week",
+		"weeks_interval", "user_id", "subscription",
+	})
+	currentNested, ok := resp.Schema.Attributes["triggers"].(schema.SetNestedAttribute)
+	if !ok {
+		t.Fatalf("current triggers must be schema.SetNestedAttribute, got %T", resp.Schema.Attributes["triggers"])
+	}
+	assertAttrKeys(t, currentNested.NestedObject.Attributes, []string{
+		"type", "enabled", "start_boundary", "end_boundary",
+		"execution_time_limit", "delay", "days_interval", "days_of_week",
+		"weeks_interval", "user_id", "subscription",
+	})
+}
+
+// TestScheduledTaskSetSemantics_ReorderIsClean pins the property the #324
+// migration relies on: two sets holding the same elements in a different
+// order compare equal, so a reorder alone produces no diff.
+func TestScheduledTaskSetSemantics_ReorderIsClean(t *testing.T) {
+	ctx := context.Background()
+
+	a, d := types.SetValueFrom(ctx, types.StringType, []string{"Monday", "Wednesday", "Friday"})
+	if d.HasError() {
+		t.Fatalf("SetValueFrom: %v", d)
+	}
+	b, d := types.SetValueFrom(ctx, types.StringType, []string{"Friday", "Monday", "Wednesday"})
+	if d.HasError() {
+		t.Fatalf("SetValueFrom: %v", d)
+	}
+	if !a.Equal(b) {
+		t.Error("days_of_week sets with the same elements in a different order must be equal")
+	}
+
+	mkWeekly := func(days []string) attr.Value {
+		t.Helper()
+		v, d := buildTriggerObject(ctx, winclient.ScheduledTaskTriggerState{
+			Type: "Weekly", Enabled: true, DaysOfWeek: days, WeeksInterval: 1,
+		}, nil)
+		if d.HasError() {
+			t.Fatalf("buildTriggerObject: %v", d)
+		}
+		return v
+	}
+	daily, d := buildTriggerObject(ctx, winclient.ScheduledTaskTriggerState{
+		Type: "Daily", Enabled: true, DaysInterval: 1,
+	}, nil)
+	if d.HasError() {
+		t.Fatalf("buildTriggerObject: %v", d)
+	}
+	setA, d := types.SetValue(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes},
+		[]attr.Value{mkWeekly([]string{"Monday", "Wednesday"}), daily})
+	if d.HasError() {
+		t.Fatalf("SetValue: %v", d)
+	}
+	setB, d := types.SetValue(types.ObjectType{AttrTypes: scheduledTaskTriggerAttrTypes},
+		[]attr.Value{daily, mkWeekly([]string{"Wednesday", "Monday"})})
+	if d.HasError() {
+		t.Fatalf("SetValue: %v", d)
+	}
+	if !setA.Equal(setB) {
+		t.Error("trigger sets with the same elements in a different order must be equal")
 	}
 }
