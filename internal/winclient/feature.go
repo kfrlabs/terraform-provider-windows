@@ -36,17 +36,18 @@ func NewFeatureClient(c *Client) *FeatureClient { return &FeatureClient{c: c} }
 // substrings to FeatureErrorKind values. Detection is best-effort and
 // substring-based because Windows error messages are localised; callers should
 // fall back to FeatureErrorUnknown when the kind is empty.
-const psFeatureHeader = psEnvelopePrelude + psFeatureRemainder
+const psFeatureHeader = psEnvelopePrelude + psClassifyPrelude + psFeatureRemainder
 
 // psFeatureRemainder Classifier and feature bodies stay here; envelope emitters come from the prelude.
 const psFeatureRemainder = `function Classify-Feature([string]$Msg) {
-  if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or $Msg -match 'not authorized') { return 'permission_denied' }
-  if ($Msg -match 'source files could not be found' -or $Msg -match 'specify an alternate source' -or $Msg -match 'Source could not be found') { return 'source_missing' }
-  if ($Msg -match 'depends on' -or $Msg -match 'parent feature' -or $Msg -match 'required feature') { return 'dependency_missing' }
-  if ($Msg -match 'is not recognized' -or $Msg -match 'CommandNotFoundException' -or $Msg -match 'ServerManager') { return 'unsupported_sku' }
-  if ($Msg -match 'No match was found' -or $Msg -match 'is not valid on this system' -or $Msg -match 'No feature') { return 'not_found' }
-  if ($Msg -match 'parameter' -and $Msg -match 'invalid') { return 'invalid_parameter' }
-  return 'unknown'
+  return (Classify-ByPatterns $Msg @(
+    @('Access is denied|AccessDenied|not authorized', 'permission_denied'),
+    @('source files could not be found|specify an alternate source|Source could not be found', 'source_missing'),
+    @('depends on|parent feature|required feature', 'dependency_missing'),
+    @('is not recognized|CommandNotFoundException|ServerManager', 'unsupported_sku'),
+    @('No match was found|is not valid on this system|No feature', 'not_found'),
+    @(@('parameter', 'invalid'), 'invalid_parameter')
+  ))
 }
 
 function Test-PendingReboot {

@@ -56,18 +56,19 @@ func NewServiceClient(c *Client) *ServiceClient { return &ServiceClient{c: c} }
 //   - Classify            : maps Win32 error codes (5/87/1056/1058/1060/1062)
 //     to ServiceErrorKind strings for robust, locale-independent error
 //     handling (SS12).
-const psHeader = psEnvelopePrelude + psHeaderRemainder
+const psHeader = psEnvelopePrelude + psClassifyPrelude + psHeaderRemainder
 
 // psHeaderRemainder Classify and service helpers stay here; envelope emitters come from the prelude.
 const psHeaderRemainder = `
 function Classify([string]$Msg) {
-  if ($Msg -match '\b1060\b')                        { return 'not_found' }
-  if ($Msg -match '\b5\b.*[Dd]enied' -or $Msg -match '[Aa]ccess is denied') { return 'permission_denied' }
-  if ($Msg -match '\b87\b')                          { return 'invalid_parameter' }
-  if ($Msg -match '\b1056\b')                        { return 'already_running' }
-  if ($Msg -match '\b1058\b')                        { return 'disabled' }
-  if ($Msg -match '\b1062\b')                        { return 'not_running' }
-  return 'unknown'
+  return (Classify-ByPatterns $Msg @(
+    @('\b1060\b', 'not_found'),
+    @('\b5\b.*[Dd]enied|[Aa]ccess is denied', 'permission_denied'),
+    @('\b87\b', 'invalid_parameter'),
+    @('\b1056\b', 'already_running'),
+    @('\b1058\b', 'disabled'),
+    @('\b1062\b', 'not_running')
+  ))
 }
 `
 

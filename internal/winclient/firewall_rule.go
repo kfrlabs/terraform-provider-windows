@@ -51,25 +51,17 @@ func NewFirewallRuleClient(c *Client) *FirewallRuleClient {
 // backtick sequences (`n, `t). None are needed here — [char]10 is used for
 // newlines inside PS strings where required, and single-quoted PS literals
 // avoid all expansion.
-const frPsHeader = psEnvelopePrelude + frPsHeaderRemainder
+const frPsHeader = psEnvelopePrelude + psClassifyPrelude + frPsHeaderRemainder
 
 // frPsHeaderRemainder Classify + rule bodies stay here; envelope emitters come from the prelude. Emit depth 10->8: payloads are flat rule dicts with string lists. Gains WarningPreference (suppression only).
 const frPsHeaderRemainder = `
 function Classify-FR([string]$Msg) {
-  if ($Msg -match 'No MSFT_NetFirewallRule' -or
-      $Msg -match 'ObjectNotFound' -or
-      $Msg -match 'ItemNotFoundException' -or
-      $Msg -match 'not exist')
-  { return 'not_found' }
-  if ($Msg -match 'already exists' -or $Msg -match 'AlreadyExists')
-  { return 'already_exists' }
-  if ($Msg -match 'Access is denied' -or
-      $Msg -match 'PermissionDenied' -or
-      $Msg -match 'Unauthorized')
-  { return 'permission_denied' }
-  if ($Msg -match '[Ii]nvalid' -or $Msg -match '[Aa]rgument')
-  { return 'invalid_input' }
-  return 'unknown'
+  return (Classify-ByPatterns $Msg @(
+    @('No MSFT_NetFirewallRule|ObjectNotFound|ItemNotFoundException|not exist', 'not_found'),
+    @('already exists|AlreadyExists', 'already_exists'),
+    @('Access is denied|PermissionDenied|Unauthorized', 'permission_denied'),
+    @('[Ii]nvalid|[Aa]rgument', 'invalid_input')
+  ))
 }
 
 function Norm-Arr([object]$val) {

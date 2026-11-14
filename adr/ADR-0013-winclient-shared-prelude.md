@@ -122,4 +122,9 @@ bytes; rendering-only, see rule 4).
   Batches 2-4 migrated every
   header whose Emit pair was byte-identical or provably equivalent
   (32 files share the prelude; the DSC depth downgrade was proven on the
-  Windows fixture).
+  Windows fixture). Batch 7 table-ified 7 more string classifiers
+  (`firewall_rule`, `iis_common` shared by app_pool/site/binding,
+  `iis_binding` own branches, `feature`, `os_info`,
+  `domain_membership`, `service`; 1409 old-vs-new equivalence cases
+  green on the fixture); pure delegators (`iis_app_pool`, `iis_site`)
+  need no change.

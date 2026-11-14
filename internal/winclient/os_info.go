@@ -41,13 +41,15 @@ func NewOSInfoClient(c *Client) *OSInfoClient {
 // Classify-OSInfo maps CIM / registry error substrings to OSInfoErrorKind
 // values. Detection is best-effort and substring-based because Windows
 // error messages are localised.
-const psOSInfoHeader = psEnvelopePrelude + psOSInfoRemainder
+const psOSInfoHeader = psEnvelopePrelude + psClassifyPrelude + psOSInfoRemainder
 
 // psOSInfoRemainder Classifier and read body stay here; envelope emitters come from the prelude.
 const psOSInfoRemainder = `function Classify-OSInfo([string]$Msg) {
-  if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or (($Msg -match '\b5\b') -and ($Msg -match 'denied'))) { return 'access_denied' }
-  if ($Msg -match 'winmgmt' -or $Msg -match '\bWMI\b' -or $Msg -match '\bCIM\b' -or $Msg -match 'CimException' -or $Msg -match 'Get-CimInstance' -or $Msg -match '\brepository\b' -or $Msg -match 'provider load failure') { return 'cim_unavailable' }
-  return 'unknown'
+  return (Classify-ByPatterns $Msg @(
+    @('Access is denied|AccessDenied', 'access_denied'),
+    @(@('\b5\b', 'denied'), 'access_denied'),
+    @('winmgmt|\bWMI\b|\bCIM\b|CimException|Get-CimInstance|\brepository\b|provider load failure', 'cim_unavailable')
+  ))
 }
 `
 
