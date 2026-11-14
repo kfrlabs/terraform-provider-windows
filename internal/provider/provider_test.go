@@ -594,3 +594,143 @@ func TestProvider_Schema_HostValidator(t *testing.T) {
 		})
 	}
 }
+
+// The timeout validator must reject malformed, zero and negative durations at
+// plan time while letting null (WINDOWS_TIMEOUT fallback) through untouched.
+func TestProvider_Schema_TimeoutValidator(t *testing.T) {
+	p := &windowsProvider{}
+	schemaResp := &provider.SchemaResponse{}
+	p.Schema(context.Background(), provider.SchemaRequest{}, schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["timeout"]
+	if !ok {
+		t.Fatal("provider schema missing timeout attribute")
+	}
+	timeoutAttr, ok := attr.(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("timeout attribute is %T, want schema.StringAttribute", attr)
+	}
+	if len(timeoutAttr.Validators) == 0 {
+		t.Fatal("timeout must carry a validator requiring a positive duration")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		value   types.String
+		wantErr bool
+	}{
+		{"null skips validation (env fallback)", types.StringNull(), false},
+		{"malformed duration", types.StringValue("not-a-duration"), true},
+		{"negative duration", types.StringValue("-5s"), true},
+		{"zero duration", types.StringValue("0s"), true},
+		{"seconds", types.StringValue("30s"), false},
+		{"minutes", types.StringValue("2m"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var diagsResp validator.StringResponse
+			for _, v := range timeoutAttr.Validators {
+				v.ValidateString(context.Background(), validator.StringRequest{
+					Path:        path.Root("timeout"),
+					ConfigValue: tc.value,
+				}, &diagsResp)
+			}
+			if got := diagsResp.Diagnostics.HasError(); got != tc.wantErr {
+				t.Errorf("timeout %v: HasError = %v, want %v (%v)", tc.value, got, tc.wantErr, diagsResp.Diagnostics)
+			}
+		})
+	}
+}
+
+// The max_sessions validator must reject values outside the pool bounds at
+// plan time while letting null (WINDOWS_MAX_SESSIONS fallback) through.
+func TestProvider_Schema_MaxSessionsValidator(t *testing.T) {
+	p := &windowsProvider{}
+	schemaResp := &provider.SchemaResponse{}
+	p.Schema(context.Background(), provider.SchemaRequest{}, schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["max_sessions"]
+	if !ok {
+		t.Fatal("provider schema missing max_sessions attribute")
+	}
+	maxSessionsAttr, ok := attr.(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("max_sessions attribute is %T, want schema.Int64Attribute", attr)
+	}
+	if len(maxSessionsAttr.Validators) == 0 {
+		t.Fatal("max_sessions must carry a range validator")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		value   types.Int64
+		wantErr bool
+	}{
+		{"null skips validation (env fallback)", types.Int64Null(), false},
+		{"zero is not a usable pool size", types.Int64Value(0), true},
+		{"negative is not a usable pool size", types.Int64Value(-1), true},
+		{"above the pool cap", types.Int64Value(winclient.MaxMaxSessions + 1), true},
+		{"lower bound", types.Int64Value(1), false},
+		{"default", types.Int64Value(4), false},
+		{"upper bound", types.Int64Value(winclient.MaxMaxSessions), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var diagsResp validator.Int64Response
+			for _, v := range maxSessionsAttr.Validators {
+				v.ValidateInt64(context.Background(), validator.Int64Request{
+					Path:        path.Root("max_sessions"),
+					ConfigValue: tc.value,
+				}, &diagsResp)
+			}
+			if got := diagsResp.Diagnostics.HasError(); got != tc.wantErr {
+				t.Errorf("max_sessions %v: HasError = %v, want %v (%v)", tc.value, got, tc.wantErr, diagsResp.Diagnostics)
+			}
+		})
+	}
+}
+
+// An explicitly configured negative or zero timeout must fail Configure with
+// an attribute diagnostic rather than reaching the dialer.
+func TestProvider_Configure_NonPositiveTimeout(t *testing.T) {
+	for _, value := range []string{"-5s", "0s"} {
+		t.Run(value, func(t *testing.T) {
+			clearProviderEnv(t)
+
+			resp := configureProvider(t, providerCfgOptions{
+				host:     strPtr("10.0.0.1"),
+				username: strPtr("admin"),
+				password: strPtr("secret"),
+				hostKey:  strPtr(testHostKey(t)),
+				timeout:  strPtr(value),
+			})
+			if !resp.Diagnostics.HasError() {
+				t.Fatalf("expected error diag for timeout %q", value)
+			}
+		})
+	}
+}
+
+// An out-of-range WINDOWS_MAX_SESSIONS bypasses schema validators, so
+// Configure must still report it against the attribute.
+func TestProvider_Configure_InvalidMaxSessionsFromEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvMaxSessions, "64")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:     strPtr("10.0.0.1"),
+		username: strPtr("admin"),
+		password: strPtr("secret"),
+		hostKey:  strPtr(testHostKey(t)),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag for WINDOWS_MAX_SESSIONS=64")
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Invalid max_sessions" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected an 'Invalid max_sessions' attribute diagnostic, got %v", resp.Diagnostics)
+	}
+}

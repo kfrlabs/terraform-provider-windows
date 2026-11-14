@@ -100,6 +100,12 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 					"PowerShell operation may run: use the per-resource timeouts block for that. May " +
 					"also be set via WINDOWS_TIMEOUT.",
 				Optional: true,
+				Validators: []validator.String{
+					// Null (unset, env fallback via WINDOWS_TIMEOUT) skips
+					// validation; explicit zero or negative durations would
+					// otherwise reach the dialer and fail with an opaque error.
+					positiveDurationValidator{},
+				},
 			},
 			"private_key": schema.StringAttribute{
 				Description: "PEM-encoded SSH private key used for public-key authentication. " +
@@ -152,6 +158,11 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 					"a slow operation blocks every other resource. Defaults to 4, which stays under the " +
 					"OpenSSH default MaxSessions 10. May also be set via WINDOWS_MAX_SESSIONS.",
 				Optional: true,
+				Validators: []validator.Int64{
+					// Null (unset, env fallback via WINDOWS_MAX_SESSIONS) skips
+					// validation. The bound matches winclient.New.
+					int64validator.Between(1, winclient.MaxMaxSessions),
+				},
 			},
 		},
 	}
@@ -275,10 +286,23 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 				fmt.Sprintf("Could not parse duration %q: %s", timeoutStr, err))
 			return
 		}
+		if d <= 0 {
+			resp.Diagnostics.AddAttributeError(pathAttr("timeout"), "Invalid timeout",
+				fmt.Sprintf("Timeout must be greater than zero, got %q.", timeoutStr))
+			return
+		}
 		cfg.Timeout = d
 	}
 	// When the attribute is unset, cfg.Timeout stays 0 so ResolveFromEnv can
 	// apply WINDOWS_TIMEOUT; New defaults to 30s when neither is set.
+
+	// Environment fallbacks bypass schema validators, so reject out-of-range
+	// values here and point at the attribute they came from.
+	if cfg.MaxSessions != 0 && (cfg.MaxSessions < 1 || cfg.MaxSessions > winclient.MaxMaxSessions) {
+		resp.Diagnostics.AddAttributeError(pathAttr("max_sessions"), "Invalid max_sessions",
+			fmt.Sprintf("max_sessions must be between 1 and %d, got %d.", winclient.MaxMaxSessions, cfg.MaxSessions))
+		return
+	}
 
 	client, err := winclient.New(cfg)
 	if err != nil {
@@ -370,5 +394,35 @@ func (p *windowsProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewWindowsTimezoneDataSource,
 		NewWindowsVolumeDataSource,
 		NewWindowsWingetPackageDataSource,
+	}
+}
+
+// positiveDurationValidator requires a Go duration string that parses to a
+// strictly positive value. Null and unknown values pass through: an unset
+// attribute falls back to WINDOWS_TIMEOUT or the built-in default.
+type positiveDurationValidator struct{}
+
+func (v positiveDurationValidator) Description(_ context.Context) string {
+	return "must be a Go duration string greater than zero, for example \"30s\" or \"2m\""
+}
+
+func (v positiveDurationValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v positiveDurationValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	raw := req.ConfigValue.ValueString()
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid timeout",
+			fmt.Sprintf("Could not parse duration %q: %s", raw, err))
+		return
+	}
+	if d <= 0 {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid timeout",
+			fmt.Sprintf("Timeout must be greater than zero, got %q.", raw))
 	}
 }
