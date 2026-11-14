@@ -108,7 +108,7 @@ variable "vendor_license_key" {
 
 - `checksum` (String) Expected installer checksum, format `<algo>:<hex>` where `<algo>` is one of `sha256`, `sha512`, `sha1`, `md5`. Verified before exec. Immutable (ForceNew).
 
-Required with an `http://` `source_url`, strongly recommended otherwise (see `source_url` threat model). Prefer `sha256` or `sha512`: `md5` and `sha1` are cryptographically broken for integrity purposes and trigger a deprecation warning.
+Required with an `http://` `source_url`, strongly recommended otherwise (see `source_url` threat model). Prefer `sha256` or `sha512`: `md5` and `sha1` are cryptographically broken for integrity purposes and trigger a deprecation warning. When `WINDOWS_REQUIRE_CHECKSUM` is set to `1`/`true`/`yes`, `md5` and `sha1` are rejected as errors.
 - `display_name_pattern` (String) Wildcard/regex matched against `DisplayName` under `HKLM:\SOFTWARE\...\Uninstall\*` (and `Wow6432Node`) to locate EXE installs. Required for `installer_type=exe` when `uninstall_command` is empty. Immutable (ForceNew).
 - `environment` (Map of String, Sensitive) Extra environment variables injected into the installer process. **Updatable in place**; marked **sensitive** (may carry license keys / proxy credentials).
 - `insecure_skip_verify` (Boolean) Disable TLS certificate validation when fetching `source_url`. **Not recommended** — use only for internal CAs. Immutable (ForceNew).
@@ -118,7 +118,7 @@ Required with an `http://` `source_url`, strongly recommended otherwise (see `so
 - `source_path` (String) Local path on the target Windows host to the `.msi`/`.exe` file. Mutually exclusive with `source_url`. Immutable (ForceNew).
 - `source_url` (String) HTTP/HTTPS URL fetched on the target host into `$env:TEMP` before exec. Mutually exclusive with `source_path`. Immutable (ForceNew).
 
-**Threat model:** the downloaded installer is executed as the SSH user (typically an administrator). An `http://` URL **requires** `checksum`: without integrity verification anyone on the network path can substitute the binary (remote code execution on the managed host). Even over HTTPS, always pin `checksum` so a compromised mirror or account cannot ship a trojaned installer unnoticed.
+**Threat model:** the downloaded installer is executed as the SSH user (typically an administrator). An `http://` URL **requires** `checksum`: without integrity verification anyone on the network path can substitute the binary (remote code execution on the managed host). Even over HTTPS, always pin `checksum` so a compromised mirror or account cannot ship a trojaned installer unnoticed. When `WINDOWS_REQUIRE_CHECKSUM` is set to `1`/`true`/`yes`, a missing `checksum` is rejected as an error even over HTTPS.
 - `timeout_seconds` (Number) Hard timeout (seconds) for install/uninstall. Default `1800`. **Updatable in place**. Range: 1–86400.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `uninstall_args` (List of String) Extra arguments for uninstallation. MSI default `['/x', <product_id>, '/qn', '/norestart']`; appended to `UninstallString` for EXE. Immutable (ForceNew).
