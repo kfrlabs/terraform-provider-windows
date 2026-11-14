@@ -1376,3 +1376,221 @@ func TestUpdate_LegacyPasswordChange_ForwardsPassword(t *testing.T) {
 		t.Errorf("legacy service_password change must be forwarded, got %q", fake.updateIn.ServicePassword)
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Partial state on reconcile failure (issue #341): when winclient returns
+// (state, err), the handler must persist the observed state before adding
+// the error diagnostic (tainted on create; saved partial state on update).
+// A nil state (e.g. already_exists pre-check) stays error-only.
+// -----------------------------------------------------------------------------
+
+func TestCreate_PartialStateOnReconcileFailure(t *testing.T) {
+	fake := &fakeSvcClient{
+		createOut: stateOK(),
+		createErr: winclient.NewServiceError(
+			winclient.ServiceErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+			"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+				"create": tftypes.String,
+				"read":   tftypes.String,
+				"update": tftypes.String,
+				"delete": tftypes.String,
+			}}, map[string]tftypes.Value{
+				"create": tftypes.NewValue(tftypes.String, "5m"),
+				"read":   tftypes.NewValue(tftypes.String, nil),
+				"update": tftypes.NewValue(tftypes.String, nil),
+				"delete": tftypes.NewValue(tftypes.String, nil),
+			}),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: svcObj(nil)},
+	}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var m windowsServiceModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ID.ValueString() != "svc" {
+		t.Errorf("partial state must be persisted (tainted), got id=%q", m.ID.ValueString())
+	}
+	if !m.ServicePasswordWO.IsNull() {
+		t.Error("ServicePasswordWO must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if m.ServicePasswordWOVersion.ValueInt64() != 2 {
+		t.Errorf("partial state must preserve the version, got %v", m.ServicePasswordWOVersion)
+	}
+	createTimeout, diags := m.Timeouts.Create(context.Background(), serviceDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Create: %v", diags)
+	}
+	if createTimeout != 5*time.Minute {
+		t.Errorf("partial state must preserve timeouts: create = %v, want 5m", createTimeout)
+	}
+}
+
+func TestCreate_NilStateOnError_StaysStateless(t *testing.T) {
+	fake := &fakeSvcClient{createErr: winclient.NewServiceError(
+		winclient.ServiceErrorAlreadyExists, "service 'svc' exists", nil, nil)}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path": tftypes.NewValue(tftypes.String, `C:\x.exe`),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: svcObj(nil)},
+	}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from already_exists")
+	}
+	var m windowsServiceModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if !m.ID.IsNull() {
+		t.Errorf("nil-state error must stay stateless, got id=%q", m.ID.ValueString())
+	}
+}
+
+func TestUpdate_PartialStateOnReconcileFailure(t *testing.T) {
+	fake := &fakeSvcClient{
+		updateOut: stateOK(),
+		updateErr: winclient.NewServiceError(
+			winclient.ServiceErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	wo := "rotated-secret"
+	ver := int64(2)
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password":            tftypes.NewValue(tftypes.String, "new-secret"),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+			"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+				"create": tftypes.String,
+				"read":   tftypes.String,
+				"update": tftypes.String,
+				"delete": tftypes.String,
+			}}, map[string]tftypes.Value{
+				"create": tftypes.NewValue(tftypes.String, nil),
+				"read":   tftypes.NewValue(tftypes.String, nil),
+				"update": tftypes.NewValue(tftypes.String, "5m"),
+				"delete": tftypes.NewValue(tftypes.String, nil),
+			}),
+		}),
+	}
+	// Plan bumps the rotation version (1 -> 2) while prior still holds 1:
+	// a failed rotation must not advance the stored version marker, or a
+	// retry would no longer diff.
+	priorState := tfsdk.State{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"id":                          tftypes.NewValue(tftypes.String, "svc"),
+			"name":                        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":                 tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"service_password":            tftypes.NewValue(tftypes.String, "old-secret"),
+			"service_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		}),
+	}
+	resp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: priorState.Raw.Copy()},
+	}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: plan, State: priorState, Config: svcUpdateConfig(schemaDef, &wo, &ver)},
+		resp,
+	)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var m windowsServiceModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ID.ValueString() != "svc" {
+		t.Errorf("partial state must be persisted on update failure, got id=%q", m.ID.ValueString())
+	}
+	if !m.ServicePasswordWO.IsNull() {
+		t.Error("ServicePasswordWO must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if m.ServicePasswordWOVersion.ValueInt64() != 1 {
+		t.Errorf("failed rotation must not advance the stored version (stays at prior 1), got %v", m.ServicePasswordWOVersion)
+	}
+	if m.ServicePassword.ValueString() != "old-secret" {
+		t.Errorf("failed update must restore ServicePassword from prior state, got %q", m.ServicePassword.ValueString())
+	}
+	updateTimeout, diags := m.Timeouts.Update(context.Background(), serviceDefaultTimeout)
+	if diags.HasError() {
+		t.Fatalf("Timeouts.Update: %v", diags)
+	}
+	if updateTimeout != 5*time.Minute {
+		t.Errorf("partial state must preserve timeouts: update = %v, want 5m", updateTimeout)
+	}
+}
+
+// TestUpdate_NilStateOnError_DoesNotOverwriteState: a nil-state Update error
+// leaves the prior state untouched (no overwrite, error only).
+func TestUpdate_NilStateOnError_DoesNotOverwriteState(t *testing.T) {
+	fake := &fakeSvcClient{updateErr: winclient.NewServiceError(
+		winclient.ServiceErrorNotFound, "service 'svc' does not exist", nil, nil)}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path": tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+		}),
+	}
+	priorState := tfsdk.State{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"id":          tftypes.NewValue(tftypes.String, "svc"),
+			"name":        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path": tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+		}),
+	}
+	resp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: priorState.Raw.Copy()},
+	}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: plan, State: priorState},
+		resp,
+	)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from not_found")
+	}
+	var m windowsServiceModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ID.ValueString() != "svc" {
+		t.Errorf("nil-state error must not overwrite state, got id=%q", m.ID.ValueString())
+	}
+}

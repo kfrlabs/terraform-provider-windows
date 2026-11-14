@@ -402,6 +402,14 @@ try {
 	// service_password is piped on stdin; passing "" + "\n" when no password
 	// is required is intentional and harmless (the script reads "" from stdin
 	// and skips the credential branch).
+	//
+	// Script-level failures before Read-ServiceState (sc.exe obj=/delayed-auto/
+	// depend= Emit-Err paths) return a nil state on purpose: the envelope
+	// reports only kind/message, so Go cannot distinguish a post-New-Service
+	// orphan from the already_exists pre-check without kind-branching plus an
+	// extra SSH round-trip, and automatic sc.exe delete rollback is out of
+	// scope without an ADR. Only reconcileStatus failures return (state, err)
+	// for provider-side taint (issue #341).
 	resp, err := s.runEnvelopeWithInput(ctx, "Create", input.Name, script, input.ServicePassword+"\n")
 	if err != nil {
 		return nil, err
@@ -560,6 +568,10 @@ try {
 `
 	// service_password is piped on stdin; passing "" + "\n" when no password
 	// is required is intentional and harmless (see Create).
+	//
+	// As in Create, script-level failures before Read-ServiceState return a
+	// nil state (no re-read, no rollback); only reconcileStatus failures
+	// return (state, err) for provider-side taint (issue #341).
 	resp, err := s.runEnvelopeWithInput(ctx, "Update", name, script, input.ServicePassword+"\n")
 	if err != nil {
 		return nil, err

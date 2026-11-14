@@ -386,6 +386,15 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 
 	state, err := r.svc.Create(ctx, input)
 	if err != nil {
+		// Partial failure (issue #341): the service may already exist on
+		// Windows (e.g. reconcileStatus failed after New-Service). Persist
+		// the observed state so the resource is tainted rather than
+		// dropped from state. A nil state (e.g. already_exists pre-check)
+		// stays error-only.
+		if state != nil {
+			final := modelFromState(state, plan)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
+		}
 		addServiceDiag(&resp.Diagnostics, "Create windows_service failed", err)
 		return
 	}
@@ -523,6 +532,17 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 
 	state, err := r.svc.Update(ctx, name, input)
 	if err != nil {
+		// Partial failure (issue #341): persist the observed state so the
+		// resource keeps its partial state rather than staying at prior
+		// state. A nil state stays error-only. Credential markers come
+		// from prior state: a failed rotation must not advance the stored
+		// version marker or a retry would no longer diff.
+		if state != nil {
+			final := modelFromState(state, plan)
+			final.ServicePassword = prior.ServicePassword
+			final.ServicePasswordWOVersion = prior.ServicePasswordWOVersion
+			resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
+		}
 		addServiceDiag(&resp.Diagnostics, "Update windows_service failed", err)
 		return
 	}
