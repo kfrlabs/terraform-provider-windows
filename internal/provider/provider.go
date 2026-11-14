@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -100,6 +101,11 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 					"PowerShell operation may run: use the per-resource timeouts block for that. May " +
 					"also be set via WINDOWS_TIMEOUT.",
 				Optional: true,
+				Validators: []validator.String{
+					// Null (unset, env fallback via WINDOWS_TIMEOUT) skips validation;
+					// an explicitly configured value must be a positive duration.
+					timeoutDurationValidator{},
+				},
 			},
 			"private_key": schema.StringAttribute{
 				Description: "PEM-encoded SSH private key used for public-key authentication. " +
@@ -152,6 +158,10 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 					"a slow operation blocks every other resource. Defaults to 4, which stays under the " +
 					"OpenSSH default MaxSessions 10. May also be set via WINDOWS_MAX_SESSIONS.",
 				Optional: true,
+				Validators: []validator.Int64{
+					// Null (unset, env fallback via WINDOWS_MAX_SESSIONS) skips validation.
+					int64validator.Between(1, winclient.MaxMaxSessions),
+				},
 			},
 		},
 	}
@@ -267,18 +277,47 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		)
 	}
 
-	timeoutStr := data.Timeout.ValueString()
-	if timeoutStr != "" {
+	if !data.Timeout.IsNull() {
+		timeoutStr := data.Timeout.ValueString()
+		if strings.TrimSpace(timeoutStr) == "" {
+			resp.Diagnostics.AddAttributeError(pathAttr("timeout"), "Invalid timeout",
+				fmt.Sprintf("Timeout must be a positive duration, got %q.", timeoutStr))
+			return
+		}
 		d, err := time.ParseDuration(timeoutStr)
 		if err != nil {
 			resp.Diagnostics.AddAttributeError(pathAttr("timeout"), "Invalid timeout",
 				fmt.Sprintf("Could not parse duration %q: %s", timeoutStr, err))
 			return
 		}
+		if d <= 0 {
+			resp.Diagnostics.AddAttributeError(pathAttr("timeout"), "Invalid timeout",
+				fmt.Sprintf("Timeout must be a positive duration, got %q.", timeoutStr))
+			return
+		}
 		cfg.Timeout = d
 	}
-	// When the attribute is unset, cfg.Timeout stays 0 so ResolveFromEnv can
+	// When the attribute is unset (null), cfg.Timeout stays 0 so ResolveFromEnv can
 	// apply WINDOWS_TIMEOUT; New defaults to 30s when neither is set.
+
+	// An explicitly configured max_sessions must stay within the pool bounds.
+	// When unset, cfg.MaxSessions holds the WINDOWS_MAX_SESSIONS fallback (or
+	// 0 for New to default), which is validated the same way so an
+	// out-of-range environment value fails with an attribute path instead of
+	// the generic New error. Malformed env values are still ignored by
+	// ResolveFromEnv and fall back to the default.
+	if !data.MaxSessions.IsNull() {
+		if v := data.MaxSessions.ValueInt64(); v < 1 || v > winclient.MaxMaxSessions {
+			resp.Diagnostics.AddAttributeError(pathAttr("max_sessions"), "Invalid max_sessions",
+				fmt.Sprintf("max_sessions must be between 1 and %d, got %d.", winclient.MaxMaxSessions, v))
+			return
+		}
+	}
+	if cfg.MaxSessions != 0 && (cfg.MaxSessions < 1 || cfg.MaxSessions > winclient.MaxMaxSessions) {
+		resp.Diagnostics.AddAttributeError(pathAttr("max_sessions"), "Invalid max_sessions",
+			fmt.Sprintf("max_sessions must be between 1 and %d, got %d.", winclient.MaxMaxSessions, cfg.MaxSessions))
+		return
+	}
 
 	client, err := winclient.New(cfg)
 	if err != nil {
