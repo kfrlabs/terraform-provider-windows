@@ -744,9 +744,11 @@ func (r *windowsFirewallProfileResource) ImportState(ctx context.Context, req re
 // ---------------------------------------------------------------------------
 
 // modelToFirewallProfileSettings converts a Terraform model to a
-// FirewallProfileSettings delta: null (or unknown) attributes stay nil and
-// are never sent to Set-NetFirewallProfile. An unknown attribute aborts with
-// a diagnostic so the run defers instead of converging on a guess.
+// FirewallProfileSettings delta: null or unknown attributes stay nil and
+// are never sent to Set-NetFirewallProfile. Unknown is treated like null
+// (not configured): on create, Terraform plans unknown for every unset
+// Optional+Computed setting, so aborting on unknown would make partial
+// configs uncreatable. Only values known at plan time are converged upon.
 func modelToFirewallProfileSettings(ctx context.Context, m windowsFirewallProfileModel) (winclient.FirewallProfileSettings, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	var s winclient.FirewallProfileSettings
@@ -766,33 +768,10 @@ func modelToFirewallProfileSettings(ctx context.Context, m windowsFirewallProfil
 		return &v
 	}
 
-	for _, b := range []types.Bool{m.Enabled, m.AllowInboundRules, m.AllowLocalFirewallRules,
-		m.AllowLocalIPsecRules, m.AllowUnicastResponseToMulticast, m.NotifyOnListen,
-		m.LogAllowed, m.LogBlocked, m.LogIgnored} {
-		if b.IsUnknown() {
-			diags.AddError(
-				"Unknown Windows Firewall profile setting",
-				"One or more profile settings are unknown. Retry the apply once the referenced values are known instead of converging the profile on a guess.",
-			)
-			return winclient.FirewallProfileSettings{}, diags
-		}
-	}
-	for _, st := range []types.String{m.DefaultInboundAction, m.DefaultOutboundAction, m.LogFileName} {
-		if st.IsUnknown() {
-			diags.AddError(
-				"Unknown Windows Firewall profile setting",
-				"One or more profile settings are unknown. Retry the apply once the referenced values are known instead of converging the profile on a guess.",
-			)
-			return winclient.FirewallProfileSettings{}, diags
-		}
-	}
-	if m.LogMaxSizeKilobytes.IsUnknown() || m.DisabledInterfaceAliases.IsUnknown() {
-		diags.AddError(
-			"Unknown Windows Firewall profile setting",
-			"One or more profile settings are unknown. Retry the apply once the referenced values are known instead of converging the profile on a guess.",
-		)
-		return winclient.FirewallProfileSettings{}, diags
-	}
+	// Unset (null) or not-yet-known (unknown) settings stay nil and are
+	// never sent: only values known at plan time are converged upon.
+	// Unknown arises normally on create, where Terraform plans unknown for
+	// every unset Optional+Computed setting.
 
 	s.Enabled = boolPtr(m.Enabled)
 	s.DefaultInboundAction = strPtr(m.DefaultInboundAction)
@@ -803,7 +782,7 @@ func modelToFirewallProfileSettings(ctx context.Context, m windowsFirewallProfil
 	s.AllowUnicastResponseToMulticast = boolPtr(m.AllowUnicastResponseToMulticast)
 	s.NotifyOnListen = boolPtr(m.NotifyOnListen)
 	s.LogFileName = strPtr(m.LogFileName)
-	if !m.LogMaxSizeKilobytes.IsNull() {
+	if !m.LogMaxSizeKilobytes.IsNull() && !m.LogMaxSizeKilobytes.IsUnknown() {
 		v := m.LogMaxSizeKilobytes.ValueInt64()
 		s.LogMaxSizeKilobytes = &v
 	}
@@ -811,7 +790,7 @@ func modelToFirewallProfileSettings(ctx context.Context, m windowsFirewallProfil
 	s.LogBlocked = boolPtr(m.LogBlocked)
 	s.LogIgnored = boolPtr(m.LogIgnored)
 
-	if !m.DisabledInterfaceAliases.IsNull() {
+	if !m.DisabledInterfaceAliases.IsNull() && !m.DisabledInterfaceAliases.IsUnknown() {
 		var aliases []string
 		diags.Append(m.DisabledInterfaceAliases.ElementsAs(ctx, &aliases, false)...)
 		if diags.HasError() {
