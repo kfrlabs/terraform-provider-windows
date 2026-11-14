@@ -143,6 +143,15 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 			"be recovered: set it together with a fresh version before the next apply.\n\n" +
 			"Requires IIS on the target host: install it with the `windows_feature` resource (`Web-Server`; " +
 			"add `Web-Mgmt-Console` / `Web-Scripting-Tools` for the `WebAdministration` module on Server Core).\n\n" +
+			"**Partial failures:** if creation fails after the pool was already registered in IIS, " +
+			"the provider persists the observed state before reporting the error, so the resource is marked " +
+			"tainted. If update fails after IIS applied part of the change, the provider saves the observed " +
+			"partial state before reporting the error, restoring `identity_password_wo_version` from prior " +
+			"state so a failed rotation still diffs on retry. Fix the cause and run `terraform apply` again " +
+			"to reconcile.\n\n" +
+			"A nil state on error does not guarantee nothing was created: a failure that returns no state " +
+			"leaves an orphaned pool that must be removed with `Remove-WebAppPool` or re-adopted " +
+			"with `terraform import`.\n\n" +
 			"Import format: `<pool name>`.",
 
 		Attributes: map[string]schema.Attribute{
@@ -711,6 +720,20 @@ func (r *windowsIISAppPoolResource) Create(ctx context.Context, req resource.Cre
 		Password: password,
 	})
 	if err != nil {
+		// Partial failure (ADR-0012): persist the observed state so the
+		// resource is tainted rather than dropped from state. A nil state
+		// (for example, the already_exists pre-flight) stays error-only.
+		if state != nil {
+			m, diags := iisAppPoolStateToModel(ctx, plan.RecyclingSchedule, state)
+			resp.Diagnostics.Append(diags...)
+			if !resp.Diagnostics.HasError() {
+				m.Timeouts = plan.Timeouts
+				m.Name = plan.Name
+				m.ID = types.StringValue(name)
+				m.IdentityPasswordWOVersion = plan.IdentityPasswordWOVersion
+				resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
+			}
+		}
 		addIISAppPoolDiag(&resp.Diagnostics, "Error creating Windows IIS application pool", err)
 		return
 	}
@@ -895,6 +918,22 @@ func (r *windowsIISAppPoolResource) Update(ctx context.Context, req resource.Upd
 		Password: password,
 	})
 	if err != nil {
+		// Partial failure (ADR-0012): persist the observed state so the
+		// resource keeps its partial state rather than staying at prior
+		// state. A nil state stays error-only. The rotation marker comes
+		// from prior state: a failed rotation must not advance the stored
+		// version marker or a retry would no longer diff.
+		if observed != nil {
+			m, diags := iisAppPoolStateToModel(ctx, plan.RecyclingSchedule, observed)
+			resp.Diagnostics.Append(diags...)
+			if !resp.Diagnostics.HasError() {
+				m.Timeouts = plan.Timeouts
+				m.Name = plan.Name
+				m.ID = prior.ID
+				m.IdentityPasswordWOVersion = prior.IdentityPasswordWOVersion
+				resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
+			}
+		}
 		addIISAppPoolDiag(&resp.Diagnostics, "Error updating Windows IIS application pool", err)
 		return
 	}

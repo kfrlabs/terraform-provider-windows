@@ -536,6 +536,78 @@ func TestWindowsSmbShareResource_Create_PathNotFound(t *testing.T) {
 	}
 }
 
+// Partial state on failure (ADR-0012): a (state, error) return persists the
+// observed state before the error diagnostic (tainted); a nil state stays
+// error-only.
+
+func TestWindowsSmbShareResource_Create_PartialStateOnError(t *testing.T) {
+	fc := &fakeSmbShareClient{
+		createOut: okSmbState("Finance"),
+		createErr: winclient.NewSmbShareError(winclient.SmbShareErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsSmbShareResource{client: fc}
+
+	req := resource.CreateRequest{Plan: smbPlan(t, nil)}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsSmbShareSchemaDefinition(context.Background())}}
+	r.Create(context.Background(), req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected diagnostics on reconcile failure")
+	}
+	var model windowsSmbShareModel
+	resp.Diagnostics.Append(resp.State.Get(context.Background(), &model)...)
+	if model.ID.ValueString() != "Finance" {
+		t.Errorf("partial state must be persisted (tainted), got id=%q", model.ID.ValueString())
+	}
+}
+
+func TestWindowsSmbShareResource_Create_NilStateOnError_StaysStateless(t *testing.T) {
+	fc := &fakeSmbShareClient{createErr: winclient.NewSmbShareError(
+		winclient.SmbShareErrorAlreadyExists,
+		"SMB share Finance already exists. Import it with: terraform import windows_smb_share.finance Finance",
+		nil, nil)}
+	r := &windowsSmbShareResource{client: fc}
+
+	schemaDef := windowsSmbShareSchemaDefinition(context.Background())
+	req := resource.CreateRequest{Plan: smbPlan(t, nil)}
+	resp := &resource.CreateResponse{State: tfsdk.State{
+		Schema: schemaDef,
+		Raw:    tftypes.NewValue(smbObjType(), nil),
+	}}
+	r.Create(context.Background(), req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected diagnostics on already_exists")
+	}
+	// The handler never touches state on a nil-state error: the raw value
+	// is still the null object it was seeded with (State.Get cannot decode
+	// a null object into the model struct, so assert on Raw directly).
+	if !resp.State.Raw.IsNull() {
+		t.Errorf("nil-state error must stay stateless, got raw=%v", resp.State.Raw)
+	}
+}
+
+func TestWindowsSmbShareResource_Update_PartialStateOnError(t *testing.T) {
+	fc := &fakeSmbShareClient{
+		updateOut: okSmbState("Finance"),
+		updateErr: winclient.NewSmbShareError(winclient.SmbShareErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsSmbShareResource{client: fc}
+
+	req := resource.UpdateRequest{Plan: smbPlan(t, nil), State: smbState(t, nil)}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: windowsSmbShareSchemaDefinition(context.Background())}}
+	r.Update(context.Background(), req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected diagnostics on reconcile failure")
+	}
+	var model windowsSmbShareModel
+	resp.Diagnostics.Append(resp.State.Get(context.Background(), &model)...)
+	if model.ID.ValueString() != "Finance" {
+		t.Errorf("partial state must be persisted on update failure (tainted), got id=%q", model.ID.ValueString())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Read
 // ---------------------------------------------------------------------------

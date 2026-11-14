@@ -1253,3 +1253,108 @@ func TestIISAppPoolIdentityUsernameValidator(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Partial state on failure (ADR-0012): a (state, error) return persists the
+// observed state before the error diagnostic (tainted); a nil state stays
+// error-only. The rotation marker comes from prior state on Update: a failed
+// rotation must not advance the stored version marker.
+// ---------------------------------------------------------------------------
+
+func TestWindowsIISAppPoolResource_Create_PartialStateOnError(t *testing.T) {
+	fc := &fakeIISAppPoolClient{
+		createOut: okIISAppPoolState("api"),
+		createErr: winclient.NewIISAppPoolError(winclient.IISAppPoolErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsIISAppPoolResource{pool: fc}
+
+	// Bump the version marker in the plan to prove the partial state
+	// preserves it (the default identity needs no credential).
+	plan := apPlan(t, map[string]tftypes.Value{
+		"identity_password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+	})
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsIISAppPoolSchemaDefinition(context.Background())}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan, Config: apConfig(t, nil)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var model windowsIISAppPoolModel
+	if d := resp.State.Get(context.Background(), &model); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if model.ID.ValueString() != "api" {
+		t.Errorf("partial state must be persisted (tainted), got id=%q", model.ID.ValueString())
+	}
+	if !model.IdentityPasswordWO.IsNull() {
+		t.Error("identity_password_wo must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if model.IdentityPasswordWOVersion.ValueInt64() != 2 {
+		t.Errorf("partial state must preserve the version, got %v", model.IdentityPasswordWOVersion)
+	}
+}
+
+func TestWindowsIISAppPoolResource_Create_NilStateOnError_StaysStateless(t *testing.T) {
+	fc := &fakeIISAppPoolClient{
+		createErr: winclient.NewIISAppPoolError(winclient.IISAppPoolErrorAlreadyExists,
+			"IIS application pool 'api' already exists on this host (use 'terraform import' to bring it under management).", nil, nil),
+	}
+	r := &windowsIISAppPoolResource{pool: fc}
+
+	schemaDef := windowsIISAppPoolSchemaDefinition(context.Background())
+	resp := &resource.CreateResponse{State: tfsdk.State{
+		Schema: schemaDef,
+		Raw:    tftypes.NewValue(apObjType(), nil),
+	}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: apPlan(t, nil), Config: apConfig(t, nil)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from already_exists")
+	}
+	// The handler never touches state on a nil-state error: the raw value
+	// is still the null object it was seeded with (State.Get cannot decode
+	// a null object into the model struct, so assert on Raw directly).
+	if !resp.State.Raw.IsNull() {
+		t.Errorf("nil-state error must stay stateless, got raw=%v", resp.State.Raw)
+	}
+}
+
+func TestWindowsIISAppPoolResource_Update_PartialStateOnError_RestoresVersion(t *testing.T) {
+	fc := &fakeIISAppPoolClient{
+		updateOut: okIISAppPoolState("api"),
+		updateErr: winclient.NewIISAppPoolError(winclient.IISAppPoolErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsIISAppPoolResource{pool: fc}
+
+	schemaDef := windowsIISAppPoolSchemaDefinition(context.Background())
+	prior := apState(t, map[string]tftypes.Value{
+		"identity_password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+	})
+	plan := apPlan(t, map[string]tftypes.Value{
+		"identity_password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+	})
+	config := apConfig(t, map[string]tftypes.Value{
+		"identity_password_wo":         tftypes.NewValue(tftypes.String, "new-secret"),
+		"identity_password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+	})
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaDef, Raw: prior.Raw}}
+
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: prior, Config: config}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var model windowsIISAppPoolModel
+	if d := resp.State.Get(context.Background(), &model); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if model.ID.ValueString() != "api" {
+		t.Errorf("partial state must be persisted on update failure, got id=%q", model.ID.ValueString())
+	}
+	if !model.IdentityPasswordWO.IsNull() {
+		t.Error("identity_password_wo must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if model.IdentityPasswordWOVersion.ValueInt64() != 1 {
+		t.Errorf("failed rotation must not advance the stored version (stays at prior 1), got %v", model.IdentityPasswordWOVersion)
+	}
+}

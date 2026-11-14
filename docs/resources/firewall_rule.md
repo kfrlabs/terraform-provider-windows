@@ -4,12 +4,18 @@ page_title: "windows_firewall_rule Resource - windows"
 subcategory: ""
 description: |-
   Manages a Windows Defender Firewall with Advanced Security rule on a remote Windows host via SSH and PowerShell (NetSecurity module). One Terraform resource maps to exactly one NetFirewallRule, keyed on its stable technical Name (InstanceID), which is distinct from display_name.
+  Partial failures: if creation fails after the rule was already registered in the firewall policy store, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after Windows applied part of the change, the provider saves the observed partial state before reporting the error. Fix the cause and run terraform apply again to reconcile.
+  A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned rule that must be removed with Remove-NetFirewallRule or re-adopted with terraform import.
   Import format: <name> (PersistentStore assumed) or <policy_store>/<name>.
 ---
 
 # windows_firewall_rule (Resource)
 
 Manages a Windows Defender Firewall with Advanced Security rule on a remote Windows host via SSH and PowerShell (`NetSecurity` module). One Terraform resource maps to exactly one `NetFirewallRule`, keyed on its stable technical `Name` (InstanceID), which is distinct from `display_name`.
+
+**Partial failures:** if creation fails after the rule was already registered in the firewall policy store, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after Windows applied part of the change, the provider saves the observed partial state before reporting the error. Fix the cause and run `terraform apply` again to reconcile.
+
+A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned rule that must be removed with `Remove-NetFirewallRule` or re-adopted with `terraform import`.
 
 Import format: `<name>` (PersistentStore assumed) or `<policy_store>/<name>`.
 

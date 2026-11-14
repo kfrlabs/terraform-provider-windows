@@ -986,6 +986,8 @@ type fakeFwClient struct {
 	createErr error
 	readOut   *winclient.FirewallRuleState
 	readErr   error
+	updateOut *winclient.FirewallRuleState
+	updateErr error
 	deleteErr error
 }
 
@@ -998,7 +1000,7 @@ func (f *fakeFwClient) Read(_ context.Context, _, _ string) (*winclient.Firewall
 }
 
 func (f *fakeFwClient) Update(_ context.Context, _, _ string, _ winclient.FirewallRuleInput) (*winclient.FirewallRuleState, error) {
-	return nil, nil
+	return f.updateOut, f.updateErr
 }
 
 func (f *fakeFwClient) Delete(_ context.Context, _, _ string) error { return f.deleteErr }
@@ -1081,6 +1083,128 @@ func TestFirewallRuleCreate_StalledTransportIsBounded(t *testing.T) {
 	}
 	if elapsed > 30*time.Second {
 		t.Errorf("Create blocked for %v with a 200ms timeout; the stalled-transport hang from issue #122 is back", elapsed)
+	}
+}
+
+func TestFirewallRuleCreate_PartialStateOnError(t *testing.T) {
+	fake := &fakeFwClient{
+		createOut: &winclient.FirewallRuleState{
+			Name: "fw-acc", DisplayName: "FW Acc", Enabled: true,
+			Direction: "Inbound", Action: "Allow", PolicyStore: "PersistentStore",
+		},
+		createErr: winclient.NewFirewallRuleError(winclient.FirewallRuleErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: fwObj(map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "fw-acc"),
+			"display_name": tftypes.NewValue(tftypes.String, "FW Acc"),
+			"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+			"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: fwObj(nil)},
+	}
+
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var m windowsFirewallRuleModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ID.ValueString() != "fw-acc" {
+		t.Errorf("partial state must be persisted (tainted), got id=%q", m.ID.ValueString())
+	}
+}
+
+func TestFirewallRuleCreate_NilStateOnError_StaysStateless(t *testing.T) {
+	fake := &fakeFwClient{
+		createErr: winclient.NewFirewallRuleError(winclient.FirewallRuleErrorAlreadyExists, "rule exists", nil, nil),
+	}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: fwObj(map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "fw-acc"),
+			"display_name": tftypes.NewValue(tftypes.String, "FW Acc"),
+			"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+			"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		}),
+	}
+	resp := &resource.CreateResponse{State: tfsdk.State{
+		Schema: schemaDef,
+		Raw:    tftypes.NewValue(fwObjectType(), nil),
+	}}
+
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from already_exists")
+	}
+	// The handler never touches state on a nil-state error: the raw value
+	// is still the null object it was seeded with (State.Get cannot decode
+	// a null object into the model struct, so assert on Raw directly).
+	if !resp.State.Raw.IsNull() {
+		t.Errorf("nil-state error must stay stateless, got raw=%v", resp.State.Raw)
+	}
+}
+
+func TestFirewallRuleUpdate_PartialStateOnError(t *testing.T) {
+	fake := &fakeFwClient{
+		updateOut: &winclient.FirewallRuleState{
+			Name: "fw-acc", DisplayName: "FW Acc Updated", Enabled: true,
+			Direction: "Inbound", Action: "Allow", PolicyStore: "PersistentStore",
+		},
+		updateErr: winclient.NewFirewallRuleError(winclient.FirewallRuleErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsFirewallRuleResource{fw: fake}
+
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	prior := tfsdk.State{
+		Schema: schemaDef,
+		Raw: fwObj(map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "fw-acc"),
+			"display_name": tftypes.NewValue(tftypes.String, "FW Acc"),
+			"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+			"action":       tftypes.NewValue(tftypes.String, "Allow"),
+			"policy_store": tftypes.NewValue(tftypes.String, "PersistentStore"),
+		}),
+	}
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: fwObj(map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "fw-acc"),
+			"display_name": tftypes.NewValue(tftypes.String, "FW Acc Updated"),
+			"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+			"action":       tftypes.NewValue(tftypes.String, "Allow"),
+			"policy_store": tftypes.NewValue(tftypes.String, "PersistentStore"),
+		}),
+	}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaDef, Raw: prior.Raw}}
+
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: prior}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var m windowsFirewallRuleModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ID.ValueString() != "fw-acc" {
+		t.Errorf("partial state must be persisted on update failure, got id=%q", m.ID.ValueString())
+	}
+	if m.DisplayName.ValueString() != "FW Acc Updated" {
+		t.Errorf("partial state must carry the observed display_name, got %q", m.DisplayName.ValueString())
 	}
 }
 

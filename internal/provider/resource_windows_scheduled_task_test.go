@@ -2082,3 +2082,272 @@ func TestScheduledTaskSetSemantics_ReorderIsClean(t *testing.T) {
 		t.Error("trigger sets with the same elements in a different order must be equal")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Partial state on failure (ADR-0012): a (state, error) return persists the
+// observed state before the error diagnostic (tainted on create, partial on
+// update); a nil state stays error-only. Update restores the credential
+// markers from prior state so a failed rotation still diffs.
+// ---------------------------------------------------------------------------
+
+// stTestSchema returns the scheduled-task schema for handler-level tests.
+func stTestSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	r := &windowsScheduledTaskResource{}
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+	return resp.Schema
+}
+
+// stNullRaw returns a null object value matching the schema type, used to
+// seed an empty response state for the nil-state (error-only) controls.
+func stNullRaw(t *testing.T, s schema.Schema) tftypes.Value {
+	t.Helper()
+	typ := s.Type().TerraformType(context.Background())
+	objTyp, ok := typ.(tftypes.Object)
+	if !ok {
+		t.Fatalf("schema terraform type = %T, want tftypes.Object", typ)
+	}
+	return tftypes.NewValue(objTyp, nil)
+}
+
+// stRawFromModel encodes a model through State.Set so the raw value carries
+// the exact nested/custom types the handler decodes (avoids hand-writing
+// the full nested tftypes shape).
+func stRawFromModel(t *testing.T, s schema.Schema, m *windowsScheduledTaskModel) tftypes.Value {
+	t.Helper()
+	st := tfsdk.State{Schema: s, Raw: stNullRaw(t, s)}
+	if diags := st.Set(context.Background(), m); diags.HasError() {
+		t.Fatalf("State.Set: %v", diags)
+	}
+	return st.Raw
+}
+
+// stBaseTestModel returns a valid plan/state model projected from a minimal
+// observed task (ServiceAccount logon, no credential required).
+func stBaseTestModel(t *testing.T) *windowsScheduledTaskModel {
+	t.Helper()
+	m, diags := stateToModel(context.Background(), minimalSTState("T", `\`), nil)
+	if diags.HasError() {
+		t.Fatalf("stateToModel: %v", diags)
+	}
+	return m
+}
+
+// stPrincipalForTest returns obj with the credential markers replaced.
+func stPrincipalForTest(t *testing.T, obj types.Object, password, passwordWO string, version int64) types.Object {
+	t.Helper()
+	ctx := context.Background()
+	var pm windowsScheduledTaskPrincipalModel
+	if d := obj.As(ctx, &pm, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); d.HasError() {
+		t.Fatalf("principal As: %v", d)
+	}
+	if password == "" {
+		pm.Password = types.StringNull()
+	} else {
+		pm.Password = types.StringValue(password)
+	}
+	if passwordWO == "" {
+		pm.PasswordWO = types.StringNull()
+	} else {
+		pm.PasswordWO = types.StringValue(passwordWO)
+	}
+	pm.PasswordWoVersion = types.Int64Value(version)
+	out, d := types.ObjectValueFrom(ctx, scheduledTaskPrincipalAttrTypes, pm)
+	if d.HasError() {
+		t.Fatalf("ObjectValueFrom: %v", d)
+	}
+	return out
+}
+
+// stPrincipalOf decodes the principal block of a state model for assertions.
+func stPrincipalOf(t *testing.T, m *windowsScheduledTaskModel) windowsScheduledTaskPrincipalModel {
+	t.Helper()
+	var pm windowsScheduledTaskPrincipalModel
+	if d := m.Principal.As(context.Background(), &pm, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); d.HasError() {
+		t.Fatalf("principal As: %v", d)
+	}
+	return pm
+}
+
+func TestSTResource_Create_PartialStateOnError(t *testing.T) {
+	ctx := context.Background()
+	def := stTestSchema(t)
+	planModel := stBaseTestModel(t)
+	// Bump the version marker in the plan to prove the partial state
+	// preserves it (ServiceAccount logon needs no credential).
+	planModel.Principal = stPrincipalForTest(t, planModel.Principal, "", "", 2)
+	plan := tfsdk.Plan{Schema: def, Raw: stRawFromModel(t, def, planModel)}
+
+	fake := &fakeSTClient{
+		createOut: minimalSTState("T", `\`),
+		createErr: winclient.NewScheduledTaskError(winclient.ScheduledTaskErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsScheduledTaskResource{stClient: fake}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: def, Raw: stNullRaw(t, def)}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var got windowsScheduledTaskModel
+	if d := resp.State.Get(ctx, &got); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if got.ID.ValueString() != `\T` {
+		t.Errorf("partial state must be persisted (tainted), got id=%q", got.ID.ValueString())
+	}
+	pm := stPrincipalOf(t, &got)
+	if !pm.PasswordWO.IsNull() {
+		t.Error("password_wo must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if pm.PasswordWoVersion.ValueInt64() != 2 {
+		t.Errorf("partial state must preserve the version, got %v", pm.PasswordWoVersion)
+	}
+}
+
+func TestSTResource_Create_NilStateOnError_StaysStateless(t *testing.T) {
+	ctx := context.Background()
+	def := stTestSchema(t)
+	planModel := stBaseTestModel(t)
+	plan := tfsdk.Plan{Schema: def, Raw: stRawFromModel(t, def, planModel)}
+
+	fake := &fakeSTClient{
+		createErr: winclient.NewScheduledTaskError(winclient.ScheduledTaskErrorAlreadyExists, "task exists", nil, nil),
+	}
+	r := &windowsScheduledTaskResource{stClient: fake}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: def, Raw: stNullRaw(t, def)}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from already_exists")
+	}
+	// The handler never touches state on a nil-state error: the raw value
+	// is still the null object it was seeded with (State.Get cannot decode
+	// a null object into the model struct, so assert on Raw directly).
+	if !resp.State.Raw.IsNull() {
+		t.Errorf("nil-state error must stay stateless, got raw=%v", resp.State.Raw)
+	}
+}
+
+func TestSTResource_Update_PartialStateOnError_RestoresVersion(t *testing.T) {
+	ctx := context.Background()
+	def := stTestSchema(t)
+
+	priorModel := stBaseTestModel(t)
+	priorModel.Principal = stPrincipalForTest(t, priorModel.Principal, "old-secret", "", 1)
+	planModel := stBaseTestModel(t)
+	planModel.Principal = stPrincipalForTest(t, planModel.Principal, "", "", 2)
+	configModel := stBaseTestModel(t)
+	configModel.Principal = stPrincipalForTest(t, configModel.Principal, "", "new-secret", 2)
+
+	priorState := tfsdk.State{Schema: def, Raw: stRawFromModel(t, def, priorModel)}
+	plan := tfsdk.Plan{Schema: def, Raw: stRawFromModel(t, def, planModel)}
+	config := tfsdk.Config{Schema: def, Raw: stRawFromModel(t, def, configModel)}
+
+	fake := &fakeSTClient{
+		updateOut: minimalSTState("T", `\`),
+		updateErr: winclient.NewScheduledTaskError(winclient.ScheduledTaskErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsScheduledTaskResource{stClient: fake}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: def, Raw: priorState.Raw}}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: priorState, Config: config}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var got windowsScheduledTaskModel
+	if d := resp.State.Get(ctx, &got); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if got.ID.ValueString() != `\T` {
+		t.Errorf("partial state must be persisted on update failure, got id=%q", got.ID.ValueString())
+	}
+	pm := stPrincipalOf(t, &got)
+	if !pm.PasswordWO.IsNull() {
+		t.Error("password_wo must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if pm.PasswordWoVersion.ValueInt64() != 1 {
+		t.Errorf("failed rotation must not advance the stored version (stays at prior 1), got %v", pm.PasswordWoVersion)
+	}
+	if pm.Password.ValueString() != "old-secret" {
+		t.Errorf("failed update must restore password from prior state, got %q", pm.Password.ValueString())
+	}
+}
+
+func TestSTResource_Update_NilStateOnError_KeepsPriorState(t *testing.T) {
+	ctx := context.Background()
+	def := stTestSchema(t)
+
+	priorModel := stBaseTestModel(t)
+	priorModel.Principal = stPrincipalForTest(t, priorModel.Principal, "old-secret", "", 1)
+	planModel := stBaseTestModel(t)
+	planModel.Principal = stPrincipalForTest(t, planModel.Principal, "old-secret", "", 1)
+
+	priorState := tfsdk.State{Schema: def, Raw: stRawFromModel(t, def, priorModel)}
+	plan := tfsdk.Plan{Schema: def, Raw: stRawFromModel(t, def, planModel)}
+
+	fake := &fakeSTClient{
+		updateErr: winclient.NewScheduledTaskError(winclient.ScheduledTaskErrorNotFound, "task gone", nil, nil),
+	}
+	r := &windowsScheduledTaskResource{stClient: fake}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: def, Raw: priorState.Raw}}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: priorState}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from not_found")
+	}
+	var got windowsScheduledTaskModel
+	if d := resp.State.Get(ctx, &got); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if got.ID.ValueString() != `\T` {
+		t.Errorf("nil-state error must not overwrite state, got id=%q", got.ID.ValueString())
+	}
+	pm := stPrincipalOf(t, &got)
+	if pm.PasswordWoVersion.ValueInt64() != 1 {
+		t.Errorf("nil-state error must keep the prior version, got %v", pm.PasswordWoVersion)
+	}
+}
+
+func TestSTResource_Update_PartialStateOnError_AddPrincipalKeepsObserved(t *testing.T) {
+	ctx := context.Background()
+	def := stTestSchema(t)
+
+	priorModel := stBaseTestModel(t)
+	priorModel.Principal = types.ObjectNull(scheduledTaskPrincipalAttrTypes)
+	planModel := stBaseTestModel(t)
+	planModel.Principal = stPrincipalForTest(t, planModel.Principal, "", "", 1)
+
+	priorState := tfsdk.State{Schema: def, Raw: stRawFromModel(t, def, priorModel)}
+	plan := tfsdk.Plan{Schema: def, Raw: stRawFromModel(t, def, planModel)}
+
+	fake := &fakeSTClient{
+		updateOut: minimalSTState("T", `\`),
+		updateErr: winclient.NewScheduledTaskError(winclient.ScheduledTaskErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsScheduledTaskResource{stClient: fake}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: def, Raw: priorState.Raw}}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: priorState}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var got windowsScheduledTaskModel
+	if d := resp.State.Get(ctx, &got); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if got.Principal.IsNull() || got.Principal.IsUnknown() {
+		t.Fatal("partial state must keep the observed principal object, got null/unknown")
+	}
+	pm := stPrincipalOf(t, &got)
+	if !pm.Password.IsNull() {
+		t.Errorf("partial state must zero password when prior managed no principal, got %q", pm.Password.ValueString())
+	}
+	if !pm.PasswordWO.IsNull() {
+		t.Error("password_wo must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if !pm.PasswordWoVersion.IsNull() {
+		t.Errorf("partial state must zero version when prior managed no principal, got %v", pm.PasswordWoVersion)
+	}
+}

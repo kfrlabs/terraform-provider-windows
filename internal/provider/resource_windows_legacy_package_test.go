@@ -709,3 +709,155 @@ func TestApplyState_KeepsUserLogPathWhenRemoteEmpty(t *testing.T) {
 		t.Errorf("LogPath should be preserved when remote.LogPath empty: %q", m.LogPath.ValueString())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Partial state on failure (ADR-0012): a (state, error) return persists the
+// observed state before the error diagnostic (tainted); a nil state stays
+// error-only.
+// ---------------------------------------------------------------------------
+
+// fakeLPClient is a stub LegacyPackageClient for partial-failure handler tests.
+type fakeLPClient struct {
+	createOut *winclient.LegacyPackageState
+	createErr error
+	updateOut *winclient.LegacyPackageState
+	updateErr error
+}
+
+func (f *fakeLPClient) Create(_ context.Context, _ winclient.LegacyPackageInput) (*winclient.LegacyPackageState, error) {
+	return f.createOut, f.createErr
+}
+
+func (f *fakeLPClient) Read(_ context.Context, _ string) (*winclient.LegacyPackageState, error) {
+	return nil, nil
+}
+
+func (f *fakeLPClient) Update(_ context.Context, _ string, _ winclient.LegacyPackageInput) (*winclient.LegacyPackageState, error) {
+	return f.updateOut, f.updateErr
+}
+
+func (f *fakeLPClient) Delete(_ context.Context, _ string) error { return nil }
+
+// lpPlan builds a tfsdk.Plan for the legacy-package schema with a minimal
+// valid MSI installer configuration.
+func lpPlan(t *testing.T, schemaResp *resource.SchemaResponse) tfsdk.Plan {
+	t.Helper()
+	return tfsdk.Plan{Schema: schemaResp.Schema, Raw: lpStateWith(map[string]tftypes.Value{
+		"name":           tftypes.NewValue(tftypes.String, "pkg"),
+		"installer_type": tftypes.NewValue(tftypes.String, "msi"),
+		"source_path":    tftypes.NewValue(tftypes.String, `C:\inst.msi`),
+	})}
+}
+
+func TestLegacyPackageCreate_PartialStateOnError(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeLPClient{
+		createOut: &winclient.LegacyPackageState{
+			ID:               "{01234567-89AB-CDEF-0123-456789ABCDEF}",
+			ProductID:        "{01234567-89AB-CDEF-0123-456789ABCDEF}",
+			InstalledVersion: "1.0.0",
+			Installed:        true,
+			InstallDate:      "2026-01-15",
+		},
+		createErr: &winclient.LegacyPackageError{Kind: "unknown", Message: "reconcile failed"},
+	}
+	r := &windowsLegacyPackageResource{lp: fake}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: lpNullRawState()}}
+	r.Create(ctx, resource.CreateRequest{Plan: lpPlan(t, schemaResp)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var m windowsLegacyPackageModel
+	if d := resp.State.Get(ctx, &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ID.ValueString() != "{01234567-89AB-CDEF-0123-456789ABCDEF}" {
+		t.Errorf("partial state must be persisted (tainted), got id=%q", m.ID.ValueString())
+	}
+	if m.InstalledVersion.ValueString() != "1.0.0" {
+		t.Errorf("partial state must carry the observed installed_version, got %q", m.InstalledVersion.ValueString())
+	}
+}
+
+func TestLegacyPackageCreate_NilStateOnError_StaysStateless(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeLPClient{
+		createErr: &winclient.LegacyPackageError{Kind: "already_exists", Message: "package already installed"},
+	}
+	r := &windowsLegacyPackageResource{lp: fake}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: lpNullRawState()}}
+	r.Create(ctx, resource.CreateRequest{Plan: lpPlan(t, schemaResp)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from already_exists")
+	}
+	// The handler never touches state on a nil-state error: no observed
+	// state is persisted, so the resource stays stateless (ID null).
+	var id types.String
+	if d := resp.State.GetAttribute(ctx, path.Root("id"), &id); d.HasError() {
+		t.Fatalf("GetAttribute id: %v", d)
+	}
+	if !id.IsNull() {
+		t.Errorf("nil-state error must stay stateless, got id=%q", id.ValueString())
+	}
+}
+
+func TestLegacyPackageUpdate_PartialStateOnError(t *testing.T) {
+	ctx := context.Background()
+	id := "{01234567-89AB-CDEF-0123-456789ABCDEF}"
+	fake := &fakeLPClient{
+		updateOut: &winclient.LegacyPackageState{
+			ID:               id,
+			ProductID:        id,
+			InstalledVersion: "9.9.9",
+			Installed:        true,
+			InstallDate:      "2026-02-02",
+		},
+		updateErr: &winclient.LegacyPackageError{Kind: "unknown", Message: "reconcile failed"},
+	}
+	r := &windowsLegacyPackageResource{lp: fake}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+
+	prior := tfsdk.State{Schema: schemaResp.Schema, Raw: lpStateWith(map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, id),
+		"name":              tftypes.NewValue(tftypes.String, "pkg"),
+		"installer_type":    tftypes.NewValue(tftypes.String, "msi"),
+		"source_path":       tftypes.NewValue(tftypes.String, `C:\inst.msi`),
+		"product_id":        tftypes.NewValue(tftypes.String, id),
+		"installed_version": tftypes.NewValue(tftypes.String, "1.0.0"),
+		"installed":         tftypes.NewValue(tftypes.Bool, true),
+		"install_date":      tftypes.NewValue(tftypes.String, "2026-01-15"),
+	})}
+	plan := tfsdk.Plan{Schema: schemaResp.Schema, Raw: lpStateWith(map[string]tftypes.Value{
+		"id":              tftypes.NewValue(tftypes.String, id),
+		"name":            tftypes.NewValue(tftypes.String, "pkg"),
+		"installer_type":  tftypes.NewValue(tftypes.String, "msi"),
+		"source_path":     tftypes.NewValue(tftypes.String, `C:\inst.msi`),
+		"timeout_seconds": tftypes.NewValue(tftypes.Number, 600),
+	})}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: prior.Raw}}
+
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: prior}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var m windowsLegacyPackageModel
+	if d := resp.State.Get(ctx, &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.ID.ValueString() != id {
+		t.Errorf("partial state must be persisted on update failure, got id=%q", m.ID.ValueString())
+	}
+	if m.InstalledVersion.ValueString() != "9.9.9" {
+		t.Errorf("partial state must carry the observed installed_version (not prior 1.0.0), got %q", m.InstalledVersion.ValueString())
+	}
+}

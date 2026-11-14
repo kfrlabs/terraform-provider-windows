@@ -464,8 +464,17 @@ func (r *windowsScheduledTaskResource) Metadata(_ context.Context, req resource.
 // Schema returns the full TPF schema.
 func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Version:             1,
-		MarkdownDescription: "Manages a Windows Scheduled Task via SSH + PowerShell (ScheduledTasks module, Windows 2012+).",
+		Version: 1,
+		MarkdownDescription: "Manages a Windows Scheduled Task via SSH + PowerShell (ScheduledTasks module, Windows 2012+).\n\n" +
+			"**Partial failures:** if creation fails after the task was already registered on the host, " +
+			"the provider persists the observed state before reporting the error, so the resource is marked " +
+			"tainted. If update fails after Windows applied part of the change, the provider saves the observed " +
+			"partial state before reporting the error, restoring the credential markers (`password`, " +
+			"`password_wo_version`) from prior state so a failed rotation still diffs on retry. " +
+			"Fix the cause and run `terraform apply` again to reconcile.\n\n" +
+			"A nil state on error does not guarantee nothing was created: a failure that returns no state " +
+			"leaves an orphaned task that must be removed with `Unregister-ScheduledTask` or re-adopted " +
+			"with `terraform import`.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -967,6 +976,17 @@ func (r *windowsScheduledTaskResource) Create(ctx context.Context, req resource.
 
 	state, err := r.stClient.Create(ctx, input)
 	if err != nil {
+		// Partial failure (ADR-0012): the task may already be registered
+		// on the host. Persist the observed state so the resource is
+		// tainted rather than dropped from state. A nil state (for
+		// example, the already_exists pre-flight) stays error-only.
+		if state != nil {
+			partial, diags := stateToModel(ctx, state, &plan)
+			resp.Diagnostics.Append(diags...)
+			if !resp.Diagnostics.HasError() {
+				resp.Diagnostics.Append(resp.State.Set(ctx, partial)...)
+			}
+		}
 		resp.Diagnostics.Append(scheduledTaskErrDiag("Create", err)...)
 		return
 	}
@@ -1127,6 +1147,21 @@ func (r *windowsScheduledTaskResource) Update(ctx context.Context, req resource.
 	})
 	state, err := r.stClient.Update(ctx, id, planInput)
 	if err != nil {
+		// Partial failure (ADR-0012): persist the observed state so the
+		// resource keeps its partial state rather than staying at prior
+		// state. A nil state stays error-only. Credential markers come
+		// from prior state: a failed rotation must not advance the stored
+		// version marker or a retry would no longer diff.
+		if state != nil {
+			partial, diags := stateToModel(ctx, state, &plan)
+			resp.Diagnostics.Append(diags...)
+			if !resp.Diagnostics.HasError() {
+				resp.Diagnostics.Append(restoreScheduledTaskPrincipalSecrets(ctx, partial, currentState)...)
+			}
+			if !resp.Diagnostics.HasError() {
+				resp.Diagnostics.Append(resp.State.Set(ctx, partial)...)
+			}
+		}
 		resp.Diagnostics.Append(scheduledTaskErrDiag("Update", err)...)
 		return
 	}
@@ -1665,6 +1700,52 @@ func buildPrincipalModel(ctx context.Context, s *winclient.ScheduledTaskPrincipa
 	obj, d := types.ObjectValueFrom(ctx, scheduledTaskPrincipalAttrTypes, pm)
 	diags.Append(d...)
 	return obj
+}
+
+// restoreScheduledTaskPrincipalSecrets overwrites the credential markers
+// (legacy password and password_wo_version) on a partial-failure model with
+// the prior-state values (ADR-0012). A failed rotation must not advance the
+// stored version marker, otherwise the retry would no longer diff and the
+// rotation would be silently lost. Non-credential fields stay on the
+// plan-based projection. When prior state managed no principal, the observed
+// principal object is kept and only its secrets are zeroed (Password and
+// PasswordWO null, PasswordWoVersion null).
+func restoreScheduledTaskPrincipalSecrets(ctx context.Context, model *windowsScheduledTaskModel, prior windowsScheduledTaskModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if model.Principal.IsNull() || model.Principal.IsUnknown() {
+		return diags
+	}
+	if prior.Principal.IsNull() || prior.Principal.IsUnknown() {
+		var cur windowsScheduledTaskPrincipalModel
+		diags.Append(model.Principal.As(ctx, &cur, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true})...)
+		if diags.HasError() {
+			return diags
+		}
+		cur.Password = types.StringNull()
+		cur.PasswordWO = types.StringNull()
+		cur.PasswordWoVersion = types.Int64Null()
+		obj, d := types.ObjectValueFrom(ctx, scheduledTaskPrincipalAttrTypes, cur)
+		diags.Append(d...)
+		if !diags.HasError() {
+			model.Principal = obj
+		}
+		return diags
+	}
+	var cur, prev windowsScheduledTaskPrincipalModel
+	diags.Append(model.Principal.As(ctx, &cur, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true})...)
+	diags.Append(prior.Principal.As(ctx, &prev, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true})...)
+	if diags.HasError() {
+		return diags
+	}
+	cur.Password = prev.Password
+	cur.PasswordWO = types.StringNull()
+	cur.PasswordWoVersion = prev.PasswordWoVersion
+	obj, d := types.ObjectValueFrom(ctx, scheduledTaskPrincipalAttrTypes, cur)
+	diags.Append(d...)
+	if !diags.HasError() {
+		model.Principal = obj
+	}
+	return diags
 }
 
 // buildTriggerObject converts a ScheduledTaskTriggerState to a types.Object.

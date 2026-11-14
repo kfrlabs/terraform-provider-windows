@@ -7,6 +7,8 @@ description: |-
   The Terraform resource ID is set to the user SID (e.g. S-1-5-21-…-1001), which is stable across renames. A change to the name attribute triggers Rename-LocalUser in place — no resource replacement (ADR-LU-1).
   ~> Password: The password attribute is Sensitive but not natively write-only in TPF v1.13.0 (write-only support requires TPF ≥ 1.14.0 + Terraform CLI ≥ 1.11). The plaintext is injected via stdin inside the PowerShell script and never appears in SSH trace logs or diagnostic output (ADR-LU-3).
   ~> Built-in accounts: Attempting terraform destroy on a built-in account (RID 500/501/503/504) results in a hard error. Use terraform state rm instead.
+  Partial failures: if creation fails after the account was already registered in SAM, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after Windows applied part of the change (rename, attributes, password or enabled state), the provider saves the observed partial state before reporting the error, restoring the credential markers (password, password_wo_version) from prior state so a failed rotation still diffs on retry. Fix the cause and run terraform apply again to reconcile.
+  A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned account that must be removed with Remove-LocalUser or re-adopted with terraform import.
 ---
 
 # windows_local_user (Resource)
@@ -18,6 +20,10 @@ The Terraform resource ID is set to the user **SID** (e.g. `S-1-5-21-…-1001`),
 ~> **Password:** The `password` attribute is `Sensitive` but **not natively write-only** in TPF v1.13.0 (write-only support requires TPF ≥ 1.14.0 + Terraform CLI ≥ 1.11). The plaintext is injected via stdin inside the PowerShell script and **never appears in SSH trace logs or diagnostic output** (ADR-LU-3).
 
 ~> **Built-in accounts:** Attempting `terraform destroy` on a built-in account (RID 500/501/503/504) results in a **hard error**. Use `terraform state rm` instead.
+
+**Partial failures:** if creation fails after the account was already registered in SAM, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after Windows applied part of the change (rename, attributes, password or enabled state), the provider saves the observed partial state before reporting the error, restoring the credential markers (`password`, `password_wo_version`) from prior state so a failed rotation still diffs on retry. Fix the cause and run `terraform apply` again to reconcile.
+
+A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned account that must be removed with `Remove-LocalUser` or re-adopted with `terraform import`.
 
 ## Example Usage
 

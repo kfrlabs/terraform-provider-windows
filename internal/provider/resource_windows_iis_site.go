@@ -157,6 +157,13 @@ func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 			"instead of failing.\n\n" +
 			"Requires IIS on the target host: install it with the `windows_feature` resource (`Web-Server`; " +
 			"add `Web-Mgmt-Console` / `Web-Scripting-Tools` for the `WebAdministration` module on Server Core).\n\n" +
+			"**Partial failures:** if creation fails after the site was already registered in IIS, " +
+			"the provider persists the observed state before reporting the error, so the resource is marked " +
+			"tainted. If update fails after IIS applied part of the change, the provider saves the observed " +
+			"partial state before reporting the error. Fix the cause and run `terraform apply` again to reconcile.\n\n" +
+			"A nil state on error does not guarantee nothing was created: a failure that returns no state " +
+			"leaves an orphaned site that must be removed with `Remove-Website` or re-adopted " +
+			"with `terraform import`.\n\n" +
 			"Import format: `<site name>`.",
 
 		Attributes: map[string]schema.Attribute{
@@ -434,6 +441,20 @@ func (r *windowsIISSiteResource) Create(ctx context.Context, req resource.Create
 		Settings: settings,
 	})
 	if err != nil {
+		// Partial failure (ADR-0012): persist the observed state so the
+		// resource is tainted rather than dropped from state. A nil state
+		// (for example, the already_exists pre-flight, or the
+		// script-side rollback of a half-created site) stays error-only.
+		if state != nil {
+			m, diags := iisSiteStateToModel(state)
+			resp.Diagnostics.Append(diags...)
+			if !resp.Diagnostics.HasError() {
+				m.Timeouts = plan.Timeouts
+				m.Name = plan.Name
+				m.ID = types.StringValue(name)
+				resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
+			}
+		}
 		addIISSiteDiag(&resp.Diagnostics, "Error creating Windows IIS site", err)
 		return
 	}
@@ -574,6 +595,19 @@ func (r *windowsIISSiteResource) Update(ctx context.Context, req resource.Update
 		Settings: settings,
 	})
 	if err != nil {
+		// Partial failure (ADR-0012): persist the observed state so the
+		// resource keeps its partial state rather than staying at prior
+		// state. A nil state stays error-only.
+		if observed != nil {
+			m, diags := iisSiteStateToModel(observed)
+			resp.Diagnostics.Append(diags...)
+			if !resp.Diagnostics.HasError() {
+				m.Timeouts = plan.Timeouts
+				m.Name = plan.Name
+				m.ID = prior.ID
+				resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
+			}
+		}
 		addIISSiteDiag(&resp.Diagnostics, "Error updating Windows IIS site", err)
 		return
 	}
