@@ -324,7 +324,7 @@ func TestBuildFirewallProfileParams_OnlyConfigured(t *testing.T) {
 		DefaultInboundAction: &allow,
 		LogMaxSizeKilobytes:  &size,
 	})
-	for _, want := range []string{"Enabled = $false", "'Allow'", "LogMaxSizeKilobytes = 8192"} {
+	for _, want := range []string{"Enabled = 'False'", "'Allow'", "LogMaxSizeKilobytes = 8192"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q, got:\n%s", want, script)
 		}
@@ -390,7 +390,7 @@ func TestBuildFirewallProfileRestoreParams_Verbatim(t *testing.T) {
 	}
 	script := buildFirewallProfileRestoreParams("Public", snap)
 	for _, want := range []string{
-		"Enabled = $true", "'Block'", "AllowInboundRules = $false",
+		"Enabled = 'True'", "'Block'", "AllowInboundRules = 'False'",
 		"AllowLocalFirewallRules = 'NotConfigured'", "LogAllowed = 'NotConfigured'",
 		"'Ethernet 2'",
 	} {
@@ -698,7 +698,7 @@ func TestFirewallProfileApply_HappyPath(t *testing.T) {
 	// Partial management: only the configured attribute is written.
 	// ($params entries use two-space indent and PascalCase names; the
 	// readback block below uses four-space indent and snake_case keys.)
-	if !strings.Contains(gotScript, "  LogBlocked = $true") {
+	if !strings.Contains(gotScript, "  LogBlocked = 'True'") {
 		t.Errorf("script must set the configured attribute, got:\n%s", gotScript)
 	}
 	for _, absent := range []string{"  LogAllowed = ", "  DefaultInboundAction = ", "  Enabled = "} {
