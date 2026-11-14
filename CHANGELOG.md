@@ -503,6 +503,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `windows_dsc_resource`: the provider no longer fails to compile on 32-bit
+  targets (`386`, `arm`), which would have broken the next release
+  (`math.MaxInt64` compared to a `uint`). Found by the GoReleaser snapshot
+  run for #352.
+
 - Transport: a parked SSH/pwsh session is now probed
   (`keepalive@openssh.com` channel request, 5s deadline) before it is
   reused (#342). A session dropped while idle (sshd `ClientAlive*`, NAT or
