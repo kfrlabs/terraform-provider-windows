@@ -16,8 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
+	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"golang.org/x/crypto/ssh"
 
@@ -493,5 +497,100 @@ func TestProvider_Configure_InvalidMaxSessions(t *testing.T) {
 	})
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error diag for negative max_sessions")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Schema validators (issue #328 datasource hygiene): fail fast at plan time.
+// ---------------------------------------------------------------------------
+
+// The port range validator must reject values that could never dial while
+// letting null (unset, WINDOWS_PORT fallback) through untouched.
+func TestProvider_Schema_PortRangeValidator(t *testing.T) {
+	p := &windowsProvider{}
+	schemaResp := &provider.SchemaResponse{}
+	p.Schema(context.Background(), provider.SchemaRequest{}, schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["port"]
+	if !ok {
+		t.Fatal("provider schema missing port attribute")
+	}
+	portAttr, ok := attr.(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("port attribute is %T, want schema.Int64Attribute", attr)
+	}
+	if len(portAttr.Validators) == 0 {
+		t.Fatal("port must carry a range validator (int64validator.Between 1..65535)")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		value   types.Int64
+		wantErr bool
+	}{
+		{"null skips validation (env fallback)", types.Int64Null(), false},
+		{"zero is not a dialable port", types.Int64Value(0), true},
+		{"negative is not a dialable port", types.Int64Value(-1), true},
+		{"above 65535 is not a dialable port", types.Int64Value(70000), true},
+		{"ssh default", types.Int64Value(22), false},
+		{"upper bound", types.Int64Value(65535), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var diagsResp validator.Int64Response
+			for _, v := range portAttr.Validators {
+				v.ValidateInt64(context.Background(), validator.Int64Request{
+					Path:        path.Root("port"),
+					ConfigValue: tc.value,
+				}, &diagsResp)
+			}
+			if got := diagsResp.Diagnostics.HasError(); got != tc.wantErr {
+				t.Errorf("port %v: HasError = %v, want %v (%v)", tc.value, got, tc.wantErr, diagsResp.Diagnostics)
+			}
+		})
+	}
+}
+
+// The host validator must reject an explicitly configured empty string while
+// letting null (unset, WINDOWS_HOST fallback) through untouched. Timeout
+// duration parsing is already covered by TestProvider_Configure_InvalidTimeout.
+func TestProvider_Schema_HostValidator(t *testing.T) {
+	p := &windowsProvider{}
+	schemaResp := &provider.SchemaResponse{}
+	p.Schema(context.Background(), provider.SchemaRequest{}, schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["host"]
+	if !ok {
+		t.Fatal("provider schema missing host attribute")
+	}
+	hostAttr, ok := attr.(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("host attribute is %T, want schema.StringAttribute", attr)
+	}
+	if len(hostAttr.Validators) == 0 {
+		t.Fatal("host must carry a validator rejecting empty strings")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		value   types.String
+		wantErr bool
+	}{
+		{"null skips validation (env fallback)", types.StringNull(), false},
+		{"empty string fails fast", types.StringValue(""), true},
+		{"hostname", types.StringValue("winhost01"), false},
+		{"ipv4", types.StringValue("10.0.0.1"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var diagsResp validator.StringResponse
+			for _, v := range hostAttr.Validators {
+				v.ValidateString(context.Background(), validator.StringRequest{
+					Path:        path.Root("host"),
+					ConfigValue: tc.value,
+				}, &diagsResp)
+			}
+			if got := diagsResp.Diagnostics.HasError(); got != tc.wantErr {
+				t.Errorf("host %v: HasError = %v, want %v (%v)", tc.value, got, tc.wantErr, diagsResp.Diagnostics)
+			}
+		})
 	}
 }

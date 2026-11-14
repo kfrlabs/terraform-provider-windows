@@ -391,8 +391,11 @@ func (r *windowsHostnameResource) Update(ctx context.Context, req resource.Updat
 	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 
-// Delete is a no-op (EC-7). It only emits a tflog.Warn and removes the
-// resource from state.
+// Delete is a pure no-op (EC-7): it performs no remote I/O and never calls
+// the client. Unlike windows_timezone/windows_ntp there is no
+// restore_on_destroy flag on this resource — a computer name cannot be
+// "un-renamed" — so destroy only emits a tflog.Warn and drops the resource
+// from state.
 func (r *windowsHostnameResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state windowsHostnameModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -418,8 +421,8 @@ func (r *windowsHostnameResource) Delete(ctx context.Context, req resource.Delet
 			"machine_id":   state.MachineID.ValueString(),
 			"current_name": current,
 		})
-	// Best-effort delegation; HostnameClient.Delete is documented as a no-op.
-	_ = r.hn.Delete(ctx, state.MachineID.ValueString())
+	// Pure no-op: no client call. The computer keeps its name; there is
+	// nothing to restore (no restore_on_destroy on this resource).
 }
 
 // -----------------------------------------------------------------------------

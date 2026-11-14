@@ -81,8 +81,8 @@ func (d *windowsCertificateDataSource) Schema(ctx context.Context, _ datasource.
 			"on a remote Windows host without managing it.\n\n" +
 			"Lookup is by `thumbprint` or by `subject` (exactly one of the two), optionally narrowed by " +
 			"`store_location` and `store_name`. A subject lookup matching several certificates resolves " +
-			"deterministically to the most recently issued one when `most_recent` is true (the default); " +
-			"with `most_recent = false` several matches are an error. Zero matches are always an error. " +
+			"deterministically to the most recently issued one only when `most_recent` is true; " +
+			"with `most_recent = false` (the default) several matches are an error. Zero matches are always an error. " +
 			"The subject must match the host-reported Subject verbatim (order, spacing and escaping must " +
 			"match; no DN normalisation is applied).",
 		Attributes: map[string]schema.Attribute{
@@ -120,7 +120,7 @@ func (d *windowsCertificateDataSource) Schema(ctx context.Context, _ datasource.
 			"most_recent": schema.BoolAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "When a subject lookup matches several certificates, pick the most recently issued one (latest not_before). Defaults to true; with false several matches are an error. Ignored for thumbprint lookups.",
+				Description: "When a subject lookup matches several certificates, pick the most recently issued one (latest not_before). Defaults to false; with false several matches are an error. Ignored for thumbprint lookups.",
 			},
 			"thumbprint_sha256": schema.StringAttribute{
 				Computed:    true,
@@ -192,6 +192,9 @@ func (d *windowsCertificateDataSource) Configure(_ context.Context, req datasour
 
 // certificateDataSourceDefaults fills the store filters and most_recent
 // from their documented defaults when the configuration omits them.
+// most_recent defaults to false: an ambiguous subject match without an
+// explicit opt-in is an error rather than a silent pick, so plan output
+// never depends on which certificate happens to be newest.
 func certificateDataSourceDefaults(config windowsCertificateDataSourceModel) (location, store string, mostRecent bool) {
 	location = winclient.CertificateStoreLocalMachine
 	if !config.StoreLocation.IsNull() && !config.StoreLocation.IsUnknown() && config.StoreLocation.ValueString() != "" {
@@ -201,7 +204,7 @@ func certificateDataSourceDefaults(config windowsCertificateDataSourceModel) (lo
 	if !config.StoreName.IsNull() && !config.StoreName.IsUnknown() && config.StoreName.ValueString() != "" {
 		store = config.StoreName.ValueString()
 	}
-	mostRecent = true
+	mostRecent = false
 	if !config.MostRecent.IsNull() && !config.MostRecent.IsUnknown() {
 		mostRecent = config.MostRecent.ValueBool()
 	}

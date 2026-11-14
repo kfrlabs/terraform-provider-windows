@@ -304,7 +304,10 @@ func TestLocalGroupsSchema_ParityWithSingular(t *testing.T) {
 	single := &windowsLocalGroupDataSource{}
 	sResp := &datasource.SchemaResponse{}
 	single.Schema(ctx, datasource.SchemaRequest{}, sResp)
-	nested := localGroupNestedAttributes()
+	nested, nestedDiags := localGroupNestedAttributes()
+	if nestedDiags.HasError() {
+		t.Fatalf("localGroupNestedAttributes must be panic-free and diag-free for the static definition set, got: %v", nestedDiags)
+	}
 	for name, collectionAttr := range nested {
 		singularAttr, ok := sResp.Schema.Attributes[name]
 		if !ok {

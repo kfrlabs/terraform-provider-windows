@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
@@ -67,10 +70,19 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 			"host": schema.StringAttribute{
 				Description: "Hostname or IP address of the target Windows host. May also be set via WINDOWS_HOST.",
 				Optional:    true,
+				Validators: []validator.String{
+					// Null (unset, env fallback via WINDOWS_HOST) skips validation;
+					// an explicitly configured empty string fails fast at plan time.
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 			"port": schema.Int64Attribute{
 				Description: "SSH port. Defaults to 22. May also be set via WINDOWS_PORT.",
 				Optional:    true,
+				Validators: []validator.Int64{
+					// Null (unset, env fallback via WINDOWS_PORT) skips validation.
+					int64validator.Between(1, 65535),
+				},
 			},
 			"username": schema.StringAttribute{
 				Description: "SSH username. May also be set via WINDOWS_USERNAME.",

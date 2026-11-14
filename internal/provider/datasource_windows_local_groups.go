@@ -74,6 +74,11 @@ func (d *windowsLocalGroupsDataSource) Metadata(_ context.Context, req datasourc
 
 // Schema returns the TPF schema for the windows_local_groups data source.
 func (d *windowsLocalGroupsDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	nestedAttrs, nestedDiags := localGroupNestedAttributes()
+	resp.Diagnostics.Append(nestedDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads the local group inventory of the remote Windows host without " +
 			"managing it. This is a **sibling collection** of `windows_local_group` — every `groups` " +
@@ -87,11 +92,11 @@ func (d *windowsLocalGroupsDataSource) Schema(ctx context.Context, _ datasource.
 			"`groups` carries one object per matching group, sorted by name (case-insensitive); " +
 			"`names` and `sids` carry the same groups in the same order. An empty match is a " +
 			"valid empty list, never an error.\n\n" +
-			"The Terraform data source ID is the hex SHA-256 of the normalised filter set.",
+			"The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
-				Description: "Data source ID; hex SHA-256 of the normalised filter set (sorted names, sorted SIDs, raw regex, include_builtin, include_members).",
+				Description: "Data source ID (query-ID); hex SHA-256 of the normalised filter set (sorted names, sorted SIDs, raw regex, include_builtin, include_members).",
 			},
 			"names": schema.SetAttribute{
 				ElementType: types.StringType,
@@ -120,7 +125,7 @@ func (d *windowsLocalGroupsDataSource) Schema(ctx context.Context, _ datasource.
 			"groups": schema.ListNestedAttribute{
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{
-					Attributes: localGroupNestedAttributes(),
+					Attributes: nestedAttrs,
 				},
 				Description: "Matching local groups, sorted by name (case-insensitive). Empty when no group matches the filters.",
 			},

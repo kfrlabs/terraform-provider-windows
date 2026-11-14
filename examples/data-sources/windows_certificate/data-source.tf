@@ -19,8 +19,8 @@ data "windows_certificate" "web" {
 }
 
 # Lookup by subject, narrowed to the Personal store. When several certificates
-# share the subject, the most recently issued one wins (most_recent defaults
-# to true).
+# share the subject, the most recently issued one wins (most_recent must be
+# set explicitly: it defaults to false and several matches are an error).
 data "windows_certificate" "by_subject" {
   subject     = "CN=example.com"
   store_name  = "My"

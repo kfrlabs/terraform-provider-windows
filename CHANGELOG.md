@@ -19,7 +19,41 @@ All notable changes to this project will be documented in this file.
   on the next refresh/plan; if a stale state needs manual repair, use
   `terraform state rm` followed by `import`.
 
+- `windows_certificate` data source: `most_recent` now defaults to `false`
+  (#328). A subject lookup matching several certificates without an explicit
+  `most_recent = true` is an ambiguous-lookup error instead of silently
+  resolving to the most recently issued one. Configs relying on the old
+  silent pick must set `most_recent = true` explicitly.
+
 ### Changed
+
+- Data source hygiene, safe subset (#328):
+  - `windows_local_users` / `windows_local_groups`: the shared per-element
+    schema builders no longer panic on an unsupported attribute type; they
+    return an error diagnostic instead, so a future attribute addition fails
+    closed at schema build time.
+  - `windows_hostname` Delete is now a pure no-op: no client call is issued
+    on destroy (previously it delegated to the documented no-op
+    `HostnameClient.Delete`). There is no `restore_on_destroy` flag on this
+    resource — a computer name cannot be "un-renamed" — so destroy only logs
+    a warning and drops the resource from state.
+  - Provider schema validation is stricter: `port` must be 1-65535 and `host`
+    must be non-empty when explicitly configured (both still Optional; null
+    keeps the `WINDOWS_HOST` / `WINDOWS_PORT` env fallbacks). The `timeout`
+    duration parsing diagnostic in Configure is unchanged (already covered).
+  - Collection data source IDs are documented as query-IDs (hex SHA-256 of
+    the normalised filter set) in the `id` descriptions of
+    `windows_network_adapters`, `windows_local_groups` and
+    `windows_installed_software`.
+  - Verified, no change needed: no singleton data source sets a literal
+    `"current"` ID in provider code (remaining `current` strings are test
+    labels, import IDs and acc-test resource names).
+  - Deferred with notes: schema `Default`s for data source inputs
+    (`policy_store`, certificate `store_location`/`store_name`) are blocked —
+    `terraform-plugin-framework` v1.19.0 data source attributes have no
+    `Default` field (only resource schemas do), so the Go-resolved Read
+    fallbacks stay; canonical observed member names as Computed attributes
+    and `Configure`-time acceptance helpers are deferred as larger churn.
 
 - Plan-time validation is stricter (fail fast at plan instead of at apply)
   (#324):

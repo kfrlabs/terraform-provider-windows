@@ -252,7 +252,8 @@ func TestCertificateDSRead_BySubject(t *testing.T) {
 	newer := certDSInfo("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "CN=example.com", "2026-06-01T00:00:00Z")
 	d := &windowsCertificateDataSource{certs: &fakeCertificateClientDS{lookupOut: []*winclient.CertificateInfo{old, newer}}}
 	cfg := certDSConfig(map[string]tftypes.Value{
-		"subject": tftypes.NewValue(tftypes.String, "CN=example.com"),
+		"subject":     tftypes.NewValue(tftypes.String, "CN=example.com"),
+		"most_recent": tftypes.NewValue(tftypes.Bool, true),
 	})
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
 	d.Read(context.Background(), datasource.ReadRequest{Config: cfg}, resp)
@@ -262,12 +263,30 @@ func TestCertificateDSRead_BySubject(t *testing.T) {
 	}
 	var state windowsCertificateDataSourceModel
 	resp.State.Get(context.Background(), &state)
-	// most_recent defaults to true: the later not_before wins.
+	// Explicit most_recent=true: the later not_before wins.
 	if state.Thumbprint.ValueString() != "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" {
 		t.Errorf("most_recent must pick the later certificate, got %q", state.Thumbprint.ValueString())
 	}
 	if !state.MostRecent.ValueBool() {
-		t.Error("most_recent must default to true in state")
+		t.Error("most_recent must echo true in state")
+	}
+}
+
+func TestCertificateDSRead_BySubject_OmittedMostRecentIsAmbiguous(t *testing.T) {
+	old := certDSInfo("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "CN=example.com", "2026-01-01T00:00:00Z")
+	newer := certDSInfo("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "CN=example.com", "2026-06-01T00:00:00Z")
+	d := &windowsCertificateDataSource{certs: &fakeCertificateClientDS{lookupOut: []*winclient.CertificateInfo{old, newer}}}
+	cfg := certDSConfig(map[string]tftypes.Value{
+		"subject": tftypes.NewValue(tftypes.String, "CN=example.com"),
+	})
+	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: cfg.Schema}}
+	d.Read(context.Background(), datasource.ReadRequest{Config: cfg}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("several matches with omitted most_recent (default false) must error")
+	}
+	if !strings.Contains(resp.Diagnostics[0].Summary(), "Ambiguous") {
+		t.Errorf("unexpected summary: %s", resp.Diagnostics[0].Summary())
 	}
 }
 
@@ -324,7 +343,7 @@ func TestPickMostRecentCertificate(t *testing.T) {
 
 func TestCertificateDataSourceDefaults(t *testing.T) {
 	loc, store, recent := certificateDataSourceDefaults(windowsCertificateDataSourceModel{})
-	if loc != "LocalMachine" || store != "My" || !recent {
+	if loc != "LocalMachine" || store != "My" || recent {
 		t.Errorf("defaults = %q, %q, %v", loc, store, recent)
 	}
 }

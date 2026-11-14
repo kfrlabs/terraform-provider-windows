@@ -6,7 +6,7 @@ description: |-
   Reads the local group inventory of the remote Windows host without managing it. This is a sibling collection of windows_local_group — every groups element carries the same attributes as the singular data source, plus is_builtin and the members list.
   Optional filters narrow the result: names / sids (exact match, host-side), name_regex (RE2 match on the group name, case-sensitive unless prefixed with (?i)), include_builtin (drop built-in groups such as Administrators and Users) and include_members (populate the per-group members list with name, sid, object_class and principal_source). Omitted filters match everything.
   groups carries one object per matching group, sorted by name (case-insensitive); names and sids carry the same groups in the same order. An empty match is a valid empty list, never an error.
-  The Terraform data source ID is the hex SHA-256 of the normalised filter set.
+  The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.
 ---
 
 # windows_local_groups (Data Source)
@@ -17,7 +17,7 @@ Optional filters narrow the result: `names` / `sids` (exact match, host-side), `
 
 `groups` carries one object per matching group, sorted by name (case-insensitive); `names` and `sids` carry the same groups in the same order. An empty match is a valid empty list, never an error.
 
-The Terraform data source ID is the hex SHA-256 of the normalised filter set.
+The Terraform data source ID is a query-ID: the hex SHA-256 of the normalised filter set.
 
 ## Example Usage
 
@@ -71,7 +71,7 @@ check "no_unexpected_admins" {
 ### Read-Only
 
 - `groups` (Attributes List) Matching local groups, sorted by name (case-insensitive). Empty when no group matches the filters. (see [below for nested schema](#nestedatt--groups))
-- `id` (String) Data source ID; hex SHA-256 of the normalised filter set (sorted names, sorted SIDs, raw regex, include_builtin, include_members).
+- `id` (String) Data source ID (query-ID); hex SHA-256 of the normalised filter set (sorted names, sorted SIDs, raw regex, include_builtin, include_members).
 
 <a id="nestedatt--timeouts"></a>
 ### Nested Schema for `timeouts`
