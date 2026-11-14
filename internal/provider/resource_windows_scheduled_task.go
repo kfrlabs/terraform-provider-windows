@@ -761,8 +761,12 @@ func windowsScheduledTaskPriorSchemaV0(ctx context.Context) *schema.Schema {
 	r.Schema(ctx, resource.SchemaRequest{}, resp)
 	s := resp.Schema
 	s.Version = 0
+	triggersAttr, ok := s.Attributes["triggers"].(schema.SetNestedAttribute)
+	if !ok {
+		return &s
+	}
 	nestedAttrs := map[string]schema.Attribute{}
-	for k, a := range s.Attributes["triggers"].(schema.SetNestedAttribute).NestedObject.Attributes {
+	for k, a := range triggersAttr.NestedObject.Attributes {
 		nestedAttrs[k] = a
 	}
 	nestedAttrs["days_of_week"] = schema.ListAttribute{
