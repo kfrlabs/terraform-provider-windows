@@ -20,7 +20,8 @@ Terraform >= 1.11 is required (Write-only arguments require Terraform 1.11 and l
 | OS | Status |
 | --- | --- |
 | Windows Server 2025 (`windows-latest` CI runners plus a `windows-2025` lab host) | Supported (tested in 2025) |
-| Windows Server 2022 / 2019 / 2016, Windows 10 / 11 client SKUs | Best-effort, untested |
+| Windows Server 2022 | Smoke-tested weekly (`testacc-compat` lane: OS facts, DISM names, NTP/timezone/service/power reads, registry, file, event log) |
+| Windows Server 2019 / 2016, Windows 10 / 11 client SKUs | Best-effort, untested (no 2019 runner available; see `testacc-compat.yml`) |
 
 ### PowerShell
 
