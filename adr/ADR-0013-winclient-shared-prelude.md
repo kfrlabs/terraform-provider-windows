@@ -46,10 +46,14 @@ bytes; rendering-only, see rule 4).
    `[Console]::Out`, the three preference pins, and since v2 the
    InvariantCulture thread pins). Migrated headers compose
    it by string concatenation (`psEnvelopePrelude + <rest>`), never by
-   re-typing the functions. Classifiers and resource-specific helpers
-   (`Read-*State`, `Invoke-*`, retry loops) stay per-resource until a
-   later ADR designs their generic form; the generic-`Classify` idea from
-   the issue is explicitly deferred for this reason.
+   re-typing the functions. The matching loop for string classifiers is
+   shared since batch 5 (`Classify-ByPatterns`: ordered [pattern, kind]
+   rows, single-regex OR or array AND, first match wins; table data stays
+   per-resource): `hostname` is the pilot, proven equivalent over a
+   21-message corpus on the Windows fixture. Classifiers over $Rec
+   objects with .Exception/HResult, exit-code classifiers and
+   resource-specific helpers (`Read-*State`, `Invoke-*`, retry loops)
+   stay per-resource.
 2. Generic error type. `internal/winclient/resource_error.go` defines
    `ResourceError{Resource, Kind, Message, Context, Cause}` with
    `Error()` (`"<resource> [<kind>]: <message>[: <cause>]"`, matching the
@@ -57,18 +61,22 @@ bytes; rendering-only, see rule 4).
    `Is()`, plus `NewResourceError` / `IsResourceError` helpers. Later
    batches re-express each `*Error` as an alias or thin wrapper over
    `ResourceError` so provider handlers, `errors.Is` sentinels and `Is*`
-   helpers keep compiling and behaving identically. Batch 1 rewrites no
-   existing error type.
+   helpers keep compiling and behaving identically. Batch 5 pilots the
+   alias pattern on `hostname` (`type HostnameError = ResourceError`,
+   untyped kind constants so all call sites compile unchanged, sentinels
+   carry the `windows_hostname` resource key to preserve `errors.Is`
+   matching).
 3. Input convention. JSON on stdin is the recommended channel for
    structured, large, or secret inputs (it removes quoting from the
    attack surface and avoids the UTF-16 base64 script-size blow-up);
    `psQuote` stays for short scalars. No new hand-rolled quoting
    (#173, #203). `psQuote` fixes continue to live in exactly one place.
 4. Versioning rule. The prelude bytes are pinned by
-   `TestPSEnvelopePrelude_Contents`. Changing the canonical bytes (Depth,
-   parameter spelling — `winget_package` uses `$Msg` where the prelude
-   uses `$Message` — preference/culture pins) is a conscious, ADR-amended
-   decision, never drive-by. Where a payload needs deeper serialisation
+   `TestPSEnvelopePrelude_Contents` and `TestPSClassifyPrelude_Contents`.
+   Changing the canonical bytes (Depth, parameter spelling, preference/culture pins,
+   classifier table shape) is a conscious, ADR-amended decision, never
+   drive-by. Batch 5 resolved the last spelling divergence (`winget_package`
+   `$Msg` -> canonical `$Message`; all call sites were positional). Where a payload needs deeper serialisation
    than `-Depth 8` (e.g. `file`/`registry_value` at 16, `legacy_package`
    at 10, `scheduled_task_scripts` at 12, plus other Depth-10 headers),
    the migrated header keeps its own depth at the call site only until a
@@ -88,9 +96,9 @@ bytes; rendering-only, see rule 4).
    (leading whitespace tolerated) outside `envelope_prelude.go` against an
    explicit allowlist. Batch 4c migrated the last entry
    (`dsc_resource_scripts.go`); the allowlist is intentionally empty.
-   Later batches (generic classifier design, per-resource error aliases,
-   stdin conversions) each get their own plan against this ADR; none may
-   change wire behaviour without fixture proof.
+   Later batches (per-resource error aliases, stdin conversions) each get
+   their own plan against this ADR; none may change wire behaviour
+   without fixture proof.
 6. Batch 1 (this ADR). ADR text + prelude const + `ResourceError`
    scaffolding + pilot migration of `hostname` (small, string classifier,
    no stdin secrets; its header is byte-identical after composition) +
@@ -106,9 +114,10 @@ bytes; rendering-only, see rule 4).
   such edit because no hostname test pins the Emit bytes.
 - `docs/` stays generated (`make docs`); this record lives in `adr/` on
   purpose, outside the drift gate.
-- Later batches (generic classifier design, per-resource error aliases,
-  stdin conversions) each get their own plan against this ADR; none may
-  change wire behaviour without fixture proof. Batches 2-4 migrated every
+- Later batches (per-resource error aliases, stdin conversions, rolling
+  out `Classify-ByPatterns` to the remaining string classifiers) each get
+  their own plan against this ADR; none may change wire behaviour
+  without fixture proof. Batches 2-4 migrated every
   header whose Emit pair was byte-identical or provably equivalent
   (32 files share the prelude; the DSC depth downgrade was proven on the
   Windows fixture).

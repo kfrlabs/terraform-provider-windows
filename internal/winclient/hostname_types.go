@@ -7,7 +7,7 @@
 // File layout:
 //
 //	HostnameErrorKind     — string enum of typed error categories
-//	HostnameError         — structured error with Kind, Message, Context, Cause
+//	HostnameError         — alias of ResourceError (Resource windows_hostname)
 //	Sentinel errors       — pre-constructed *HostnameError for errors.Is
 //	HostnameInput         — input parameters for Create/Update
 //	HostnameState         — observed state returned by Read
@@ -16,8 +16,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,109 +31,75 @@ const (
 	// HostnameErrorInvalidName is returned when the desired name fails the
 	// server-side NetBIOS validation (length, charset, leading/trailing
 	// hyphen, purely numeric).  Mirrors EC-1.
-	HostnameErrorInvalidName HostnameErrorKind = "invalid_name"
+	HostnameErrorInvalidName = "invalid_name"
 
 	// HostnameErrorPermission is returned when Rename-Computer or the HKLM
 	// reads fail with AccessDenied / RenameComputerNotAuthorized (EC-4).
-	HostnameErrorPermission HostnameErrorKind = "permission_denied"
+	HostnameErrorPermission = "permission_denied"
 
 	// HostnameErrorDomainJoined is returned when the target machine is
 	// part of a domain (PartOfDomain == true).  v1 does not support
 	// domain-joined renames (EC-5).
-	HostnameErrorDomainJoined HostnameErrorKind = "domain_joined"
+	HostnameErrorDomainJoined = "domain_joined"
 
 	// HostnameErrorUnreachable is returned when SSH cannot be contacted
 	// (connection refused, TLS error, auth failure, timeout).  Context
 	// SHOULD include host, port and transport (EC-6).
-	HostnameErrorUnreachable HostnameErrorKind = "unreachable"
+	HostnameErrorUnreachable = "unreachable"
 
 	// HostnameErrorMachineMismatch is returned by Read when the live
 	// MachineGuid differs from the supplied state ID (EC-10).  Causes
 	// the resource handler to RemoveResource and recreate.
-	HostnameErrorMachineMismatch HostnameErrorKind = "machine_mismatch"
+	HostnameErrorMachineMismatch = "machine_mismatch"
 
 	// HostnameErrorConcurrent is returned when an external rename happens
 	// between Read and Update — the observed pending_name diverges from
 	// what the client expected (EC-11).  Context contains both names.
-	HostnameErrorConcurrent HostnameErrorKind = "concurrent_modification"
+	HostnameErrorConcurrent = "concurrent_modification"
 
 	// HostnameErrorUnknown is the catch-all for unmapped PowerShell or
 	// SSH failures.  Stdout/stderr SHOULD be captured in Context.
-	HostnameErrorUnknown HostnameErrorKind = "unknown"
+	HostnameErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
-// HostnameError — structured error
-// ---------------------------------------------------------------------------
-
+// HostnameError — alias of the generic ResourceError (issue #348, batch 5)
+//
 // HostnameError is the structured error type returned by all
-// WindowsHostnameClient methods.  Use errors.Is(err, ErrHostname*) for
-// kind matching, or errors.As(err, &he) to inspect Context.
-type HostnameError struct {
-	// Kind is the machine-readable error category.
-	Kind HostnameErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics.  Must not contain SSH credentials.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "desired_name", "pending_name", "domain").
-	// All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically a SSH transport
-	// or PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *HostnameError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_hostname [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_hostname [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *HostnameError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *HostnameError) Is(target error) bool {
-	t, ok := target.(*HostnameError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+// WindowsHostnameClient methods. It is an alias of the generic
+// ResourceError with Resource fixed to "windows_hostname": use
+// errors.Is(err, ErrHostname*) for kind matching (matches by
+// (Resource, Kind), same as the old Kind-only match within this
+// resource), or errors.As(err, &he) to inspect Context.
+// The wire format is unchanged: "windows_hostname [<kind>]: <message>".
+type HostnameError = ResourceError
 
 // NewHostnameError constructs a *HostnameError. Pass a nil cause when no
 // underlying error exists.  The ctx map may be nil.
 func NewHostnameError(kind HostnameErrorKind, message string, cause error, ctx map[string]string) *HostnameError {
-	return &HostnameError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError(hostnameResource, string(kind), message, cause, ctx)
 }
 
 // IsHostnameError reports whether err is a *HostnameError of the given kind.
 func IsHostnameError(err error, kind HostnameErrorKind) bool {
-	var he *HostnameError
-	if errors.As(err, &he) {
-		return he.Kind == kind
-	}
-	return false
+	return IsResourceError(err, hostnameResource, string(kind))
 }
+
+// hostnameResource is the Resource key carried by every HostnameError.
+const hostnameResource = "windows_hostname"
 
 // ---------------------------------------------------------------------------
 // Sentinel errors — use with errors.Is
 // ---------------------------------------------------------------------------
 
 var (
-	ErrHostnameInvalidName     = &HostnameError{Kind: HostnameErrorInvalidName}
-	ErrHostnamePermission      = &HostnameError{Kind: HostnameErrorPermission}
-	ErrHostnameDomainJoined    = &HostnameError{Kind: HostnameErrorDomainJoined}
-	ErrHostnameUnreachable     = &HostnameError{Kind: HostnameErrorUnreachable}
-	ErrHostnameMachineMismatch = &HostnameError{Kind: HostnameErrorMachineMismatch}
-	ErrHostnameConcurrent      = &HostnameError{Kind: HostnameErrorConcurrent}
-	ErrHostnameUnknown         = &HostnameError{Kind: HostnameErrorUnknown}
+	ErrHostnameInvalidName     = &HostnameError{Resource: hostnameResource, Kind: HostnameErrorInvalidName}
+	ErrHostnamePermission      = &HostnameError{Resource: hostnameResource, Kind: HostnameErrorPermission}
+	ErrHostnameDomainJoined    = &HostnameError{Resource: hostnameResource, Kind: HostnameErrorDomainJoined}
+	ErrHostnameUnreachable     = &HostnameError{Resource: hostnameResource, Kind: HostnameErrorUnreachable}
+	ErrHostnameMachineMismatch = &HostnameError{Resource: hostnameResource, Kind: HostnameErrorMachineMismatch}
+	ErrHostnameConcurrent      = &HostnameError{Resource: hostnameResource, Kind: HostnameErrorConcurrent}
+	ErrHostnameUnknown         = &HostnameError{Resource: hostnameResource, Kind: HostnameErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------
