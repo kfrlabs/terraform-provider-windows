@@ -46,7 +46,8 @@ func (v fileNoTraversalValidator) ValidateString(_ context.Context, req validato
 		return
 	}
 	p := req.ConfigValue.ValueString()
-	for _, seg := range strings.Split(p, `\`) {
+	normalized := strings.ReplaceAll(p, "/", `\`)
+	for _, seg := range strings.Split(normalized, `\`) {
 		if seg == ".." {
 			resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 				fmt.Sprintf(`path %q must not contain ".." segments`, p))

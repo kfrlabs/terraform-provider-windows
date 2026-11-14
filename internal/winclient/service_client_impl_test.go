@@ -131,7 +131,9 @@ func TestExtractLastJSONLine(t *testing.T) {
 		{"", ""},
 		{"WARNING: foo\n{\"ok\":true}\n", `{"ok":true}`},
 		{"no json here", ""},
-		{"{\"a\":1}\n{\"b\":2}\n", `{"b":2}`},
+		// Non-envelope JSON (no `ok` field) is ignored so trailing noise
+		// objects cannot shadow the real envelope (adversarial hardening).
+		{"{\"a\":1}\n{\"b\":2}\n", ""},
 		{"  {\"ok\":true}  ", `{"ok":true}`},
 		// BOM defense for #102: a BOM-emitting encoder must not hide the envelope.
 		{"\uFEFF{\"ok\":true}\n", `{"ok":true}`},

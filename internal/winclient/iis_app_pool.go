@@ -459,6 +459,11 @@ func parseIISAppPoolState(op, name string, data json.RawMessage) (*IISAppPoolSta
 // failure the half-created pool is deleted best-effort (script-side) and
 // the original error is returned.
 func (a *IISAppPoolClient) Create(ctx context.Context, in IISAppPoolInput) (*IISAppPoolState, error) {
+	if strings.ContainsAny(in.Password, "\r\n") {
+		return nil, NewIISAppPoolError(IISAppPoolErrorUnknown,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, map[string]string{"name": in.Name})
+	}
 	if err := ValidateIISAppPoolName(in.Name); err != nil {
 		return nil, NewIISAppPoolError(IISAppPoolErrorUnknown, err.Error(), nil, map[string]string{"name": in.Name})
 	}
@@ -546,6 +551,11 @@ try {
 // password when in.Password is non-empty), enforces the configured state,
 // and returns the read-back state. A missing pool yields not_found.
 func (a *IISAppPoolClient) Update(ctx context.Context, in IISAppPoolInput) (*IISAppPoolState, error) {
+	if strings.ContainsAny(in.Password, "\r\n") {
+		return nil, NewIISAppPoolError(IISAppPoolErrorUnknown,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, map[string]string{"name": in.Name})
+	}
 	if err := ValidateIISAppPoolName(in.Name); err != nil {
 		return nil, NewIISAppPoolError(IISAppPoolErrorUnknown, err.Error(), nil, map[string]string{"name": in.Name})
 	}

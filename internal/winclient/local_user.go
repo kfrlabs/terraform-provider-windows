@@ -317,6 +317,11 @@ func (lc *LocalUserClientImpl) parseLUEnvelope(op, key, stdout, stderr string) e
 //  4. Call New-LocalUser with all applicable parameters.
 //  5. Re-read the account via Get-LocalUser -SID to get the full state.
 func (lc *LocalUserClientImpl) Create(ctx context.Context, input UserInput, password string) (*UserState, error) {
+	if strings.ContainsAny(password, "\r\n") {
+		return nil, NewLocalUserError(LocalUserErrorInvalidParameter,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, map[string]string{"key": input.Name})
+	}
 	qName := psQuote(input.Name)
 	qFullName := psQuote(input.FullName)
 	qDesc := psQuote(input.Description)
@@ -387,7 +392,7 @@ try {
     Emit-OK $data
 } catch {
     $kind = Classify-LU $_.Exception.Message $_.FullyQualifiedErrorId
-    Emit-Err $kind $_.Exception.Message @{ name = %s; step = 'new_local_user'; pwlen = $PlainPassword.Length }
+    Emit-Err $kind $_.Exception.Message @{ name = %s; step = 'new_local_user' }
 }
 `,
 		qName, qName,
@@ -531,6 +536,11 @@ try {
 // The password plaintext is injected via stdin and NEVER appears in the script
 // body, SSH trace logs, or diagnostic output (ADR-LU-3, EC-6).
 func (lc *LocalUserClientImpl) SetPassword(ctx context.Context, sid, password string) error {
+	if strings.ContainsAny(password, "\r\n") {
+		return NewLocalUserError(LocalUserErrorInvalidParameter,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, map[string]string{"key": sid})
+	}
 	qSID := psQuote(sid)
 
 	script := fmt.Sprintf(`
