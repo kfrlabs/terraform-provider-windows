@@ -36,13 +36,15 @@ headers do not.
 
 ## Decision
 
-Consolidation is incremental, one resource per batch, with no behaviour
-change in any batch.
+Consolidation is incremental, one resource per batch, with no logic
+change in any batch (v2 adds invariant-culture pins to the batch-1/2 wire
+bytes; rendering-only, see rule 4).
 
 1. Shared Emit-only prelude. `internal/winclient/envelope_prelude.go`
    defines `psEnvelopePrelude`: the canonical `Emit-OK` / `Emit-Err`
    pair (`-Depth 8`, `$Ctx` nil-guard, `ConvertTo-Json -Compress` to
-   `[Console]::Out`, the three preference pins). Migrated headers compose
+   `[Console]::Out`, the three preference pins, and since v2 the
+   InvariantCulture thread pins). Migrated headers compose
    it by string concatenation (`psEnvelopePrelude + <rest>`), never by
    re-typing the functions. Classifiers and resource-specific helpers
    (`Read-*State`, `Invoke-*`, retry loops) stay per-resource until a
@@ -65,11 +67,17 @@ change in any batch.
 4. Versioning rule. The prelude bytes are pinned by
    `TestPSEnvelopePrelude_Contents`. Changing the canonical bytes (Depth,
    parameter spelling — `winget_package` uses `$Msg` where the prelude
-   uses `$Message` — preference pins) is a conscious, ADR-amended
+   uses `$Message` — preference/culture pins) is a conscious, ADR-amended
    decision, never drive-by. Where a payload needs deeper serialisation
-   than `-Depth 8` (today: `file` at 16, `legacy_package` at 10), the
-   migrated header keeps its own depth at the call site until a batch
-   canonicalises it with fixture proof.
+   than `-Depth 8` (e.g. `file`/`registry_value` at 16, `legacy_package`
+   at 10, `scheduled_task_scripts` at 12, plus other Depth-10 headers),
+   the migrated header keeps its own
+   depth at the call site until a batch canonicalises it with fixture
+   proof. v2 (batch 3) adds the InvariantCulture thread pins, following
+   the IIS/storage precedent: error text and .NET formatting stay stable
+   regardless of host locale, which is the point of a machine-parseable
+   envelope. The batch-1/2 headers gain the two lines through composition
+   (benign: invariant formatting affects rendering only, never logic).
 5. Guard test. `TestPSEnvelopePrelude_NoNewDefinitions` scans non-test
    `internal/winclient/*.go` for `function Emit-(OK|Err)` definitions
    (leading whitespace tolerated) outside `envelope_prelude.go` against an explicit allowlist of not-yet-

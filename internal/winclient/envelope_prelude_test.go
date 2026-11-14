@@ -22,6 +22,9 @@ func TestPSEnvelopePrelude_Contents(t *testing.T) {
 		"$ErrorActionPreference = 'Stop'",
 		"$ProgressPreference    = 'SilentlyContinue'",
 		"$WarningPreference     = 'SilentlyContinue'",
+		"CurrentThread.CurrentCulture",
+		"CurrentThread.CurrentUICulture",
+		"InvariantCulture",
 		"function Emit-OK([object]$Data)",
 		"function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx)",
 		"ConvertTo-Json -Depth 8 -Compress",
@@ -74,13 +77,10 @@ var envelopePreludeAllowlist = map[string]bool{
 	"net_ip_address_scripts.go": true,
 	"net_route.go":              true,
 	"network_adapter.go":        true,
-	"ntp.go":                    true,
-	"power_plan.go":             true,
 	"registry_value.go":         true,
 	"scheduled_task_scripts.go": true,
 	"service.go":                true,
 	"storage_common.go":         true,
-	"timezone.go":               true,
 	"winget_package.go":         true,
 }
 
@@ -154,6 +154,9 @@ func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 		"psFeatureHeader":          psFeatureHeader,
 		"psOSInfoHeader":           psOSInfoHeader,
 		"psSmbShareHeader":         psSmbShareHeader,
+		"psNTPHeader":              psNTPHeader,
+		"psPowerPlanHeader":        psPowerPlanHeader,
+		"psTimezoneHeader":         psTimezoneHeader,
 	}
 	for name, h := range headers {
 		if !strings.HasPrefix(h, psEnvelopePrelude) {
@@ -174,6 +177,9 @@ func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 		"function Classify-Feature",
 		"function Classify-OSInfo",
 		"function Classify-SmbShare",
+		"function Classify-NTP",
+		"function Classify-PowerPlan",
+		"function Classify-Timezone",
 	} {
 		found := false
 		for _, h := range headers {

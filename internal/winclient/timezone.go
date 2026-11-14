@@ -71,23 +71,10 @@ type timezoneStatePayload struct {
 // which handles the exact DST delta, formatted in invariant culture as
 // "+HH:mm". The session culture is pinned to InvariantCulture so enum and
 // TimeSpan stringification stay English on any host locale.
-const psTimezoneHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
-[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
-[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+const psTimezoneHeader = psEnvelopePrelude + psTimezoneRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Classify-Timezone([object]$Rec) {
+// psTimezoneRemainder Classifier and time-zone bodies stay here; envelope emitters come from the prelude.
+const psTimezoneRemainder = `function Classify-Timezone([object]$Rec) {
   $msg = ''
   try { $msg = [string]$Rec.Exception.Message } catch { $msg = [string]$Rec }
   if ($msg -match 'SeTimeZonePrivilege' -or $msg -match 'privilege' -or $msg -match 'Access is denied' -or $msg -match 'AccessDenied' -or $msg -match 'UnauthorizedAccess' -or $msg -match 'Unauthorized') { return 'access_denied' }

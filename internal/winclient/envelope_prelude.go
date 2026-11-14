@@ -1,4 +1,4 @@
-// Shared PowerShell envelope prelude (issue #348, batch 1).
+// Shared PowerShell envelope prelude (issue #348, batch 1; v2 in batch 3).
 //
 // psEnvelopePrelude is the canonical Emit-OK / Emit-Err pair every
 // winclient PowerShell pipeline uses to report its result as a single JSON
@@ -13,13 +13,21 @@
 // incompatible shapes (plain message string, (Msg,FQEI) pairs,
 // $Record objects with .Exception/HResult, exit codes).
 //
+// v2 (batch 3) pins the thread culture to InvariantCulture, following the
+// IIS/storage precedent: error text and .NET formatting stay stable
+// regardless of the host locale, which is the point of a
+// machine-parseable envelope. Headers that already pinned it migrate with
+// no wire change; the batch-1/2 headers gain the two lines (benign:
+// invariant formatting only affects rendering, never logic).
+//
 // Versioning rule (ADR-0013): the prelude bytes are covered by
 // TestPSEnvelopePrelude_Contents. Changing the canonical bytes (Depth,
-// parameter spelling, preference pins) is a conscious, ADR-amended
-// decision, never drive-by. Migrated headers MUST compose the prelude by
-// string concatenation (never by re-typing the functions) so drift is
-// impossible; the guard test TestPSEnvelopePrelude_NoNewDefinitions
-// fails if a new per-file Emit-OK / Emit-Err definition appears.
+// parameter spelling, preference/culture pins) is a conscious,
+// ADR-amended decision, never drive-by. Migrated headers MUST compose
+// the prelude by string concatenation (never by re-typing the functions)
+// so drift is impossible; the guard test
+// TestPSEnvelopePrelude_NoNewDefinitions fails if a new per-file
+// Emit-OK / Emit-Err definition appears outside the shared prelude.
 //
 // Session safety (#81): the prelude never calls exit and never returns a
 // value; it only writes one line to [Console]::Out.
@@ -33,6 +41,8 @@ const psEnvelopePrelude = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 $WarningPreference     = 'SilentlyContinue'
+[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
+[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
 
 function Emit-OK([object]$Data) {
   $obj = [ordered]@{ ok = $true; data = $Data }

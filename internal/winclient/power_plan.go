@@ -110,23 +110,10 @@ type powerPlanListPayload struct {
 // GUID-first match is primary; an alias-first match stays as a fallback.
 // Lines without a GUID (headers, blanks) are skipped, so the parse does
 // not depend on column layout or localisation.
-const psPowerPlanHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
-[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
-[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+const psPowerPlanHeader = psEnvelopePrelude + psPowerPlanRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Classify-PowerPlan([object]$Rec) {
+// psPowerPlanRemainder Classifier and power-plan bodies stay here; envelope emitters come from the prelude.
+const psPowerPlanRemainder = `function Classify-PowerPlan([object]$Rec) {
   $msg = ''
   try { $msg = [string]$Rec.Exception.Message } catch { $msg = [string]$Rec }
   if ($msg -match 'is not recognized as the name of a cmdlet' -or $msg -match 'is not recognized as an internal or external command' -or $msg -match 'Not supported' -or $msg -match 'Invalid namespace' -or $msg -match 'Invalid class') { return 'unsupported' }
