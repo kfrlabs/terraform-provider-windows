@@ -52,14 +52,10 @@ func TestPSEnvelopePrelude_Contents(t *testing.T) {
 var envelopeDefRe = regexp.MustCompile(`(?m)^\s*function Emit-(OK|Err)\b`)
 
 // envelopePreludeAllowlist names the non-test winclient files still
-// permitted to define their own Emit-OK / Emit-Err pair. Only
-// dsc_resource_scripts.go remains: Invoke-DscResource returns arbitrary
-// resource state whose depth cannot be bounded statically, so its Depth-10
-// Emit-OK stays until a fixture proves a lower depth safe for real DSC
-// resources. The guard fails on any definition outside this list.
-var envelopePreludeAllowlist = map[string]bool{
-	"dsc_resource_scripts.go": true,
-}
+// permitted to define their own Emit-OK / Emit-Err pair. All headers are
+// migrated; the list is intentionally empty. The guard fails on any new
+// per-file definition outside the shared prelude.
+var envelopePreludeAllowlist = map[string]bool{}
 
 // findEnvelopeViolations scans dir for non-test .go files defining
 // Emit-OK / Emit-Err outside the shared prelude (envelope_prelude.go)
@@ -156,6 +152,7 @@ func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 		"psNetworkAdaptersHeader":   psNetworkAdaptersHeader,
 		"psStorageHeader":           psStorageHeader,
 		"wpHeader":                  wpHeader,
+		"dscPsHeader":               dscPsHeader,
 	}
 	for name, h := range headers {
 		if !strings.HasPrefix(h, psEnvelopePrelude) {
@@ -200,6 +197,7 @@ func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 		"function Classify-NetworkAdapters",
 		"function Classify-Storage",
 		"function Classify-WG",
+		"function Classify-DscResource",
 	} {
 		found := false
 		for _, h := range headers {
