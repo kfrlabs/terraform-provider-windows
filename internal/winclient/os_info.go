@@ -41,21 +41,10 @@ func NewOSInfoClient(c *Client) *OSInfoClient {
 // Classify-OSInfo maps CIM / registry error substrings to OSInfoErrorKind
 // values. Detection is best-effort and substring-based because Windows
 // error messages are localised.
-const psOSInfoHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psOSInfoHeader = psEnvelopePrelude + psOSInfoRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Classify-OSInfo([string]$Msg) {
+// psOSInfoRemainder Classifier and read body stay here; envelope emitters come from the prelude.
+const psOSInfoRemainder = `function Classify-OSInfo([string]$Msg) {
   if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or (($Msg -match '\b5\b') -and ($Msg -match 'denied'))) { return 'access_denied' }
   if ($Msg -match 'winmgmt' -or $Msg -match '\bWMI\b' -or $Msg -match '\bCIM\b' -or $Msg -match 'CimException' -or $Msg -match 'Get-CimInstance' -or $Msg -match '\brepository\b' -or $Msg -match 'provider load failure') { return 'cim_unavailable' }
   return 'unknown'

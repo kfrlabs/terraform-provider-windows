@@ -53,21 +53,10 @@ func NewDomainMembershipClient(c *Client) *DomainMembershipClient {
 // exists, 5 access denied) because Windows error messages are localised;
 // message-substring fallbacks cover the same failures when only text is
 // available.
-const psDomainMembershipHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psDomainMembershipHeader = psEnvelopePrelude + psDomainMembershipRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Classify-DomainMembership([string]$Msg) {
+// psDomainMembershipRemainder Classifier and join/unjoin helpers stay here; envelope emitters come from the prelude.
+const psDomainMembershipRemainder = `function Classify-DomainMembership([string]$Msg) {
   if ($Msg -match '\b1326\b' -or $Msg -match 'unknown user name or bad password' -or $Msg -match 'Logon failure') { return 'bad_credentials' }
   if ($Msg -match '\b1355\b' -or $Msg -match 'either does not exist or could not be contacted' -or $Msg -match 'cannot find the domain') { return 'domain_not_found' }
   if (($Msg -match '\b53\b') -and ($Msg -match 'network path was not found')) { return 'domain_not_found' }

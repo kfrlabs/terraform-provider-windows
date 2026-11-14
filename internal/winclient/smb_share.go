@@ -43,21 +43,10 @@ var runSmbSharePowerShell = func(ctx context.Context, c *Client, script string) 
 }
 
 // psSmbShareHeader holds every PowerShell helper shared by the SMB share scripts.
-const psSmbShareHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psSmbShareHeader = psEnvelopePrelude + psSmbShareRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-
+// psSmbShareRemainder Classifier and share bodies stay here; envelope emitters come from the prelude.
+const psSmbShareRemainder = `
 # Classify-SmbShare maps a caught error record to a SmbShareErrorKind. The
 # Smb* cmdlets are CIM-based, so classification prefers the .NET exception
 # TYPE, the CategoryInfo category and the FullyQualifiedErrorId over

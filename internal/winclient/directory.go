@@ -33,21 +33,10 @@ func NewDirectoryClient(c *Client) *DirectoryClientImpl {
 }
 
 // psDirectoryHeader holds every PowerShell helper shared by the directory scripts.
-const psDirectoryHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psDirectoryHeader = psEnvelopePrelude + psDirectoryRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-
+// psDirectoryRemainder Classifier, attribute helpers and CRUD bodies stay here; envelope emitters come from the prelude.
+const psDirectoryRemainder = `
 # Classify-DirectoryError maps a .NET exception to a DirectoryErrorKind. Win32
 # codes are read from HResult rather than from message text so the mapping is
 # immune to the locale of the target host.
