@@ -176,6 +176,17 @@ func TestAccWindowsNTP_Basic(t *testing.T) {
 				Config:   cfg,
 				PlanOnly: true,
 			},
+			{
+				// Import round-trip: the live W32Time time source is
+				// adopted under any non-empty ID. restore_on_destroy is
+				// config-only (import resets it to false), so it cannot
+				// verify.
+				ResourceName:            "windows_ntp.acc",
+				ImportState:             true,
+				ImportStateId:           "current",
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"restore_on_destroy"},
+			},
 		},
 	})
 }

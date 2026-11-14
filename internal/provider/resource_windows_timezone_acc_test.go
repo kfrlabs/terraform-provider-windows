@@ -157,6 +157,16 @@ func TestAccWindowsTimezone_Basic(t *testing.T) {
 				Config:   cfg,
 				PlanOnly: true,
 			},
+			{
+				// Import round-trip: the live time zone is adopted under
+				// any non-empty ID. restore_on_destroy is config-only
+				// (import resets it to false), so it cannot verify.
+				ResourceName:            "windows_timezone.acc",
+				ImportState:             true,
+				ImportStateId:           "current",
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"restore_on_destroy"},
+			},
 		},
 	})
 }
