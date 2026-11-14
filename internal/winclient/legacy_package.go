@@ -73,6 +73,13 @@ type LegacyPackageInput struct {
 	// InstallArgs are extra arguments passed to the installer.
 	InstallArgs []string `json:"install_args,omitempty"`
 
+	// InstallArgsWO are extra installer arguments supplied via the
+	// WriteOnly install_args_wo attribute. They are concatenated after
+	// InstallArgs at exec time and never persisted in state. They travel
+	// to the host inside the stdin JSON payload only and are never
+	// interpolated into the script body.
+	InstallArgsWO []string `json:"install_args_wo,omitempty"`
+
 	// UninstallArgs are extra arguments passed at uninstall time.
 	UninstallArgs []string `json:"uninstall_args,omitempty"`
 
@@ -90,6 +97,13 @@ type LegacyPackageInput struct {
 
 	// LogPath is the path to the MSI /l*v log or EXE stdout/stderr capture.
 	LogPath string `json:"log_path,omitempty"`
+
+	// KeepLog preserves the installer log file after a successful run.
+	// When false (default), the log is deleted after success and kept
+	// after failure for troubleshooting. MSI verbose logs record public
+	// property values, so keeping them persists any secrets passed via
+	// install arguments in clear text on the host.
+	KeepLog bool `json:"keep_log,omitempty"`
 
 	// Environment holds extra env vars injected into the installer process.
 	// Sensitive: may carry license keys or proxy credentials.
@@ -151,13 +165,16 @@ type LegacyPackageClient interface {
 	Read(ctx context.Context, id string) (*LegacyPackageState, error)
 
 	// Update applies in-place mutations (valid_exit_codes, timeout_seconds,
-	// log_path, environment). All other changes are ForceNew at the
+	// log_path, environment, keep_log). All other changes are ForceNew at the
 	// resource layer and never reach this method.
 	Update(ctx context.Context, id string, in LegacyPackageInput) (*LegacyPackageState, error)
 
 	// Delete uninstalls the package. MSI uses msiexec /x; EXE prefers
 	// UninstallCommand and falls back to the parsed registry UninstallString.
-	Delete(ctx context.Context, id string) error
+	// The input carries the in-place uninstall settings (uninstall_args,
+	// valid_exit_codes, timeout_seconds, keep_log) from state so the
+	// uninstall log lifecycle matches the install one.
+	Delete(ctx context.Context, id string, in LegacyPackageInput) error
 }
 
 // Compile-time assertion: LegacyPackageClientImpl satisfies LegacyPackageClient.
@@ -222,6 +239,10 @@ type deletePayload struct {
 	UninstallArgs    []string `json:"uninstall_args,omitempty"`
 	ValidExitCodes   []int64  `json:"valid_exit_codes,omitempty"`
 	TimeoutSeconds   int64    `json:"timeout_seconds,omitempty"`
+	// KeepLog mirrors LegacyPackageInput.KeepLog: when false the MSI
+	// uninstall log is deleted after a successful uninstall and kept
+	// after failure.
+	KeepLog bool `json:"keep_log,omitempty"`
 }
 
 // runEnvelope executes script over SSH with stdin piped from payload (JSON
@@ -306,18 +327,26 @@ func (l *LegacyPackageClientImpl) Read(ctx context.Context, id string) (*LegacyP
 }
 
 // Update is a no-op on the Windows host: only state-level fields
-// (valid_exit_codes, timeout_seconds, log_path, environment) are updatable
-// in place and they affect future invocations only. The current observed
-// state is refreshed via Read.
+// (valid_exit_codes, timeout_seconds, log_path, environment, keep_log) are
+// updatable in place and they affect future invocations only. The current
+// observed state is refreshed via Read.
 func (l *LegacyPackageClientImpl) Update(ctx context.Context, id string, _ LegacyPackageInput) (*LegacyPackageState, error) {
 	return l.Read(ctx, id)
 }
 
 // Delete uninstalls the package. MSI uses msiexec /x; EXE prefers
 // UninstallCommand and falls back to the parsed registry UninstallString
-// (QuietUninstallString preferred).
-func (l *LegacyPackageClientImpl) Delete(ctx context.Context, id string) error {
-	_, err := l.runEnvelope(ctx, "Delete", deletePayload{ID: id}, lpDeleteBody)
+// (QuietUninstallString preferred). The input carries the uninstall settings
+// so the MSI uninstall log honors keep_log like the install log.
+func (l *LegacyPackageClientImpl) Delete(ctx context.Context, id string, in LegacyPackageInput) error {
+	_, err := l.runEnvelope(ctx, "Delete", deletePayload{
+		ID:               id,
+		UninstallCommand: in.UninstallCommand,
+		UninstallArgs:    in.UninstallArgs,
+		ValidExitCodes:   in.ValidExitCodes,
+		TimeoutSeconds:   in.TimeoutSeconds,
+		KeepLog:          in.KeepLog,
+	}, lpDeleteBody)
 	return err
 }
 
@@ -567,9 +596,11 @@ if ([string]::IsNullOrEmpty($logPath)) {
   $logPath = Join-Path $logDir ($safeName + '_install_' + $stamp + '.log')
 }
 
-# 5) Build argument list
+# 5) Build argument list (install_args_wo travels in the stdin payload
+# alongside install_args so secrets never appear in the script body or logs)
 $extraInstall = @()
 if ($cfg.install_args) { $extraInstall = @([string[]]$cfg.install_args) }
+if ($cfg.install_args_wo) { $extraInstall += @([string[]]$cfg.install_args_wo) }
 
 $argList = @()
 if ($installerType -eq 'msi') {
@@ -654,12 +685,8 @@ if ($valid -notcontains $exitCode) {
   return
 }
 
-# 7) Cleanup downloaded source on success
-if ($downloaded -and (Test-Path -LiteralPath $installerPath)) {
-  Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
-}
-
-# 8) Read state from Uninstall hives
+# 7) Read state from Uninstall hives. Every failure path below returns
+# before the success cleanup in step 8, keeping the log for troubleshooting.
 $searchId = ''
 $searchPattern = ''
 if ($installerType -eq 'msi') { $searchId = $productId } else { $searchPattern = [string]$cfg.display_name_pattern }
@@ -669,6 +696,12 @@ if ($entries.Count -eq 0) {
   # Installer reported success but the entry is not detectable. Surface a
   # minimal state so Terraform records the resource and a subsequent Read
   # can flag drift if needed.
+  if ($downloaded -and (Test-Path -LiteralPath $installerPath)) {
+    Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+  }
+  if (-not $cfg.keep_log) {
+    Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
+  }
   $idOut = if ($installerType -eq 'msi') { $productId } else { [string]$cfg.name }
   Emit-OK ([ordered]@{
     id                = $idOut
@@ -684,6 +717,17 @@ if ($installerType -eq 'exe' -and $entries.Count -gt 1) {
   $names = ($entries | ForEach-Object { [string]$_.DisplayName }) -join '; '
   Emit-Err 'multiple_matches' ("display_name_pattern matches multiple installed entries: " + $names) @{ matches = $names }
   return
+}
+
+# 8) Cleanup on success. Unless keep_log is set, the installer log is
+# deleted too: a verbose MSI log records public property values, so it
+# would otherwise persist any secrets passed via install arguments in
+# clear text on the host.
+if ($downloaded -and (Test-Path -LiteralPath $installerPath)) {
+  Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+}
+if (-not $cfg.keep_log) {
+  Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
 }
 
 $e = $entries[0]
@@ -802,6 +846,12 @@ if ($isMsi) {
     if ($exitCode -eq 1618) { $kind = 'msi_in_progress' }
     Emit-Err $kind ("msiexec exited with code " + $exitCode + " (valid: " + ($valid -join ',') + ")") @{ exit_code = [string]$exitCode; log_path = $logPath }
     return
+  }
+  # Uninstall succeeded: unless keep_log is set, delete the verbose MSI log
+  # (it records public property values, i.e. any secrets passed as install
+  # or uninstall arguments). Failure paths return above and keep the log.
+  if (-not $cfg.keep_log) {
+    Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
   }
   Emit-OK $null
   return

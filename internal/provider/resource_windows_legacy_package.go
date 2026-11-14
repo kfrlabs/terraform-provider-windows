@@ -26,13 +26,17 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -167,27 +171,30 @@ func legacyPackageListRequiresReplaceOnKnownPriorState() planmodifier.List {
 // ---------------------------------------------------------------------------
 
 type windowsLegacyPackageModel struct {
-	ID                 types.String   `tfsdk:"id"`
-	Name               types.String   `tfsdk:"name"`
-	InstallerType      types.String   `tfsdk:"installer_type"`
-	SourcePath         types.String   `tfsdk:"source_path"`
-	SourceURL          types.String   `tfsdk:"source_url"`
-	Checksum           types.String   `tfsdk:"checksum"`
-	InsecureSkipVerify types.Bool     `tfsdk:"insecure_skip_verify"`
-	ProductID          types.String   `tfsdk:"product_id"`
-	DisplayNamePattern types.String   `tfsdk:"display_name_pattern"`
-	InstallArgs        types.List     `tfsdk:"install_args"`
-	UninstallArgs      types.List     `tfsdk:"uninstall_args"`
-	UninstallCommand   types.String   `tfsdk:"uninstall_command"`
-	ValidExitCodes     types.List     `tfsdk:"valid_exit_codes"`
-	WorkingDirectory   types.String   `tfsdk:"working_directory"`
-	TimeoutSeconds     types.Int64    `tfsdk:"timeout_seconds"`
-	LogPath            types.String   `tfsdk:"log_path"`
-	Environment        types.Map      `tfsdk:"environment"`
-	InstalledVersion   types.String   `tfsdk:"installed_version"`
-	Installed          types.Bool     `tfsdk:"installed"`
-	InstallDate        types.String   `tfsdk:"install_date"`
-	Timeouts           timeouts.Value `tfsdk:"timeouts"`
+	ID                   types.String   `tfsdk:"id"`
+	Name                 types.String   `tfsdk:"name"`
+	InstallerType        types.String   `tfsdk:"installer_type"`
+	SourcePath           types.String   `tfsdk:"source_path"`
+	SourceURL            types.String   `tfsdk:"source_url"`
+	Checksum             types.String   `tfsdk:"checksum"`
+	InsecureSkipVerify   types.Bool     `tfsdk:"insecure_skip_verify"`
+	ProductID            types.String   `tfsdk:"product_id"`
+	DisplayNamePattern   types.String   `tfsdk:"display_name_pattern"`
+	InstallArgs          types.List     `tfsdk:"install_args"`
+	InstallArgsWO        types.List     `tfsdk:"install_args_wo"`
+	InstallArgsWOVersion types.Int64    `tfsdk:"install_args_wo_version"`
+	UninstallArgs        types.List     `tfsdk:"uninstall_args"`
+	UninstallCommand     types.String   `tfsdk:"uninstall_command"`
+	ValidExitCodes       types.List     `tfsdk:"valid_exit_codes"`
+	WorkingDirectory     types.String   `tfsdk:"working_directory"`
+	TimeoutSeconds       types.Int64    `tfsdk:"timeout_seconds"`
+	LogPath              types.String   `tfsdk:"log_path"`
+	KeepLog              types.Bool     `tfsdk:"keep_log"`
+	Environment          types.Map      `tfsdk:"environment"`
+	InstalledVersion     types.String   `tfsdk:"installed_version"`
+	Installed            types.Bool     `tfsdk:"installed"`
+	InstallDate          types.String   `tfsdk:"install_date"`
+	Timeouts             timeouts.Value `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -335,16 +342,42 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 			"install_args": schema.ListAttribute{
 				ElementType:         types.StringType,
 				Optional:            true,
-				Description:         "Extra args to the installer. MSI defaults injected by provider (/i,/qn,/norestart,/l*v <log>); EXE has no defaults.",
-				MarkdownDescription: "Extra arguments to the installer. MSI defaults injected by provider (`/i`, `/qn`, `/norestart`, `/l*v <log>`); EXE has no defaults. Immutable (ForceNew).",
+				Description:         "Extra args to the installer. MSI defaults injected by provider (/i,/qn,/norestart,/l*v <log>); EXE has no defaults. Values appear in plan output and state: never put secrets here, use install_args_wo. A verbose MSI log records public property values.",
+				MarkdownDescription: "Extra arguments to the installer. MSI defaults injected by provider (`/i`, `/qn`, `/norestart`, `/l*v <log>`); EXE has no defaults. Immutable (ForceNew).\n\n**Warning:** values appear in plan output and state, and a verbose MSI log records public property values in clear text on the host. Never put secrets here — use `install_args_wo`.",
 				PlanModifiers:       []planmodifier.List{legacyPackageListRequiresReplaceOnKnownPriorState()},
+			},
+
+			"install_args_wo": schema.ListAttribute{
+				ElementType:         types.StringType,
+				Optional:            true,
+				Sensitive:           true,
+				WriteOnly:           true,
+				Description:         "Write-only extra installer args for secrets (passwords, license keys). Concatenated after install_args at exec time; never persisted in state. Requires install_args_wo_version.",
+				MarkdownDescription: "Write-only extra installer arguments for secrets (passwords, license keys). Concatenated after `install_args` at exec time; never persisted in state. Immutable (ForceNew). Requires `install_args_wo_version`: bump the version and re-apply with the new values to rotate. Changing only the values without bumping the version is a no-op.",
+				PlanModifiers:       []planmodifier.List{listplanmodifier.RequiresReplace()},
+				Validators: []validator.List{
+					listvalidator.AlsoRequires(path.MatchRoot("install_args_wo_version")),
+				},
+			},
+
+			"install_args_wo_version": schema.Int64Attribute{
+				Optional:            true,
+				Description:         "Version counter for install_args_wo rotation. Bump to replace the package with new secret args.",
+				MarkdownDescription: "Version counter for `install_args_wo` rotation. Bump the version and re-apply with the new values to replace the package. Conventionally starts at `1`. Immutable (ForceNew).",
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+				},
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+					int64validator.AlsoRequires(path.MatchRoot("install_args_wo")),
+				},
 			},
 
 			"uninstall_args": schema.ListAttribute{
 				ElementType:         types.StringType,
 				Optional:            true,
-				Description:         "Extra args for uninstallation. MSI default ['/x',<product_id>,'/qn','/norestart']; appended to UninstallString for EXE.",
-				MarkdownDescription: "Extra arguments for uninstallation. MSI default `['/x', <product_id>, '/qn', '/norestart']`; appended to `UninstallString` for EXE. Immutable (ForceNew).",
+				Description:         "Extra args for uninstallation. MSI default ['/x',<product_id>,'/qn','/norestart']; appended to UninstallString for EXE. Values appear in plan output and state: never put secrets here. The MSI uninstall log is deleted after a successful uninstall unless keep_log is true.",
+				MarkdownDescription: "Extra arguments for uninstallation. MSI default `['/x', <product_id>, '/qn', '/norestart']`; appended to `UninstallString` for EXE. Immutable (ForceNew).\n\n**Warning:** values appear in plan output and state. Never put secrets here: unlike install arguments there is no WriteOnly companion (WriteOnly values are unavailable at destroy time), and a verbose MSI log records public property values.",
 				PlanModifiers:       []planmodifier.List{legacyPackageListRequiresReplaceOnKnownPriorState()},
 			},
 
@@ -385,11 +418,19 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 			"log_path": schema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
-				Description:         "Path to MSI /l*v log or EXE stdout/stderr capture. Auto-generated under $env:TEMP\\windows_legacy_package\\ when omitted. Updatable in place.",
-				MarkdownDescription: "Path to MSI `/l*v` log or EXE stdout/stderr capture. Auto-generated under `$env:TEMP\\windows_legacy_package\\` when omitted. **Updatable in place**.",
+				Description:         "Path to MSI /l*v log or EXE stdout/stderr capture. Auto-generated under $env:TEMP\\windows_legacy_package\\ when omitted. Updatable in place. A verbose MSI log records public property values: it is deleted after a successful run unless keep_log is true.",
+				MarkdownDescription: "Path to MSI `/l*v` log or EXE stdout/stderr capture. Auto-generated under `$env:TEMP\\windows_legacy_package\\` when omitted. **Updatable in place**.\n\n**Warning:** a verbose MSI log records public property values in clear text. The log file is deleted after a successful run unless `keep_log` is `true`, and kept after failure for troubleshooting.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
+			},
+
+			"keep_log": schema.BoolAttribute{
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				Description:         "Preserve the installer log file after a successful run. Default false: the log is deleted after success and kept after failure. Set to true to preserve the previous behaviour (log always kept).",
+				MarkdownDescription: "Preserve the installer log file after a successful run. Defaults to `false`: the log is deleted after success and kept after failure for troubleshooting. Set to `true` to keep the previous behaviour (log always kept). **Updatable in place** (only affects future runs).",
 			},
 
 			"environment": schema.MapAttribute{
@@ -600,6 +641,24 @@ func (r *windowsLegacyPackageResource) Create(ctx context.Context, req resource.
 		return
 	}
 
+	// WriteOnly values are null in the plan handed to ApplyResourceChange,
+	// so they must come from req.Config first (windows_certificate
+	// pfx_base64_wo precedent); the plan value is still consulted as a
+	// fallback for callers that bypass Config (unit tests driving Plan only).
+	var cfgModel windowsLegacyPackageModel
+	if !req.Config.Raw.IsNull() {
+		resp.Diagnostics.Append(req.Config.Get(ctx, &cfgModel)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	woArgs, wd := effectiveLegacyPackageInstallArgsWO(ctx, plan, cfgModel)
+	resp.Diagnostics.Append(wd...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	input.InstallArgsWO = woArgs
+
 	tflog.Debug(ctx, "windows_legacy_package Create", map[string]interface{}{
 		"installer_type":  input.InstallerType,
 		"source_path":     input.SourcePath,
@@ -729,8 +788,8 @@ func (r *windowsLegacyPackageResource) Update(ctx context.Context, req resource.
 		// Partial failure (ADR-0012): persist the observed registry state
 		// so the resource keeps its partial state rather than staying at
 		// prior state. A nil state stays error-only. Non-observed mutable
-		// fields (valid_exit_codes, timeout_seconds, environment, log_path)
-		// are restored from prior state: the in-place change may not have
+		// fields (valid_exit_codes, timeout_seconds, environment, log_path,
+		// keep_log) are restored from prior state: the in-place change may not have
 		// applied, so the plan values must not overwrite the last-applied
 		// configuration.
 		if remote != nil {
@@ -745,6 +804,7 @@ func (r *windowsLegacyPackageResource) Update(ctx context.Context, req resource.
 			plan.TimeoutSeconds = prior.TimeoutSeconds
 			plan.Environment = prior.Environment
 			plan.LogPath = prior.LogPath
+			plan.KeepLog = prior.KeepLog
 			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		}
 		addLPDiag(&resp.Diagnostics, err, "Update")
@@ -803,7 +863,12 @@ func (r *windowsLegacyPackageResource) Delete(ctx context.Context, req resource.
 		"id":             id,
 		"installer_type": state.InstallerType.ValueString(),
 	})
-	if err := r.lp.Delete(ctx, id); err != nil {
+	delInput, d := r.modelToInput(ctx, state)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := r.lp.Delete(ctx, id, delInput); err != nil {
 		addLPDiag(&resp.Diagnostics, err, "Delete")
 		return
 	}
@@ -830,10 +895,34 @@ func (r *windowsLegacyPackageResource) ImportState(ctx context.Context, req reso
 // Helpers
 // ---------------------------------------------------------------------------
 
+// effectiveLegacyPackageInstallArgsWO resolves the WriteOnly install_args_wo
+// values for Create from the already-decoded plan and config models.
+// WriteOnly values are null in the plan handed to ApplyResourceChange, so
+// the config model wins (windows_certificate effectiveCertificatePFX
+// precedent); the plan value is a fallback for callers that bypass Config
+// (unit tests driving Plan only). The returned slice is nil when unset.
+func effectiveLegacyPackageInstallArgsWO(ctx context.Context, plan, config windowsLegacyPackageModel) ([]string, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	for _, m := range []windowsLegacyPackageModel{config, plan} {
+		if m.InstallArgsWO.IsNull() || m.InstallArgsWO.IsUnknown() {
+			continue
+		}
+		var v []string
+		diags.Append(m.InstallArgsWO.ElementsAs(ctx, &v, false)...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		return v, diags
+	}
+	return nil, diags
+}
+
 // modelToInput converts the Terraform plan/state model into the LegacyPackageInput
 // consumed by the winclient. List/map values are unmarshalled element-by-element
 // to preserve typed semantics; null and unknown collections are flattened to
-// empty slices/maps so the JSON payload is stable.
+// empty slices/maps so the JSON payload is stable. WriteOnly install_args_wo
+// is NOT read here: it is null in the plan handed to ApplyResourceChange and
+// is overlaid from req.Config by effectiveLegacyPackageInstallArgsWO.
 func (r *windowsLegacyPackageResource) modelToInput(ctx context.Context, m windowsLegacyPackageModel) (winclient.LegacyPackageInput, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	in := winclient.LegacyPackageInput{
@@ -848,6 +937,7 @@ func (r *windowsLegacyPackageResource) modelToInput(ctx context.Context, m windo
 		UninstallCommand:   m.UninstallCommand.ValueString(),
 		WorkingDirectory:   m.WorkingDirectory.ValueString(),
 		LogPath:            m.LogPath.ValueString(),
+		KeepLog:            m.KeepLog.ValueBool(),
 		TimeoutSeconds:     m.TimeoutSeconds.ValueInt64(),
 	}
 

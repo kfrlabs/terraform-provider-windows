@@ -66,6 +66,20 @@ resource "windows_legacy_package" "vlc" {
   display_name_pattern = "VLC media player*"
 }
 
+# MSI that needs secrets on the command line (service account password,
+# license key). install_args_wo is WriteOnly: values never persist in state,
+# and the verbose MSI log is deleted after a successful run (keep_log=false).
+resource "windows_legacy_package" "agent" {
+  name                        = "agent"
+  installer_type              = "msi"
+  source_path                 = "C:\\Packages\\agent-3.1.0.msi"
+  checksum                    = "sha256:1a2b3c4d5e6f7081928374655463728190a1b2c3d4e5f60718293a4b5c6d7e8f"
+  install_args                = ["/qn", "/norestart"]
+  install_args_wo             = ["SERVICEPASSWORD=${var.agent_service_password}", "LICENSEKEY=${var.agent_license_key}"]
+  install_args_wo_version     = 1
+  keep_log                    = false
+}
+
 # EXE with explicit uninstall command, custom env (sensitive) and longer timeout.
 resource "windows_legacy_package" "vendor_tool" {
   name              = "vendor-tool"
@@ -106,6 +120,8 @@ variable "vendor_license_key" {
 
 ### Optional
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
 - `checksum` (String) Expected installer checksum, format `<algo>:<hex>` where `<algo>` is one of `sha256`, `sha512`, `sha1`, `md5`. Verified before exec. Immutable (ForceNew).
 
 Required with an `http://` `source_url`, strongly recommended otherwise (see `source_url` threat model). Prefer `sha256` or `sha512`: `md5` and `sha1` are cryptographically broken for integrity purposes and trigger a deprecation warning. When `WINDOWS_REQUIRE_CHECKSUM` is set to `1`/`true`/`yes`, `md5` and `sha1` are rejected as errors.
@@ -113,7 +129,14 @@ Required with an `http://` `source_url`, strongly recommended otherwise (see `so
 - `environment` (Map of String, Sensitive) Extra environment variables injected into the installer process. **Updatable in place**; marked **sensitive** (may carry license keys / proxy credentials).
 - `insecure_skip_verify` (Boolean) Disable TLS certificate validation when fetching `source_url`. **Not recommended** — use only for internal CAs. Immutable (ForceNew).
 - `install_args` (List of String) Extra arguments to the installer. MSI defaults injected by provider (`/i`, `/qn`, `/norestart`, `/l*v <log>`); EXE has no defaults. Immutable (ForceNew).
+
+**Warning:** values appear in plan output and state, and a verbose MSI log records public property values in clear text on the host. Never put secrets here — use `install_args_wo`.
+- `install_args_wo` (List of String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only extra installer arguments for secrets (passwords, license keys). Concatenated after `install_args` at exec time; never persisted in state. Immutable (ForceNew). Requires `install_args_wo_version`: bump the version and re-apply with the new values to rotate. Changing only the values without bumping the version is a no-op.
+- `install_args_wo_version` (Number) Version counter for `install_args_wo` rotation. Bump the version and re-apply with the new values to replace the package. Conventionally starts at `1`. Immutable (ForceNew).
+- `keep_log` (Boolean) Preserve the installer log file after a successful run. Defaults to `false`: the log is deleted after success and kept after failure for troubleshooting. Set to `true` to keep the previous behaviour (log always kept). **Updatable in place** (only affects future runs).
 - `log_path` (String) Path to MSI `/l*v` log or EXE stdout/stderr capture. Auto-generated under `$env:TEMP\windows_legacy_package\` when omitted. **Updatable in place**.
+
+**Warning:** a verbose MSI log records public property values in clear text. The log file is deleted after a successful run unless `keep_log` is `true`, and kept after failure for troubleshooting.
 - `product_id` (String) MSI **ProductCode** GUID (`{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`). Auto-extracted from the MSI at Create when omitted. Immutable (ForceNew).
 - `source_path` (String) Local path on the target Windows host to the `.msi`/`.exe` file. Mutually exclusive with `source_url`. Immutable (ForceNew).
 - `source_url` (String) HTTP/HTTPS URL fetched on the target host into `$env:TEMP` before exec. Mutually exclusive with `source_path`. Immutable (ForceNew).
@@ -122,6 +145,8 @@ Required with an `http://` `source_url`, strongly recommended otherwise (see `so
 - `timeout_seconds` (Number) Hard timeout (seconds) for install/uninstall. Default `1800`. **Updatable in place**. Range: 1–86400.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `uninstall_args` (List of String) Extra arguments for uninstallation. MSI default `['/x', <product_id>, '/qn', '/norestart']`; appended to `UninstallString` for EXE. Immutable (ForceNew).
+
+**Warning:** values appear in plan output and state. Never put secrets here: unlike install arguments there is no WriteOnly companion (WriteOnly values are unavailable at destroy time), and a verbose MSI log records public property values.
 - `uninstall_command` (String) Explicit EXE uninstall command when registry `UninstallString` is unreliable. Immutable (ForceNew).
 - `valid_exit_codes` (List of Number) Exit codes treated as success. Default `[0, 3010]`. **Updatable in place** (only affects future runs).
 - `working_directory` (String) Working directory for the installer process. Defaults to the parent directory of the resolved installer. Immutable (ForceNew).

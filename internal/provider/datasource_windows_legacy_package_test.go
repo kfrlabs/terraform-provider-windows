@@ -45,7 +45,7 @@ func (f *fakeLegacyPackageClientDS) Read(ctx context.Context, _ string) (*wincli
 func (f *fakeLegacyPackageClientDS) Update(_ context.Context, _ string, _ winclient.LegacyPackageInput) (*winclient.LegacyPackageState, error) {
 	panic("Update not used in data source")
 }
-func (f *fakeLegacyPackageClientDS) Delete(_ context.Context, _ string) error {
+func (f *fakeLegacyPackageClientDS) Delete(_ context.Context, _ string, _ winclient.LegacyPackageInput) error {
 	panic("Delete not used in data source")
 }
 
@@ -183,8 +183,9 @@ func TestLegacyPackageDSSchema_NoInstallOnlyAttributes(t *testing.T) {
 	for _, k := range []string{
 		"name", "installer_type", "source_path", "source_url", "checksum",
 		"insecure_skip_verify", "display_name_pattern", "install_args",
+		"install_args_wo", "install_args_wo_version",
 		"uninstall_args", "uninstall_command", "valid_exit_codes",
-		"working_directory", "timeout_seconds", "log_path", "environment",
+		"working_directory", "timeout_seconds", "log_path", "keep_log", "environment",
 	} {
 		if _, ok := resp.Schema.Attributes[k]; ok {
 			t.Errorf("data source must NOT expose install-only attribute %q", k)

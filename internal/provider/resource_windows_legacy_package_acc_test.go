@@ -14,7 +14,7 @@
 //
 // Suite covers:
 //   - Create + Read (MSI happy path, ProductCode discovered post-install)
-//   - Update in place (timeout_seconds, log_path, environment, valid_exit_codes)
+//   - Update in place (timeout_seconds, log_path, keep_log, environment, valid_exit_codes)
 //   - Update ForceNew (source_path / source_url / installer_type changes)
 //   - Import (ProductCode for MSI, DisplayName for EXE)
 //   - Drift detection (manual uninstall on the host → next plan re-creates)
@@ -75,7 +75,7 @@ func TestAccWindowsLegacyPackage_Basic(t *testing.T) {
 }
 
 // TestAccWindowsLegacyPackage_UpdateInPlace — only mutable attributes change
-// (timeout_seconds, log_path, valid_exit_codes, environment); ID must persist.
+// (timeout_seconds, log_path, keep_log, valid_exit_codes, environment); ID must persist.
 func TestAccWindowsLegacyPackage_UpdateInPlace(t *testing.T) {
 	testAccLegacyPackagePreCheck(t)
 	t.Skip("SKELETON: see TestAccWindowsLegacyPackage_Basic")
@@ -112,7 +112,7 @@ func TestAccWindowsLegacyPackage_Import(t *testing.T) {
 	//       ResourceName:            "windows_legacy_package.test",
 	//       ImportState:             true,
 	//       ImportStateVerify:       true,
-	//       ImportStateVerifyIgnore: []string{"source_url", "checksum", "install_args"},
+	//       ImportStateVerifyIgnore: []string{"source_url", "checksum", "install_args", "install_args_wo", "install_args_wo_version", "keep_log"},
 	//     },
 	//   },
 	// })

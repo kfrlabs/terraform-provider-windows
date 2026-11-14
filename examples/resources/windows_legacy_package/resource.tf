@@ -42,6 +42,20 @@ resource "windows_legacy_package" "vlc" {
   display_name_pattern = "VLC media player*"
 }
 
+# MSI that needs secrets on the command line (service account password,
+# license key). install_args_wo is WriteOnly: values never persist in state,
+# and the verbose MSI log is deleted after a successful run (keep_log=false).
+resource "windows_legacy_package" "agent" {
+  name                        = "agent"
+  installer_type              = "msi"
+  source_path                 = "C:\\Packages\\agent-3.1.0.msi"
+  checksum                    = "sha256:1a2b3c4d5e6f7081928374655463728190a1b2c3d4e5f60718293a4b5c6d7e8f"
+  install_args                = ["/qn", "/norestart"]
+  install_args_wo             = ["SERVICEPASSWORD=${var.agent_service_password}", "LICENSEKEY=${var.agent_license_key}"]
+  install_args_wo_version     = 1
+  keep_log                    = false
+}
+
 # EXE with explicit uninstall command, custom env (sensitive) and longer timeout.
 resource "windows_legacy_package" "vendor_tool" {
   name              = "vendor-tool"
