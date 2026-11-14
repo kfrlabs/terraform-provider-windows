@@ -5,6 +5,17 @@
 # OS/arch, zips each binary, and attaches the checksums (+ GPG signature) to
 # the GitHub release. The Terraform Registry picks the release up from there.
 #
+# The `gate` job must pass before anything is published: the tagged commit
+# has to be on main, and build/vet, unit tests and golangci-lint must be
+# green on it. The latest testacc-windows result for the commit is reported
+# as a warning only (it depends on a live Windows host, see #352).
+#
+# Each release also ships an SPDX SBOM per archive (GoReleaser + syft) and a
+# GitHub build provenance attestation (Sigstore) covering every file listed
+# in SHA256SUMS. Verify with:
+#   gh attestation verify <file> --repo kfrlabs/terraform-provider-windows
+# GPG signing of the checksums is kept: the Terraform Registry requires it.
+#
 # Required repository secrets (Settings > Secrets and variables > Actions):
 #   - GPG_PRIVATE_KEY : ASCII-armoured private key used to sign the checksums
 #   - GPG_PASSPHRASE  : its passphrase
@@ -20,17 +31,71 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  gate:
+    name: release gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: tagged commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag ${GITHUB_REF_NAME} points to ${GITHUB_SHA}, which is not on main"
+            exit 1
+          fi
+
+      - name: testacc-windows status (advisory)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+            --workflow testacc-windows.yml --limit 1 --json conclusion --jq '.[0].conclusion // "none"' || echo "unknown")
+          if [ "$conclusion" = "success" ]; then
+            echo "testacc-windows succeeded on ${GITHUB_SHA}"
+          else
+            echo "::warning::latest testacc-windows run on ${GITHUB_SHA}: ${conclusion}"
+          fi
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -short
+        run: go test -short -race -timeout 300s ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.15.0
+
   goreleaser:
     name: goreleaser release
+    needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -40,6 +105,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # syft generates the per-archive SBOMs declared in .goreleaser.yml.
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
       - name: import GPG key
         id: gpg
@@ -56,3 +124,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
+
+      - name: resolve checksums file
+        id: sums
+        run: echo "path=dist/terraform-provider-windows_${GITHUB_REF_NAME#v}_SHA256SUMS" >> "$GITHUB_OUTPUT"
+
+      # SHA256SUMS lists the archives, the registry manifest and the SBOMs,
+      # so a single attestation covers every published file.
+      - name: attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ steps.sums.outputs.path }}

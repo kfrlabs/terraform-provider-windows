@@ -97,6 +97,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Release supply chain (#352): `release.yml` now publishes only from a tag
+  on `main` whose build, vet, unit tests and golangci-lint pass (the latest
+  `testacc-windows` result is reported as a warning). Each release ships an
+  SPDX SBOM per archive and a GitHub build provenance attestation covering
+  every file in `SHA256SUMS`, verifiable with `gh attestation verify`. GPG
+  signing of the checksums is unchanged.
+
 - New `windows_dsc_resource` resource (#293): generic gateway managing one
   instance of any DSC resource on the target host through
   `Invoke-DscResource` (`Test`/`Set`/`Get`). Every operation first checks
