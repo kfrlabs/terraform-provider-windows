@@ -1084,29 +1084,30 @@ func TestBuildTriggerObject_UnknownIntervalResolvesToNull(t *testing.T) {
 
 // TestBuildTriggerObject_DailyDefaultsResolveKnown is a regression test for
 // the #324 acceptance failure ("planned set element does not correlate with
-// any element in actual"). A Daily trigger planned with only
-// type/start_boundary/enabled leaves every other nested attribute Unknown
-// (all Optional+Computed, first plan has no prior state). When Windows
-// reports its defaults for such a trigger (DaysInterval 1, everything else
-// empty), the mapped object must contain no Unknown values: unknowns inside
-// a planned Set element break correlation, while known values (and nulls
-// for unset fields) correlate cleanly.
+// any element in actual"). A minimal Daily trigger planned with only
+// type/start_boundary/enabled carries Null for every other nested attribute
+// on first create (no prior state exists for UseStateForUnknown to copy).
+// When Windows reports its defaults for such a trigger (DaysInterval 1,
+// everything else empty), the mapped object must contain no Unknown values
+// AND must equal the plan: the Windows default is suppressed back to Null
+// (plan-clean) so the planned and actual Set elements correlate. A drifted
+// non-default interval is still surfaced.
 func TestBuildTriggerObject_DailyDefaultsResolveKnown(t *testing.T) {
 	ctx := context.Background()
 
-	// First-plan shape: only type/start_boundary/enabled known.
+	// First-create plan shape: only type/start_boundary/enabled known.
 	prior := &windowsScheduledTaskTriggerModel{
 		Type:               types.StringValue("Daily"),
 		Enabled:            types.BoolValue(true),
 		StartBoundary:      types.StringValue("2026-01-01T00:00:00Z"),
-		EndBoundary:        types.StringUnknown(),
-		ExecutionTimeLimit: types.StringUnknown(),
-		Delay:              types.StringUnknown(),
-		DaysInterval:       types.Int64Unknown(),
-		DaysOfWeek:         types.SetUnknown(types.StringType),
-		WeeksInterval:      types.Int64Unknown(),
-		UserID:             types.StringUnknown(),
-		Subscription:       subscriptionXMLValue{StringValue: types.StringUnknown()},
+		EndBoundary:        types.StringNull(),
+		ExecutionTimeLimit: types.StringNull(),
+		Delay:              types.StringNull(),
+		DaysInterval:       types.Int64Null(),
+		DaysOfWeek:         types.SetNull(types.StringType),
+		WeeksInterval:      types.Int64Null(),
+		UserID:             types.StringNull(),
+		Subscription:       subscriptionXMLValue{StringValue: types.StringNull()},
 	}
 	// Windows report for a default Daily trigger: interval default 1, all
 	// optional strings empty.
@@ -1141,8 +1142,10 @@ func TestBuildTriggerObject_DailyDefaultsResolveKnown(t *testing.T) {
 			t.Errorf("%s must not be Unknown after apply (breaks Set correlation)", name)
 		}
 	}
-	if tm.DaysInterval.IsNull() || tm.DaysInterval.ValueInt64() != 1 {
-		t.Errorf("days_interval = %v, want 1 (Windows default)", tm.DaysInterval)
+	// Plan-clean suppression: the omitted interval stays Null so the actual
+	// Set element equals the planned one (Windows still stores 1).
+	if !tm.DaysInterval.IsNull() {
+		t.Errorf("days_interval = %v, want null (Windows default suppressed to match plan)", tm.DaysInterval)
 	}
 	for name, field := range map[string]struct {
 		null bool
@@ -1165,6 +1168,97 @@ func TestBuildTriggerObject_DailyDefaultsResolveKnown(t *testing.T) {
 	}
 	if !tm.WeeksInterval.IsNull() {
 		t.Errorf("weeks_interval = %v, want null (not applicable to Daily)", tm.WeeksInterval)
+	}
+
+	// A drifted non-default interval must still surface instead of being
+	// suppressed: prior Null, live 3 -> 3 (drift visible, not plan-clean).
+	v, d = buildTriggerObject(ctx, winclient.ScheduledTaskTriggerState{
+		Type: "Daily", Enabled: true,
+		StartBoundary: "2026-01-01T00:00:00Z", DaysInterval: 3,
+	}, prior)
+	if d.HasError() {
+		t.Fatalf("drift diags: %v", d)
+	}
+	obj, ok = v.(types.Object)
+	if !ok {
+		t.Fatalf("drift: expected types.Object, got %T", v)
+	}
+	var dm windowsScheduledTaskTriggerModel
+	if d := obj.As(ctx, &dm, basetypes.ObjectAsOptions{}); d.HasError() {
+		t.Fatalf("drift obj.As: %v", d)
+	}
+	if dm.DaysInterval.IsNull() || dm.DaysInterval.ValueInt64() != 3 {
+		t.Errorf("drift days_interval = %v, want 3 (non-default live value must surface)", dm.DaysInterval)
+	}
+
+	// Weekly mirror: an omitted weeks_interval stays Null when Windows
+	// reports its default 1.
+	weeklyPrior := &windowsScheduledTaskTriggerModel{
+		Type:               types.StringValue("Weekly"),
+		Enabled:            types.BoolValue(true),
+		StartBoundary:      types.StringValue("2026-01-05T08:00:00Z"),
+		EndBoundary:        types.StringNull(),
+		ExecutionTimeLimit: types.StringNull(),
+		Delay:              types.StringNull(),
+		DaysInterval:       types.Int64Null(),
+		DaysOfWeek:         types.SetNull(types.StringType),
+		WeeksInterval:      types.Int64Null(),
+		UserID:             types.StringNull(),
+		Subscription:       subscriptionXMLValue{StringValue: types.StringNull()},
+	}
+	v, d = buildTriggerObject(ctx, winclient.ScheduledTaskTriggerState{
+		Type: "Weekly", Enabled: true,
+		StartBoundary: "2026-01-05T08:00:00Z",
+		DaysOfWeek:    []string{"Monday"},
+		WeeksInterval: 1,
+	}, weeklyPrior)
+	if d.HasError() {
+		t.Fatalf("weekly diags: %v", d)
+	}
+	obj, ok = v.(types.Object)
+	if !ok {
+		t.Fatalf("weekly: expected types.Object, got %T", v)
+	}
+	var wm windowsScheduledTaskTriggerModel
+	if d := obj.As(ctx, &wm, basetypes.ObjectAsOptions{}); d.HasError() {
+		t.Fatalf("weekly obj.As: %v", d)
+	}
+	if !wm.WeeksInterval.IsNull() {
+		t.Errorf("weekly weeks_interval = %v, want null (Windows default suppressed to match plan)", wm.WeeksInterval)
+	}
+
+	// An Unknown prior (framework-proposed Unknown on create) still resolves
+	// to the live default: Unknown -> 1 is a legal plan resolution.
+	unknownPrior := &windowsScheduledTaskTriggerModel{
+		Type:               types.StringValue("Daily"),
+		Enabled:            types.BoolValue(true),
+		StartBoundary:      types.StringValue("2026-01-01T00:00:00Z"),
+		EndBoundary:        types.StringUnknown(),
+		ExecutionTimeLimit: types.StringUnknown(),
+		Delay:              types.StringUnknown(),
+		DaysInterval:       types.Int64Unknown(),
+		DaysOfWeek:         types.SetUnknown(types.StringType),
+		WeeksInterval:      types.Int64Unknown(),
+		UserID:             types.StringUnknown(),
+		Subscription:       subscriptionXMLValue{StringValue: types.StringUnknown()},
+	}
+	v, d = buildTriggerObject(ctx, st, unknownPrior)
+	if d.HasError() {
+		t.Fatalf("unknown-prior diags: %v", d)
+	}
+	obj, ok = v.(types.Object)
+	if !ok {
+		t.Fatalf("unknown-prior: expected types.Object, got %T", v)
+	}
+	var um windowsScheduledTaskTriggerModel
+	if d := obj.As(ctx, &um, basetypes.ObjectAsOptions{}); d.HasError() {
+		t.Fatalf("unknown-prior obj.As: %v", d)
+	}
+	if um.DaysInterval.IsUnknown() {
+		t.Error("unknown-prior days_interval must not stay Unknown after apply")
+	}
+	if um.DaysInterval.IsNull() || um.DaysInterval.ValueInt64() != 1 {
+		t.Errorf("unknown-prior days_interval = %v, want 1 (Windows default)", um.DaysInterval)
 	}
 }
 

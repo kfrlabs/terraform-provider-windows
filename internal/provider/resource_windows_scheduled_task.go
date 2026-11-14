@@ -1684,16 +1684,36 @@ func buildTriggerObject(ctx context.Context, t winclient.ScheduledTaskTriggerSta
 	// Only preserve a prior value when it is known: on a create prior == plan,
 	// and an unset Optional+Computed interval is Unknown there. A Computed
 	// attribute must never stay Unknown after apply, so resolve those to null.
+	//
+	// Windows-default suppression (plan-clean, issue #324): a Daily trigger
+	// created without -DaysInterval reports DaysInterval 1 (likewise
+	// WeeksInterval 1 for a Weekly trigger created without -WeeksInterval),
+	// because Create omits empty fields and Windows applies its own default.
+	// The minimal acc-test Daily shape omits both, so the create plan carries
+	// Null; writing the live default into state breaks Set element
+	// correlation ("planned set element does not correlate with any element
+	// in actual") on first create, where there is no prior state for
+	// UseStateForUnknown to copy. When the prior value is Null and live
+	// equals the Windows default, keep Null so plan == state. Explicitly
+	// configured or drifted non-default values are still surfaced, and the
+	// import path (prior == nil) always reports live values.
 	var di, wi types.Int64
-	if t.DaysInterval > 0 {
-		di = types.Int64Value(t.DaysInterval)
+	diLive, wiLive := t.DaysInterval, t.WeeksInterval
+	if t.Type == "Daily" && diLive == 1 && prior != nil && prior.DaysInterval.IsNull() {
+		diLive = 0
+	}
+	if t.Type == "Weekly" && wiLive == 1 && prior != nil && prior.WeeksInterval.IsNull() {
+		wiLive = 0
+	}
+	if diLive > 0 {
+		di = types.Int64Value(diLive)
 	} else if prior != nil && !prior.DaysInterval.IsUnknown() {
 		di = prior.DaysInterval // preserve known null/value from state
 	} else {
 		di = types.Int64Null()
 	}
-	if t.WeeksInterval > 0 {
-		wi = types.Int64Value(t.WeeksInterval)
+	if wiLive > 0 {
+		wi = types.Int64Value(wiLive)
 	} else if prior != nil && !prior.WeeksInterval.IsUnknown() {
 		wi = prior.WeeksInterval
 	} else {
