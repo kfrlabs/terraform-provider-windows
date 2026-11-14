@@ -126,6 +126,23 @@ of `.tf` files and out of Terraform state:
 Never commit credentials to source control. Use a secret manager (Azure Key
 Vault, HashiCorp Vault, AWS SSM, CI/CD secret store).
 
+## Verifying a release
+
+Releases are cut only from commits on `main` that pass build, vet, unit
+tests and golangci-lint. Besides the GPG-signed `SHA256SUMS` required by the
+Terraform Registry, each release ships:
+
+- an SPDX SBOM per archive (`<archive>.zip.sbom.json`);
+- a GitHub build provenance attestation (Sigstore) for every file listed in
+  `SHA256SUMS`, proving which commit and workflow produced it.
+
+Verify a downloaded file with the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify terraform-provider-windows_<version>_linux_amd64.zip \
+  --repo kfrlabs/terraform-provider-windows
+```
+
 ## Developing the provider
 
 Common development tasks are exposed through the `GNUmakefile`:

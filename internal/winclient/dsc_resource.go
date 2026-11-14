@@ -603,7 +603,7 @@ func dscToInt64(v any) (int64, bool) {
 	case int64:
 		return n, true
 	case uint:
-		if n > math.MaxInt64 {
+		if uint64(n) > math.MaxInt64 {
 			return 0, false
 		}
 		return int64(n), true
