@@ -24,7 +24,6 @@ const (
 	replReadySuffix     = "##"
 	replEndStdoutPrefix = "##WINCLIENT-END:"
 	replEndStdoutSuffix = "##"
-	replEndStderrLine   = "##WINCLIENT-END##"
 )
 
 // psReplBootstrap is the fixed script passed via -EncodedCommand. Unlike the
@@ -83,9 +82,9 @@ while ($true) {
   } finally {
     [Console]::SetIn($__prevIn)
   }
-  [Console]::Out.WriteLine('` + replEndStdoutPrefix + `' + $__status + '` + replEndStdoutSuffix + `')
+  [Console]::Out.WriteLine('` + replEndStdoutPrefix + `' + $__wcMarker + ':' + $__status + '` + replEndStdoutSuffix + `')
   [Console]::Out.Flush()
-  [Console]::Error.WriteLine('` + replEndStderrLine + `')
+  [Console]::Error.WriteLine('` + replEndStdoutPrefix + `' + $__wcMarker + '` + replEndStdoutSuffix + `')
   [Console]::Error.Flush()
 }
 `
@@ -122,10 +121,16 @@ func encodeReplSecret(secret string) string {
 }
 
 // readReplResponse reads one framed response from the REPL: stdout lines up
-// to the "##WINCLIENT-END:<status>##" marker, and stderr lines up to
-// "##WINCLIENT-END##". status is 0 when the script ran to completion, 1 when
-// it raised an uncaught error (the persistent-session analogue of the old
-// non-zero process exit).
+// to the nonce-qualified "##WINCLIENT-END:<nonce>:<status>##" marker, and
+// stderr lines up to "##WINCLIENT-END:<nonce>##", where nonce is the
+// per-session marker announced by the bootstrap handshake. status is 0 when
+// the script ran to completion, 1 when it raised an uncaught error (the
+// persistent-session analogue of the old non-zero process exit).
+//
+// The nonce qualifies every marker so a stale or replayed framing line can
+// never terminate the wrong call: lines carrying a bare legacy marker or a
+// foreign nonce pass through as ordinary script output, and only the exact
+// nonce announced for this session ends the response (fail closed).
 //
 // The two streams are drained by concurrent goroutines rather than one after
 // the other. A script that writes enough combined stdout+stderr to fill the
@@ -147,7 +152,7 @@ func encodeReplSecret(secret string) string {
 // preceding the marker on its line is kept verbatim as script output. The
 // marker is always the last thing written on its stream for the call, so a
 // suffix match cannot misfire on script output.
-func readReplResponse(stdout, stderr *bufio.Reader) (out, errOut string, status int, err error) {
+func readReplResponse(stdout, stderr *bufio.Reader, nonce string) (out, errOut string, status int, err error) {
 	type stdoutResult struct {
 		out    string
 		status int
@@ -158,14 +163,20 @@ func readReplResponse(stdout, stderr *bufio.Reader) (out, errOut string, status 
 		err error
 	}
 
+	// Nonce-qualified framing: only markers carrying this session's nonce
+	// terminate the response. Bare legacy markers and foreign nonces are
+	// ordinary data and pass through silently.
+	stdoutPrefix := replEndStdoutPrefix + nonce + ":"
+	stderrMarker := replEndStdoutPrefix + nonce + replEndStdoutSuffix
+
 	stdoutDone := make(chan stdoutResult, 1)
 	go func() {
 		var outBuf strings.Builder
 		for {
 			line, rerr := stdout.ReadString('\n')
 			trimmed := strings.TrimRight(line, "\r\n")
-			if idx := strings.LastIndex(trimmed, replEndStdoutPrefix); idx >= 0 && strings.HasSuffix(trimmed, replEndStdoutSuffix) {
-				code := strings.TrimSuffix(trimmed[idx+len(replEndStdoutPrefix):], replEndStdoutSuffix)
+			if idx := strings.LastIndex(trimmed, stdoutPrefix); idx >= 0 && strings.HasSuffix(trimmed, replEndStdoutSuffix) {
+				code := strings.TrimSuffix(trimmed[idx+len(stdoutPrefix):], replEndStdoutSuffix)
 				if st, atoiErr := strconv.Atoi(code); atoiErr == nil {
 					outBuf.WriteString(trimmed[:idx])
 					stdoutDone <- stdoutResult{outBuf.String(), st, nil}
@@ -185,8 +196,8 @@ func readReplResponse(stdout, stderr *bufio.Reader) (out, errOut string, status 
 		var errBuf strings.Builder
 		for {
 			line, rerr := stderr.ReadString('\n')
-			if trimmed := strings.TrimRight(line, "\r\n"); strings.HasSuffix(trimmed, replEndStderrLine) {
-				errBuf.WriteString(strings.TrimSuffix(trimmed, replEndStderrLine))
+			if trimmed := strings.TrimRight(line, "\r\n"); strings.HasSuffix(trimmed, stderrMarker) {
+				errBuf.WriteString(strings.TrimSuffix(trimmed, stderrMarker))
 				stderrDone <- stderrResult{errBuf.String(), nil}
 				return
 			}

@@ -88,6 +88,11 @@ type testServerOptions struct {
 	// while the request counts as in-flight, so concurrent callers overlap
 	// deterministically — for pool-concurrency tests (issue #180).
 	responseDelay time.Duration
+
+	// bareMarkers, when true, emits the legacy bare end markers instead of
+	// the nonce-qualified ones, to prove the client ignores them (fail
+	// closed) rather than mis-framing the response.
+	bareMarkers bool
 }
 
 // testRequest is one decoded REPL request the server received.
@@ -269,7 +274,14 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 			return
 		}
 
-		_, _ = fmt.Fprintf(ch, "%stestmarker%s\n", replReadyPrefix, replReadySuffix)
+		// Each connection announces its own nonce, like the real bootstrap's
+		// per-session $__wcMarker, and qualifies every end marker with it.
+		var nb [8]byte
+		if _, err := rand.Read(nb[:]); err != nil {
+			copy(nb[:], "fallbacknonce12345")
+		}
+		nonce := fmt.Sprintf("%x", nb[:])
+		_, _ = fmt.Fprintf(ch, "%s%s%s\n", replReadyPrefix, nonce, replReadySuffix)
 
 		in := bufio.NewReader(ch)
 		calls := 0
@@ -313,11 +325,21 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 				// while it runs, before the stdout end marker.
 				writeFramedLine(ch.Stderr(), opts.stderr)
 			}
-			_, _ = fmt.Fprintf(ch, "%s%d%s\n", replEndStdoutPrefix, opts.status, replEndStdoutSuffix)
+			if opts.bareMarkers {
+				// Legacy framing without the nonce: the client must ignore
+				// these lines as ordinary data (fail closed).
+				_, _ = fmt.Fprintf(ch, "%s%d%s\n", replEndStdoutPrefix, opts.status, replEndStdoutSuffix)
+			} else {
+				_, _ = fmt.Fprintf(ch, "%s%s:%d%s\n", replEndStdoutPrefix, nonce, opts.status, replEndStdoutSuffix)
+			}
 			if !opts.stderrBeforeEndMarker {
 				writeFramedLine(ch.Stderr(), opts.stderr)
 			}
-			_, _ = fmt.Fprintf(ch.Stderr(), "%s\n", replEndStderrLine)
+			if opts.bareMarkers {
+				_, _ = fmt.Fprintf(ch.Stderr(), "##WINCLIENT-END##\n")
+			} else {
+				_, _ = fmt.Fprintf(ch.Stderr(), "%s%s%s\n", replEndStdoutPrefix, nonce, replEndStdoutSuffix)
+			}
 
 			if opts.dropIdleAfterCalls > 0 && calls == opts.dropIdleAfterCalls {
 				return // idle death between calls: the next write fails
