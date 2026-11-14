@@ -63,6 +63,10 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # 32-bit guard (#367): vet type-checks test files, no 32-bit runner needed.
+      - name: go vet (386)
+        run: GOARCH=386 go vet ./...
+
   test:
     name: unit tests
     if: github.event_name != 'schedule'

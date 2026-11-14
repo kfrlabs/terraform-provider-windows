@@ -712,7 +712,7 @@ func TestWindowsEventLogResource_Create_Warnings(t *testing.T) {
 	r := &windowsEventLogResource{el: fc}
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsEventLogSchemaDefinition(context.Background())}}
 	r.Create(context.Background(), resource.CreateRequest{Plan: elPlan(t, map[string]tftypes.Value{
-		"maximum_size_bytes": tftypes.NewValue(tftypes.Number, 5368709120),
+		"maximum_size_bytes": tftypes.NewValue(tftypes.Number, int64(5368709120)),
 	})}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("warnings must not error: %v", elDiagSummaries(resp.Diagnostics))

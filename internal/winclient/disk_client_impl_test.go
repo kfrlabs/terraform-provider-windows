@@ -82,7 +82,7 @@ func fakeDiskData(uniqueID string) map[string]any {
 		"is_boot":            false,
 		"is_system":          false,
 		"is_clustered":       false,
-		"size_bytes":         137438953472,
+		"size_bytes":         int64(137438953472),
 	}
 }
 
