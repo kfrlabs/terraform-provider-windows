@@ -51,7 +51,7 @@ func setHome(t *testing.T, dir string) {
 
 func TestBuildAuthMethodsPasswordOnly(t *testing.T) {
 	noAgent(t)
-	methods, err := buildAuthMethods(Config{Password: "s3cr3t"})
+	methods, _, err := buildAuthMethods(Config{Password: "s3cr3t"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestBuildAuthMethodsPasswordOnly(t *testing.T) {
 func TestBuildAuthMethodsPrivateKeyPEM(t *testing.T) {
 	noAgent(t)
 	privPEM, _, _ := newTestKey(t)
-	methods, err := buildAuthMethods(Config{PrivateKey: string(privPEM)})
+	methods, _, err := buildAuthMethods(Config{PrivateKey: string(privPEM)})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestBuildAuthMethodsPrivateKeyPath(t *testing.T) {
 	if err := os.WriteFile(path, privPEM, 0o600); err != nil {
 		t.Fatalf("write key: %v", err)
 	}
-	methods, err := buildAuthMethods(Config{PrivateKeyPath: path})
+	methods, _, err := buildAuthMethods(Config{PrivateKeyPath: path})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestBuildAuthMethodsPrivateKeyPath(t *testing.T) {
 func TestBuildAuthMethodsKeyPrecedesPassword(t *testing.T) {
 	noAgent(t)
 	privPEM, _, _ := newTestKey(t)
-	methods, err := buildAuthMethods(Config{PrivateKey: string(privPEM), Password: "s3cr3t"})
+	methods, _, err := buildAuthMethods(Config{PrivateKey: string(privPEM), Password: "s3cr3t"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestBuildAuthMethodsKeyPrecedesPassword(t *testing.T) {
 
 func TestBuildAuthMethodsRejectsNoCredentials(t *testing.T) {
 	noAgent(t)
-	if _, err := buildAuthMethods(Config{}); err == nil {
+	if _, _, err := buildAuthMethods(Config{}); err == nil {
 		t.Fatal("expected an error when no authentication method is configured")
 	}
 }
@@ -112,7 +112,7 @@ func TestBuildAuthMethodsRejectsNoCredentials(t *testing.T) {
 func TestBuildAuthMethodsRejectsBothKeyForms(t *testing.T) {
 	noAgent(t)
 	privPEM, _, _ := newTestKey(t)
-	_, err := buildAuthMethods(Config{PrivateKey: string(privPEM), PrivateKeyPath: "/tmp/whatever"})
+	_, _, err := buildAuthMethods(Config{PrivateKey: string(privPEM), PrivateKeyPath: "/tmp/whatever"})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("expected mutual-exclusion error, got %v", err)
 	}
@@ -367,11 +367,11 @@ func TestBuildAuthMethodsAgentFailureHandling(t *testing.T) {
 	yes := true
 	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "missing.sock"))
 
-	if _, err := buildAuthMethods(Config{UseAgent: &yes, Password: "p"}); err == nil {
+	if _, _, err := buildAuthMethods(Config{UseAgent: &yes, Password: "p"}); err == nil {
 		t.Error("explicitly requested but broken agent should error")
 	}
 
-	methods, err := buildAuthMethods(Config{Password: "p"})
+	methods, _, err := buildAuthMethods(Config{Password: "p"})
 	if err != nil {
 		t.Fatalf("auto-detected broken agent should be skipped, got: %v", err)
 	}
