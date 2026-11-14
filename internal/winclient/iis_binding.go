@@ -144,10 +144,11 @@ function Get-BindingData([string]$SiteName, [string]$Protocol, [string]$BindingI
 function Classify-Binding([string]$Msg) {
   $shared = Classify-IIS $Msg
   if ($shared -ne 'unknown') { return $shared }
-  if ($Msg -match 'already exists' -or $Msg -match '0x800700b7') { return 'already_exists' }
-  if ($Msg -match 'was not found' -or $Msg -match 'Cannot find path' -or $Msg -match '0x80070490') { return 'not_found' }
-  if ($Msg -match 'in use' -or $Msg -match 'conflict' -or $Msg -match '0x80076380') { return 'ssl_binding_conflict' }
-  return 'unknown'
+  return (Classify-ByPatterns $Msg @(
+    @('already exists|0x800700b7', 'already_exists'),
+    @('was not found|Cannot find path|0x80070490', 'not_found'),
+    @('in use|conflict|0x80076380', 'ssl_binding_conflict')
+  ))
 }
 `
 

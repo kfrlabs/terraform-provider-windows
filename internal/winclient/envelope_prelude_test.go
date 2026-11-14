@@ -188,11 +188,21 @@ func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 			t.Errorf("%s must define Emit-OK exactly once (via the prelude), got %d", name, n)
 		}
 	}
-	// Batch 5 pilots the shared string-classifier table on hostname: the
-	// composed header must embed the matcher, or Classify-Hostname fails
-	// at PowerShell runtime.
-	if !strings.Contains(psHostnameHeader, "function Classify-ByPatterns") {
-		t.Error("psHostnameHeader must embed psClassifyPrelude (Classify-ByPatterns)")
+	// Batches 5 and 7 table-ify string classifiers: composed headers that
+	// call Classify-ByPatterns must embed the matcher, or they fail at
+	// PowerShell runtime.
+	for name, h := range map[string]string{
+		"psHostnameHeader":         psHostnameHeader,
+		"frPsHeader":               frPsHeader,
+		"psIISHeader":              psIISHeader,
+		"psFeatureHeader":          psFeatureHeader,
+		"psOSInfoHeader":           psOSInfoHeader,
+		"psDomainMembershipHeader": psDomainMembershipHeader,
+		"psHeader":                 psHeader,
+	} {
+		if !strings.Contains(h, "function Classify-ByPatterns") {
+			t.Errorf("%s must embed psClassifyPrelude (Classify-ByPatterns)", name)
+		}
 	}
 	for _, want := range []string{
 		"function Classify-Hostname",

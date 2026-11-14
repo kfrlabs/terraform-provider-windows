@@ -53,18 +53,20 @@ func NewDomainMembershipClient(c *Client) *DomainMembershipClient {
 // exists, 5 access denied) because Windows error messages are localised;
 // message-substring fallbacks cover the same failures when only text is
 // available.
-const psDomainMembershipHeader = psEnvelopePrelude + psDomainMembershipRemainder
+const psDomainMembershipHeader = psEnvelopePrelude + psClassifyPrelude + psDomainMembershipRemainder
 
 // psDomainMembershipRemainder Classifier and join/unjoin helpers stay here; envelope emitters come from the prelude.
 const psDomainMembershipRemainder = `function Classify-DomainMembership([string]$Msg) {
-  if ($Msg -match '\b1326\b' -or $Msg -match 'unknown user name or bad password' -or $Msg -match 'Logon failure') { return 'bad_credentials' }
-  if ($Msg -match '\b1355\b' -or $Msg -match 'either does not exist or could not be contacted' -or $Msg -match 'cannot find the domain') { return 'domain_not_found' }
-  if (($Msg -match '\b53\b') -and ($Msg -match 'network path was not found')) { return 'domain_not_found' }
-  if ($Msg -match '\b2224\b' -or $Msg -match 'account already exists') { return 'account_exists' }
-  if (($Msg -match 'organizational unit') -and ($Msg -match 'does not exist|not found|could not be found')) { return 'ou_not_found' }
-  if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or (($Msg -match '\b5\b') -and ($Msg -match 'denied'))) { return 'access_denied' }
-  if (($Msg -match 'reboot') -and ($Msg -match 'pending')) { return 'reboot_pending' }
-  return 'unknown'
+  return (Classify-ByPatterns $Msg @(
+    @('\b1326\b|unknown user name or bad password|Logon failure', 'bad_credentials'),
+    @('\b1355\b|either does not exist or could not be contacted|cannot find the domain', 'domain_not_found'),
+    @(@('\b53\b', 'network path was not found'), 'domain_not_found'),
+    @('\b2224\b|account already exists', 'account_exists'),
+    @(@('organizational unit', 'does not exist|not found|could not be found'), 'ou_not_found'),
+    @('Access is denied|AccessDenied', 'access_denied'),
+    @(@('\b5\b', 'denied'), 'access_denied'),
+    @(@('reboot', 'pending'), 'reboot_pending')
+  ))
 }
 
 function Test-DMPendingReboot {

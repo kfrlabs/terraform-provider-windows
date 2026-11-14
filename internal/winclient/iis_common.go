@@ -41,17 +41,18 @@ import (
 //
 // NOTE: this constant uses a Go raw string (backtick-delimited). PowerShell
 // backtick escape sequences (`n, `t) MUST NOT appear in this body.
-const psIISHeader = psEnvelopePrelude + psIISHeaderRemainder
+const psIISHeader = psEnvelopePrelude + psClassifyPrelude + psIISHeaderRemainder
 
 // psIISHeaderRemainder Shared IIS header: Classify-IIS + Ensure-IIS stay here; envelope emitters come from the prelude. Emit depth 10->8: app-pool/site payloads are flat dicts.
 const psIISHeaderRemainder = `
 function Classify-IIS([string]$Msg) {
-  if ($Msg -match '0x8007052e' -or $Msg -match 'unknown user name or bad password' -or $Msg -match 'Logon failure') { return 'invalid_identity' }
-  if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or $Msg -match 'UnauthorizedAccess' -or $Msg -match '0x80070005') { return 'access_denied' }
-  if ($Msg -match '0x800700b7' -or $Msg -match 'already exists') { return 'already_exists' }
-  if ($Msg -match '0x80070002' -or $Msg -match 'was not found' -or $Msg -match 'Cannot find path') { return 'not_found' }
-  if ($Msg -match '0x80070021' -or $Msg -match 'locked' -or $Msg -match 'Cannot read configuration file') { return 'config_locked' }
-  return 'unknown'
+  return (Classify-ByPatterns $Msg @(
+    @('0x8007052e|unknown user name or bad password|Logon failure', 'invalid_identity'),
+    @('Access is denied|AccessDenied|UnauthorizedAccess|0x80070005', 'access_denied'),
+    @('0x800700b7|already exists', 'already_exists'),
+    @('0x80070002|was not found|Cannot find path', 'not_found'),
+    @('0x80070021|locked|Cannot read configuration file', 'config_locked')
+  ))
 }
 
 function Ensure-IIS {
