@@ -113,7 +113,20 @@ func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages the full lifecycle of a Windows service on a remote host " +
 			"via SSH and PowerShell. Supports create, update, in-place reconfiguration, " +
-			"runtime state control (Running/Stopped/Paused), deletion and import.",
+			"runtime state control (Running/Stopped/Paused), deletion and import.\n\n" +
+			"**Partial failures:** if creation fails after the service was already registered on Windows " +
+			"(for example, runtime-state reconciliation fails after `New-Service`), " +
+			"the provider persists the observed state before reporting the error, so " +
+			"the resource is marked tainted. If update fails after Windows applied " +
+			"part of the change, the provider saves the observed partial state " +
+			"before reporting the error. Fix the cause and run `terraform apply` " +
+			"again to reconcile.\n\n" +
+			"A nil state on error does not guarantee nothing was created: " +
+			"config-mutation failures after `New-Service` (for example, `sc.exe` " +
+			"`obj=` / `delayed-auto` / `depend=` steps) return no state for " +
+			"error-only reporting, leaving an orphaned service that must be removed " +
+			"with `sc.exe delete` or re-adopted with `terraform import`. Automatic " +
+			"rollback is deferred pending issue #344.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
