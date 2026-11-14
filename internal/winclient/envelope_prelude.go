@@ -54,3 +54,34 @@ function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
   [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
 }
 `
+
+// ---------------------------------------------------------------------------
+// Shared string classifier (issue #348, batch 5, decision 2a).
+//
+// psClassifyPrelude is an opt-in companion to psEnvelopePrelude (it is a
+// separate constant so headers that need it compose it explicitly, and the
+// envelope prelude stays Emit-only). Classify-ByPatterns maps a message to
+// a kind through an ordered table of [pattern, kind] rows, first match
+// wins. A row pattern is either a single regex (matched with -match, OR
+// semantics via |) or an array of regexes that must ALL match
+// (AND semantics). This covers the string classifiers (hostname,
+// timezone, feature, ...); classifiers over $Rec objects with
+// .Exception/HResult and exit-code classifiers stay per-resource.
+//
+// Table data (the patterns) stays in each resource's Classify-* function;
+// only the matching loop is shared.
+// ---------------------------------------------------------------------------
+const psClassifyPrelude = `
+# Ordered [pattern, kind] table, first match wins. A pattern is one regex
+# (-match, OR via |) or an array of regexes that must ALL match (AND).
+function Classify-ByPatterns([string]$Msg, [array]$Table, [string]$Default = 'unknown') {
+  foreach ($row in $Table) {
+    $pats = $row[0]
+    if ($pats -isnot [array]) { $pats = @($pats) }
+    $all = $true
+    foreach ($p in $pats) { if (-not ($Msg -match $p)) { $all = $false; break } }
+    if ($all) { return $row[1] }
+  }
+  return $Default
+}
+`

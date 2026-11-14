@@ -45,6 +45,29 @@ func TestPSEnvelopePrelude_Contents(t *testing.T) {
 	}
 }
 
+func TestPSClassifyPrelude_Contents(t *testing.T) {
+	for _, want := range []string{
+		"function Classify-ByPatterns([string]$Msg, [array]$Table, [string]$Default = 'unknown')",
+		"first match wins",
+		"$row[1]",
+	} {
+		if !strings.Contains(psClassifyPrelude, want) {
+			t.Errorf("psClassifyPrelude missing %q", want)
+		}
+	}
+	// Table data (patterns) lives per-resource; only the loop is shared.
+	if strings.Contains(psClassifyPrelude, "permission_denied") || strings.Contains(psClassifyPrelude, "invalid_name") {
+		t.Error("psClassifyPrelude must not hard-code resource kinds; table data stays per-resource")
+	}
+	if strings.Contains(psClassifyPrelude, "`n") || strings.Contains(psClassifyPrelude, "`t") {
+		t.Error("psClassifyPrelude must not contain PowerShell backtick escape sequences")
+	}
+	lower := strings.ToLower(psClassifyPrelude)
+	if strings.Contains(lower, "\nexit") || strings.Contains(lower, ";exit") {
+		t.Error("psClassifyPrelude must never call exit (persistent session)")
+	}
+}
+
 // envelopeDefRe matches a PowerShell function DEFINITION of Emit-OK or
 // Emit-Err. It deliberately does not match call sites ("Emit-Err 'kind'")
 // or prose mentions in comments. Leading whitespace is tolerated so an
@@ -164,6 +187,12 @@ func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 		if n := strings.Count(h, "function Emit-OK"); n != 1 {
 			t.Errorf("%s must define Emit-OK exactly once (via the prelude), got %d", name, n)
 		}
+	}
+	// Batch 5 pilots the shared string-classifier table on hostname: the
+	// composed header must embed the matcher, or Classify-Hostname fails
+	// at PowerShell runtime.
+	if !strings.Contains(psHostnameHeader, "function Classify-ByPatterns") {
+		t.Error("psHostnameHeader must embed psClassifyPrelude (Classify-ByPatterns)")
 	}
 	for _, want := range []string{
 		"function Classify-Hostname",

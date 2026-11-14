@@ -87,22 +87,23 @@ type hostnameStatePayload struct {
 	Domain        string `json:"domain"`
 }
 
-// psHostnameHeader prepends the shared envelope prelude (Emit-OK/Emit-Err,
-// issue #348) plus Classify-Hostname.
+// psHostnameHeader composes the shared envelope prelude (Emit-OK/Emit-Err),
+// the shared string-classifier matcher, and the hostname remainder
+// (issue #348, batch 1 pilot + batch 5 decision 2a pilot).
 //
 // Classify-Hostname maps Rename-Computer / SSH error substrings to
 // HostnameErrorKind values. Detection is best-effort and substring-based
 // because Windows error messages are localised.
-const psHostnameHeader = psEnvelopePrelude + psHostnameRemainder
+const psHostnameHeader = psEnvelopePrelude + psClassifyPrelude + psHostnameRemainder
 
 // psHostnameRemainder holds the hostname-specific half of the header: the
-// string classifier and the state reader. Classifiers stay per-resource in
-// batch 1 (see envelope_prelude.go): their input shapes differ too much
-// for one generic table.
+// classifier pattern table (the matching loop is shared) and the state
+// reader.
 const psHostnameRemainder = `function Classify-Hostname([string]$Msg) {
-  if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or $Msg -match 'RenameComputerNotAuthorized' -or $Msg -match 'not authorized') { return 'permission_denied' }
-  if ($Msg -match 'computer name' -and ($Msg -match 'invalid' -or $Msg -match 'not valid')) { return 'invalid_name' }
-  return 'unknown'
+  return (Classify-ByPatterns $Msg @(
+    @('Access is denied|AccessDenied|RenameComputerNotAuthorized|not authorized', 'permission_denied'),
+    @(@('computer name', 'invalid|not valid'), 'invalid_name')
+  ))
 }
 
 function Read-HostnameState {
@@ -146,7 +147,7 @@ func (h *HostnameClient) runHostnameEnvelope(ctx context.Context, op, script str
 		return resp, nil
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		kind := HostnameErrorUnknown
+		kind := HostnameErrorKind(HostnameErrorUnknown)
 		if eerr.Stage == EnvelopeStageTimeout || eerr.Stage == EnvelopeStageTransport {
 			kind = HostnameErrorUnreachable
 		}
