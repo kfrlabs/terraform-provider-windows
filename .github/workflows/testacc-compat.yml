@@ -1,0 +1,197 @@
+# Compatibility smoke tests on older Windows Server releases.
+#
+# Both acceptance lanes target Windows Server 2025 only (testacc-windows.yml
+# runs on windows-latest; testacc-lab-container.yml targets a 2025 lab
+# host), but the provider deals with behaviour that differs between Windows
+# versions (DISM feature names, LocalAccounts, IIS modules, OpenSSH Server
+# packaging, PowerShell 5.1 builds). Regressions on the still widely
+# deployed Server 2022 (and 2019, where a runner exists) would otherwise go
+# unnoticed until users report them (issue #355).
+#
+# Layout: a weekly schedule plus workflow_dispatch runs a REDUCED smoke
+# suite — not the full matrix — on windows-2022, reusing the same
+# self-target SSH provisioning as testacc-windows.yml. Password auth only:
+# auth-mode coverage lives in the main lane; this lane proves OS-version
+# compatibility. Nothing here runs on pull requests (cost); main and
+# nightly are enough.
+#
+# The smoke set (SMOKE_RUN, passed as `go test -run`) is read-only or
+# instantly reversible and covers one probe per area: OS facts, DISM
+# feature names, hostname/NTP/timezone/service/power reads, installed
+# software, registry, file apply path, event log. Per-version results land
+# in the job summary and feed the compatibility table in docs/index.md
+# (templates/index.md.tmpl).
+#
+# windows-2019 is intentionally absent: GitHub retired the windows-2019
+# hosted image, and the lab lane (testacc-lab-container.yml) documents why
+# no scheduled self-hosted run is possible (#129). Re-add a 2019 leg here
+# once a runner for it exists.
+
+name: testacc-compat
+
+on:
+  schedule:
+    # Weekly, Sunday 06:00 UTC.
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testacc-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Smoke suite: read-only or instantly reversible probes, one per area.
+  # Kept inline (not in testacc-groups.json) so the compat lane never
+  # grows with the full suite. Single line: a YAML folded scalar would
+  # inject spaces between alternatives and match nothing.
+  SMOKE_RUN: "^(TestAccWindowsOSInfoDataSource_Basic|TestAccWindowsFeatureDataSource_Basic|TestAccWindowsHostnameDataSource_Basic|TestAccWindowsNTPDataSource_Basic|TestAccWindowsNTP_TypeServersMatrix|TestAccWindowsTimezoneDataSource_Basic|TestAccWindowsTimezone_InvalidIANA|TestAccWindowsServiceDataSource_Basic|TestAccWindowsPowerPlanDataSource_Basic|TestAccWindowsPowerPlan_InvalidPlan|TestAccWindowsInstalledSoftwareDataSource_Basic|TestAccWindowsRegistryValueDataSource_REGSZ|TestAccWindowsRegistryValue_StringCreateUpdate|TestAccWindowsFileDataSource_Basic|TestAccWindowsFile_ContentLifecycle|TestAccWindowsEventLogDataSource_Basic)$"
+
+jobs:
+  build:
+    name: build acceptance binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          # Canonical toolchain: track the version pinned in go.mod.
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build acceptance test binary (windows/amd64)
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go test -c -tags acceptance -o provider-acc.test.exe ./internal/provider/
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: provider-acc-test-compat
+          path: provider-acc.test.exe
+          retention-days: 1
+          if-no-files-found: error
+
+  smoke:
+    name: smoke (${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: provider-acc-test-compat
+          path: ${{ runner.temp }}
+
+      # Provision the runner as its own SSH target: a dedicated local admin
+      # with a random password (never the runner account), the image's
+      # OpenSSH Server, PowerShell 5.1 as the default SSH shell and a
+      # firewall exception. Mirrors testacc-windows.yml; Windows Server
+      # 2022 ships the same OpenSSH Server capability.
+      - name: Configure local SSH target
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $user = 'tfacc'
+          $chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+          $core  = -join (1..20 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+          $pass  = "$core-aB3z"
+          Write-Host "::add-mask::$pass"
+          $secure = ConvertTo-SecureString $pass -AsPlainText -Force
+
+          if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $user -Password $secure
+          } else {
+            New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -AccountNeverExpires | Out-Null
+          }
+          Add-LocalGroupMember -Group 'Administrators' -Member $user -ErrorAction SilentlyContinue
+
+          if (-not (Get-Service -Name sshd -ErrorAction SilentlyContinue)) {
+            Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
+          }
+
+          Set-Service -Name sshd -StartupType Automatic
+
+          New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell `
+            -Value 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' `
+            -PropertyType String -Force | Out-Null
+
+          if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' `
+              -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+          }
+
+          Restart-Service sshd
+
+          $deadline = (Get-Date).AddSeconds(30)
+          while (-not (Test-NetConnection -ComputerName 127.0.0.1 -Port 22 -WarningAction SilentlyContinue).TcpTestSucceeded) {
+            if ((Get-Date) -gt $deadline) { throw "sshd is not accepting connections on port 22" }
+            Start-Sleep -Milliseconds 500
+          }
+
+          "WINDOWS_HOST=127.0.0.1" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WINDOWS_USERNAME=$user" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WINDOWS_PASSWORD=$pass" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Record host key for verification
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = Join-Path $env:RUNNER_TEMP 'known_hosts'
+          $keys = & ssh-keyscan -p 22 $env:WINDOWS_HOST 2>$null
+          if (-not $keys) {
+            throw "ssh-keyscan returned no host key for $($env:WINDOWS_HOST)"
+          }
+          $keys | Set-Content -Path $path -Encoding ascii
+          "WINDOWS_KNOWN_HOSTS=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Record OS version
+        run: |
+          $os = Get-CimInstance -ClassName Win32_OperatingSystem
+          $line = "smoke target: $($os.Caption) (Version $($os.Version), Build $($os.BuildNumber))"
+          Write-Host $line
+          "### Compat smoke target" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $line | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Run compat smoke suite
+        env:
+          TF_ACC: "1"
+        run: |
+          & ./.github/scripts/Invoke-AccTests.ps1 `
+            -Binary "$env:RUNNER_TEMP\provider-acc.test.exe" `
+            -WorkingDirectory (Join-Path $env:GITHUB_WORKSPACE 'internal\provider') `
+            -RunFilter "$env:SMOKE_RUN" `
+            -LogDirectory (Join-Path $env:RUNNER_TEMP 'testacc-logs') `
+            -Timeout 20m `
+            -AllowedSkipsFile (Join-Path $env:GITHUB_WORKSPACE '.github\testacc-allowed-skips.json') `
+            -Title 'compat smoke (${{ matrix.os }})'
+          exit $LASTEXITCODE
+
+  # Single stable check name for the scheduled lane.
+  result:
+    name: testacc-compat result
+    needs: [build, smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check smoke outcome
+        env:
+          BUILD: ${{ needs.build.result }}
+          SMOKE: ${{ needs.smoke.result }}
+        run: |
+          echo "build=$BUILD smoke=$SMOKE"
+          [ "$BUILD" = success ] || exit 1
+          [ "$SMOKE" = success ]
