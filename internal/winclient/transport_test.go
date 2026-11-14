@@ -715,12 +715,13 @@ func TestTransportDrainsLargeStderrBeforeEndMarkerWithoutDeadlock(t *testing.T) 
 // storage shards): the script completed, but the stderr drain never saw its
 // end marker.
 func TestReadReplResponseGluedMarkers(t *testing.T) {
+	const nonce = "0123456789abcdef"
 	stdout := bufio.NewReader(strings.NewReader(
-		"{\"ok\":true}\npartial-output" + replEndStdoutPrefix + "0" + replEndStdoutSuffix + "\n"))
+		"{\"ok\":true}\npartial-output" + replEndStdoutPrefix + nonce + ":0" + replEndStdoutSuffix + "\n"))
 	stderr := bufio.NewReader(strings.NewReader(
-		"#< CLIXML\n<Objs><S S=\"warning\">chatter</S>c" + replEndStderrLine + "\n"))
+		"#< CLIXML\n<Objs><S S=\"warning\">chatter</S>c" + replEndStdoutPrefix + nonce + replEndStdoutSuffix + "\n"))
 
-	out, errOut, status, err := readReplResponse(stdout, stderr)
+	out, errOut, status, err := readReplResponse(stdout, stderr, nonce)
 	if err != nil {
 		t.Fatalf("readReplResponse: %v", err)
 	}
@@ -738,12 +739,13 @@ func TestReadReplResponseGluedMarkers(t *testing.T) {
 // A clean marker on its own line keeps working exactly as before (no output
 // glued to it contributes nothing).
 func TestReadReplResponseCleanMarkers(t *testing.T) {
+	const nonce = "0123456789abcdef"
 	stdout := bufio.NewReader(strings.NewReader(
-		"{\"ok\":true}\n" + replEndStdoutPrefix + "3" + replEndStdoutSuffix + "\n"))
+		"{\"ok\":true}\n" + replEndStdoutPrefix + nonce + ":3" + replEndStdoutSuffix + "\n"))
 	stderr := bufio.NewReader(strings.NewReader(
-		"warning line\n" + replEndStderrLine + "\n"))
+		"warning line\n" + replEndStdoutPrefix + nonce + replEndStdoutSuffix + "\n"))
 
-	out, errOut, status, err := readReplResponse(stdout, stderr)
+	out, errOut, status, err := readReplResponse(stdout, stderr, nonce)
 	if err != nil {
 		t.Fatalf("readReplResponse: %v", err)
 	}
@@ -755,6 +757,76 @@ func TestReadReplResponseCleanMarkers(t *testing.T) {
 	}
 	if errOut != "warning line\n" {
 		t.Errorf("stderr = %q", errOut)
+	}
+}
+
+// Bare legacy markers and foreign nonces never terminate the response: they
+// pass through as ordinary script output, and only the session's own nonce
+// ends the call (fail closed, issue #345).
+func TestReadReplResponseIgnoresBareAndForeignNonceMarkers(t *testing.T) {
+	const nonce = "0123456789abcdef"
+	stdout := bufio.NewReader(strings.NewReader(
+		"output line\n" +
+			"##WINCLIENT-END:0##\n" +
+			"##WINCLIENT-END:foreignnonce:0##\n" +
+			"more output" + replEndStdoutPrefix + nonce + ":0" + replEndStdoutSuffix + "\n"))
+	stderr := bufio.NewReader(strings.NewReader(
+		"warning line\n" +
+			"##WINCLIENT-END##\n" +
+			"##WINCLIENT-END:othernonce##\n" +
+			"more chatter" + replEndStdoutPrefix + nonce + replEndStdoutSuffix + "\n"))
+
+	out, errOut, status, err := readReplResponse(stdout, stderr, nonce)
+	if err != nil {
+		t.Fatalf("readReplResponse: %v", err)
+	}
+	if status != 0 {
+		t.Errorf("status = %d, want 0", status)
+	}
+	if want := "output line\n##WINCLIENT-END:0##\n##WINCLIENT-END:foreignnonce:0##\nmore output"; out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+	if want := "warning line\n##WINCLIENT-END##\n##WINCLIENT-END:othernonce##\nmore chatter"; errOut != want {
+		t.Errorf("stderr = %q, want %q", errOut, want)
+	}
+}
+
+// A bare legacy marker inside one call's output must not desynchronise the
+// next call: it passes through as data, and the following response still
+// frames exactly (issue #345).
+func TestReadReplResponseBareMarkerDoesNotDesyncNextCall(t *testing.T) {
+	const nonce = "0123456789abcdef"
+	stdoutText := "first\n##WINCLIENT-END:0##\n" +
+		replEndStdoutPrefix + nonce + ":0" + replEndStdoutSuffix + "\n" +
+		"second\n" +
+		replEndStdoutPrefix + nonce + ":0" + replEndStdoutSuffix + "\n"
+	stderrText := "e1\n" +
+		replEndStdoutPrefix + nonce + replEndStdoutSuffix + "\n" +
+		"e2\n" +
+		replEndStdoutPrefix + nonce + replEndStdoutSuffix + "\n"
+	stdout := bufio.NewReader(strings.NewReader(stdoutText))
+	stderr := bufio.NewReader(strings.NewReader(stderrText))
+
+	out1, err1, _, err := readReplResponse(stdout, stderr, nonce)
+	if err != nil {
+		t.Fatalf("first readReplResponse: %v", err)
+	}
+	if want := "first\n##WINCLIENT-END:0##\n"; out1 != want {
+		t.Errorf("first stdout = %q, want %q", out1, want)
+	}
+	if err1 != "e1\n" {
+		t.Errorf("first stderr = %q, want %q", err1, "e1\n")
+	}
+
+	out2, err2, _, err := readReplResponse(stdout, stderr, nonce)
+	if err != nil {
+		t.Fatalf("second readReplResponse: %v", err)
+	}
+	if out2 != "second\n" {
+		t.Errorf("second stdout = %q, want %q", out2, "second\n")
+	}
+	if err2 != "e2\n" {
+		t.Errorf("second stderr = %q, want %q", err2, "e2\n")
 	}
 }
 

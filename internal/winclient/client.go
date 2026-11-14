@@ -735,7 +735,7 @@ func (ps *persistentSession) run(ctx context.Context, script, secret string) (st
 			done <- result{err: &replWriteError{err: err}}
 			return
 		}
-		stdout, stderr, status, err := readReplResponse(ps.stdout, ps.stderr)
+		stdout, stderr, status, err := readReplResponse(ps.stdout, ps.stderr, ps.marker)
 		if err != nil {
 			done <- result{stdout: stdout, stderr: stderr, err: &replTransportError{err: err}}
 			return
