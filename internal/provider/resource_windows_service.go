@@ -113,7 +113,20 @@ func windowsServiceSchemaDefinition(ctx context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: "Manages the full lifecycle of a Windows service on a remote host " +
 			"via SSH and PowerShell. Supports create, update, in-place reconfiguration, " +
-			"runtime state control (Running/Stopped/Paused), deletion and import.",
+			"runtime state control (Running/Stopped/Paused), deletion and import.\n\n" +
+			"**Partial failures:** if creation fails after the service was already registered on Windows " +
+			"(for example, runtime-state reconciliation fails after `New-Service`), " +
+			"the provider persists the observed state before reporting the error, so " +
+			"the resource is marked tainted. If update fails after Windows applied " +
+			"part of the change, the provider saves the observed partial state " +
+			"before reporting the error. Fix the cause and run `terraform apply` " +
+			"again to reconcile.\n\n" +
+			"A nil state on error does not guarantee nothing was created: " +
+			"config-mutation failures after `New-Service` (for example, `sc.exe` " +
+			"`obj=` / `delayed-auto` / `depend=` steps) return no state for " +
+			"error-only reporting, leaving an orphaned service that must be removed " +
+			"with `sc.exe delete` or re-adopted with `terraform import`. Automatic " +
+			"rollback is deferred pending issue #344.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -386,6 +399,15 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 
 	state, err := r.svc.Create(ctx, input)
 	if err != nil {
+		// Partial failure (issue #341): the service may already exist on
+		// Windows (e.g. reconcileStatus failed after New-Service). Persist
+		// the observed state so the resource is tainted rather than
+		// dropped from state. A nil state (e.g. already_exists pre-check)
+		// stays error-only.
+		if state != nil {
+			final := modelFromState(state, plan)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
+		}
 		addServiceDiag(&resp.Diagnostics, "Create windows_service failed", err)
 		return
 	}
@@ -523,6 +545,17 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 
 	state, err := r.svc.Update(ctx, name, input)
 	if err != nil {
+		// Partial failure (issue #341): persist the observed state so the
+		// resource keeps its partial state rather than staying at prior
+		// state. A nil state stays error-only. Credential markers come
+		// from prior state: a failed rotation must not advance the stored
+		// version marker or a retry would no longer diff.
+		if state != nil {
+			final := modelFromState(state, plan)
+			final.ServicePassword = prior.ServicePassword
+			final.ServicePasswordWOVersion = prior.ServicePasswordWOVersion
+			resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
+		}
 		addServiceDiag(&resp.Diagnostics, "Update windows_service failed", err)
 		return
 	}
