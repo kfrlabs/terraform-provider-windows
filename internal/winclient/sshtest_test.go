@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,6 +94,12 @@ type testServerOptions struct {
 	// the nonce-qualified ones, to prove the client ignores them (fail
 	// closed) rather than mis-framing the response.
 	bareMarkers bool
+
+	// freezeAfterCalls, when > 0, makes the session go silent after serving
+	// that many requests: it keeps the channel and connection open but
+	// answers neither data nor channel requests, like a half-open
+	// connection whose peer vanished without a FIN (#342).
+	freezeAfterCalls int
 }
 
 // testRequest is one decoded REPL request the server received.
@@ -281,6 +288,18 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 			copy(nb[:], "fallbacknonce12345")
 		}
 		nonce := fmt.Sprintf("%x", nb[:])
+
+		// Answer later channel requests (the client's liveness probe) like
+		// sshd does for unknown types: a failure reply, unless frozen.
+		var frozen atomic.Bool
+		go func() {
+			for r := range reqs {
+				if r.WantReply && !frozen.Load() {
+					_ = r.Reply(false, nil)
+				}
+			}
+		}()
+
 		_, _ = fmt.Fprintf(ch, "%s%s%s\n", replReadyPrefix, nonce, replReadySuffix)
 
 		in := bufio.NewReader(ch)
@@ -343,6 +362,11 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 
 			if opts.dropIdleAfterCalls > 0 && calls == opts.dropIdleAfterCalls {
 				return // idle death between calls: the next write fails
+			}
+			if opts.freezeAfterCalls > 0 && calls == opts.freezeAfterCalls {
+				frozen.Store(true)
+				_, _ = io.Copy(io.Discard, in) // silent until the client closes
+				return
 			}
 		}
 

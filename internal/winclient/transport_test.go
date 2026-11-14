@@ -683,6 +683,44 @@ func TestTransportRecoversFromDroppedSession(t *testing.T) {
 	}
 }
 
+// A parked session whose peer went silent (half-open connection, no FIN)
+// must be detected by the borrow-time liveness probe within its deadline,
+// replaced by a fresh session before any byte of the request is written,
+// instead of blocking until the operation timeout (#342).
+func TestTransportProbeDetectsSilentParkedSession(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey:    pub,
+		stdout:           "ok",
+		freezeAfterCalls: 1, // the parked session goes silent after request 1
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	c.probeTimeout = 200 * time.Millisecond
+
+	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+		t.Fatalf("first call: stdout = %q", stdout)
+	}
+	start := time.Now()
+	if stdout, _ := mustRun(t, c, "Get-OtherThing"); stdout != "ok" {
+		t.Fatalf("second call: stdout = %q", stdout)
+	}
+	if elapsed := time.Since(start); elapsed > testTimeout/2 {
+		t.Errorf("second call took %s: the probe should fail fast, not wait for the operation timeout", elapsed)
+	}
+
+	if got := srv.Connections(); got != 2 {
+		t.Errorf("connections = %d, want 2 (one reconnect after the failed probe)", got)
+	}
+	if got := len(srv.Requests()); got != 2 {
+		t.Errorf("requests = %d, want 2 (nothing written to the silent session)", got)
+	}
+}
+
 // dropAfterCalls: 1 records the doomed request server-side, then drops the
 // channel without responding — exactly the "write OK, response lost" case.
 // The client must return an error, open no new connection for a retry, and
