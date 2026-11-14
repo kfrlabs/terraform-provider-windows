@@ -7,68 +7,37 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // RegistryKeyErrorKind categorises errors returned by RegistryKeyClient operations.
 type RegistryKeyErrorKind string
 
 const (
-	RegistryKeyErrorNotFound     RegistryKeyErrorKind = "not_found"
-	RegistryKeyErrorPermission   RegistryKeyErrorKind = "permission_denied"
-	RegistryKeyErrorInvalidInput RegistryKeyErrorKind = "invalid_input"
-	RegistryKeyErrorUnknown      RegistryKeyErrorKind = "unknown"
+	RegistryKeyErrorNotFound     = "not_found"
+	RegistryKeyErrorPermission   = "permission_denied"
+	RegistryKeyErrorInvalidInput = "invalid_input"
+	RegistryKeyErrorUnknown      = "unknown"
 )
 
 // RegistryKeyError is the structured error type returned by all RegistryKeyClient methods.
-type RegistryKeyError struct {
-	Kind    RegistryKeyErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *RegistryKeyError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_registry_key [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_registry_key [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *RegistryKeyError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *RegistryKeyError) Is(target error) bool {
-	t, ok := target.(*RegistryKeyError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type RegistryKeyError = ResourceError
 
 // NewRegistryKeyError constructs a *RegistryKeyError.
 func NewRegistryKeyError(kind RegistryKeyErrorKind, message string, cause error, ctx map[string]string) *RegistryKeyError {
-	return &RegistryKeyError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_registry_key", string(kind), message, cause, ctx)
 }
 
 // IsRegistryKeyError reports whether err is a *RegistryKeyError with the given kind.
 func IsRegistryKeyError(err error, kind RegistryKeyErrorKind) bool {
-	var rke *RegistryKeyError
-	if errors.As(err, &rke) {
-		return rke.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_registry_key", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrRegistryKeyNotFound     = &RegistryKeyError{Kind: RegistryKeyErrorNotFound}
-	ErrRegistryKeyPermission   = &RegistryKeyError{Kind: RegistryKeyErrorPermission}
-	ErrRegistryKeyInvalidInput = &RegistryKeyError{Kind: RegistryKeyErrorInvalidInput}
-	ErrRegistryKeyUnknown      = &RegistryKeyError{Kind: RegistryKeyErrorUnknown}
+	ErrRegistryKeyNotFound     = &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorNotFound}
+	ErrRegistryKeyPermission   = &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorPermission}
+	ErrRegistryKeyInvalidInput = &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorInvalidInput}
+	ErrRegistryKeyUnknown      = &RegistryKeyError{Resource: "windows_registry_key", Kind: RegistryKeyErrorUnknown}
 )
 
 // RegistryKeyValueSummary is a drift-detection summary of one value: its name

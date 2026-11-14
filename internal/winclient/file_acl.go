@@ -387,14 +387,14 @@ func (f *FileACLClientImpl) runScript(ctx context.Context, op, script, stdin str
 		return resp, nil
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		return nil, &FileACLError{
+		return nil, &FileACLError{Resource: "windows_file_acl",
 			Kind:    FileACLErrorUnknown,
 			Message: eerr.Message,
 			Cause:   eerr.Cause,
 			Context: eerr.Context,
 		}
 	}
-	return resp, &FileACLError{Kind: mapFileACLErrorKind(eerr.RemoteKind), Message: eerr.Message, Context: eerr.Context}
+	return resp, &FileACLError{Resource: "windows_file_acl", Kind: string(mapFileACLErrorKind(eerr.RemoteKind)), Message: eerr.Message, Context: eerr.Context}
 }
 
 // mapFileACLErrorKind translates the PS-side "kind" string to a typed kind.
@@ -416,7 +416,7 @@ func (f *FileACLClientImpl) Set(ctx context.Context, input FileACLInput) (*FileA
 	}
 	payload, err := json.Marshal(input)
 	if err != nil {
-		return nil, &FileACLError{Kind: FileACLErrorInvalidInput, Message: "cannot encode ACL specification", Cause: err}
+		return nil, &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorInvalidInput, Message: "cannot encode ACL specification", Cause: err}
 	}
 	script := psFileACLHeader + "\n" + psFileACLSetBody
 	resp, err := f.runScript(ctx, "set", script, string(payload))
@@ -429,7 +429,7 @@ func (f *FileACLClientImpl) Set(ctx context.Context, input FileACLInput) (*FileA
 // Read returns the observed descriptor, or (nil, nil) when the target is absent.
 func (f *FileACLClientImpl) Read(ctx context.Context, path string) (*FileACLState, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, &FileACLError{Kind: FileACLErrorInvalidInput, Message: "path must not be empty"}
+		return nil, &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorInvalidInput, Message: "path must not be empty"}
 	}
 	script := psFileACLHeader + "\n" + strings.NewReplacer("@@PATH@@", psQuote(path)).Replace(psFileACLReadBody)
 	resp, err := f.runScript(ctx, "read", script, "")
@@ -446,7 +446,7 @@ func (f *FileACLClientImpl) Read(ctx context.Context, path string) (*FileACLStat
 // itself is never deleted, and a missing target is a silent success.
 func (f *FileACLClientImpl) Reset(ctx context.Context, path string, managed []FileACLAccessRule) error {
 	if strings.TrimSpace(path) == "" {
-		return &FileACLError{Kind: FileACLErrorInvalidInput, Message: "path must not be empty"}
+		return &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorInvalidInput, Message: "path must not be empty"}
 	}
 	spec := FileACLInput{Path: path, Mode: FileACLModeAdditive, AccessRules: managed}
 	for i := range spec.AccessRules {
@@ -458,7 +458,7 @@ func (f *FileACLClientImpl) Reset(ctx context.Context, path string, managed []Fi
 	}
 	payload, err := json.Marshal(spec)
 	if err != nil {
-		return &FileACLError{Kind: FileACLErrorInvalidInput, Message: "cannot encode ACL specification", Cause: err}
+		return &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorInvalidInput, Message: "cannot encode ACL specification", Cause: err}
 	}
 	script := psFileACLHeader + "\n" + psFileACLResetBody
 	_, err = f.runScript(ctx, "reset", script, string(payload))
@@ -476,7 +476,7 @@ func parseFileACLPayload(raw json.RawMessage, path string) (*FileACLState, error
 	}
 	var payload fileACLDataPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, &FileACLError{Kind: FileACLErrorUnknown, Message: "failed to parse ACL payload", Cause: err}
+		return nil, &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorUnknown, Message: "failed to parse ACL payload", Cause: err}
 	}
 	if !payload.Found {
 		return nil, nil
@@ -515,12 +515,12 @@ func parseFileACLRules(raw json.RawMessage) ([]FileACLAccessRule, error) {
 	var decoded []FileACLAccessRule
 	if strings.HasPrefix(trimmed, "[") {
 		if err := json.Unmarshal(raw, &decoded); err != nil {
-			return nil, &FileACLError{Kind: FileACLErrorUnknown, Message: "failed to parse access rules", Cause: err}
+			return nil, &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorUnknown, Message: "failed to parse access rules", Cause: err}
 		}
 	} else {
 		var single FileACLAccessRule
 		if err := json.Unmarshal(raw, &single); err != nil {
-			return nil, &FileACLError{Kind: FileACLErrorUnknown, Message: "failed to parse access rule", Cause: err}
+			return nil, &FileACLError{Resource: "windows_file_acl", Kind: FileACLErrorUnknown, Message: "failed to parse access rule", Cause: err}
 		}
 		decoded = []FileACLAccessRule{single}
 	}

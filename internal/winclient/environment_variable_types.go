@@ -16,8 +16,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -49,19 +47,19 @@ type EnvVarErrorKind string
 const (
 	// EnvVarErrorNotFound is returned when the variable does not exist and
 	// the caller requires its presence (e.g. Import — EC-10).
-	EnvVarErrorNotFound EnvVarErrorKind = "not_found"
+	EnvVarErrorNotFound = "not_found"
 
 	// EnvVarErrorPermission is returned when an UnauthorizedAccessException
 	// occurs (e.g. writing to machine scope without Local Administrator — EC-9).
-	EnvVarErrorPermission EnvVarErrorKind = "permission_denied"
+	EnvVarErrorPermission = "permission_denied"
 
 	// EnvVarErrorInvalidInput is returned when the PS layer rejects the input
 	// (e.g. the scope-resolved registry key does not exist — EC-2).
-	EnvVarErrorInvalidInput EnvVarErrorKind = "invalid_input"
+	EnvVarErrorInvalidInput = "invalid_input"
 
 	// EnvVarErrorUnknown is returned for unrecognised PS errors or unexpected
 	// SSH transport failures.
-	EnvVarErrorUnknown EnvVarErrorKind = "unknown"
+	EnvVarErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -72,54 +70,17 @@ const (
 //
 // Callers should use errors.Is(err, ErrEnvVar*) for kind-based matching or
 // errors.As(err, &eve) to access the full Context map for diagnostics.
-type EnvVarError struct {
-	// Kind is the machine-readable error category.
-	Kind EnvVarErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics and provider logs.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs.
-	Context map[string]string
-
-	// Cause is the underlying error, if any.
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *EnvVarError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_environment_variable [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_environment_variable [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors chain walking.
-func (e *EnvVarError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *EnvVarError) Is(target error) bool {
-	t, ok := target.(*EnvVarError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type EnvVarError = ResourceError
 
 // NewEnvVarError constructs a *EnvVarError. Pass nil cause when no underlying
 // error exists. ctx may be nil.
 func NewEnvVarError(kind EnvVarErrorKind, message string, cause error, ctx map[string]string) *EnvVarError {
-	return &EnvVarError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_environment_variable", string(kind), message, cause, ctx)
 }
 
 // IsEnvVarError reports whether err is an *EnvVarError with the given kind.
 func IsEnvVarError(err error, kind EnvVarErrorKind) bool {
-	var eve *EnvVarError
-	if errors.As(err, &eve) {
-		return eve.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_environment_variable", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -128,16 +89,16 @@ func IsEnvVarError(err error, kind EnvVarErrorKind) bool {
 
 var (
 	// ErrEnvVarNotFound is the sentinel for EnvVarErrorNotFound.
-	ErrEnvVarNotFound = &EnvVarError{Kind: EnvVarErrorNotFound}
+	ErrEnvVarNotFound = &EnvVarError{Resource: "windows_environment_variable", Kind: EnvVarErrorNotFound}
 
 	// ErrEnvVarPermission is the sentinel for EnvVarErrorPermission.
-	ErrEnvVarPermission = &EnvVarError{Kind: EnvVarErrorPermission}
+	ErrEnvVarPermission = &EnvVarError{Resource: "windows_environment_variable", Kind: EnvVarErrorPermission}
 
 	// ErrEnvVarInvalidInput is the sentinel for EnvVarErrorInvalidInput.
-	ErrEnvVarInvalidInput = &EnvVarError{Kind: EnvVarErrorInvalidInput}
+	ErrEnvVarInvalidInput = &EnvVarError{Resource: "windows_environment_variable", Kind: EnvVarErrorInvalidInput}
 
 	// ErrEnvVarUnknown is the sentinel for EnvVarErrorUnknown.
-	ErrEnvVarUnknown = &EnvVarError{Kind: EnvVarErrorUnknown}
+	ErrEnvVarUnknown = &EnvVarError{Resource: "windows_environment_variable", Kind: EnvVarErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

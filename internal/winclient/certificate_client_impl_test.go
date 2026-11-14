@@ -176,7 +176,7 @@ func TestCertificateError(t *testing.T) {
 		if !IsCertificateError(tc.sentinel, tc.kind) {
 			t.Errorf("sentinel %v must report kind %q", tc.sentinel, tc.kind)
 		}
-		other := CertificateErrorNotFound
+		other := CertificateErrorKind(CertificateErrorNotFound)
 		if tc.kind == CertificateErrorNotFound {
 			other = CertificateErrorUnknown
 		}

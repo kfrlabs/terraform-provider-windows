@@ -487,7 +487,7 @@ func addNetworkAdaptersDiag(diags *diag.Diagnostics, summary string, err error) 
 			detail += "\n\nCause: " + ne.Cause.Error()
 		}
 		if ne.Kind != "" {
-			detail += "\n\nKind: " + string(ne.Kind)
+			detail += "\n\nKind: " + ne.Kind
 		}
 		diags.AddError(summary, detail)
 		return

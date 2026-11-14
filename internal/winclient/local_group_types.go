@@ -15,8 +15,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -34,43 +32,43 @@ const (
 	// GroupNotFound for the given SID. In Read, this triggers
 	// RemoveResource() — the drift-tolerant "disappeared outside Terraform"
 	// path (EC-3).
-	LocalGroupErrorNotFound LocalGroupErrorKind = "not_found"
+	LocalGroupErrorNotFound = "not_found"
 
 	// LocalGroupErrorAlreadyExists is returned when Create detects a
 	// pre-existing group with the same name before calling New-LocalGroup
 	// (EC-1). Hard error — the operator must use terraform import.
-	LocalGroupErrorAlreadyExists LocalGroupErrorKind = "already_exists"
+	LocalGroupErrorAlreadyExists = "already_exists"
 
 	// LocalGroupErrorBuiltinGroup is returned when Delete detects that the
 	// target group's SID matches the BUILTIN authority prefix "S-1-5-32-"
 	// (EC-2, ADR-LG-2). Hard error — not a warning.
-	LocalGroupErrorBuiltinGroup LocalGroupErrorKind = "builtin_group"
+	LocalGroupErrorBuiltinGroup = "builtin_group"
 
 	// LocalGroupErrorPermission is returned when a mutating cmdlet is
 	// rejected with AccessDenied (EC-8).
-	LocalGroupErrorPermission LocalGroupErrorKind = "permission_denied"
+	LocalGroupErrorPermission = "permission_denied"
 
 	// LocalGroupErrorNameConflict is returned when Rename-LocalGroup fails
 	// because the target name is already used by another local group (EC-5).
-	LocalGroupErrorNameConflict LocalGroupErrorKind = "name_conflict"
+	LocalGroupErrorNameConflict = "name_conflict"
 
 	// LocalGroupErrorInvalidName is returned when a group name fails
 	// Windows-side validation (defence-in-depth, EC-6).
-	LocalGroupErrorInvalidName LocalGroupErrorKind = "invalid_name"
+	LocalGroupErrorInvalidName = "invalid_name"
 
 	// LocalGroupErrorInvalidParameter is returned when a List filter fails
 	// Go-side validation (e.g. name_regex is not a valid regular expression).
 	// No host call is made in that case.
-	LocalGroupErrorInvalidParameter LocalGroupErrorKind = "invalid_parameter"
+	LocalGroupErrorInvalidParameter = "invalid_parameter"
 
 	// LocalGroupErrorUnsupportedOnDC is returned when List runs on a domain
 	// controller (Win32_ComputerSystem DomainRole >= 4), where the
 	// LocalAccounts cmdlets address the domain database, not local groups.
-	LocalGroupErrorUnsupportedOnDC LocalGroupErrorKind = "unsupported_on_domain_controller"
+	LocalGroupErrorUnsupportedOnDC = "unsupported_on_domain_controller"
 
 	// LocalGroupErrorUnknown is returned for unrecognised PowerShell errors
 	// or unexpected SSH transport failures.
-	LocalGroupErrorUnknown LocalGroupErrorKind = "unknown"
+	LocalGroupErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -82,48 +80,7 @@ const (
 //
 // Callers should use errors.Is(err, ErrLocalGroup*) for kind matching, or
 // errors.As(err, &lge) to access the full Context map for diagnostics.
-type LocalGroupError struct {
-	// Kind is the machine-readable error category.
-	Kind LocalGroupErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics and provider logs.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "sid", "name", "new_name", "operation", "output", "exit_code").
-	// All values must be safe to log — no secrets.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (e.g. a SSH transport error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *LocalGroupError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_local_group [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_local_group [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *LocalGroupError) Unwrap() error {
-	return e.Cause
-}
-
-// Is implements errors.Is comparison by Kind only.
-//
-// This allows:
-//
-//	errors.Is(err, ErrLocalGroupNotFound) // true when err.Kind == LocalGroupErrorNotFound
-func (e *LocalGroupError) Is(target error) bool {
-	t, ok := target.(*LocalGroupError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type LocalGroupError = ResourceError
 
 // NewLocalGroupError constructs a *LocalGroupError. Pass a nil cause when no
 // underlying error exists. The ctx map may be nil.
@@ -133,23 +90,14 @@ func NewLocalGroupError(
 	cause error,
 	ctx map[string]string,
 ) *LocalGroupError {
-	return &LocalGroupError{
-		Kind:    kind,
-		Message: message,
-		Cause:   cause,
-		Context: ctx,
-	}
+	return NewResourceError("windows_local_group", string(kind), message, cause, ctx)
 }
 
 // IsLocalGroupError reports whether err is a *LocalGroupError with the given
 // kind. Equivalent to errors.Is(err, &LocalGroupError{Kind: kind}) but more
 // readable at call sites.
 func IsLocalGroupError(err error, kind LocalGroupErrorKind) bool {
-	var lge *LocalGroupError
-	if errors.As(err, &lge) {
-		return lge.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_local_group", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -157,31 +105,31 @@ func IsLocalGroupError(err error, kind LocalGroupErrorKind) bool {
 // ---------------------------------------------------------------------------
 
 // ErrLocalGroupNotFound is a sentinel for GroupNotFound (EC-3, EC-10).
-var ErrLocalGroupNotFound = &LocalGroupError{Kind: LocalGroupErrorNotFound}
+var ErrLocalGroupNotFound = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorNotFound}
 
 // ErrLocalGroupAlreadyExists is a sentinel for name collision at Create (EC-1).
-var ErrLocalGroupAlreadyExists = &LocalGroupError{Kind: LocalGroupErrorAlreadyExists}
+var ErrLocalGroupAlreadyExists = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorAlreadyExists}
 
 // ErrLocalGroupBuiltinGroup is a sentinel for BUILTIN group deletion attempt (EC-2).
-var ErrLocalGroupBuiltinGroup = &LocalGroupError{Kind: LocalGroupErrorBuiltinGroup}
+var ErrLocalGroupBuiltinGroup = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorBuiltinGroup}
 
 // ErrLocalGroupPermission is a sentinel for AccessDenied (EC-8).
-var ErrLocalGroupPermission = &LocalGroupError{Kind: LocalGroupErrorPermission}
+var ErrLocalGroupPermission = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorPermission}
 
 // ErrLocalGroupNameConflict is a sentinel for rename target already taken (EC-5).
-var ErrLocalGroupNameConflict = &LocalGroupError{Kind: LocalGroupErrorNameConflict}
+var ErrLocalGroupNameConflict = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorNameConflict}
 
 // ErrLocalGroupInvalidName is a sentinel for invalid name (EC-6).
-var ErrLocalGroupInvalidName = &LocalGroupError{Kind: LocalGroupErrorInvalidName}
+var ErrLocalGroupInvalidName = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorInvalidName}
 
 // ErrLocalGroupInvalidParameter is a sentinel for invalid List filters.
-var ErrLocalGroupInvalidParameter = &LocalGroupError{Kind: LocalGroupErrorInvalidParameter}
+var ErrLocalGroupInvalidParameter = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorInvalidParameter}
 
 // ErrLocalGroupUnsupportedOnDC is a sentinel for List on a domain controller.
-var ErrLocalGroupUnsupportedOnDC = &LocalGroupError{Kind: LocalGroupErrorUnsupportedOnDC}
+var ErrLocalGroupUnsupportedOnDC = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorUnsupportedOnDC}
 
 // ErrLocalGroupUnknown is a sentinel for unexpected errors.
-var ErrLocalGroupUnknown = &LocalGroupError{Kind: LocalGroupErrorUnknown}
+var ErrLocalGroupUnknown = &LocalGroupError{Resource: "windows_local_group", Kind: LocalGroupErrorUnknown}
 
 // ---------------------------------------------------------------------------
 // GroupInput — input parameters for Create and Update

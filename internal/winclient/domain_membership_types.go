@@ -6,8 +6,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // DomainMembershipErrorKind categorises errors returned by
@@ -17,105 +15,76 @@ type DomainMembershipErrorKind string
 const (
 	// DomainMembershipErrorAlreadyJoined is returned by Join when the host is
 	// already joined to the desired domain. Hard error — use terraform import.
-	DomainMembershipErrorAlreadyJoined DomainMembershipErrorKind = "already_joined"
+	DomainMembershipErrorAlreadyJoined = "already_joined"
 
 	// DomainMembershipErrorJoinedToOtherDomain is returned by Join when the
 	// host is already joined to a different domain.
-	DomainMembershipErrorJoinedToOtherDomain DomainMembershipErrorKind = "joined_to_other_domain"
+	DomainMembershipErrorJoinedToOtherDomain = "joined_to_other_domain"
 
 	// DomainMembershipErrorDomainNotFound is returned when the domain (or a
 	// domain controller for it) cannot be located (Win32 1355 / 53).
-	DomainMembershipErrorDomainNotFound DomainMembershipErrorKind = "domain_not_found"
+	DomainMembershipErrorDomainNotFound = "domain_not_found"
 
 	// DomainMembershipErrorBadCredentials is returned on logon failure
 	// (Win32 1326): unknown user name or bad password.
-	DomainMembershipErrorBadCredentials DomainMembershipErrorKind = "bad_credentials"
+	DomainMembershipErrorBadCredentials = "bad_credentials"
 
 	// DomainMembershipErrorAccountExists is returned when the computer
 	// account already exists in the domain (Win32 2224).
-	DomainMembershipErrorAccountExists DomainMembershipErrorKind = "account_exists"
+	DomainMembershipErrorAccountExists = "account_exists"
 
 	// DomainMembershipErrorOuNotFound is returned when the requested
 	// organisational unit does not exist.
-	DomainMembershipErrorOuNotFound DomainMembershipErrorKind = "ou_not_found"
+	DomainMembershipErrorOuNotFound = "ou_not_found"
 
 	// DomainMembershipErrorAccessDenied is returned on AccessDenied (Win32 5).
-	DomainMembershipErrorAccessDenied DomainMembershipErrorKind = "access_denied"
+	DomainMembershipErrorAccessDenied = "access_denied"
 
 	// DomainMembershipErrorRebootPending is returned when a pending reboot
 	// blocks the join/unjoin operation.
-	DomainMembershipErrorRebootPending DomainMembershipErrorKind = "reboot_pending"
+	DomainMembershipErrorRebootPending = "reboot_pending"
 
 	// DomainMembershipErrorTimeout is returned when the operation timed out
 	// or was cancelled.
-	DomainMembershipErrorTimeout DomainMembershipErrorKind = "timeout"
+	DomainMembershipErrorTimeout = "timeout"
 
 	// DomainMembershipErrorInvalidParameter is returned for empty required
 	// inputs (domain, username).
-	DomainMembershipErrorInvalidParameter DomainMembershipErrorKind = "invalid_parameter"
+	DomainMembershipErrorInvalidParameter = "invalid_parameter"
 
 	// DomainMembershipErrorUnknown is the catch-all for unmapped PowerShell
 	// or SSH failures.
-	DomainMembershipErrorUnknown DomainMembershipErrorKind = "unknown"
+	DomainMembershipErrorUnknown = "unknown"
 )
 
 // DomainMembershipError is the structured error type returned by
 // WindowsDomainMembershipClient.
-type DomainMembershipError struct {
-	Kind    DomainMembershipErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements error.
-func (e *DomainMembershipError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_domain_membership [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_domain_membership [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *DomainMembershipError) Unwrap() error { return e.Cause }
-
-// Is matches by Kind only.
-func (e *DomainMembershipError) Is(target error) bool {
-	t, ok := target.(*DomainMembershipError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type DomainMembershipError = ResourceError
 
 // NewDomainMembershipError constructs a *DomainMembershipError.
 func NewDomainMembershipError(kind DomainMembershipErrorKind, msg string, cause error, ctx map[string]string) *DomainMembershipError {
-	return &DomainMembershipError{Kind: kind, Message: msg, Cause: cause, Context: ctx}
+	return NewResourceError("windows_domain_membership", string(kind), msg, cause, ctx)
 }
 
 // IsDomainMembershipError reports whether err is a *DomainMembershipError of
 // the given kind.
 func IsDomainMembershipError(err error, kind DomainMembershipErrorKind) bool {
-	var de *DomainMembershipError
-	if errors.As(err, &de) {
-		return de.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_domain_membership", string(kind))
 }
 
 // Sentinel errors usable with errors.Is.
 var (
-	ErrDomainMembershipAlreadyJoined       = &DomainMembershipError{Kind: DomainMembershipErrorAlreadyJoined}
-	ErrDomainMembershipJoinedToOtherDomain = &DomainMembershipError{Kind: DomainMembershipErrorJoinedToOtherDomain}
-	ErrDomainMembershipDomainNotFound      = &DomainMembershipError{Kind: DomainMembershipErrorDomainNotFound}
-	ErrDomainMembershipBadCredentials      = &DomainMembershipError{Kind: DomainMembershipErrorBadCredentials}
-	ErrDomainMembershipAccountExists       = &DomainMembershipError{Kind: DomainMembershipErrorAccountExists}
-	ErrDomainMembershipOuNotFound          = &DomainMembershipError{Kind: DomainMembershipErrorOuNotFound}
-	ErrDomainMembershipAccessDenied        = &DomainMembershipError{Kind: DomainMembershipErrorAccessDenied}
-	ErrDomainMembershipRebootPending       = &DomainMembershipError{Kind: DomainMembershipErrorRebootPending}
-	ErrDomainMembershipTimeout             = &DomainMembershipError{Kind: DomainMembershipErrorTimeout}
-	ErrDomainMembershipInvalidParameter    = &DomainMembershipError{Kind: DomainMembershipErrorInvalidParameter}
-	ErrDomainMembershipUnknown             = &DomainMembershipError{Kind: DomainMembershipErrorUnknown}
+	ErrDomainMembershipAlreadyJoined       = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorAlreadyJoined}
+	ErrDomainMembershipJoinedToOtherDomain = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorJoinedToOtherDomain}
+	ErrDomainMembershipDomainNotFound      = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorDomainNotFound}
+	ErrDomainMembershipBadCredentials      = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorBadCredentials}
+	ErrDomainMembershipAccountExists       = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorAccountExists}
+	ErrDomainMembershipOuNotFound          = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorOuNotFound}
+	ErrDomainMembershipAccessDenied        = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorAccessDenied}
+	ErrDomainMembershipRebootPending       = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorRebootPending}
+	ErrDomainMembershipTimeout             = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorTimeout}
+	ErrDomainMembershipInvalidParameter    = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorInvalidParameter}
+	ErrDomainMembershipUnknown             = &DomainMembershipError{Resource: "windows_domain_membership", Kind: DomainMembershipErrorUnknown}
 )
 
 // DomainJoinInput carries the desired configuration for Join.

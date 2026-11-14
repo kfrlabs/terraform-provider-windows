@@ -752,7 +752,7 @@ func TestScheduledTaskSentinels(t *testing.T) {
 	}
 	for _, c := range cases {
 		var ste *ScheduledTaskError
-		if !errors.As(c.sentinel, &ste) || ste.Kind != c.kind {
+		if !errors.As(c.sentinel, &ste) || ste.Kind != string(c.kind) {
 			t.Errorf("%T does not carry kind %q", c.sentinel, c.kind)
 			continue
 		}
@@ -770,7 +770,7 @@ func TestScheduledTaskSentinels(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestScheduledTaskError_Error_NoWrap(t *testing.T) {
-	e := &ScheduledTaskError{Kind: ScheduledTaskErrorNotFound, Message: "not found"}
+	e := &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorNotFound, Message: "not found"}
 	s := e.Error()
 	if !strings.Contains(s, "not_found") {
 		t.Errorf("Error() missing kind: %s", s)
@@ -782,7 +782,7 @@ func TestScheduledTaskError_Error_NoWrap(t *testing.T) {
 
 func TestScheduledTaskError_Error_WithCause(t *testing.T) {
 	cause := errors.New("rpc error")
-	e := &ScheduledTaskError{Kind: ScheduledTaskErrorUnknown, Message: "wrap", Cause: cause}
+	e := &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorUnknown, Message: "wrap", Cause: cause}
 	s := e.Error()
 	if !strings.Contains(s, "rpc error") {
 		t.Errorf("Error() should include cause: %s", s)
@@ -791,28 +791,28 @@ func TestScheduledTaskError_Error_WithCause(t *testing.T) {
 
 func TestScheduledTaskError_Unwrap(t *testing.T) {
 	inner := errors.New("inner")
-	e := &ScheduledTaskError{Cause: inner}
+	e := &ScheduledTaskError{Resource: "windows_scheduled_task", Cause: inner}
 	if !errors.Is(e, inner) {
 		t.Error("Unwrap should chain to inner error")
 	}
 }
 
 func TestScheduledTaskError_Is_SameKind(t *testing.T) {
-	e := &ScheduledTaskError{Kind: ScheduledTaskErrorNotFound}
+	e := &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorNotFound}
 	if !errors.Is(e, ErrScheduledTaskNotFound) {
 		t.Error("errors.Is with sentinel should match by Kind")
 	}
 }
 
 func TestScheduledTaskError_Is_DifferentKind(t *testing.T) {
-	e := &ScheduledTaskError{Kind: ScheduledTaskErrorNotFound}
+	e := &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorNotFound}
 	if errors.Is(e, ErrScheduledTaskAlreadyExists) {
 		t.Error("different kind should not match")
 	}
 }
 
 func TestScheduledTaskError_Is_NonMatchingType(t *testing.T) {
-	e := &ScheduledTaskError{Kind: ScheduledTaskErrorNotFound}
+	e := &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorNotFound}
 	if errors.Is(e, errors.New("plain")) {
 		t.Error("non-ScheduledTaskError should not match")
 	}

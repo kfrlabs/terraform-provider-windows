@@ -15,8 +15,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,21 +30,21 @@ const (
 	// TimezoneErrorInvalidTimezone is returned when the desired time zone ID
 	// is unknown to the host (Set-TimeZone / tzutil reject it). The error
 	// context carries up to five close-match suggestions when available.
-	TimezoneErrorInvalidTimezone TimezoneErrorKind = "invalid_timezone"
+	TimezoneErrorInvalidTimezone = "invalid_timezone"
 
 	// TimezoneErrorAccessDenied is returned when the SSH user lacks the
 	// SeTimeZonePrivilege privilege (or administrator rights) required to
 	// change the system time zone.
-	TimezoneErrorAccessDenied TimezoneErrorKind = "access_denied"
+	TimezoneErrorAccessDenied = "access_denied"
 
 	// TimezoneErrorTimeout is returned when the operation timed out or was
 	// cancelled. The script outcome is unknown, so the caller must not
 	// retry blindly.
-	TimezoneErrorTimeout TimezoneErrorKind = "timeout"
+	TimezoneErrorTimeout = "timeout"
 
 	// TimezoneErrorUnknown is the catch-all for unmapped PowerShell or SSH
 	// failures. Stdout/stderr SHOULD be captured in Context.
-	TimezoneErrorUnknown TimezoneErrorKind = "unknown"
+	TimezoneErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -56,57 +54,17 @@ const (
 // TimezoneError is the structured error type returned by all
 // WindowsTimezoneClient methods. Use errors.Is(err, ErrTimezone*) for kind
 // matching, or errors.As(err, &te) to inspect Context.
-type TimezoneError struct {
-	// Kind is the machine-readable error category.
-	Kind TimezoneErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. Must not contain SSH credentials.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "timezone_id", "suggestions"). All values must
-	// be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *TimezoneError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_timezone [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_timezone [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *TimezoneError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *TimezoneError) Is(target error) bool {
-	t, ok := target.(*TimezoneError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type TimezoneError = ResourceError
 
 // NewTimezoneError constructs a *TimezoneError. Pass a nil cause when no
 // underlying error exists. The ctx map may be nil.
 func NewTimezoneError(kind TimezoneErrorKind, message string, cause error, ctx map[string]string) *TimezoneError {
-	return &TimezoneError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_timezone", string(kind), message, cause, ctx)
 }
 
 // IsTimezoneError reports whether err is a *TimezoneError of the given kind.
 func IsTimezoneError(err error, kind TimezoneErrorKind) bool {
-	var te *TimezoneError
-	if errors.As(err, &te) {
-		return te.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_timezone", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -114,10 +72,10 @@ func IsTimezoneError(err error, kind TimezoneErrorKind) bool {
 // ---------------------------------------------------------------------------
 
 var (
-	ErrTimezoneInvalidTimezone = &TimezoneError{Kind: TimezoneErrorInvalidTimezone}
-	ErrTimezoneAccessDenied    = &TimezoneError{Kind: TimezoneErrorAccessDenied}
-	ErrTimezoneTimeout         = &TimezoneError{Kind: TimezoneErrorTimeout}
-	ErrTimezoneUnknown         = &TimezoneError{Kind: TimezoneErrorUnknown}
+	ErrTimezoneInvalidTimezone = &TimezoneError{Resource: "windows_timezone", Kind: TimezoneErrorInvalidTimezone}
+	ErrTimezoneAccessDenied    = &TimezoneError{Resource: "windows_timezone", Kind: TimezoneErrorAccessDenied}
+	ErrTimezoneTimeout         = &TimezoneError{Resource: "windows_timezone", Kind: TimezoneErrorTimeout}
+	ErrTimezoneUnknown         = &TimezoneError{Resource: "windows_timezone", Kind: TimezoneErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

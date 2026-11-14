@@ -10,7 +10,6 @@ package winclient
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 )
 
@@ -36,74 +35,45 @@ const (
 type FileErrorKind string
 
 const (
-	FileErrorNotFound         FileErrorKind = "not_found"
-	FileErrorAlreadyExists    FileErrorKind = "already_exists"
-	FileErrorTypeConflict     FileErrorKind = "type_conflict"
-	FileErrorPathNotFound     FileErrorKind = "path_not_found"
-	FileErrorPermission       FileErrorKind = "permission_denied"
-	FileErrorLocked           FileErrorKind = "file_locked"
-	FileErrorDiskFull         FileErrorKind = "disk_full"
-	FileErrorDownloadFailed   FileErrorKind = "download_failed"
-	FileErrorChecksumMismatch FileErrorKind = "checksum_mismatch"
-	FileErrorInvalidInput     FileErrorKind = "invalid_input"
-	FileErrorUnknown          FileErrorKind = "unknown"
+	FileErrorNotFound         = "not_found"
+	FileErrorAlreadyExists    = "already_exists"
+	FileErrorTypeConflict     = "type_conflict"
+	FileErrorPathNotFound     = "path_not_found"
+	FileErrorPermission       = "permission_denied"
+	FileErrorLocked           = "file_locked"
+	FileErrorDiskFull         = "disk_full"
+	FileErrorDownloadFailed   = "download_failed"
+	FileErrorChecksumMismatch = "checksum_mismatch"
+	FileErrorInvalidInput     = "invalid_input"
+	FileErrorUnknown          = "unknown"
 )
 
 // FileError is the structured error type returned by all FileClient methods.
-type FileError struct {
-	Kind    FileErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *FileError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_file [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_file [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *FileError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *FileError) Is(target error) bool {
-	t, ok := target.(*FileError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type FileError = ResourceError
 
 // NewFileError constructs a *FileError.
 func NewFileError(kind FileErrorKind, message string, cause error, ctx map[string]string) *FileError {
-	return &FileError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_file", string(kind), message, cause, ctx)
 }
 
 // IsFileError reports whether err is a *FileError with the given kind.
 func IsFileError(err error, kind FileErrorKind) bool {
-	var fe *FileError
-	if errors.As(err, &fe) {
-		return fe.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_file", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrFileNotFound         = &FileError{Kind: FileErrorNotFound}
-	ErrFileAlreadyExists    = &FileError{Kind: FileErrorAlreadyExists}
-	ErrFileTypeConflict     = &FileError{Kind: FileErrorTypeConflict}
-	ErrFilePathNotFound     = &FileError{Kind: FileErrorPathNotFound}
-	ErrFilePermission       = &FileError{Kind: FileErrorPermission}
-	ErrFileLocked           = &FileError{Kind: FileErrorLocked}
-	ErrFileDiskFull         = &FileError{Kind: FileErrorDiskFull}
-	ErrFileDownloadFailed   = &FileError{Kind: FileErrorDownloadFailed}
-	ErrFileChecksumMismatch = &FileError{Kind: FileErrorChecksumMismatch}
-	ErrFileInvalidInput     = &FileError{Kind: FileErrorInvalidInput}
-	ErrFileUnknown          = &FileError{Kind: FileErrorUnknown}
+	ErrFileNotFound         = &FileError{Resource: "windows_file", Kind: FileErrorNotFound}
+	ErrFileAlreadyExists    = &FileError{Resource: "windows_file", Kind: FileErrorAlreadyExists}
+	ErrFileTypeConflict     = &FileError{Resource: "windows_file", Kind: FileErrorTypeConflict}
+	ErrFilePathNotFound     = &FileError{Resource: "windows_file", Kind: FileErrorPathNotFound}
+	ErrFilePermission       = &FileError{Resource: "windows_file", Kind: FileErrorPermission}
+	ErrFileLocked           = &FileError{Resource: "windows_file", Kind: FileErrorLocked}
+	ErrFileDiskFull         = &FileError{Resource: "windows_file", Kind: FileErrorDiskFull}
+	ErrFileDownloadFailed   = &FileError{Resource: "windows_file", Kind: FileErrorDownloadFailed}
+	ErrFileChecksumMismatch = &FileError{Resource: "windows_file", Kind: FileErrorChecksumMismatch}
+	ErrFileInvalidInput     = &FileError{Resource: "windows_file", Kind: FileErrorInvalidInput}
+	ErrFileUnknown          = &FileError{Resource: "windows_file", Kind: FileErrorUnknown}
 )
 
 // Valid file attribute keywords (schema enum).
@@ -189,7 +159,7 @@ type FileClient interface {
 func ValidateFileContentBase64(s string) (int64, error) {
 	raw, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
-		return 0, &FileError{
+		return 0, &FileError{Resource: "windows_file",
 			Kind:    FileErrorInvalidInput,
 			Message: "content_base64 is not valid standard base64",
 			Cause:   err,
@@ -197,7 +167,7 @@ func ValidateFileContentBase64(s string) (int64, error) {
 	}
 	size := int64(len(raw))
 	if size > FileMaxContentBytes {
-		return size, &FileError{
+		return size, &FileError{Resource: "windows_file",
 			Kind: FileErrorInvalidInput,
 			Message: fmt.Sprintf("content is %d bytes, which exceeds the %d byte limit of windows_file",
 				size, FileMaxContentBytes),
@@ -216,7 +186,7 @@ func NormaliseFileAttributes(attrs []string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, a := range attrs {
 		if _, ok := fileAttributeToDotNet[a]; !ok {
-			return nil, &FileError{
+			return nil, &FileError{Resource: "windows_file",
 				Kind:    FileErrorInvalidInput,
 				Message: fmt.Sprintf("unknown file attribute %q", a),
 			}
@@ -224,7 +194,7 @@ func NormaliseFileAttributes(attrs []string) ([]string, error) {
 		seen[a] = true
 	}
 	if seen[FileAttributeSystem] && seen[FileAttributeTemporary] {
-		return nil, &FileError{
+		return nil, &FileError{Resource: "windows_file",
 			Kind:    FileErrorInvalidInput,
 			Message: "attributes \"system\" and \"temporary\" are mutually exclusive",
 		}

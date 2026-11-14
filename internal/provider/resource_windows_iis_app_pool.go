@@ -758,7 +758,7 @@ func addIISAppPoolDiag(d *diag.Diagnostics, summary string, err error) {
 		if ae.Cause != nil {
 			detail += "\n\nCause: " + ae.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(ae.Kind)+"]", detail)
+		d.AddError(summary+" ["+ae.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

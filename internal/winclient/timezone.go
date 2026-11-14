@@ -147,7 +147,7 @@ func (t *TimezoneClient) runTimezoneEnvelope(ctx context.Context, op, script str
 		return resp, nil
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		kind := TimezoneErrorUnknown
+		kind := TimezoneErrorKind(TimezoneErrorUnknown)
 		if eerr.Stage == EnvelopeStageTimeout {
 			kind = TimezoneErrorTimeout
 		}

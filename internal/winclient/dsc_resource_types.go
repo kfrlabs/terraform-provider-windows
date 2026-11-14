@@ -34,8 +34,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -51,53 +49,53 @@ const (
 	// DSCResourceErrorModuleNotFound is returned when the requested DSC
 	// module is not installed on the target host, or when module_version
 	// pins a version that is not installed.
-	DSCResourceErrorModuleNotFound DSCResourceErrorKind = "module_not_found"
+	DSCResourceErrorModuleNotFound = "module_not_found"
 
 	// DSCResourceErrorResourceNotFound is returned when the requested DSC
 	// resource is not exposed by the resolved module on the target host.
 	// On Read it drops the Terraform resource from state.
-	DSCResourceErrorResourceNotFound DSCResourceErrorKind = "resource_not_found"
+	DSCResourceErrorResourceNotFound = "resource_not_found"
 
 	// DSCResourceErrorInvalidProperty is returned when properties names an
 	// unknown property, or when a PSCredential-typed property is passed
 	// inline instead of through credential_properties_wo.
-	DSCResourceErrorInvalidProperty DSCResourceErrorKind = "invalid_property"
+	DSCResourceErrorInvalidProperty = "invalid_property"
 
 	// DSCResourceErrorMissingProperty is returned when a mandatory
 	// (IsMandatory) schema property — including a mandatory PSCredential —
 	// has no value.
-	DSCResourceErrorMissingProperty DSCResourceErrorKind = "missing_property"
+	DSCResourceErrorMissingProperty = "missing_property"
 
 	// DSCResourceErrorInvalidValue is returned when a property value cannot
 	// be coerced to its schema type, violates a ValueMap, or carries a
 	// newline that the stdin line protocol cannot transport.
-	DSCResourceErrorInvalidValue DSCResourceErrorKind = "invalid_value"
+	DSCResourceErrorInvalidValue = "invalid_value"
 
 	// DSCResourceErrorLCMConflict is returned when the Local Configuration
 	// Manager would fight the direct Invoke-DscResource call: RefreshMode
 	// Pull, or an LCMState showing a busy/pending operation. The message
 	// carries remediation steps. The gateway never changes LCM settings.
-	DSCResourceErrorLCMConflict DSCResourceErrorKind = "lcm_conflict"
+	DSCResourceErrorLCMConflict = "lcm_conflict"
 
 	// DSCResourceErrorNotConverged is returned when Set reports success but
 	// the follow-up Test still reports InDesiredState=false.
-	DSCResourceErrorNotConverged DSCResourceErrorKind = "not_converged"
+	DSCResourceErrorNotConverged = "not_converged"
 
 	// DSCResourceErrorSetFailed is returned when Invoke-DscResource -Method
 	// Set throws an error that no more specific kind explains.
-	DSCResourceErrorSetFailed DSCResourceErrorKind = "set_failed"
+	DSCResourceErrorSetFailed = "set_failed"
 
 	// DSCResourceErrorAccessDenied is returned when the SSH user lacks the
 	// privilege to invoke the DSC resource.
-	DSCResourceErrorAccessDenied DSCResourceErrorKind = "access_denied"
+	DSCResourceErrorAccessDenied = "access_denied"
 
 	// DSCResourceErrorUnsupported is returned when the resource or the host
 	// does not support the requested operation.
-	DSCResourceErrorUnsupported DSCResourceErrorKind = "unsupported"
+	DSCResourceErrorUnsupported = "unsupported"
 
 	// DSCResourceErrorUnknown is returned for unexpected PowerShell errors
 	// or SSH transport failures.
-	DSCResourceErrorUnknown DSCResourceErrorKind = "unknown"
+	DSCResourceErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -112,61 +110,18 @@ const (
 //
 // SECURITY: credential passwords MUST NEVER appear in Message, Context, or
 // anywhere the error might be surfaced in provider logs or Terraform output.
-type DSCResourceError struct {
-	// Kind is the machine-readable error category.
-	Kind DSCResourceErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. Must not contain credential passwords or other secrets.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "module",
-	// "resource", "operation", "property"). All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (e.g. a SSH transport error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *DSCResourceError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_dsc_resource [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_dsc_resource [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *DSCResourceError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *DSCResourceError) Is(target error) bool {
-	t, ok := target.(*DSCResourceError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type DSCResourceError = ResourceError
 
 // NewDSCResourceError constructs a *DSCResourceError. Pass a nil cause when
 // no underlying error exists. The ctx map may be nil.
 func NewDSCResourceError(kind DSCResourceErrorKind, message string, cause error, ctx map[string]string) *DSCResourceError {
-	return &DSCResourceError{
-		Kind:    kind,
-		Message: message,
-		Cause:   cause,
-		Context: ctx,
-	}
+	return NewResourceError("windows_dsc_resource", string(kind), message, cause, ctx)
 }
 
 // IsDSCResourceError reports whether err is a *DSCResourceError with the
 // given kind.
 func IsDSCResourceError(err error, kind DSCResourceErrorKind) bool {
-	var de *DSCResourceError
-	if errors.As(err, &de) {
-		return de.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_dsc_resource", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -179,17 +134,17 @@ func IsDSCResourceError(err error, kind DSCResourceErrorKind) bool {
 // *DSCResourceError{Kind: DSCResourceErrorNotFound}, regardless of Message or
 // Context.
 var (
-	ErrDSCResourceModuleNotFound   = &DSCResourceError{Kind: DSCResourceErrorModuleNotFound}
-	ErrDSCResourceResourceNotFound = &DSCResourceError{Kind: DSCResourceErrorResourceNotFound}
-	ErrDSCResourceInvalidProperty  = &DSCResourceError{Kind: DSCResourceErrorInvalidProperty}
-	ErrDSCResourceMissingProperty  = &DSCResourceError{Kind: DSCResourceErrorMissingProperty}
-	ErrDSCResourceInvalidValue     = &DSCResourceError{Kind: DSCResourceErrorInvalidValue}
-	ErrDSCResourceLCMConflict      = &DSCResourceError{Kind: DSCResourceErrorLCMConflict}
-	ErrDSCResourceNotConverged     = &DSCResourceError{Kind: DSCResourceErrorNotConverged}
-	ErrDSCResourceSetFailed        = &DSCResourceError{Kind: DSCResourceErrorSetFailed}
-	ErrDSCResourceAccessDenied     = &DSCResourceError{Kind: DSCResourceErrorAccessDenied}
-	ErrDSCResourceUnsupported      = &DSCResourceError{Kind: DSCResourceErrorUnsupported}
-	ErrDSCResourceUnknown          = &DSCResourceError{Kind: DSCResourceErrorUnknown}
+	ErrDSCResourceModuleNotFound   = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorModuleNotFound}
+	ErrDSCResourceResourceNotFound = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorResourceNotFound}
+	ErrDSCResourceInvalidProperty  = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorInvalidProperty}
+	ErrDSCResourceMissingProperty  = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorMissingProperty}
+	ErrDSCResourceInvalidValue     = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorInvalidValue}
+	ErrDSCResourceLCMConflict      = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorLCMConflict}
+	ErrDSCResourceNotConverged     = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorNotConverged}
+	ErrDSCResourceSetFailed        = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorSetFailed}
+	ErrDSCResourceAccessDenied     = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorAccessDenied}
+	ErrDSCResourceUnsupported      = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorUnsupported}
+	ErrDSCResourceUnknown          = &DSCResourceError{Resource: "windows_dsc_resource", Kind: DSCResourceErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

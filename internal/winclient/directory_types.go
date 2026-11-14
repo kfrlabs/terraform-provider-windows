@@ -11,7 +11,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 )
 
@@ -19,64 +18,35 @@ import (
 type DirectoryErrorKind string
 
 const (
-	DirectoryErrorNotFound     DirectoryErrorKind = "not_found"
-	DirectoryErrorTypeConflict DirectoryErrorKind = "type_conflict"
-	DirectoryErrorPermission   DirectoryErrorKind = "permission_denied"
-	DirectoryErrorNotEmpty     DirectoryErrorKind = "not_empty"
-	DirectoryErrorInvalidInput DirectoryErrorKind = "invalid_input"
-	DirectoryErrorUnknown      DirectoryErrorKind = "unknown"
+	DirectoryErrorNotFound     = "not_found"
+	DirectoryErrorTypeConflict = "type_conflict"
+	DirectoryErrorPermission   = "permission_denied"
+	DirectoryErrorNotEmpty     = "not_empty"
+	DirectoryErrorInvalidInput = "invalid_input"
+	DirectoryErrorUnknown      = "unknown"
 )
 
 // DirectoryError is the structured error type returned by all DirectoryClient methods.
-type DirectoryError struct {
-	Kind    DirectoryErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *DirectoryError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_directory [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_directory [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *DirectoryError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *DirectoryError) Is(target error) bool {
-	t, ok := target.(*DirectoryError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type DirectoryError = ResourceError
 
 // NewDirectoryError constructs a *DirectoryError.
 func NewDirectoryError(kind DirectoryErrorKind, message string, cause error, ctx map[string]string) *DirectoryError {
-	return &DirectoryError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_directory", string(kind), message, cause, ctx)
 }
 
 // IsDirectoryError reports whether err is a *DirectoryError with the given kind.
 func IsDirectoryError(err error, kind DirectoryErrorKind) bool {
-	var de *DirectoryError
-	if errors.As(err, &de) {
-		return de.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_directory", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrDirectoryNotFound     = &DirectoryError{Kind: DirectoryErrorNotFound}
-	ErrDirectoryTypeConflict = &DirectoryError{Kind: DirectoryErrorTypeConflict}
-	ErrDirectoryPermission   = &DirectoryError{Kind: DirectoryErrorPermission}
-	ErrDirectoryNotEmpty     = &DirectoryError{Kind: DirectoryErrorNotEmpty}
-	ErrDirectoryInvalidInput = &DirectoryError{Kind: DirectoryErrorInvalidInput}
-	ErrDirectoryUnknown      = &DirectoryError{Kind: DirectoryErrorUnknown}
+	ErrDirectoryNotFound     = &DirectoryError{Resource: "windows_directory", Kind: DirectoryErrorNotFound}
+	ErrDirectoryTypeConflict = &DirectoryError{Resource: "windows_directory", Kind: DirectoryErrorTypeConflict}
+	ErrDirectoryPermission   = &DirectoryError{Resource: "windows_directory", Kind: DirectoryErrorPermission}
+	ErrDirectoryNotEmpty     = &DirectoryError{Resource: "windows_directory", Kind: DirectoryErrorNotEmpty}
+	ErrDirectoryInvalidInput = &DirectoryError{Resource: "windows_directory", Kind: DirectoryErrorInvalidInput}
+	ErrDirectoryUnknown      = &DirectoryError{Resource: "windows_directory", Kind: DirectoryErrorUnknown}
 )
 
 // Valid directory attribute keywords (schema enum).
@@ -148,7 +118,7 @@ func NormaliseDirectoryAttributes(attrs []string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, a := range attrs {
 		if _, ok := directoryAttributeToDotNet[a]; !ok {
-			return nil, &DirectoryError{
+			return nil, &DirectoryError{Resource: "windows_directory",
 				Kind:    DirectoryErrorInvalidInput,
 				Message: fmt.Sprintf("unknown directory attribute %q", a),
 			}

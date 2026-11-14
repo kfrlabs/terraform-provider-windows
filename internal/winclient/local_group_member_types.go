@@ -14,8 +14,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -37,14 +35,14 @@ const (
 	//   • Get (Read)   → the caller MUST call resp.State.RemoveResource()
 	//                    and return nil — not an error (EC-5).
 	//   • Remove (Delete) → treat as success; log tflog.Debug and return nil.
-	LocalGroupMemberErrorGroupNotFound LocalGroupMemberErrorKind = "group_not_found"
+	LocalGroupMemberErrorGroupNotFound = "group_not_found"
 
 	// LocalGroupMemberErrorAlreadyExists is returned by Add when the
 	// pre-flight duplicate check detects that the resolved member SID is
 	// already present in the group (EC-1, ADR-LGM-3).
 	//
 	// The diagnostic MUST include an import hint.
-	LocalGroupMemberErrorAlreadyExists LocalGroupMemberErrorKind = "member_already_exists"
+	LocalGroupMemberErrorAlreadyExists = "member_already_exists"
 
 	// LocalGroupMemberErrorUnresolvable is returned when the member identity
 	// string cannot be resolved to a SID on the target host (EC-3, EC-10).
@@ -55,20 +53,20 @@ const (
 	//   "host"      → the SSH target hostname.
 	//
 	// Diagnostic attribute path: "member".
-	LocalGroupMemberErrorUnresolvable LocalGroupMemberErrorKind = "member_unresolvable"
+	LocalGroupMemberErrorUnresolvable = "member_unresolvable"
 
 	// LocalGroupMemberErrorNotFound is used by the import path when the
 	// requested membership is absent after full resolution.  During normal
 	// Read, Get returns (nil, nil) rather than this error (EC-4 drift).
-	LocalGroupMemberErrorNotFound LocalGroupMemberErrorKind = "member_not_found"
+	LocalGroupMemberErrorNotFound = "member_not_found"
 
 	// LocalGroupMemberErrorPermission is returned when Add-LocalGroupMember
 	// or Remove-LocalGroupMember raises AccessDenied (EC-8).
-	LocalGroupMemberErrorPermission LocalGroupMemberErrorKind = "permission_denied"
+	LocalGroupMemberErrorPermission = "permission_denied"
 
 	// LocalGroupMemberErrorUnknown is the catch-all for unrecognised
 	// PowerShell errors or SSH transport failures.
-	LocalGroupMemberErrorUnknown LocalGroupMemberErrorKind = "unknown"
+	LocalGroupMemberErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -84,43 +82,7 @@ const (
 //	errors.As(err, &lgme)                             // full Context access
 //
 // No secrets (passwords, tokens) may appear in Message, Context, or Cause.
-type LocalGroupMemberError struct {
-	// Kind is the machine-readable error category.
-	Kind LocalGroupMemberErrorKind
-
-	// Message is a human-readable, diagnostic-safe description.
-	Message string
-
-	// Context holds structured key-value pairs for diagnostics.
-	// All values MUST be log-safe (no credentials).
-	Context map[string]string
-
-	// Cause is the underlying error, if any.
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *LocalGroupMemberError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_local_group_member [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_local_group_member [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *LocalGroupMemberError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only, enabling:
-//
-//	errors.Is(err, ErrLocalGroupMemberAlreadyExists)
-//	// true for any *LocalGroupMemberError{Kind: LocalGroupMemberErrorAlreadyExists}
-func (e *LocalGroupMemberError) Is(target error) bool {
-	t, ok := target.(*LocalGroupMemberError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type LocalGroupMemberError = ResourceError
 
 // NewLocalGroupMemberError constructs a *LocalGroupMemberError.
 // Pass nil cause when no underlying error exists; ctx may be nil.
@@ -130,22 +92,13 @@ func NewLocalGroupMemberError(
 	cause error,
 	ctx map[string]string,
 ) *LocalGroupMemberError {
-	return &LocalGroupMemberError{
-		Kind:    kind,
-		Message: message,
-		Cause:   cause,
-		Context: ctx,
-	}
+	return NewResourceError("windows_local_group_member", string(kind), message, cause, ctx)
 }
 
 // IsLocalGroupMemberError reports whether err is a *LocalGroupMemberError
 // of the given kind.
 func IsLocalGroupMemberError(err error, kind LocalGroupMemberErrorKind) bool {
-	var lgme *LocalGroupMemberError
-	if errors.As(err, &lgme) {
-		return lgme.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_local_group_member", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -153,22 +106,22 @@ func IsLocalGroupMemberError(err error, kind LocalGroupMemberErrorKind) bool {
 // ---------------------------------------------------------------------------
 
 // ErrLocalGroupMemberGroupNotFound is a sentinel for group-not-found (EC-5).
-var ErrLocalGroupMemberGroupNotFound = &LocalGroupMemberError{Kind: LocalGroupMemberErrorGroupNotFound}
+var ErrLocalGroupMemberGroupNotFound = &LocalGroupMemberError{Resource: "windows_local_group_member", Kind: LocalGroupMemberErrorGroupNotFound}
 
 // ErrLocalGroupMemberAlreadyExists is a sentinel for duplicate membership (EC-1).
-var ErrLocalGroupMemberAlreadyExists = &LocalGroupMemberError{Kind: LocalGroupMemberErrorAlreadyExists}
+var ErrLocalGroupMemberAlreadyExists = &LocalGroupMemberError{Resource: "windows_local_group_member", Kind: LocalGroupMemberErrorAlreadyExists}
 
 // ErrLocalGroupMemberUnresolvable is a sentinel for unresolvable member identity (EC-3).
-var ErrLocalGroupMemberUnresolvable = &LocalGroupMemberError{Kind: LocalGroupMemberErrorUnresolvable}
+var ErrLocalGroupMemberUnresolvable = &LocalGroupMemberError{Resource: "windows_local_group_member", Kind: LocalGroupMemberErrorUnresolvable}
 
 // ErrLocalGroupMemberNotFound is a sentinel for absent membership (import path, EC-4).
-var ErrLocalGroupMemberNotFound = &LocalGroupMemberError{Kind: LocalGroupMemberErrorNotFound}
+var ErrLocalGroupMemberNotFound = &LocalGroupMemberError{Resource: "windows_local_group_member", Kind: LocalGroupMemberErrorNotFound}
 
 // ErrLocalGroupMemberPermission is a sentinel for AccessDenied (EC-8).
-var ErrLocalGroupMemberPermission = &LocalGroupMemberError{Kind: LocalGroupMemberErrorPermission}
+var ErrLocalGroupMemberPermission = &LocalGroupMemberError{Resource: "windows_local_group_member", Kind: LocalGroupMemberErrorPermission}
 
 // ErrLocalGroupMemberUnknown is a sentinel for unmapped errors.
-var ErrLocalGroupMemberUnknown = &LocalGroupMemberError{Kind: LocalGroupMemberErrorUnknown}
+var ErrLocalGroupMemberUnknown = &LocalGroupMemberError{Resource: "windows_local_group_member", Kind: LocalGroupMemberErrorUnknown}
 
 // ---------------------------------------------------------------------------
 // LocalGroupMemberInput — parameters for ClientLocalGroupMember.Add

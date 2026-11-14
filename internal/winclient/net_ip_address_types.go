@@ -12,8 +12,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,60 +28,60 @@ const (
 	// matches the requested alias (exact, case-insensitive comparison —
 	// never -InterfaceAlias wildcard semantics). The message lists the
 	// valid aliases.
-	NetIPAddressErrorInterfaceNotFound NetIPAddressErrorKind = "interface_not_found"
+	NetIPAddressErrorInterfaceNotFound = "interface_not_found"
 
 	// NetIPAddressErrorNotFound is returned when the requested address is
 	// not present (read of a missing address, update/delete pre-flight).
-	NetIPAddressErrorNotFound NetIPAddressErrorKind = "not_found"
+	NetIPAddressErrorNotFound = "not_found"
 
 	// NetIPAddressErrorAlreadyExists is returned when the requested address
 	// is already present on the same interface (suggest terraform import).
-	NetIPAddressErrorAlreadyExists NetIPAddressErrorKind = "already_exists"
+	NetIPAddressErrorAlreadyExists = "already_exists"
 
 	// NetIPAddressErrorInUseElsewhere is returned when the requested address
 	// is present on a different interface, or when a lookup matches several
 	// addresses. The message lists the candidates.
-	NetIPAddressErrorInUseElsewhere NetIPAddressErrorKind = "address_in_use_elsewhere"
+	NetIPAddressErrorInUseElsewhere = "address_in_use_elsewhere"
 
 	// NetIPAddressErrorInvalidAddress is returned when the address, prefix
 	// length or family combination is rejected by the host or by
 	// client-side validation.
-	NetIPAddressErrorInvalidAddress NetIPAddressErrorKind = "invalid_address"
+	NetIPAddressErrorInvalidAddress = "invalid_address"
 
 	// NetIPAddressErrorDHCPEnabled is returned when an IPv4 address cannot
 	// be created because the interface still has DHCP enabled
 	// ("inconsistent parameters PolicyStore PersistentStore and Dhcp
 	// Enabled"). The message hints at setting disable_dhcp.
-	NetIPAddressErrorDHCPEnabled NetIPAddressErrorKind = "dhcp_enabled"
+	NetIPAddressErrorDHCPEnabled = "dhcp_enabled"
 
 	// NetIPAddressErrorDuplicate is returned when the new address fails
 	// duplicate address detection (AddressState Duplicate). The address is
 	// removed again (rollback) before this error is returned.
-	NetIPAddressErrorDuplicate NetIPAddressErrorKind = "duplicate_address"
+	NetIPAddressErrorDuplicate = "duplicate_address"
 
 	// NetIPAddressErrorPermission is returned when the SSH user lacks the
 	// privilege to manage addresses (typically a non-administrator
 	// connection).
-	NetIPAddressErrorPermission NetIPAddressErrorKind = "permission_denied"
+	NetIPAddressErrorPermission = "permission_denied"
 
 	// NetIPAddressErrorMgmtAtRisk is returned, fail-closed, when the
 	// operation would remove or alter the management address or the route
 	// currently carrying the SSH traffic. Nothing is applied.
-	NetIPAddressErrorMgmtAtRisk NetIPAddressErrorKind = "management_path_at_risk"
+	NetIPAddressErrorMgmtAtRisk = "management_path_at_risk"
 
 	// NetIPAddressErrorMgmtUnknown is returned, fail-closed, when the
 	// management path cannot be determined and the operation is risky.
 	// Nothing is applied.
-	NetIPAddressErrorMgmtUnknown NetIPAddressErrorKind = "management_path_unknown"
+	NetIPAddressErrorMgmtUnknown = "management_path_unknown"
 
 	// NetIPAddressErrorUnreachable is returned when SSH cannot be contacted
 	// (connection refused, auth failure, timeout). Context SHOULD include
 	// host, port and transport.
-	NetIPAddressErrorUnreachable NetIPAddressErrorKind = "unreachable"
+	NetIPAddressErrorUnreachable = "unreachable"
 
 	// NetIPAddressErrorUnknown is the catch-all for unmapped PowerShell or
 	// SSH failures.
-	NetIPAddressErrorUnknown NetIPAddressErrorKind = "unknown"
+	NetIPAddressErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -93,59 +91,17 @@ const (
 // NetIPAddressError is the structured error type returned by all
 // NetIPAddressClient methods. Use errors.Is(err, ErrNetIPAddress*) for kind
 // matching, or errors.As(err, &ne) to inspect Context.
-type NetIPAddressError struct {
-	// Kind is the machine-readable error category.
-	Kind NetIPAddressErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It must not contain SSH credentials. Guard refusals name
-	// the address, say why (the SSH_CONNECTION server IP), and point at
-	// the unsafe_skip_management_check escape hatch.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "interface_alias", "ip_address").
-	// All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *NetIPAddressError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_net_ip_address [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_net_ip_address [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *NetIPAddressError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *NetIPAddressError) Is(target error) bool {
-	t, ok := target.(*NetIPAddressError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type NetIPAddressError = ResourceError
 
 // NewNetIPAddressError constructs a *NetIPAddressError. Pass a nil cause
 // when no underlying error exists. The ctx map may be nil.
 func NewNetIPAddressError(kind NetIPAddressErrorKind, message string, cause error, ctx map[string]string) *NetIPAddressError {
-	return &NetIPAddressError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_net_ip_address", string(kind), message, cause, ctx)
 }
 
 // IsNetIPAddressError reports whether err is a *NetIPAddressError of the given kind.
 func IsNetIPAddressError(err error, kind NetIPAddressErrorKind) bool {
-	var ne *NetIPAddressError
-	if errors.As(err, &ne) {
-		return ne.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_net_ip_address", string(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -153,18 +109,18 @@ func IsNetIPAddressError(err error, kind NetIPAddressErrorKind) bool {
 // ---------------------------------------------------------------------------
 
 var (
-	ErrNetIPAddressInterfaceNotFound = &NetIPAddressError{Kind: NetIPAddressErrorInterfaceNotFound}
-	ErrNetIPAddressNotFound          = &NetIPAddressError{Kind: NetIPAddressErrorNotFound}
-	ErrNetIPAddressAlreadyExists     = &NetIPAddressError{Kind: NetIPAddressErrorAlreadyExists}
-	ErrNetIPAddressInUseElsewhere    = &NetIPAddressError{Kind: NetIPAddressErrorInUseElsewhere}
-	ErrNetIPAddressInvalidAddress    = &NetIPAddressError{Kind: NetIPAddressErrorInvalidAddress}
-	ErrNetIPAddressDHCPEnabled       = &NetIPAddressError{Kind: NetIPAddressErrorDHCPEnabled}
-	ErrNetIPAddressDuplicate         = &NetIPAddressError{Kind: NetIPAddressErrorDuplicate}
-	ErrNetIPAddressPermission        = &NetIPAddressError{Kind: NetIPAddressErrorPermission}
-	ErrNetIPAddressMgmtAtRisk        = &NetIPAddressError{Kind: NetIPAddressErrorMgmtAtRisk}
-	ErrNetIPAddressMgmtUnknown       = &NetIPAddressError{Kind: NetIPAddressErrorMgmtUnknown}
-	ErrNetIPAddressUnreachable       = &NetIPAddressError{Kind: NetIPAddressErrorUnreachable}
-	ErrNetIPAddressUnknown           = &NetIPAddressError{Kind: NetIPAddressErrorUnknown}
+	ErrNetIPAddressInterfaceNotFound = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorInterfaceNotFound}
+	ErrNetIPAddressNotFound          = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorNotFound}
+	ErrNetIPAddressAlreadyExists     = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorAlreadyExists}
+	ErrNetIPAddressInUseElsewhere    = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorInUseElsewhere}
+	ErrNetIPAddressInvalidAddress    = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorInvalidAddress}
+	ErrNetIPAddressDHCPEnabled       = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorDHCPEnabled}
+	ErrNetIPAddressDuplicate         = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorDuplicate}
+	ErrNetIPAddressPermission        = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorPermission}
+	ErrNetIPAddressMgmtAtRisk        = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorMgmtAtRisk}
+	ErrNetIPAddressMgmtUnknown       = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorMgmtUnknown}
+	ErrNetIPAddressUnreachable       = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorUnreachable}
+	ErrNetIPAddressUnknown           = &NetIPAddressError{Resource: "windows_net_ip_address", Kind: NetIPAddressErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

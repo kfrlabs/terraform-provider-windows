@@ -14,8 +14,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,32 +30,32 @@ const (
 	// matches the requested alias (exact, case-insensitive comparison —
 	// never -InterfaceAlias wildcard semantics). The message lists the
 	// valid aliases.
-	DnsClientErrorInterfaceNotFound DnsClientErrorKind = "interface_not_found"
+	DnsClientErrorInterfaceNotFound = "interface_not_found"
 
 	// DnsClientErrorInvalidAddress is returned when a server address fails
 	// client-side validation (unparsable, wrong family, duplicate,
 	// unspecified, multicast, broadcast, zone ID) or when the host rejects
 	// it.
-	DnsClientErrorInvalidAddress DnsClientErrorKind = "invalid_address"
+	DnsClientErrorInvalidAddress = "invalid_address"
 
 	// DnsClientErrorInvalidSuffix is returned when the connection-specific
 	// suffix fails client-side DNS name validation or when the host
 	// rejects it.
-	DnsClientErrorInvalidSuffix DnsClientErrorKind = "invalid_suffix"
+	DnsClientErrorInvalidSuffix = "invalid_suffix"
 
 	// DnsClientErrorPermission is returned when the SSH user lacks the
 	// privilege to read or write DNS client settings (typically a
 	// non-administrator connection).
-	DnsClientErrorPermission DnsClientErrorKind = "permission_denied"
+	DnsClientErrorPermission = "permission_denied"
 
 	// DnsClientErrorUnreachable is returned when SSH cannot be contacted
 	// (connection refused, auth failure, timeout). Context SHOULD include
 	// host, port and transport.
-	DnsClientErrorUnreachable DnsClientErrorKind = "unreachable"
+	DnsClientErrorUnreachable = "unreachable"
 
 	// DnsClientErrorUnknown is the catch-all for unmapped PowerShell or SSH
 	// failures.
-	DnsClientErrorUnknown DnsClientErrorKind = "unknown"
+	DnsClientErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -67,67 +65,27 @@ const (
 // DnsClientError is the structured error type returned by all
 // DnsClientClient methods. Use errors.Is(err, ErrDnsClient*) for kind
 // matching, or errors.As(err, &de) to inspect Context.
-type DnsClientError struct {
-	// Kind is the machine-readable error category.
-	Kind DnsClientErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It must not contain SSH credentials.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "interface_alias"). All values must be safe
-	// to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport
-	// or PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *DnsClientError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_dns_client [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_dns_client [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *DnsClientError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *DnsClientError) Is(target error) bool {
-	t, ok := target.(*DnsClientError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type DnsClientError = ResourceError
 
 // NewDnsClientError constructs a *DnsClientError. Pass a nil cause when no
 // underlying error exists. The ctx map may be nil.
 func NewDnsClientError(kind DnsClientErrorKind, message string, cause error, ctx map[string]string) *DnsClientError {
-	return &DnsClientError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_dns_client", string(kind), message, cause, ctx)
 }
 
 // IsDnsClientError reports whether err is a *DnsClientError of the given kind.
 func IsDnsClientError(err error, kind DnsClientErrorKind) bool {
-	var de *DnsClientError
-	if errors.As(err, &de) {
-		return de.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_dns_client", string(kind))
 }
 
 // Sentinel errors — use with errors.Is.
 var (
-	ErrDnsClientInterfaceNotFound = &DnsClientError{Kind: DnsClientErrorInterfaceNotFound}
-	ErrDnsClientInvalidAddress    = &DnsClientError{Kind: DnsClientErrorInvalidAddress}
-	ErrDnsClientInvalidSuffix     = &DnsClientError{Kind: DnsClientErrorInvalidSuffix}
-	ErrDnsClientPermission        = &DnsClientError{Kind: DnsClientErrorPermission}
-	ErrDnsClientUnreachable       = &DnsClientError{Kind: DnsClientErrorUnreachable}
-	ErrDnsClientUnknown           = &DnsClientError{Kind: DnsClientErrorUnknown}
+	ErrDnsClientInterfaceNotFound = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorInterfaceNotFound}
+	ErrDnsClientInvalidAddress    = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorInvalidAddress}
+	ErrDnsClientInvalidSuffix     = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorInvalidSuffix}
+	ErrDnsClientPermission        = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorPermission}
+	ErrDnsClientUnreachable       = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorUnreachable}
+	ErrDnsClientUnknown           = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

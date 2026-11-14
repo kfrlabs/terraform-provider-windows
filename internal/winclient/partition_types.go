@@ -8,7 +8,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -26,44 +25,44 @@ const (
 	// PartitionErrorNotFound is returned when no partition matches the
 	// disk/key identity (GUID on GPT, offset on MBR). Read swallows it to
 	// (nil, nil); Delete treats it as success.
-	PartitionErrorNotFound PartitionErrorKind = "not_found"
+	PartitionErrorNotFound = "not_found"
 
 	// PartitionErrorDiskNotFound is returned when no disk matches the
 	// selector. Read swallows it to (nil, nil): a gone disk means a gone
 	// partition.
-	PartitionErrorDiskNotFound PartitionErrorKind = "disk_not_found"
+	PartitionErrorDiskNotFound = "disk_not_found"
 
 	// PartitionErrorDiskNotReady is returned when the disk is offline,
 	// read-only or still RAW (not initialized), so no partition can be
 	// created, grown or otherwise changed on it.
-	PartitionErrorDiskNotReady PartitionErrorKind = "disk_not_ready"
+	PartitionErrorDiskNotReady = "disk_not_ready"
 
 	// PartitionErrorInsufficientSpace is returned when the requested size
 	// exceeds the largest free extent (Create) or the supported maximum
 	// (Grow). The message carries the largest usable size in bytes.
-	PartitionErrorInsufficientSpace PartitionErrorKind = "insufficient_space"
+	PartitionErrorInsufficientSpace = "insufficient_space"
 
 	// PartitionErrorDriveLetterInUse is returned when the requested drive
 	// letter is already assigned on the host.
-	PartitionErrorDriveLetterInUse PartitionErrorKind = "drive_letter_in_use"
+	PartitionErrorDriveLetterInUse = "drive_letter_in_use"
 
 	// PartitionErrorShrinkNotSupported is returned Go-side when the desired
 	// size is smaller than the observed size. Shrinking a partition is out
 	// of scope in v1 and is refused before any remote call.
-	PartitionErrorShrinkNotSupported PartitionErrorKind = "shrink_not_supported"
+	PartitionErrorShrinkNotSupported = "shrink_not_supported"
 
 	// PartitionErrorProtected is returned when the partition (or its disk)
 	// is protected: boot, system, EFI, MSR, recovery, pagefile-backed, or
 	// its placement could not be determined (fail closed).
-	PartitionErrorProtected PartitionErrorKind = "protected_storage"
+	PartitionErrorProtected = "protected_storage"
 
 	// PartitionErrorAccessDenied is returned when the SSH user lacks the
 	// privilege for the operation (storage management needs elevation).
-	PartitionErrorAccessDenied PartitionErrorKind = "access_denied"
+	PartitionErrorAccessDenied = "access_denied"
 
 	// PartitionErrorUnknown is the catch-all for unmapped PowerShell or SSH
 	// failures, including timeouts and transport errors.
-	PartitionErrorUnknown PartitionErrorKind = "unknown"
+	PartitionErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -73,70 +72,30 @@ const (
 // PartitionError is the structured error type returned by all
 // WindowsPartitionClient methods. Use errors.Is(err, ErrPartition*) for kind
 // matching, or errors.As(err, &pe) to inspect Context.
-type PartitionError struct {
-	// Kind is the machine-readable error category.
-	Kind PartitionErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It never contains secrets: disk and partition identities
-	// carry no credentials.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "disk_unique_id"). All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *PartitionError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_partition [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_partition [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *PartitionError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *PartitionError) Is(target error) bool {
-	t, ok := target.(*PartitionError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type PartitionError = ResourceError
 
 // NewPartitionError constructs a *PartitionError. Pass a nil cause when no
 // underlying error exists. The ctx map may be nil.
 func NewPartitionError(kind PartitionErrorKind, message string, cause error, ctx map[string]string) *PartitionError {
-	return &PartitionError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_partition", string(kind), message, cause, ctx)
 }
 
 // IsPartitionError reports whether err is a *PartitionError of the given kind.
 func IsPartitionError(err error, kind PartitionErrorKind) bool {
-	var pe *PartitionError
-	if errors.As(err, &pe) {
-		return pe.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_partition", string(kind))
 }
 
 // Sentinel errors usable with errors.Is.
 var (
-	ErrPartitionNotFound           = &PartitionError{Kind: PartitionErrorNotFound}
-	ErrPartitionDiskNotFound       = &PartitionError{Kind: PartitionErrorDiskNotFound}
-	ErrPartitionDiskNotReady       = &PartitionError{Kind: PartitionErrorDiskNotReady}
-	ErrPartitionInsufficientSpace  = &PartitionError{Kind: PartitionErrorInsufficientSpace}
-	ErrPartitionDriveLetterInUse   = &PartitionError{Kind: PartitionErrorDriveLetterInUse}
-	ErrPartitionShrinkNotSupported = &PartitionError{Kind: PartitionErrorShrinkNotSupported}
-	ErrPartitionProtected          = &PartitionError{Kind: PartitionErrorProtected}
-	ErrPartitionAccessDenied       = &PartitionError{Kind: PartitionErrorAccessDenied}
-	ErrPartitionUnknown            = &PartitionError{Kind: PartitionErrorUnknown}
+	ErrPartitionNotFound           = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorNotFound}
+	ErrPartitionDiskNotFound       = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorDiskNotFound}
+	ErrPartitionDiskNotReady       = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorDiskNotReady}
+	ErrPartitionInsufficientSpace  = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorInsufficientSpace}
+	ErrPartitionDriveLetterInUse   = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorDriveLetterInUse}
+	ErrPartitionShrinkNotSupported = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorShrinkNotSupported}
+	ErrPartitionProtected          = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorProtected}
+	ErrPartitionAccessDenied       = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorAccessDenied}
+	ErrPartitionUnknown            = &PartitionError{Resource: "windows_partition", Kind: PartitionErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

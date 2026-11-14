@@ -8,7 +8,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -145,38 +144,38 @@ const (
 	// unformatted partition reports a null or RAW file system, which reads
 	// as "no volume". Read swallows it to (nil, nil); Delete is state-only
 	// and never sees it.
-	VolumeErrorNotFound VolumeErrorKind = "not_found"
+	VolumeErrorNotFound = "not_found"
 
 	// VolumeErrorPartitionNotFound is returned when the hosting partition
 	// (disk, key) is gone. Read swallows it to (nil, nil): a gone partition
 	// means a gone volume.
-	VolumeErrorPartitionNotFound VolumeErrorKind = "partition_not_found"
+	VolumeErrorPartitionNotFound = "partition_not_found"
 
 	// VolumeErrorAlreadyFormatted is returned by Format when the partition
 	// already carries a formatted file system and allow_format_existing is
 	// false. Reformatting destroys data, so it is opt-in.
-	VolumeErrorAlreadyFormatted VolumeErrorKind = "already_formatted"
+	VolumeErrorAlreadyFormatted = "already_formatted"
 
 	// VolumeErrorProtected is returned when the hosting disk or partition is
 	// protected: boot, system, EFI, MSR, recovery, pagefile-backed, or its
 	// placement could not be determined (fail closed).
-	VolumeErrorProtected VolumeErrorKind = "protected_storage"
+	VolumeErrorProtected = "protected_storage"
 
 	// VolumeErrorUnsupportedFileSystem is returned when the configured file
 	// system is not NTFS, ReFS, exFAT or FAT32.
-	VolumeErrorUnsupportedFileSystem VolumeErrorKind = "unsupported_file_system"
+	VolumeErrorUnsupportedFileSystem = "unsupported_file_system"
 
 	// VolumeErrorInvalidAllocationUnit is returned when the configured
 	// allocation unit size is not a per-file-system power of two in range.
-	VolumeErrorInvalidAllocationUnit VolumeErrorKind = "invalid_allocation_unit"
+	VolumeErrorInvalidAllocationUnit = "invalid_allocation_unit"
 
 	// VolumeErrorAccessDenied is returned when the SSH user lacks the
 	// privilege for the operation (storage management needs elevation).
-	VolumeErrorAccessDenied VolumeErrorKind = "access_denied"
+	VolumeErrorAccessDenied = "access_denied"
 
 	// VolumeErrorUnknown is the catch-all for unmapped PowerShell or SSH
 	// failures, including timeouts and transport errors.
-	VolumeErrorUnknown VolumeErrorKind = "unknown"
+	VolumeErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -186,69 +185,29 @@ const (
 // VolumeError is the structured error type returned by all
 // WindowsVolumeClient methods. Use errors.Is(err, ErrVolume*) for kind
 // matching, or errors.As(err, &ve) to inspect Context.
-type VolumeError struct {
-	// Kind is the machine-readable error category.
-	Kind VolumeErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It never contains secrets: disk, partition and volume
-	// identities carry no credentials.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "partition_id"). All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *VolumeError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_volume [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_volume [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *VolumeError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *VolumeError) Is(target error) bool {
-	t, ok := target.(*VolumeError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type VolumeError = ResourceError
 
 // NewVolumeError constructs a *VolumeError. Pass a nil cause when no underlying
 // error exists. The ctx map may be nil.
 func NewVolumeError(kind VolumeErrorKind, message string, cause error, ctx map[string]string) *VolumeError {
-	return &VolumeError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_volume", string(kind), message, cause, ctx)
 }
 
 // IsVolumeError reports whether err is a *VolumeError of the given kind.
 func IsVolumeError(err error, kind VolumeErrorKind) bool {
-	var ve *VolumeError
-	if errors.As(err, &ve) {
-		return ve.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_volume", string(kind))
 }
 
 // Sentinel errors usable with errors.Is.
 var (
-	ErrVolumeNotFound              = &VolumeError{Kind: VolumeErrorNotFound}
-	ErrVolumePartitionNotFound     = &VolumeError{Kind: VolumeErrorPartitionNotFound}
-	ErrVolumeAlreadyFormatted      = &VolumeError{Kind: VolumeErrorAlreadyFormatted}
-	ErrVolumeProtected             = &VolumeError{Kind: VolumeErrorProtected}
-	ErrVolumeUnsupportedFileSystem = &VolumeError{Kind: VolumeErrorUnsupportedFileSystem}
-	ErrVolumeInvalidAllocationUnit = &VolumeError{Kind: VolumeErrorInvalidAllocationUnit}
-	ErrVolumeAccessDenied          = &VolumeError{Kind: VolumeErrorAccessDenied}
-	ErrVolumeUnknown               = &VolumeError{Kind: VolumeErrorUnknown}
+	ErrVolumeNotFound              = &VolumeError{Resource: "windows_volume", Kind: VolumeErrorNotFound}
+	ErrVolumePartitionNotFound     = &VolumeError{Resource: "windows_volume", Kind: VolumeErrorPartitionNotFound}
+	ErrVolumeAlreadyFormatted      = &VolumeError{Resource: "windows_volume", Kind: VolumeErrorAlreadyFormatted}
+	ErrVolumeProtected             = &VolumeError{Resource: "windows_volume", Kind: VolumeErrorProtected}
+	ErrVolumeUnsupportedFileSystem = &VolumeError{Resource: "windows_volume", Kind: VolumeErrorUnsupportedFileSystem}
+	ErrVolumeInvalidAllocationUnit = &VolumeError{Resource: "windows_volume", Kind: VolumeErrorInvalidAllocationUnit}
+	ErrVolumeAccessDenied          = &VolumeError{Resource: "windows_volume", Kind: VolumeErrorAccessDenied}
+	ErrVolumeUnknown               = &VolumeError{Resource: "windows_volume", Kind: VolumeErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

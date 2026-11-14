@@ -10,8 +10,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // OSInfoErrorKind categorises errors returned by WindowsOSInfoClient.
@@ -20,76 +18,47 @@ type OSInfoErrorKind string
 const (
 	// OSInfoErrorAccessDenied is returned when the CIM or registry reads
 	// fail with AccessDenied (Win32 5).
-	OSInfoErrorAccessDenied OSInfoErrorKind = "access_denied"
+	OSInfoErrorAccessDenied = "access_denied"
 
 	// OSInfoErrorCIMUnavailable is returned when the CIM/WMI stack itself
 	// is unavailable (winmgmt service stopped, repository corruption).
-	OSInfoErrorCIMUnavailable OSInfoErrorKind = "cim_unavailable"
+	OSInfoErrorCIMUnavailable = "cim_unavailable"
 
 	// OSInfoErrorTimeout is returned when the operation timed out or was
 	// cancelled.
-	OSInfoErrorTimeout OSInfoErrorKind = "timeout"
+	OSInfoErrorTimeout = "timeout"
 
 	// OSInfoErrorInvalidParameter is reserved for invalid inputs. The
 	// current Read takes no parameters, so it is never returned today;
 	// kept for parity with the other client error kinds.
-	OSInfoErrorInvalidParameter OSInfoErrorKind = "invalid_parameter"
+	OSInfoErrorInvalidParameter = "invalid_parameter"
 
 	// OSInfoErrorUnknown is the catch-all for unmapped PowerShell or SSH
 	// failures.
-	OSInfoErrorUnknown OSInfoErrorKind = "unknown"
+	OSInfoErrorUnknown = "unknown"
 )
 
 // OSInfoError is the structured error type returned by
 // WindowsOSInfoClient.
-type OSInfoError struct {
-	Kind    OSInfoErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements error.
-func (e *OSInfoError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_os_info [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_os_info [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *OSInfoError) Unwrap() error { return e.Cause }
-
-// Is matches by Kind only.
-func (e *OSInfoError) Is(target error) bool {
-	t, ok := target.(*OSInfoError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type OSInfoError = ResourceError
 
 // NewOSInfoError constructs a *OSInfoError.
 func NewOSInfoError(kind OSInfoErrorKind, msg string, cause error, ctx map[string]string) *OSInfoError {
-	return &OSInfoError{Kind: kind, Message: msg, Cause: cause, Context: ctx}
+	return NewResourceError("windows_os_info", string(kind), msg, cause, ctx)
 }
 
 // IsOSInfoError reports whether err is a *OSInfoError of the given kind.
 func IsOSInfoError(err error, kind OSInfoErrorKind) bool {
-	var oe *OSInfoError
-	if errors.As(err, &oe) {
-		return oe.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_os_info", string(kind))
 }
 
 // Sentinel errors usable with errors.Is.
 var (
-	ErrOSInfoAccessDenied     = &OSInfoError{Kind: OSInfoErrorAccessDenied}
-	ErrOSInfoCIMUnavailable   = &OSInfoError{Kind: OSInfoErrorCIMUnavailable}
-	ErrOSInfoTimeout          = &OSInfoError{Kind: OSInfoErrorTimeout}
-	ErrOSInfoInvalidParameter = &OSInfoError{Kind: OSInfoErrorInvalidParameter}
-	ErrOSInfoUnknown          = &OSInfoError{Kind: OSInfoErrorUnknown}
+	ErrOSInfoAccessDenied     = &OSInfoError{Resource: "windows_os_info", Kind: OSInfoErrorAccessDenied}
+	ErrOSInfoCIMUnavailable   = &OSInfoError{Resource: "windows_os_info", Kind: OSInfoErrorCIMUnavailable}
+	ErrOSInfoTimeout          = &OSInfoError{Resource: "windows_os_info", Kind: OSInfoErrorTimeout}
+	ErrOSInfoInvalidParameter = &OSInfoError{Resource: "windows_os_info", Kind: OSInfoErrorInvalidParameter}
+	ErrOSInfoUnknown          = &OSInfoError{Resource: "windows_os_info", Kind: OSInfoErrorUnknown}
 )
 
 // OSInfo is the observed OS inventory of a remote Windows host, returned by

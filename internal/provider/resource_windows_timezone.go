@@ -563,7 +563,7 @@ func addTimezoneDiag(diags *diag.Diagnostics, summary string, err error) {
 		if te.Kind != "" {
 			detail += fmt.Sprintf("\n\nKind: %s", te.Kind)
 		}
-		diags.AddError(summary+" ["+string(te.Kind)+"]", detail)
+		diags.AddError(summary+" ["+te.Kind+"]", detail)
 		return
 	}
 	diags.AddError(summary, err.Error())

@@ -408,7 +408,7 @@ func addInstalledSoftwareDiag(diags *diag.Diagnostics, summary string, err error
 			detail += "\n\nCause: " + ie.Cause.Error()
 		}
 		if ie.Kind != "" {
-			detail += "\n\nKind: " + string(ie.Kind)
+			detail += "\n\nKind: " + ie.Kind
 		}
 		diags.AddError(summary, detail)
 		return

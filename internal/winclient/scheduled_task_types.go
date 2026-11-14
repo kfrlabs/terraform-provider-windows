@@ -6,8 +6,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,76 +16,47 @@ import (
 type ScheduledTaskErrorKind string
 
 const (
-	ScheduledTaskErrorAlreadyExists     ScheduledTaskErrorKind = "already_exists"
-	ScheduledTaskErrorNotFound          ScheduledTaskErrorKind = "not_found"
-	ScheduledTaskErrorBuiltinTask       ScheduledTaskErrorKind = "builtin_task"
-	ScheduledTaskErrorInvalidPath       ScheduledTaskErrorKind = "invalid_path"
-	ScheduledTaskErrorInvalidTrigger    ScheduledTaskErrorKind = "invalid_trigger"
-	ScheduledTaskErrorInvalidAction     ScheduledTaskErrorKind = "invalid_action"
-	ScheduledTaskErrorPasswordRequired  ScheduledTaskErrorKind = "password_required"
-	ScheduledTaskErrorPasswordForbidden ScheduledTaskErrorKind = "password_forbidden"
-	ScheduledTaskErrorPermissionDenied  ScheduledTaskErrorKind = "permission_denied"
-	ScheduledTaskErrorRunning           ScheduledTaskErrorKind = "task_running"
-	ScheduledTaskErrorInvalidInput      ScheduledTaskErrorKind = "invalid_input"
-	ScheduledTaskErrorUnknown           ScheduledTaskErrorKind = "unknown"
+	ScheduledTaskErrorAlreadyExists     = "already_exists"
+	ScheduledTaskErrorNotFound          = "not_found"
+	ScheduledTaskErrorBuiltinTask       = "builtin_task"
+	ScheduledTaskErrorInvalidPath       = "invalid_path"
+	ScheduledTaskErrorInvalidTrigger    = "invalid_trigger"
+	ScheduledTaskErrorInvalidAction     = "invalid_action"
+	ScheduledTaskErrorPasswordRequired  = "password_required"
+	ScheduledTaskErrorPasswordForbidden = "password_forbidden"
+	ScheduledTaskErrorPermissionDenied  = "permission_denied"
+	ScheduledTaskErrorRunning           = "task_running"
+	ScheduledTaskErrorInvalidInput      = "invalid_input"
+	ScheduledTaskErrorUnknown           = "unknown"
 )
 
 // ScheduledTaskError is the structured error type returned by ScheduledTaskClient methods.
-type ScheduledTaskError struct {
-	Kind    ScheduledTaskErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *ScheduledTaskError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_scheduled_task [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_scheduled_task [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *ScheduledTaskError) Unwrap() error { return e.Cause }
-
-// Is compares by Kind, enabling errors.Is(err, ErrScheduledTask*) matching.
-func (e *ScheduledTaskError) Is(target error) bool {
-	t, ok := target.(*ScheduledTaskError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type ScheduledTaskError = ResourceError
 
 // NewScheduledTaskError constructs a *ScheduledTaskError.
 func NewScheduledTaskError(kind ScheduledTaskErrorKind, message string, cause error, ctx map[string]string) *ScheduledTaskError {
-	return &ScheduledTaskError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_scheduled_task", string(kind), message, cause, ctx)
 }
 
 // IsScheduledTaskError reports whether err is a *ScheduledTaskError of the given kind.
 func IsScheduledTaskError(err error, kind ScheduledTaskErrorKind) bool {
-	var ste *ScheduledTaskError
-	if errors.As(err, &ste) {
-		return ste.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_scheduled_task", string(kind))
 }
 
 // Sentinel errors for errors.Is matching.
 var (
-	ErrScheduledTaskAlreadyExists     = &ScheduledTaskError{Kind: ScheduledTaskErrorAlreadyExists}
-	ErrScheduledTaskNotFound          = &ScheduledTaskError{Kind: ScheduledTaskErrorNotFound}
-	ErrScheduledTaskBuiltinTask       = &ScheduledTaskError{Kind: ScheduledTaskErrorBuiltinTask}
-	ErrScheduledTaskInvalidPath       = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidPath}
-	ErrScheduledTaskInvalidTrigger    = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidTrigger}
-	ErrScheduledTaskInvalidAction     = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidAction}
-	ErrScheduledTaskPasswordRequired  = &ScheduledTaskError{Kind: ScheduledTaskErrorPasswordRequired}
-	ErrScheduledTaskPasswordForbidden = &ScheduledTaskError{Kind: ScheduledTaskErrorPasswordForbidden}
-	ErrScheduledTaskPermissionDenied  = &ScheduledTaskError{Kind: ScheduledTaskErrorPermissionDenied}
-	ErrScheduledTaskRunning           = &ScheduledTaskError{Kind: ScheduledTaskErrorRunning}
-	ErrScheduledTaskInvalidInput      = &ScheduledTaskError{Kind: ScheduledTaskErrorInvalidInput}
-	ErrScheduledTaskUnknown           = &ScheduledTaskError{Kind: ScheduledTaskErrorUnknown}
+	ErrScheduledTaskAlreadyExists     = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorAlreadyExists}
+	ErrScheduledTaskNotFound          = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorNotFound}
+	ErrScheduledTaskBuiltinTask       = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorBuiltinTask}
+	ErrScheduledTaskInvalidPath       = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorInvalidPath}
+	ErrScheduledTaskInvalidTrigger    = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorInvalidTrigger}
+	ErrScheduledTaskInvalidAction     = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorInvalidAction}
+	ErrScheduledTaskPasswordRequired  = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorPasswordRequired}
+	ErrScheduledTaskPasswordForbidden = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorPasswordForbidden}
+	ErrScheduledTaskPermissionDenied  = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorPermissionDenied}
+	ErrScheduledTaskRunning           = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorRunning}
+	ErrScheduledTaskInvalidInput      = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorInvalidInput}
+	ErrScheduledTaskUnknown           = &ScheduledTaskError{Resource: "windows_scheduled_task", Kind: ScheduledTaskErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

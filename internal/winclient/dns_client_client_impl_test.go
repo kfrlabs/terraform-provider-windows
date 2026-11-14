@@ -149,7 +149,7 @@ func TestDnsClientSentinels(t *testing.T) {
 		{ErrDnsClientUnreachable, DnsClientErrorUnreachable},
 		{ErrDnsClientUnknown, DnsClientErrorUnknown},
 	} {
-		if !errors.Is(tc.sentinel, &DnsClientError{Kind: tc.kind}) {
+		if !errors.Is(tc.sentinel, &DnsClientError{Resource: "windows_dns_client", Kind: string(tc.kind)}) {
 			t.Errorf("sentinel for %q does not match", tc.kind)
 		}
 	}

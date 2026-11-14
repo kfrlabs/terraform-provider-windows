@@ -8,8 +8,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
-	"fmt"
 )
 
 // ---------------------------------------------------------------------------
@@ -41,37 +39,37 @@ type DiskErrorKind string
 
 const (
 	// DiskErrorNotFound is returned when no disk matches the selector.
-	DiskErrorNotFound DiskErrorKind = "disk_not_found"
+	DiskErrorNotFound = "disk_not_found"
 
 	// DiskErrorAmbiguous is returned when several disks match the selector.
-	DiskErrorAmbiguous DiskErrorKind = "ambiguous_disk"
+	DiskErrorAmbiguous = "ambiguous_disk"
 
 	// DiskErrorProtected is returned when the matched disk is the boot or
 	// system disk, hosts the active pagefile or the crash-dump target, is
 	// clustered, or its placement could not be determined (fail closed).
-	DiskErrorProtected DiskErrorKind = "protected_storage"
+	DiskErrorProtected = "protected_storage"
 
 	// DiskErrorPartitionStyleMismatch is returned when the disk already
 	// carries a partition style different from the desired one. Only RAW
 	// disks are initialized in place; converting GPT<->MBR destroys data
 	// and is out of scope.
-	DiskErrorPartitionStyleMismatch DiskErrorKind = "partition_style_mismatch"
+	DiskErrorPartitionStyleMismatch = "partition_style_mismatch"
 
 	// DiskErrorOffline is returned when an operation needs the disk online
 	// (e.g. Initialize) but the disk is offline.
-	DiskErrorOffline DiskErrorKind = "disk_offline"
+	DiskErrorOffline = "disk_offline"
 
 	// DiskErrorAccessDenied is returned when the SSH user lacks the
 	// privilege for the operation (storage management needs elevation).
-	DiskErrorAccessDenied DiskErrorKind = "access_denied"
+	DiskErrorAccessDenied = "access_denied"
 
 	// DiskErrorUnsupported is returned when the Storage module cmdlets are
 	// unavailable on the host.
-	DiskErrorUnsupported DiskErrorKind = "unsupported"
+	DiskErrorUnsupported = "unsupported"
 
 	// DiskErrorUnknown is the catch-all for unmapped PowerShell or SSH
 	// failures, including timeouts and transport errors.
-	DiskErrorUnknown DiskErrorKind = "unknown"
+	DiskErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -81,69 +79,29 @@ const (
 // DiskError is the structured error type returned by all WindowsDiskClient
 // methods. Use errors.Is(err, ErrDisk*) for kind matching, or errors.As(err,
 // &de) to inspect Context.
-type DiskError struct {
-	// Kind is the machine-readable error category.
-	Kind DiskErrorKind
-
-	// Message is a human-readable description safe to surface in Terraform
-	// diagnostics. It never contains secrets: selectors are disk identities,
-	// not credentials.
-	Message string
-
-	// Context holds structured diagnostic key-value pairs (e.g. "host",
-	// "port", "transport", "selector"). All values must be safe to log.
-	Context map[string]string
-
-	// Cause is the underlying error, if any (typically an SSH transport or
-	// PowerShell parsing error).
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *DiskError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_disk [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_disk [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *DiskError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *DiskError) Is(target error) bool {
-	t, ok := target.(*DiskError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type DiskError = ResourceError
 
 // NewDiskError constructs a *DiskError. Pass a nil cause when no underlying
 // error exists. The ctx map may be nil.
 func NewDiskError(kind DiskErrorKind, message string, cause error, ctx map[string]string) *DiskError {
-	return &DiskError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_disk", string(kind), message, cause, ctx)
 }
 
 // IsDiskError reports whether err is a *DiskError of the given kind.
 func IsDiskError(err error, kind DiskErrorKind) bool {
-	var de *DiskError
-	if errors.As(err, &de) {
-		return de.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_disk", string(kind))
 }
 
 // Sentinel errors usable with errors.Is.
 var (
-	ErrDiskNotFound          = &DiskError{Kind: DiskErrorNotFound}
-	ErrDiskAmbiguous         = &DiskError{Kind: DiskErrorAmbiguous}
-	ErrDiskProtected         = &DiskError{Kind: DiskErrorProtected}
-	ErrDiskPartitionMismatch = &DiskError{Kind: DiskErrorPartitionStyleMismatch}
-	ErrDiskOffline           = &DiskError{Kind: DiskErrorOffline}
-	ErrDiskAccessDenied      = &DiskError{Kind: DiskErrorAccessDenied}
-	ErrDiskUnsupported       = &DiskError{Kind: DiskErrorUnsupported}
-	ErrDiskUnknown           = &DiskError{Kind: DiskErrorUnknown}
+	ErrDiskNotFound          = &DiskError{Resource: "windows_disk", Kind: DiskErrorNotFound}
+	ErrDiskAmbiguous         = &DiskError{Resource: "windows_disk", Kind: DiskErrorAmbiguous}
+	ErrDiskProtected         = &DiskError{Resource: "windows_disk", Kind: DiskErrorProtected}
+	ErrDiskPartitionMismatch = &DiskError{Resource: "windows_disk", Kind: DiskErrorPartitionStyleMismatch}
+	ErrDiskOffline           = &DiskError{Resource: "windows_disk", Kind: DiskErrorOffline}
+	ErrDiskAccessDenied      = &DiskError{Resource: "windows_disk", Kind: DiskErrorAccessDenied}
+	ErrDiskUnsupported       = &DiskError{Resource: "windows_disk", Kind: DiskErrorUnsupported}
+	ErrDiskUnknown           = &DiskError{Resource: "windows_disk", Kind: DiskErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

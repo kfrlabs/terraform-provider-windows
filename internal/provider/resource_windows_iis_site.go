@@ -939,7 +939,7 @@ func addIISSiteDiag(d *diag.Diagnostics, summary string, err error) {
 			winclient.IISSiteErrorPathNotFound,
 			winclient.IISSiteErrorAlreadyExists,
 			winclient.IISSiteErrorIISNotInstalled:
-			d.AddError(summary+" ["+string(ae.Kind)+"]", ae.Message)
+			d.AddError(summary+" ["+ae.Kind+"]", ae.Message)
 			return
 		}
 		detail := ae.Message
@@ -953,7 +953,7 @@ func addIISSiteDiag(d *diag.Diagnostics, summary string, err error) {
 		if ae.Cause != nil {
 			detail += "\n\nCause: " + ae.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(ae.Kind)+"]", detail)
+		d.AddError(summary+" ["+ae.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

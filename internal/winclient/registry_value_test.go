@@ -199,7 +199,7 @@ func TestRegistryValueError_Sentinels(t *testing.T) {
 		{ErrRegistryValueUnknown, RegistryValueErrorUnknown},
 	}
 	for _, p := range pairs {
-		if p.s.Kind != p.kind {
+		if p.s.Kind != string(p.kind) {
 			t.Errorf("sentinel kind = %q, want %q", p.s.Kind, p.kind)
 		}
 	}

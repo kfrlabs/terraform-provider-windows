@@ -14,7 +14,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -24,68 +23,39 @@ import (
 type SmbShareErrorKind string
 
 const (
-	SmbShareErrorNotFound                 SmbShareErrorKind = "not_found"
-	SmbShareErrorAlreadyExists            SmbShareErrorKind = "already_exists"
-	SmbShareErrorPathNotFound             SmbShareErrorKind = "path_not_found"
-	SmbShareErrorAccessDenied             SmbShareErrorKind = "permission_denied"
-	SmbShareErrorInvalidName              SmbShareErrorKind = "invalid_name"
-	SmbShareErrorPrincipalNotFound        SmbShareErrorKind = "principal_not_found"
-	SmbShareErrorServerServiceUnavailable SmbShareErrorKind = "server_service_unavailable"
-	SmbShareErrorUnknown                  SmbShareErrorKind = "unknown"
+	SmbShareErrorNotFound                 = "not_found"
+	SmbShareErrorAlreadyExists            = "already_exists"
+	SmbShareErrorPathNotFound             = "path_not_found"
+	SmbShareErrorAccessDenied             = "permission_denied"
+	SmbShareErrorInvalidName              = "invalid_name"
+	SmbShareErrorPrincipalNotFound        = "principal_not_found"
+	SmbShareErrorServerServiceUnavailable = "server_service_unavailable"
+	SmbShareErrorUnknown                  = "unknown"
 )
 
 // SmbShareError is the structured error type returned by all SmbShareClient methods.
-type SmbShareError struct {
-	Kind    SmbShareErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements the error interface.
-func (e *SmbShareError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_smb_share [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_smb_share [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *SmbShareError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *SmbShareError) Is(target error) bool {
-	t, ok := target.(*SmbShareError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type SmbShareError = ResourceError
 
 // NewSmbShareError constructs a *SmbShareError.
 func NewSmbShareError(kind SmbShareErrorKind, message string, cause error, ctx map[string]string) *SmbShareError {
-	return &SmbShareError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_smb_share", string(kind), message, cause, ctx)
 }
 
 // IsSmbShareError reports whether err is a *SmbShareError with the given kind.
 func IsSmbShareError(err error, kind SmbShareErrorKind) bool {
-	var se *SmbShareError
-	if errors.As(err, &se) {
-		return se.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_smb_share", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrSmbShareNotFound                 = &SmbShareError{Kind: SmbShareErrorNotFound}
-	ErrSmbShareAlreadyExists            = &SmbShareError{Kind: SmbShareErrorAlreadyExists}
-	ErrSmbSharePathNotFound             = &SmbShareError{Kind: SmbShareErrorPathNotFound}
-	ErrSmbShareAccessDenied             = &SmbShareError{Kind: SmbShareErrorAccessDenied}
-	ErrSmbShareInvalidName              = &SmbShareError{Kind: SmbShareErrorInvalidName}
-	ErrSmbSharePrincipalNotFound        = &SmbShareError{Kind: SmbShareErrorPrincipalNotFound}
-	ErrSmbShareServerServiceUnavailable = &SmbShareError{Kind: SmbShareErrorServerServiceUnavailable}
-	ErrSmbShareUnknown                  = &SmbShareError{Kind: SmbShareErrorUnknown}
+	ErrSmbShareNotFound                 = &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorNotFound}
+	ErrSmbShareAlreadyExists            = &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorAlreadyExists}
+	ErrSmbSharePathNotFound             = &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorPathNotFound}
+	ErrSmbShareAccessDenied             = &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorAccessDenied}
+	ErrSmbShareInvalidName              = &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorInvalidName}
+	ErrSmbSharePrincipalNotFound        = &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorPrincipalNotFound}
+	ErrSmbShareServerServiceUnavailable = &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorServerServiceUnavailable}
+	ErrSmbShareUnknown                  = &SmbShareError{Resource: "windows_smb_share", Kind: SmbShareErrorUnknown}
 )
 
 // Share property enums, mirroring the New-SmbShare / Set-SmbShare parameters.
@@ -221,7 +191,7 @@ type SmbShareClient interface {
 // defence-in-depth check shared by Create/Read/Update/Delete.
 func ValidateSmbShareName(name string) error {
 	if len(name) == 0 || len(name) > 80 {
-		return &SmbShareError{
+		return &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("share name %q must be 1-80 characters", name),
 		}
@@ -229,7 +199,7 @@ func ValidateSmbShareName(name string) error {
 	const forbidden = `\/[]:|<>+=;,*?"`
 	for _, r := range name {
 		if strings.ContainsRune(forbidden, r) || r < 0x20 || r == 0x7f {
-			return &SmbShareError{
+			return &SmbShareError{Resource: "windows_smb_share",
 				Kind:    SmbShareErrorInvalidName,
 				Message: fmt.Sprintf("share name %q contains a forbidden character (\\ / [ ] : | < > + = ; , * ? \" or a control character)", name),
 			}
@@ -237,13 +207,13 @@ func ValidateSmbShareName(name string) error {
 	}
 	upper := strings.ToUpper(name)
 	if upper == "IPC$" || upper == "ADMIN$" {
-		return &SmbShareError{
+		return &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("share name %q is a reserved administrative share name", name),
 		}
 	}
 	if len(name) == 2 && upper[1] == '$' && upper[0] >= 'A' && upper[0] <= 'Z' {
-		return &SmbShareError{
+		return &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("share name %q is a reserved administrative drive share name (<letter>$)", name),
 		}
@@ -261,20 +231,20 @@ func ValidateSmbShareName(name string) error {
 // surfaces as SmbShareErrorPathNotFound at apply time.
 func NormalizeSmbSharePath(path string) (string, error) {
 	if strings.Contains(path, "/") {
-		return "", &SmbShareError{
+		return "", &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("share path %q must use backslash separators (e.g. D:\\Shares\\Finance); forward slashes are not accepted", path),
 		}
 	}
 	if len(path) < 3 || path[1] != ':' || path[2] != '\\' {
-		return "", &SmbShareError{
+		return "", &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("share path %q must be a local absolute Windows path (e.g. D:\\Shares\\Finance); UNC paths are not accepted", path),
 		}
 	}
 	drive := path[0]
 	if (drive < 'A' || drive > 'Z') && (drive < 'a' || drive > 'z') {
-		return "", &SmbShareError{
+		return "", &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("share path %q must start with a drive letter", path),
 		}
@@ -347,7 +317,7 @@ func ValidateSmbShareSettings(s *SmbShareSettings) error {
 		s.FolderEnumerationMode = SmbShareFolderEnumerationUnrestricted
 	case SmbShareFolderEnumerationUnrestricted, SmbShareFolderEnumerationAccessBased:
 	default:
-		return &SmbShareError{
+		return &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("unknown folder_enumeration_mode %q: expected %q or %q", s.FolderEnumerationMode, SmbShareFolderEnumerationUnrestricted, SmbShareFolderEnumerationAccessBased),
 		}
@@ -357,19 +327,19 @@ func ValidateSmbShareSettings(s *SmbShareSettings) error {
 		s.CachingMode = SmbShareCachingManual
 	case SmbShareCachingNone, SmbShareCachingManual, SmbShareCachingPrograms, SmbShareCachingDocuments, SmbShareCachingBranchCache:
 	default:
-		return &SmbShareError{
+		return &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("unknown caching_mode %q: expected one of None, Manual, Programs, Documents, BranchCache", s.CachingMode),
 		}
 	}
 	if s.ConcurrentUserLimit < 0 || s.ConcurrentUserLimit > SmbShareMaxConcurrentUserLimit {
-		return &SmbShareError{
+		return &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("concurrent_user_limit %d must be between 0 and %d (0 means no limit)", s.ConcurrentUserLimit, SmbShareMaxConcurrentUserLimit),
 		}
 	}
 	if utf8.RuneCountInString(s.Description) > SmbShareMaxDescriptionLength {
-		return &SmbShareError{
+		return &SmbShareError{Resource: "windows_smb_share",
 			Kind:    SmbShareErrorInvalidName,
 			Message: fmt.Sprintf("description must be at most %d characters", SmbShareMaxDescriptionLength),
 		}
@@ -386,14 +356,14 @@ func ValidateSmbShareSettings(s *SmbShareSettings) error {
 	} {
 		for _, p := range bucket.items {
 			if strings.TrimSpace(p) == "" {
-				return &SmbShareError{
+				return &SmbShareError{Resource: "windows_smb_share",
 					Kind:    SmbShareErrorInvalidName,
 					Message: fmt.Sprintf("%s must not contain empty principals", bucket.level),
 				}
 			}
 			key := canonicalSmbSharePrincipalKey(p)
 			if prev, dup := seen[key]; dup {
-				return &SmbShareError{
+				return &SmbShareError{Resource: "windows_smb_share",
 					Kind: SmbShareErrorInvalidName,
 					Message: fmt.Sprintf("principal %q appears in both %s and %s: a principal may belong to at most one access set",
 						p, prev, bucket.level),

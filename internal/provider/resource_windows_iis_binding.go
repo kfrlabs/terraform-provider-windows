@@ -1025,7 +1025,7 @@ func addIISBindingDiag(d *diag.Diagnostics, summary string, err error) {
 		if be.Cause != nil {
 			detail += "\n\nCause: " + be.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(be.Kind)+"]", detail)
+		d.AddError(summary+" ["+be.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

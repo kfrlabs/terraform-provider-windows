@@ -823,7 +823,7 @@ func addFirewallDiag(d *diag.Diagnostics, summary string, err error) {
 		if fe.Cause != nil {
 			detail += "\n\nCause: " + fe.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(fe.Kind)+"]", detail)
+		d.AddError(summary+" ["+fe.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

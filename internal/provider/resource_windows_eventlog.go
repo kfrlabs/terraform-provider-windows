@@ -831,7 +831,7 @@ func addEventLogDiag(d *diag.Diagnostics, summary string, err error) {
 		if ee.Cause != nil {
 			detail += "\n\nCause: " + ee.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(ee.Kind)+"]", detail)
+		d.AddError(summary+" ["+ee.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

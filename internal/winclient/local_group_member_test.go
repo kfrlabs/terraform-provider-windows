@@ -153,7 +153,7 @@ func TestLocalGroupMemberError_Sentinels(t *testing.T) {
 		LocalGroupMemberErrorUnknown,
 	}
 	for i, s := range sentinels {
-		if s.Kind != kinds[i] {
+		if s.Kind != string(kinds[i]) {
 			t.Errorf("sentinel[%d] kind = %q, want %q", i, s.Kind, kinds[i])
 		}
 	}

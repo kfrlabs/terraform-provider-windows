@@ -266,7 +266,7 @@ func addLocalUsersDiag(diags *diag.Diagnostics, summary string, err error) {
 			detail += "\n\nCause: " + lue.Cause.Error()
 		}
 		if lue.Kind != "" {
-			detail += "\n\nKind: " + string(lue.Kind)
+			detail += "\n\nKind: " + lue.Kind
 		}
 		diags.AddError(summary, detail)
 		return

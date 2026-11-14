@@ -1078,7 +1078,7 @@ func addNTPDiag(d *diag.Diagnostics, summary string, err error) {
 		if ne.Cause != nil {
 			detail += "\n\nCause: " + ne.Cause.Error()
 		}
-		d.AddError(summary+" ["+string(ne.Kind)+"]", detail)
+		d.AddError(summary+" ["+ne.Kind+"]", detail)
 		return
 	}
 	d.AddError(summary, err.Error())

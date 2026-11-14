@@ -14,7 +14,6 @@ package winclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -30,41 +29,41 @@ const (
 	// IISSiteErrorNotFound is returned when the site does not exist.
 	// Read maps it to (nil, nil) for drift removal; Delete treats it as
 	// already absent.
-	IISSiteErrorNotFound IISSiteErrorKind = "not_found"
+	IISSiteErrorNotFound = "not_found"
 
 	// IISSiteErrorAlreadyExists is returned by Create when a site with
 	// the same name already exists. The message suggests terraform import.
-	IISSiteErrorAlreadyExists IISSiteErrorKind = "already_exists"
+	IISSiteErrorAlreadyExists = "already_exists"
 
 	// IISSiteErrorIDConflict is returned by Create/Update when the
 	// configured site_id is already used by another site. Site IDs share
 	// one namespace across all sites; the message names the conflicting
 	// site.
-	IISSiteErrorIDConflict IISSiteErrorKind = "id_conflict"
+	IISSiteErrorIDConflict = "id_conflict"
 
 	// IISSiteErrorAppPoolNotFound is returned by Create/Update when the
 	// configured application_pool does not exist on the host. The pool
 	// must be managed separately (windows_iis_app_pool); it is never
 	// created implicitly.
-	IISSiteErrorAppPoolNotFound IISSiteErrorKind = "app_pool_not_found"
+	IISSiteErrorAppPoolNotFound = "app_pool_not_found"
 
 	// IISSiteErrorPathNotFound is returned by Create/Update when the
 	// configured physical_path does not exist on the host. The directory
 	// is never created implicitly (manage it with windows_directory).
-	IISSiteErrorPathNotFound IISSiteErrorKind = "path_not_found"
+	IISSiteErrorPathNotFound = "path_not_found"
 
 	// IISSiteErrorIISNotInstalled is returned when the W3SVC/WAS
 	// services or the WebAdministration module are missing. The message
 	// points at the windows_feature resource (Web-Server).
-	IISSiteErrorIISNotInstalled IISSiteErrorKind = "iis_not_installed"
+	IISSiteErrorIISNotInstalled = "iis_not_installed"
 
 	// IISSiteErrorAccessDenied is returned when the SSH user lacks the
 	// privilege to manage IIS configuration.
-	IISSiteErrorAccessDenied IISSiteErrorKind = "access_denied"
+	IISSiteErrorAccessDenied = "access_denied"
 
 	// IISSiteErrorUnknown is the catch-all for unrecognised PowerShell
 	// errors or SSH transport failures.
-	IISSiteErrorUnknown IISSiteErrorKind = "unknown"
+	IISSiteErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
@@ -73,57 +72,28 @@ const (
 
 // IISSiteError is the structured error type returned by all
 // WindowsIISSiteClient methods.
-type IISSiteError struct {
-	Kind    IISSiteErrorKind
-	Message string
-	Context map[string]string
-	Cause   error
-}
-
-// Error implements error.
-func (e *IISSiteError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_iis_site [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_iis_site [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause for errors.As / errors.Is chain walking.
-func (e *IISSiteError) Unwrap() error { return e.Cause }
-
-// Is implements errors.Is comparison by Kind only.
-func (e *IISSiteError) Is(target error) bool {
-	t, ok := target.(*IISSiteError)
-	if !ok {
-		return false
-	}
-	return e.Kind == t.Kind
-}
+type IISSiteError = ResourceError
 
 // NewIISSiteError constructs a *IISSiteError.
 func NewIISSiteError(kind IISSiteErrorKind, message string, cause error, ctx map[string]string) *IISSiteError {
-	return &IISSiteError{Kind: kind, Message: message, Cause: cause, Context: ctx}
+	return NewResourceError("windows_iis_site", string(kind), message, cause, ctx)
 }
 
 // IsIISSiteError reports whether err is a *IISSiteError with the given kind.
 func IsIISSiteError(err error, kind IISSiteErrorKind) bool {
-	var ae *IISSiteError
-	if errors.As(err, &ae) {
-		return ae.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_iis_site", string(kind))
 }
 
 // Sentinel errors for use with errors.Is.
 var (
-	ErrIISSiteNotFound        = &IISSiteError{Kind: IISSiteErrorNotFound}
-	ErrIISSiteAlreadyExists   = &IISSiteError{Kind: IISSiteErrorAlreadyExists}
-	ErrIISSiteIDConflict      = &IISSiteError{Kind: IISSiteErrorIDConflict}
-	ErrIISSiteAppPoolNotFound = &IISSiteError{Kind: IISSiteErrorAppPoolNotFound}
-	ErrIISSitePathNotFound    = &IISSiteError{Kind: IISSiteErrorPathNotFound}
-	ErrIISSiteIISNotInstalled = &IISSiteError{Kind: IISSiteErrorIISNotInstalled}
-	ErrIISSiteAccessDenied    = &IISSiteError{Kind: IISSiteErrorAccessDenied}
-	ErrIISSiteUnknown         = &IISSiteError{Kind: IISSiteErrorUnknown}
+	ErrIISSiteNotFound        = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorNotFound}
+	ErrIISSiteAlreadyExists   = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorAlreadyExists}
+	ErrIISSiteIDConflict      = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorIDConflict}
+	ErrIISSiteAppPoolNotFound = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorAppPoolNotFound}
+	ErrIISSitePathNotFound    = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorPathNotFound}
+	ErrIISSiteIISNotInstalled = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorIISNotInstalled}
+	ErrIISSiteAccessDenied    = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorAccessDenied}
+	ErrIISSiteUnknown         = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------

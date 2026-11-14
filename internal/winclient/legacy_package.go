@@ -13,7 +13,6 @@ package winclient
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -184,36 +183,12 @@ var _ LegacyPackageClient = (*LegacyPackageClientImpl)(nil)
 // LegacyPackageClient method on a non-transport failure (Emit-Err on the
 // PowerShell side or a Go-side parse error). It mirrors the shape of
 // ServiceError / WingetPackageError used by the rest of the package.
-type LegacyPackageError struct {
-	// Kind is the machine-readable error category (matches the PS-side `kind`).
-	Kind string
-	// Message is the human-readable description.
-	Message string
-	// Context carries structured key/value diagnostic data.
-	Context map[string]string
-	// Cause is the underlying error, if any.
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *LegacyPackageError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("windows_legacy_package [%s]: %s: %v", e.Kind, e.Message, e.Cause)
-	}
-	return fmt.Sprintf("windows_legacy_package [%s]: %s", e.Kind, e.Message)
-}
-
-// Unwrap returns the underlying cause.
-func (e *LegacyPackageError) Unwrap() error { return e.Cause }
+type LegacyPackageError = ResourceError
 
 // IsLegacyPackageError reports whether err is a *LegacyPackageError with the
 // given kind.
 func IsLegacyPackageError(err error, kind string) bool {
-	var e *LegacyPackageError
-	if errors.As(err, &e) {
-		return e.Kind == kind
-	}
-	return false
+	return IsResourceError(err, "windows_legacy_package", kind)
 }
 
 // LegacyPackageClientImpl is the concrete LegacyPackageClient.
@@ -252,7 +227,7 @@ type deletePayload struct {
 func (l *LegacyPackageClientImpl) runEnvelope(ctx context.Context, op string, payload any, script string) (*psResponse, error) {
 	stdin, err := json.Marshal(payload)
 	if err != nil {
-		return nil, &LegacyPackageError{
+		return nil, &LegacyPackageError{Resource: "windows_legacy_package",
 			Kind: "unknown", Message: "marshal payload", Cause: err,
 			Context: map[string]string{"operation": op},
 		}
@@ -270,18 +245,18 @@ func (l *LegacyPackageClientImpl) runEnvelope(ctx context.Context, op string, pa
 	}
 	// Preserve the historical legacy timeout kind and message.
 	if eerr.Stage == EnvelopeStageTimeout {
-		return nil, &LegacyPackageError{
+		return nil, &LegacyPackageError{Resource: "windows_legacy_package",
 			Kind: "timeout", Message: fmt.Sprintf("operation %q cancelled or timed out", op),
 			Cause: eerr.Cause, Context: eerr.Context,
 		}
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		return nil, &LegacyPackageError{
+		return nil, &LegacyPackageError{Resource: "windows_legacy_package",
 			Kind: "unknown", Message: eerr.Message,
 			Cause: eerr.Cause, Context: eerr.Context,
 		}
 	}
-	return resp, &LegacyPackageError{
+	return resp, &LegacyPackageError{Resource: "windows_legacy_package",
 		Kind: eerr.RemoteKind, Message: eerr.Message, Context: eerr.Context,
 	}
 }
@@ -294,7 +269,7 @@ func parseLPState(resp *psResponse) (*LegacyPackageState, error) {
 	}
 	var st LegacyPackageState
 	if err := json.Unmarshal(resp.Data, &st); err != nil {
-		return nil, &LegacyPackageError{
+		return nil, &LegacyPackageError{Resource: "windows_legacy_package",
 			Kind: "unknown", Message: "failed to parse legacy package state JSON", Cause: err,
 		}
 	}
