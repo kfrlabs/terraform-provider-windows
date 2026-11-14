@@ -995,3 +995,92 @@ func TestIISSiteErrorDiag_TypedKinds(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Partial state on failure (ADR-0012): a (state, error) return persists the
+// observed state before the error diagnostic (tainted); a nil state stays
+// error-only.
+// ---------------------------------------------------------------------------
+
+func TestWindowsIISSiteResource_Create_PartialStateOnError(t *testing.T) {
+	fc := &fakeIISSiteClient{
+		createOut: okIISSiteState(),
+		createErr: winclient.NewIISSiteError(winclient.IISSiteErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsIISSiteResource{site: fc}
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: windowsIISSiteSchemaDefinition(context.Background())}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: sitePlan(t, nil)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var model windowsIISSiteModel
+	if d := resp.State.Get(context.Background(), &model); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if model.ID.ValueString() != "web" {
+		t.Errorf("partial state must be persisted (tainted), got id=%q", model.ID.ValueString())
+	}
+	if model.SiteID.ValueInt64() != 2 {
+		t.Errorf("partial state must carry the observed site_id, got %v", model.SiteID)
+	}
+}
+
+func TestWindowsIISSiteResource_Create_NilStateOnError_StaysStateless(t *testing.T) {
+	fc := &fakeIISSiteClient{
+		createErr: winclient.NewIISSiteError(winclient.IISSiteErrorAlreadyExists,
+			"IIS site 'web' already exists on this host (use 'terraform import' to bring it under management).", nil, nil),
+	}
+	r := &windowsIISSiteResource{site: fc}
+
+	schemaDef := windowsIISSiteSchemaDefinition(context.Background())
+	resp := &resource.CreateResponse{State: tfsdk.State{
+		Schema: schemaDef,
+		Raw:    tftypes.NewValue(siteObjType(), nil),
+	}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: sitePlan(t, nil)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from already_exists")
+	}
+	// The handler never touches state on a nil-state error: the raw value
+	// is still the null object it was seeded with (State.Get cannot decode
+	// a null object into the model struct, so assert on Raw directly).
+	if !resp.State.Raw.IsNull() {
+		t.Errorf("nil-state error must stay stateless, got raw=%v", resp.State.Raw)
+	}
+}
+
+func TestWindowsIISSiteResource_Update_PartialStateOnError(t *testing.T) {
+	observed := okIISSiteState()
+	observed.ApplicationPool = "pool2"
+	fc := &fakeIISSiteClient{
+		updateOut: observed,
+		updateErr: winclient.NewIISSiteError(winclient.IISSiteErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsIISSiteResource{site: fc}
+
+	schemaDef := windowsIISSiteSchemaDefinition(context.Background())
+	prior := siteState(t, nil)
+	plan := sitePlan(t, map[string]tftypes.Value{
+		"application_pool": tftypes.NewValue(tftypes.String, "pool2"),
+	})
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaDef, Raw: prior.Raw}}
+
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: prior}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var model windowsIISSiteModel
+	if d := resp.State.Get(context.Background(), &model); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if model.ID.ValueString() != "web" {
+		t.Errorf("partial state must be persisted on update failure, got id=%q", model.ID.ValueString())
+	}
+	if model.ApplicationPool.ValueString() != "pool2" {
+		t.Errorf("partial state must carry the observed application_pool, got %q", model.ApplicationPool.ValueString())
+	}
+}

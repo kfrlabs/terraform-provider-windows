@@ -5,6 +5,8 @@ subcategory: ""
 description: |-
   Installs, updates and uninstalls Windows software distributed as legacy installers (.exe wrappers like InstallShield/NSIS/Inno Setup and Windows Installer .msi packages).
   Complements windows_winget_package for software not available via winget or shipped as a local/internal binary. Detection is performed against the standard Uninstall registry hives (HKLM:\SOFTWARE\...\Uninstall\* and Wow6432Node).
+  Partial failures: if creation fails after the installer already ran and the package is detected in the Uninstall registry, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after part of the in-place change applied, the provider saves the observed registry state before reporting the error. Fix the cause and run terraform apply again to reconcile.
+  A nil state on error does not guarantee nothing was installed: a failure that returns no state leaves an orphaned package that must be uninstalled out-of-band or re-adopted with terraform import.
 ---
 
 # windows_legacy_package (Resource)
@@ -12,6 +14,10 @@ description: |-
 Installs, updates and uninstalls Windows software distributed as legacy installers (`.exe` wrappers like InstallShield/NSIS/Inno Setup and Windows Installer `.msi` packages).
 
 Complements `windows_winget_package` for software not available via winget or shipped as a local/internal binary. Detection is performed against the standard Uninstall registry hives (`HKLM:\SOFTWARE\...\Uninstall\*` and `Wow6432Node`).
+
+**Partial failures:** if creation fails after the installer already ran and the package is detected in the Uninstall registry, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after part of the in-place change applied, the provider saves the observed registry state before reporting the error. Fix the cause and run `terraform apply` again to reconcile.
+
+A nil state on error does not guarantee nothing was installed: a failure that returns no state leaves an orphaned package that must be uninstalled out-of-band or re-adopted with `terraform import`.
 
 ## Example Usage
 

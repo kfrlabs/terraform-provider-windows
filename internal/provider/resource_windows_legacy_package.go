@@ -204,7 +204,15 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 			"(`.exe` wrappers like InstallShield/NSIS/Inno Setup and Windows Installer `.msi` packages).\n\n" +
 			"Complements `windows_winget_package` for software not available via winget or shipped as a " +
 			"local/internal binary. Detection is performed against the standard Uninstall registry hives " +
-			"(`HKLM:\\SOFTWARE\\...\\Uninstall\\*` and `Wow6432Node`).",
+			"(`HKLM:\\SOFTWARE\\...\\Uninstall\\*` and `Wow6432Node`).\n\n" +
+			"**Partial failures:** if creation fails after the installer already ran and the package is " +
+			"detected in the Uninstall registry, the provider persists the observed state before reporting " +
+			"the error, so the resource is marked tainted. If update fails after part of the in-place change " +
+			"applied, the provider saves the observed registry state before reporting the error. " +
+			"Fix the cause and run `terraform apply` again to reconcile.\n\n" +
+			"A nil state on error does not guarantee nothing was installed: a failure that returns no state " +
+			"leaves an orphaned package that must be uninstalled out-of-band or re-adopted " +
+			"with `terraform import`.",
 		Attributes: map[string]schema.Attribute{
 
 			"id": schema.StringAttribute{
@@ -583,6 +591,14 @@ func (r *windowsLegacyPackageResource) Create(ctx context.Context, req resource.
 
 	state, err := r.lp.Create(ctx, input)
 	if err != nil {
+		// Partial failure (ADR-0012): the installer may have run and the
+		// package may already be detected in the Uninstall registry.
+		// Persist the observed state so the resource is tainted rather
+		// than dropped from state. A nil state stays error-only.
+		if state != nil {
+			r.applyState(&plan, state)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		}
 		addLPDiag(&resp.Diagnostics, err, "Create")
 		return
 	}
@@ -680,6 +696,27 @@ func (r *windowsLegacyPackageResource) Update(ctx context.Context, req resource.
 	})
 	remote, err := r.lp.Update(ctx, id, input)
 	if err != nil {
+		// Partial failure (ADR-0012): persist the observed registry state
+		// so the resource keeps its partial state rather than staying at
+		// prior state. A nil state stays error-only. Non-observed mutable
+		// fields (valid_exit_codes, timeout_seconds, environment, log_path)
+		// are restored from prior state: the in-place change may not have
+		// applied, so the plan values must not overwrite the last-applied
+		// configuration.
+		if remote != nil {
+			plan.ID = prior.ID
+			if plan.ProductID.IsUnknown() || plan.ProductID.IsNull() {
+				plan.ProductID = prior.ProductID
+			}
+			plan.InstalledVersion = types.StringValue(remote.InstalledVersion)
+			plan.Installed = types.BoolValue(remote.Installed)
+			plan.InstallDate = types.StringValue(remote.InstallDate)
+			plan.ValidExitCodes = prior.ValidExitCodes
+			plan.TimeoutSeconds = prior.TimeoutSeconds
+			plan.Environment = prior.Environment
+			plan.LogPath = prior.LogPath
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		}
 		addLPDiag(&resp.Diagnostics, err, "Update")
 		return
 	}

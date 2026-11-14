@@ -7,6 +7,8 @@ description: |-
   The site is always created with zero bindings: bindings are not managed here (see windows_iis_binding). The read-only bindings attribute (protocol plus binding_information) reflects the observed view so plans stay stable.
   Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime state (Started / Stopped) is enforced only when configured — except that a Started site with no bindings stays Stopped with a warning (IIS cannot run an unbound site) instead of failing.
   Requires IIS on the target host: install it with the windows_feature resource (Web-Server; add Web-Mgmt-Console / Web-Scripting-Tools for the WebAdministration module on Server Core).
+  Partial failures: if creation fails after the site was already registered in IIS, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after IIS applied part of the change, the provider saves the observed partial state before reporting the error. Fix the cause and run terraform apply again to reconcile.
+  A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned site that must be removed with Remove-Website or re-adopted with terraform import.
   Import format: <site name>.
 ---
 
@@ -19,6 +21,10 @@ The site is always created with zero bindings: bindings are not managed here (se
 Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime `state` (`Started` / `Stopped`) is enforced only when configured — except that a `Started` site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site) instead of failing.
 
 Requires IIS on the target host: install it with the `windows_feature` resource (`Web-Server`; add `Web-Mgmt-Console` / `Web-Scripting-Tools` for the `WebAdministration` module on Server Core).
+
+**Partial failures:** if creation fails after the site was already registered in IIS, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after IIS applied part of the change, the provider saves the observed partial state before reporting the error. Fix the cause and run `terraform apply` again to reconcile.
+
+A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned site that must be removed with `Remove-Website` or re-adopted with `terraform import`.
 
 Import format: `<site name>`.
 

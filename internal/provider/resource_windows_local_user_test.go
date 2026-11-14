@@ -1506,3 +1506,131 @@ func TestLocalUserImportState_SetsTypedNullTimeouts(t *testing.T) {
 		t.Errorf("imported timeouts should be null, got %v", m.Timeouts)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Partial state on failure (ADR-0012): a (state, error) return persists the
+// observed state before the error diagnostic (tainted); a nil state stays
+// error-only. Credential markers come from prior state on Update: a failed
+// rotation must not advance the stored version marker.
+// ---------------------------------------------------------------------------
+
+func TestLocalUserCreate_PartialStateOnError(t *testing.T) {
+	fake := &fakeLocalUserClient{
+		createOut: okUserState("alice"),
+		createErr: winclient.NewLocalUserError(winclient.LocalUserErrorUnknown, "reconcile failed", nil, nil),
+	}
+	r := &windowsLocalUserResource{user: fake}
+	s := windowsLocalUserSchemaDefinition(context.Background())
+
+	// Bump the version marker in the plan to prove the partial state
+	// preserves it (the legacy password attribute supplies the credential).
+	rawPlan := luObj(map[string]tftypes.Value{
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+	})
+	plan := tfsdk.Plan{Schema: s, Raw: rawPlan}
+	req := resource.CreateRequest{Plan: plan}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+
+	r.Create(context.Background(), req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from reconcile failure")
+	}
+	var got windowsLocalUserModel
+	if d := resp.State.Get(context.Background(), &got); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if got.Name.ValueString() != "alice" {
+		t.Errorf("partial state must be persisted (tainted), got name=%q", got.Name.ValueString())
+	}
+	if got.SID.ValueString() != "S-1-5-21-111-222-333-1001" {
+		t.Errorf("partial state must carry the observed SID, got %q", got.SID.ValueString())
+	}
+	if !got.PasswordWO.IsNull() {
+		t.Error("password_wo must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if got.PasswordWoVersion.ValueInt64() != 2 {
+		t.Errorf("partial state must preserve the version, got %v", got.PasswordWoVersion)
+	}
+}
+
+func TestLocalUserCreate_NilStateOnError_StaysStateless(t *testing.T) {
+	fake := &fakeLocalUserClient{
+		createErr: winclient.NewLocalUserError(winclient.LocalUserErrorAlreadyExists,
+			"user already exists", nil, nil),
+	}
+	r := &windowsLocalUserResource{user: fake}
+	s := windowsLocalUserSchemaDefinition(context.Background())
+
+	rawPlan := luObj(nil)
+	plan := tfsdk.Plan{Schema: s, Raw: rawPlan}
+	req := resource.CreateRequest{Plan: plan}
+	resp := &resource.CreateResponse{State: tfsdk.State{
+		Schema: s,
+		Raw:    tftypes.NewValue(localUserObjectType(), nil),
+	}}
+
+	r.Create(context.Background(), req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from already_exists")
+	}
+	// The handler never touches state on a nil-state error: the raw value
+	// is still the null object it was seeded with (State.Get cannot decode
+	// a null object into the model struct, so assert on Raw directly).
+	if !resp.State.Raw.IsNull() {
+		t.Errorf("nil-state error must stay stateless, got raw=%v", resp.State.Raw)
+	}
+}
+
+func TestLocalUserUpdate_PartialStateOnError_RestoresVersion(t *testing.T) {
+	fake := &fakeLocalUserClient{
+		readOut: okUserState("alice"),
+		readErr: winclient.NewLocalUserError(winclient.LocalUserErrorUnknown, "refresh failed", nil, nil),
+	}
+	r := &windowsLocalUserResource{user: fake}
+	s := windowsLocalUserSchemaDefinition(context.Background())
+
+	rawState := luObj(map[string]tftypes.Value{
+		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":                  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"name":                tftypes.NewValue(tftypes.String, "alice"),
+		"password":            tftypes.NewValue(tftypes.String, "old-secret"),
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 1),
+	})
+	rawPlan := luObj(map[string]tftypes.Value{
+		"sid":                 tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"id":                  tftypes.NewValue(tftypes.String, "S-1-5-21-111-222-333-1001"),
+		"name":                tftypes.NewValue(tftypes.String, "alice"),
+		"password":            tftypes.NewValue(tftypes.String, "old-secret"),
+		"password_wo_version": tftypes.NewValue(tftypes.Number, 2),
+	})
+
+	req := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: rawPlan},
+		State: tfsdk.State{Schema: s, Raw: rawState},
+	}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: rawState}}
+
+	r.Update(context.Background(), req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from refresh failure")
+	}
+	var got windowsLocalUserModel
+	if d := resp.State.Get(context.Background(), &got); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if got.Name.ValueString() != "alice" {
+		t.Errorf("partial state must be persisted on update failure, got name=%q", got.Name.ValueString())
+	}
+	if !got.PasswordWO.IsNull() {
+		t.Error("password_wo must stay null in partial state (WriteOnly, never persisted)")
+	}
+	if got.PasswordWoVersion.ValueInt64() != 1 {
+		t.Errorf("failed rotation must not advance the stored version (stays at prior 1), got %v", got.PasswordWoVersion)
+	}
+	if got.Password.ValueString() != "old-secret" {
+		t.Errorf("failed update must restore password from prior state, got %q", got.Password.ValueString())
+	}
+}

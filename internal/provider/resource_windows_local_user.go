@@ -285,7 +285,16 @@ func windowsLocalUserSchemaDefinition(ctx context.Context) schema.Schema {
 			"≥ 1.11). The plaintext is injected via stdin inside the PowerShell script and " +
 			"**never appears in SSH trace logs or diagnostic output** (ADR-LU-3).\n\n" +
 			"~> **Built-in accounts:** Attempting `terraform destroy` on a built-in account " +
-			"(RID 500/501/503/504) results in a **hard error**. Use `terraform state rm` instead.",
+			"(RID 500/501/503/504) results in a **hard error**. Use `terraform state rm` instead.\n\n" +
+			"**Partial failures:** if creation fails after the account was already registered in SAM, " +
+			"the provider persists the observed state before reporting the error, so the resource is marked " +
+			"tainted. If update fails after Windows applied part of the change (rename, attributes, password " +
+			"or enabled state), the provider saves the observed partial state before reporting the error, " +
+			"restoring the credential markers (`password`, `password_wo_version`) from prior state so a " +
+			"failed rotation still diffs on retry. Fix the cause and run `terraform apply` again to reconcile.\n\n" +
+			"A nil state on error does not guarantee nothing was created: a failure that returns no state " +
+			"leaves an orphaned account that must be removed with `Remove-LocalUser` or re-adopted " +
+			"with `terraform import`.",
 
 		Attributes: map[string]schema.Attribute{
 			// ---- Terraform ID / SID ----
@@ -649,6 +658,17 @@ func (r *windowsLocalUserResource) Create(
 
 	us, err := r.user.Create(ctx, input, password)
 	if err != nil {
+		// Partial failure (ADR-0012): the account may already exist on
+		// the host. Persist the observed state so the resource is tainted
+		// rather than dropped from state. A nil state (for example, the
+		// already_exists pre-flight) stays error-only.
+		if us != nil {
+			next := stateFromUser(us)
+			next.Password = plan.Password
+			next.PasswordWoVersion = plan.PasswordWoVersion
+			next.Timeouts = plan.Timeouts
+			resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
+		}
 		addLocalUserDiag(&resp.Diagnostics, "Create windows_local_user failed", err)
 		return
 	}
@@ -830,6 +850,7 @@ func (r *windowsLocalUserResource) Update(
 	// Step 1: Rename if name changed (case-insensitive comparison, EC-5).
 	if !strings.EqualFold(plan.Name.ValueString(), prior.Name.ValueString()) {
 		if err := r.user.Rename(ctx, sid, plan.Name.ValueString()); err != nil {
+			r.persistLocalUserUpdatePartial(ctx, resp, sid, plan, prior)
 			addLocalUserDiag(&resp.Diagnostics, "Rename windows_local_user failed", err)
 			return
 		}
@@ -839,6 +860,7 @@ func (r *windowsLocalUserResource) Update(
 	if scalarAttrsChanged(plan, prior) {
 		input := planToUserInput(plan)
 		if _, err := r.user.Update(ctx, sid, input); err != nil {
+			r.persistLocalUserUpdatePartial(ctx, resp, sid, plan, prior)
 			addLocalUserDiag(&resp.Diagnostics, "Update windows_local_user (Set-LocalUser) failed", err)
 			return
 		}
@@ -877,6 +899,7 @@ func (r *windowsLocalUserResource) Update(
 			return
 		}
 		if err := r.user.SetPassword(ctx, sid, pw); err != nil {
+			r.persistLocalUserUpdatePartial(ctx, resp, sid, plan, prior)
 			addLocalUserDiag(&resp.Diagnostics, "SetPassword windows_local_user failed", err)
 			return
 		}
@@ -891,6 +914,7 @@ func (r *windowsLocalUserResource) Update(
 			err = r.user.Disable(ctx, sid)
 		}
 		if err != nil {
+			r.persistLocalUserUpdatePartial(ctx, resp, sid, plan, prior)
 			addLocalUserDiag(&resp.Diagnostics, "Enable/Disable windows_local_user failed", err)
 			return
 		}
@@ -899,6 +923,22 @@ func (r *windowsLocalUserResource) Update(
 	// Refresh state after all mutations.
 	us, err := r.user.Read(ctx, sid)
 	if err != nil {
+		// Partial failure (ADR-0012): the mutations above may already have
+		// applied on the host. Persist the observed state so the resource
+		// keeps its partial state rather than staying at prior state. A
+		// nil state stays error-only. Credential markers come from prior
+		// state: a failed rotation must not advance the stored version
+		// marker or a retry would no longer diff.
+		if us != nil {
+			next := stateFromUser(us)
+			next.Password = prior.Password
+			next.PasswordWoVersion = prior.PasswordWoVersion
+			next.Timeouts = plan.Timeouts
+			if strings.EqualFold(us.Name, plan.Name.ValueString()) {
+				next.Name = plan.Name
+			}
+			resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
+		}
 		addLocalUserDiag(&resp.Diagnostics, "Read after Update windows_local_user failed", err)
 		return
 	}
@@ -1108,6 +1148,31 @@ func scalarAttrsChanged(plan, prior windowsLocalUserModel) bool {
 		!plan.UserMayNotChangePassword.Equal(prior.UserMayNotChangePassword) ||
 		!plan.AccountNeverExpires.Equal(prior.AccountNeverExpires) ||
 		!plan.AccountExpires.Equal(prior.AccountExpires)
+}
+
+// persistLocalUserUpdatePartial best-effort re-reads the account after an
+// intermediate Update step failed (ADR-0012 partial-failure contract). A
+// non-nil observation is projected with stateFromUser plus the
+// prior-credential projection used by the final-refresh error path, so a
+// partially applied Rename/Set-LocalUser/SetPassword/Enable-Disable keeps
+// its partial state instead of staying at prior state. A nil observation
+// (or Read error) stays error-only.
+func (r *windowsLocalUserResource) persistLocalUserUpdatePartial(
+	ctx context.Context, resp *resource.UpdateResponse, sid string,
+	plan, prior windowsLocalUserModel,
+) {
+	us, err := r.user.Read(ctx, sid)
+	if err != nil || us == nil {
+		return
+	}
+	next := stateFromUser(us)
+	next.Password = prior.Password
+	next.PasswordWoVersion = prior.PasswordWoVersion
+	next.Timeouts = plan.Timeouts
+	if strings.EqualFold(us.Name, plan.Name.ValueString()) {
+		next.Name = plan.Name
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
 }
 
 // addLocalUserDiag converts a winclient error into a TPF diagnostic.

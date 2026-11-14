@@ -125,6 +125,14 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 			"on a remote Windows host via SSH and PowerShell (`NetSecurity` module). " +
 			"One Terraform resource maps to exactly one `NetFirewallRule`, keyed on its " +
 			"stable technical `Name` (InstanceID), which is distinct from `display_name`.\n\n" +
+			"**Partial failures:** if creation fails after the rule was already registered in the firewall " +
+			"policy store, the provider persists the observed state before reporting the error, so the resource " +
+			"is marked tainted. If update fails after Windows applied part of the change, the provider saves " +
+			"the observed partial state before reporting the error. " +
+			"Fix the cause and run `terraform apply` again to reconcile.\n\n" +
+			"A nil state on error does not guarantee nothing was created: a failure that returns no state " +
+			"leaves an orphaned rule that must be removed with `Remove-NetFirewallRule` or re-adopted " +
+			"with `terraform import`.\n\n" +
 			"Import format: `<name>` (PersistentStore assumed) or `<policy_store>/<name>`.",
 
 		Attributes: map[string]schema.Attribute{
@@ -424,6 +432,15 @@ func (r *windowsFirewallRuleResource) Create(ctx context.Context, req resource.C
 
 	state, err := r.fw.Create(ctx, input)
 	if err != nil {
+		// Partial failure (ADR-0012): the rule may already exist on the
+		// host. Persist the observed state so the resource is tainted
+		// rather than dropped from state. A nil state (for example, the
+		// already_exists pre-flight) stays error-only.
+		if state != nil {
+			m := firewallStateToModel(state)
+			m.Timeouts = plan.Timeouts
+			resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
+		}
 		addFirewallDiag(&resp.Diagnostics, "Error creating Windows Firewall rule", err)
 		return
 	}
@@ -521,6 +538,14 @@ func (r *windowsFirewallRuleResource) Update(ctx context.Context, req resource.U
 
 	fwState, err := r.fw.Update(ctx, name, policyStore, input)
 	if err != nil {
+		// Partial failure (ADR-0012): persist the observed state so the
+		// resource keeps its partial state rather than staying at prior
+		// state. A nil state stays error-only.
+		if fwState != nil {
+			m := firewallStateToModel(fwState)
+			m.Timeouts = plan.Timeouts
+			resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
+		}
 		addFirewallDiag(&resp.Diagnostics, "Error updating Windows Firewall rule", err)
 		return
 	}

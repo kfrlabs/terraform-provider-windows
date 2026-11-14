@@ -4,11 +4,17 @@ page_title: "windows_scheduled_task Resource - windows"
 subcategory: ""
 description: |-
   Manages a Windows Scheduled Task via SSH + PowerShell (ScheduledTasks module, Windows 2012+).
+  Partial failures: if creation fails after the task was already registered on the host, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after Windows applied part of the change, the provider saves the observed partial state before reporting the error, restoring the credential markers (password, password_wo_version) from prior state so a failed rotation still diffs on retry. Fix the cause and run terraform apply again to reconcile.
+  A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned task that must be removed with Unregister-ScheduledTask or re-adopted with terraform import.
 ---
 
 # windows_scheduled_task (Resource)
 
 Manages a Windows Scheduled Task via SSH + PowerShell (ScheduledTasks module, Windows 2012+).
+
+**Partial failures:** if creation fails after the task was already registered on the host, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after Windows applied part of the change, the provider saves the observed partial state before reporting the error, restoring the credential markers (`password`, `password_wo_version`) from prior state so a failed rotation still diffs on retry. Fix the cause and run `terraform apply` again to reconcile.
+
+A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned task that must be removed with `Unregister-ScheduledTask` or re-adopted with `terraform import`.
 
 ## Example Usage
 

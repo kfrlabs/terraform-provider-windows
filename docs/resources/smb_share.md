@@ -7,6 +7,8 @@ description: |-
   The shared directory itself is never created here: pair this resource with windows_directory, which owns the directory entry. NTFS permissions stay with windows_file_acl; Windows evaluates share and NTFS permissions together, the most restrictive winning.
   When all four of full_access, change_access, read_access and no_access are omitted, the host access list is unmanaged: it is left untouched and never diffed. When at least one is configured, all four become authoritative: an empty set revokes every entry at that level, and any out-of-band entry (including the Everyone:Read entry New-SmbShare creates by default) is revoked as stale. A principal may belong to at most one set.
   encrypt_data defaults to false, matching the Windows default; enabling it (true) is recommended whenever the share carries sensitive data, so traffic cannot be read off the wire.
+  Partial failures: if creation fails after the share was already registered on the host, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after Windows applied part of the change (share properties or access entries), the provider saves the observed partial state before reporting the error. Fix the cause and run terraform apply again to reconcile.
+  A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned share that must be removed with Remove-SmbShare or re-adopted with terraform import.
 ---
 
 # windows_smb_share (Resource)
@@ -18,6 +20,10 @@ The shared directory itself is never created here: pair this resource with `wind
 When all four of `full_access`, `change_access`, `read_access` and `no_access` are omitted, the host access list is unmanaged: it is left untouched and never diffed. When at least one is configured, all four become authoritative: an empty set revokes every entry at that level, and any out-of-band entry (including the `Everyone:Read` entry `New-SmbShare` creates by default) is revoked as stale. A principal may belong to at most one set.
 
 `encrypt_data` defaults to `false`, matching the Windows default; enabling it (`true`) is recommended whenever the share carries sensitive data, so traffic cannot be read off the wire.
+
+**Partial failures:** if creation fails after the share was already registered on the host, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after Windows applied part of the change (share properties or access entries), the provider saves the observed partial state before reporting the error. Fix the cause and run `terraform apply` again to reconcile.
+
+A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned share that must be removed with `Remove-SmbShare` or re-adopted with `terraform import`.
 
 ## Example Usage
 

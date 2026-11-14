@@ -7,6 +7,8 @@ description: |-
   Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime state (Started / Stopped) is enforced only when configured.
   A SpecificUser identity needs identity_username plus the WriteOnly identity_password_wo, which travels to the host on stdin and is never persisted in state; rotation is driven exclusively by identity_password_wo_version. After terraform import the password cannot be recovered: set it together with a fresh version before the next apply.
   Requires IIS on the target host: install it with the windows_feature resource (Web-Server; add Web-Mgmt-Console / Web-Scripting-Tools for the WebAdministration module on Server Core).
+  Partial failures: if creation fails after the pool was already registered in IIS, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after IIS applied part of the change, the provider saves the observed partial state before reporting the error, restoring identity_password_wo_version from prior state so a failed rotation still diffs on retry. Fix the cause and run terraform apply again to reconcile.
+  A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned pool that must be removed with Remove-WebAppPool or re-adopted with terraform import.
   Import format: <pool name>.
 ---
 
@@ -19,6 +21,10 @@ Only the attributes configured in Terraform are written; every other setting on 
 A `SpecificUser` identity needs `identity_username` plus the WriteOnly `identity_password_wo`, which travels to the host on stdin and is never persisted in state; rotation is driven exclusively by `identity_password_wo_version`. After `terraform import` the password cannot be recovered: set it together with a fresh version before the next apply.
 
 Requires IIS on the target host: install it with the `windows_feature` resource (`Web-Server`; add `Web-Mgmt-Console` / `Web-Scripting-Tools` for the `WebAdministration` module on Server Core).
+
+**Partial failures:** if creation fails after the pool was already registered in IIS, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after IIS applied part of the change, the provider saves the observed partial state before reporting the error, restoring `identity_password_wo_version` from prior state so a failed rotation still diffs on retry. Fix the cause and run `terraform apply` again to reconcile.
+
+A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned pool that must be removed with `Remove-WebAppPool` or re-adopted with `terraform import`.
 
 Import format: `<pool name>`.
 
