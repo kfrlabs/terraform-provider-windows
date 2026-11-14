@@ -57,13 +57,10 @@ var envelopeDefRe = regexp.MustCompile(`(?m)^\s*function Emit-(OK|Err)\b`)
 // an entry to the new scripts filename without shrinking the list.
 var envelopePreludeAllowlist = map[string]bool{
 	"certificate.go":            true,
-	"directory.go":              true,
 	"dns_client.go":             true,
-	"domain_membership.go":      true,
 	"dsc_resource_scripts.go":   true,
 	"environment_variable.go":   true,
 	"eventlog.go":               true,
-	"feature.go":                true,
 	"file.go":                   true,
 	"file_acl.go":               true,
 	"firewall_profile.go":       true,
@@ -78,12 +75,10 @@ var envelopePreludeAllowlist = map[string]bool{
 	"net_route.go":              true,
 	"network_adapter.go":        true,
 	"ntp.go":                    true,
-	"os_info.go":                true,
 	"power_plan.go":             true,
 	"registry_value.go":         true,
 	"scheduled_task_scripts.go": true,
 	"service.go":                true,
-	"smb_share.go":              true,
 	"storage_common.go":         true,
 	"timezone.go":               true,
 	"winget_package.go":         true,
@@ -151,22 +146,44 @@ func TestPSEnvelopePrelude_NoNewDefinitions(t *testing.T) {
 	}
 }
 
-func TestPSHostnameHeader_UsesSharedPrelude(t *testing.T) {
-	if !strings.HasPrefix(psHostnameHeader, psEnvelopePrelude) {
-		t.Error("psHostnameHeader must compose the shared psEnvelopePrelude by concatenation")
+func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
+	headers := map[string]string{
+		"psHostnameHeader":         psHostnameHeader,
+		"psDirectoryHeader":        psDirectoryHeader,
+		"psDomainMembershipHeader": psDomainMembershipHeader,
+		"psFeatureHeader":          psFeatureHeader,
+		"psOSInfoHeader":           psOSInfoHeader,
+		"psSmbShareHeader":         psSmbShareHeader,
+	}
+	for name, h := range headers {
+		if !strings.HasPrefix(h, psEnvelopePrelude) {
+			t.Errorf("%s must compose the shared psEnvelopePrelude by concatenation", name)
+		}
+		if n := strings.Count(h, "function Emit-Err"); n != 1 {
+			t.Errorf("%s must define Emit-Err exactly once (via the prelude), got %d", name, n)
+		}
+		if n := strings.Count(h, "function Emit-OK"); n != 1 {
+			t.Errorf("%s must define Emit-OK exactly once (via the prelude), got %d", name, n)
+		}
 	}
 	for _, want := range []string{
 		"function Classify-Hostname",
 		"function Read-HostnameState",
+		"function Classify-DirectoryError",
+		"function Classify-DomainMembership",
+		"function Classify-Feature",
+		"function Classify-OSInfo",
+		"function Classify-SmbShare",
 	} {
-		if !strings.Contains(psHostnameHeader, want) {
-			t.Errorf("psHostnameHeader lost its resource-specific helper %q during migration", want)
+		found := false
+		for _, h := range headers {
+			if strings.Contains(h, want) {
+				found = true
+				break
+			}
 		}
-	}
-	if n := strings.Count(psHostnameHeader, "function Emit-Err"); n != 1 {
-		t.Errorf("psHostnameHeader must define Emit-Err exactly once (via the prelude), got %d", n)
-	}
-	if n := strings.Count(psHostnameHeader, "function Emit-OK"); n != 1 {
-		t.Errorf("psHostnameHeader must define Emit-OK exactly once (via the prelude), got %d", n)
+		if !found {
+			t.Errorf("migrated headers lost resource-specific helper %q", want)
+		}
 	}
 }

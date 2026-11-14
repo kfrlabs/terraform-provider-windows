@@ -36,21 +36,10 @@ func NewFeatureClient(c *Client) *FeatureClient { return &FeatureClient{c: c} }
 // substrings to FeatureErrorKind values. Detection is best-effort and
 // substring-based because Windows error messages are localised; callers should
 // fall back to FeatureErrorUnknown when the kind is empty.
-const psFeatureHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
+const psFeatureHeader = psEnvelopePrelude + psFeatureRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Classify-Feature([string]$Msg) {
+// psFeatureRemainder Classifier and feature bodies stay here; envelope emitters come from the prelude.
+const psFeatureRemainder = `function Classify-Feature([string]$Msg) {
   if ($Msg -match 'Access is denied' -or $Msg -match 'AccessDenied' -or $Msg -match 'not authorized') { return 'permission_denied' }
   if ($Msg -match 'source files could not be found' -or $Msg -match 'specify an alternate source' -or $Msg -match 'Source could not be found') { return 'source_missing' }
   if ($Msg -match 'depends on' -or $Msg -match 'parent feature' -or $Msg -match 'required feature') { return 'dependency_missing' }
