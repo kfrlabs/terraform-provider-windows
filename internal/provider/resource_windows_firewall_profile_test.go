@@ -616,7 +616,7 @@ func TestModelToFirewallProfileSettings_ConfiguredAndAliases(t *testing.T) {
 	}
 }
 
-func TestModelToFirewallProfileSettings_UnknownDefers(t *testing.T) {
+func TestModelToFirewallProfileSettings_UnknownSkipped(t *testing.T) {
 	ctx := context.Background()
 	m := windowsFirewallProfileModel{
 		Enabled:                         types.BoolUnknown(),
@@ -627,22 +627,40 @@ func TestModelToFirewallProfileSettings_UnknownDefers(t *testing.T) {
 		AllowUnicastResponseToMulticast: types.BoolNull(),
 		NotifyOnListen:                  types.BoolNull(),
 		LogAllowed:                      types.BoolNull(),
-		LogBlocked:                      types.BoolNull(),
+		LogBlocked:                      types.BoolValue(true),
 		LogIgnored:                      types.BoolNull(),
 		DefaultInboundAction:            types.StringNull(),
 		DefaultOutboundAction:           types.StringNull(),
 		LogFileName:                     types.StringNull(),
-		LogMaxSizeKilobytes:             types.Int64Null(),
+		LogMaxSizeKilobytes:             types.Int64Unknown(),
 	}
-	if _, diags := modelToFirewallProfileSettings(ctx, m); !diags.HasError() {
-		t.Error("unknown attributes must abort with a deferring diagnostic")
+	// On create, Terraform plans unknown for every unset Optional+Computed
+	// setting: unknowns must be skipped (never sent), not abort the run.
+	// Otherwise a partial config like the lab pack's (or the acc test's)
+	// could never converge.
+	s, diags := modelToFirewallProfileSettings(ctx, m)
+	if diags.HasError() {
+		t.Fatalf("unknown attributes must be skipped, got diags: %v", diags)
 	}
-	// Unknown alias set defers too.
+	if s.Enabled != nil {
+		t.Error("unknown Enabled must stay nil (never sent)")
+	}
+	if s.LogMaxSizeKilobytes != nil {
+		t.Error("unknown LogMaxSizeKilobytes must stay nil (never sent)")
+	}
+	if s.LogBlocked == nil || !*s.LogBlocked {
+		t.Error("configured LogBlocked must be forwarded")
+	}
+	// Unknown alias set is skipped too.
 	m2 := m
 	m2.Enabled = types.BoolNull()
 	m2.DisabledInterfaceAliases = types.SetUnknown(types.StringType)
-	if _, diags := modelToFirewallProfileSettings(ctx, m2); !diags.HasError() {
-		t.Error("unknown alias set must abort with a deferring diagnostic")
+	s2, diags := modelToFirewallProfileSettings(ctx, m2)
+	if diags.HasError() {
+		t.Fatalf("unknown alias set must be skipped, got diags: %v", diags)
+	}
+	if s2.DisabledInterfaceAliasesSet {
+		t.Error("unknown alias set must not be marked authoritative")
 	}
 }
 

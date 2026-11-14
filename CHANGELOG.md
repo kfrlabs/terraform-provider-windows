@@ -595,6 +595,15 @@ All notable changes to this project will be documented in this file.
   validator: unexpected host spellings surface as a Read-time error
   diagnostic from the state projection instead of schema rejection.
 
+- `windows_firewall_profile`: partial configurations can be created
+  again. Unset `Optional+Computed` settings (planned `unknown` on
+  create) are now skipped like `null` instead of aborting with
+  "Unknown Windows Firewall profile setting". Only values known at
+  plan time are sent to `Set-NetFirewallProfile`, matching the
+  documented partial-management contract and the `ntp` / `timezone` /
+  `power_plan` convention. Found by a manual lab run: a profile tuning
+  only `log_blocked` + `log_max_size_kilobytes` could never converge.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
