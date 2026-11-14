@@ -223,6 +223,109 @@ func TestTransportAgentAuth(t *testing.T) {
 	}
 }
 
+// The ssh-agent socket is owned by the Client: it stays open across
+// handshakes and is closed exactly once by Close (issue #356). The fake
+// agent below mirrors TestTransportAgentAuth: a keyring served over a unix
+// socket, so the handshake is a real agent protocol exchange.
+func TestTransportAgentConnClosedOnClientClose(t *testing.T) {
+	t.Run("agent socket closed on Close", func(t *testing.T) {
+		_, pub, priv := newClientKeypair(t)
+		srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
+
+		// Keep the socket path short: sun_path is capped around 104 bytes.
+		sockPath := filepath.Join(t.TempDir(), "s")
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Skipf("unix sockets unavailable: %v", err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+
+		keyring := agent.NewKeyring()
+		if err := keyring.Add(agent.AddedKey{PrivateKey: &priv}); err != nil {
+			t.Fatalf("add key to keyring: %v", err)
+		}
+		// agentDone reports when each server-side agent connection ends:
+		// Client.Close must EOF the one the client holds.
+		agentDone := make(chan error, 16)
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func() { agentDone <- agent.ServeAgent(keyring, conn) }()
+			}
+		}()
+
+		t.Setenv("SSH_AUTH_SOCK", sockPath)
+
+		c, err := New(Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+		})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if c.agentConn == nil {
+			t.Fatal("New with an agent should hold the agent socket")
+		}
+
+		// The handshake uses the agent; the socket must survive it for the
+		// next dial/retry instead of being closed per connection.
+		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+		defer cancel()
+		if stdout, _, err := c.RunPowerShell(ctx, "Get-Thing"); err != nil {
+			t.Fatalf("RunPowerShell: %v", err)
+		} else if strings.TrimSuffix(stdout, "\n") != "ok" {
+			t.Fatalf("stdout = %q, want %q", stdout, "ok")
+		}
+		if c.agentConn == nil {
+			t.Fatal("agent socket must stay open across handshakes")
+		}
+
+		if err := c.Close(); err != nil {
+			t.Fatalf("first Close: %v", err)
+		}
+		if c.agentConn != nil {
+			t.Error("agent socket reference must be cleared after Close")
+		}
+		select {
+		case <-agentDone:
+			// The server side observed EOF: the socket is really closed.
+		case <-time.After(5 * time.Second):
+			t.Error("agent server did not observe EOF within 5s of Client.Close")
+		}
+		if err := c.Close(); err != nil {
+			t.Errorf("second Close: %v", err)
+		}
+	})
+
+	// Without an agent there is no socket to close: Close stays a no-op
+	// and stays idempotent.
+	t.Run("no agent Close is noop and idempotent", func(t *testing.T) {
+		noAgent(t)
+		keyPEM, pub, _ := newClientKeypair(t)
+		srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok"})
+
+		c, err := New(Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+		})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if c.agentConn != nil {
+			t.Fatal("agent socket should be nil without an agent")
+		}
+		if err := c.Close(); err != nil {
+			t.Fatalf("first Close: %v", err)
+		}
+		if err := c.Close(); err != nil {
+			t.Errorf("second Close: %v", err)
+		}
+	})
+}
+
 // The security-critical path: an impostor presenting a different host key must
 // not be reachable, even though the credentials themselves are valid.
 func TestTransportRejectsWrongPinnedHostKey(t *testing.T) {

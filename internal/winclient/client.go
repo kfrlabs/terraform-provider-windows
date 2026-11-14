@@ -60,6 +60,10 @@ type Client struct {
 	// per call (see above). Set when establishing a persistent session
 	// fails; only touched with mu held.
 	oneShot bool
+	// agentConn owns the ssh-agent socket dialled by agentAuthMethod. It
+	// stays open across dials and retries (every handshake reuses it) and
+	// is closed exactly once by Close. Nil when no agent is used.
+	agentConn io.Closer
 }
 
 // New creates and validates a new SSH Client from the given Config. It does
@@ -84,12 +88,15 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("winclient: max_sessions must be between 1 and %d, got %d", MaxMaxSessions, cfg.MaxSessions)
 	}
 
-	auth, err := buildAuthMethods(cfg)
+	auth, agentConn, err := buildAuthMethods(cfg)
 	if err != nil {
 		return nil, err
 	}
 	hostKeys, err := hostKeyCallback(cfg)
 	if err != nil {
+		if agentConn != nil {
+			_ = agentConn.Close()
+		}
 		return nil, err
 	}
 
@@ -101,10 +108,11 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		cfg:     cfg,
-		sshCfg:  sshCfg,
-		address: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
-		sem:     make(chan struct{}, cfg.MaxSessions),
+		cfg:       cfg,
+		sshCfg:    sshCfg,
+		address:   net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+		sem:       make(chan struct{}, cfg.MaxSessions),
+		agentConn: agentConn,
 	}, nil
 }
 
@@ -114,8 +122,8 @@ func (c *Client) Config() Config { return c.cfg }
 
 // Close tears down every idle pooled session and marks the pool closed, so
 // sessions still borrowed are closed on return instead of being re-pooled.
-// Safe to call on a Client that never ran a command, and safe to call more
-// than once.
+// It also closes the ssh-agent socket, if any. Safe to call on a Client
+// that never ran a command, and safe to call more than once.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -127,6 +135,12 @@ func (c *Client) Close() error {
 		}
 	}
 	c.idle = nil
+	if c.agentConn != nil {
+		if err := c.agentConn.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		c.agentConn = nil
+	}
 	return errors.Join(errs...)
 }
 

@@ -8,6 +8,7 @@ package winclient
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -24,26 +25,32 @@ var defaultKnownHosts = filepath.Join(".ssh", "known_hosts")
 // buildAuthMethods assembles the authentication methods to offer, in the
 // conventional OpenSSH order: explicit private key, then agent, then password.
 // Offering several lets a server that refuses one still accept another.
-func buildAuthMethods(cfg Config) ([]ssh.AuthMethod, error) {
+//
+// When the agent contributes a method, the second return value is the open
+// agent socket, owned by the caller: it must stay open across handshakes and
+// be closed when the client is done. It is nil when no agent is used.
+func buildAuthMethods(cfg Config) ([]ssh.AuthMethod, io.Closer, error) {
 	var methods []ssh.AuthMethod
+	var agentConn io.Closer
 
 	signer, err := privateKeySigner(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if signer != nil {
 		methods = append(methods, ssh.PublicKeys(signer))
 	}
 
 	if agentRequested(cfg) {
-		m, agentErr := agentAuthMethod()
+		m, conn, agentErr := agentAuthMethod()
 		switch {
 		case agentErr == nil:
 			methods = append(methods, m)
+			agentConn = conn
 		case cfg.UseAgent != nil && *cfg.UseAgent:
 			// The operator asked for the agent explicitly, so a broken agent
 			// is a configuration error rather than something to skip past.
-			return nil, agentErr
+			return nil, nil, agentErr
 		}
 	}
 
@@ -52,11 +59,14 @@ func buildAuthMethods(cfg Config) ([]ssh.AuthMethod, error) {
 	}
 
 	if len(methods) == 0 {
-		return nil, errors.New("winclient: no authentication method configured; set one of private_key, " +
+		if agentConn != nil {
+			_ = agentConn.Close()
+		}
+		return nil, nil, errors.New("winclient: no authentication method configured; set one of private_key, " +
 			"private_key_path, password (or WINDOWS_PRIVATE_KEY / WINDOWS_PRIVATE_KEY_PATH / WINDOWS_PASSWORD), " +
 			"or run an ssh-agent holding the key")
 	}
-	return methods, nil
+	return methods, agentConn, nil
 }
 
 // privateKeySigner loads and parses the configured private key, returning
@@ -117,17 +127,18 @@ func agentRequested(cfg Config) bool {
 
 // agentAuthMethod connects to the ssh-agent advertised by SSH_AUTH_SOCK. The
 // signers are fetched lazily at handshake time, so an agent whose keys change
-// between calls stays usable.
-func agentAuthMethod() (ssh.AuthMethod, error) {
+// between calls stays usable. The returned closer owns the agent socket and
+// must stay open across handshakes; the caller closes it when done.
+func agentAuthMethod() (ssh.AuthMethod, io.Closer, error) {
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
-		return nil, errors.New("winclient: ssh-agent authentication requested but SSH_AUTH_SOCK is not set")
+		return nil, nil, errors.New("winclient: ssh-agent authentication requested but SSH_AUTH_SOCK is not set")
 	}
 	conn, err := net.Dial("unix", sock) //nolint:gosec // dialing the operator-configured ssh-agent socket is intended
 	if err != nil {
-		return nil, fmt.Errorf("winclient: connect to ssh-agent at %s: %w", sock, err)
+		return nil, nil, fmt.Errorf("winclient: connect to ssh-agent at %s: %w", sock, err)
 	}
-	return ssh.PublicKeysCallback(agent.NewClient(conn).Signers), nil
+	return ssh.PublicKeysCallback(agent.NewClient(conn).Signers), conn, nil
 }
 
 // hostKeyCallback builds the server identity check. Verification is on by
