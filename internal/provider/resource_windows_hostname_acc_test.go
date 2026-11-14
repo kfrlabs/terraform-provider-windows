@@ -12,8 +12,10 @@
 // requires a reboot to take effect. That is destructive on a shared/lab host,
 // so the create/update/drift lifecycle scenarios below remain SKELETONS gated
 // on WINDOWS_HOSTNAME_ALLOW_RENAME=1 and are left unimplemented. Only the
-// plan-time schema-validation tests are executed here — they never mutate the
-// host because the error is raised before any SSH call.
+// plan-time schema-validation tests execute unconditionally (they never
+// mutate the host because the error is raised before any SSH call); the
+// import round-trip also runs behind the rename gate because it needs a
+// managed resource first.
 package provider
 
 import (
@@ -125,6 +127,34 @@ func TestAccWindowsHostname_DriftDetection(t *testing.T) {
 	testAccHostnamePreCheck(t)
 	skipUnlessRenameAllowed(t)
 	t.Skip("SKELETON: destructive rename — see TestAccWindowsHostname_Basic")
+}
+
+// TestAccWindowsHostname_Import — import round-trip of the live host
+// state. The import itself is read-only, but the round-trip needs a
+// managed resource first, so this runs behind the same disposable-host
+// gate as the rename scenarios. The import ID comes from state (the
+// machine GUID), and the imported live values must verify in place.
+func TestAccWindowsHostname_Import(t *testing.T) {
+	testAccHostnamePreCheck(t)
+	skipUnlessRenameAllowed(t)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: hostnameConfig("ACC-IMPORT"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_hostname.this", "pending_name", "ACC-IMPORT"),
+					resource.TestCheckResourceAttrSet("windows_hostname.this", "machine_id"),
+				),
+			},
+			{
+				ResourceName:      "windows_hostname.this",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
 }
 
 // TestAccWindowsHostname_DeleteIsNoOp — destroy removes the resource from state

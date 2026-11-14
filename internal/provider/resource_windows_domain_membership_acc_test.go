@@ -85,6 +85,32 @@ resource "windows_domain_membership" "this" {
 	})
 }
 
+// TestAccWindowsDomainMembership_Import — import round-trip of a
+// domain-joined host. No CI environment provides a test domain, so this
+// runs only when WINDOWS_TEST_DOMAIN names a domain the target host is
+// already joined to (lab lane); otherwise it skips with a recorded
+// reason. join_credential is config-only (import nulls it), so it cannot
+// verify.
+func TestAccWindowsDomainMembership_Import(t *testing.T) {
+	testAccDomainMembershipPreCheck(t)
+	domain := os.Getenv("WINDOWS_TEST_DOMAIN")
+	if domain == "" {
+		t.Skip("WINDOWS_TEST_DOMAIN is not set; no test domain available for the import round-trip")
+	}
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				ResourceName:            "windows_domain_membership.this",
+				ImportState:             true,
+				ImportStateId:           domain,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"join_credential"},
+			},
+		},
+	})
+}
+
 // TestAccWindowsDomainMembership_UnjoinNeedsStatePassword rejects
 // unjoin_on_destroy with a WriteOnly password before any SSH call.
 func TestAccWindowsDomainMembership_UnjoinNeedsStatePassword(t *testing.T) {
