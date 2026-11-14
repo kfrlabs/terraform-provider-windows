@@ -30,6 +30,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -622,15 +623,21 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						},
 						"end_boundary": schema.StringAttribute{
 							Optional:            true,
+							Computed:            true,
+							PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 							MarkdownDescription: "RFC 3339 deactivation datetime.",
 						},
 						"execution_time_limit": schema.StringAttribute{
 							Optional:            true,
+							Computed:            true,
+							PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 							Validators:          []validator.String{stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)},
 							MarkdownDescription: "ISO 8601 per-trigger time cap. Assigned to Windows as an XSD string and compared verbatim.",
 						},
 						"delay": schema.StringAttribute{
 							Optional:            true,
+							Computed:            true,
+							PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 							Validators:          []validator.String{stringvalidator.RegexMatches(scheduledTaskTriggerDurationRegex, scheduledTaskTriggerDurationDesc)},
 							MarkdownDescription: "ISO 8601 delay before task start (AtStartup/AtLogon/OnEvent). Assigned to Windows as an XSD string and compared verbatim.",
 						},
@@ -641,7 +648,11 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 							MarkdownDescription: "Daily recurrence interval. Only valid for `Daily`. Windows default: 1.",
 						},
 						"days_of_week": schema.SetAttribute{
-							Optional:    true,
+							Optional: true,
+							Computed: true,
+							PlanModifiers: []planmodifier.Set{
+								setplanmodifier.UseStateForUnknown(),
+							},
 							ElementType: types.StringType,
 							Validators: []validator.Set{
 								setvalidator.ValueStringsAre(
@@ -658,10 +669,16 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 						},
 						"user_id": schema.StringAttribute{
 							Optional:            true,
+							Computed:            true,
+							PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 							MarkdownDescription: "Restrict `AtLogon` trigger to a specific user.",
 						},
 						"subscription": schema.StringAttribute{
 							Optional: true,
+							Computed: true,
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.UseStateForUnknown(),
+							},
 							// CustomType gives this attribute semantic-equality XML comparison
 							// (see subscriptionXMLValue), so Windows re-serializing this value's
 							// whitespace on round-trip doesn't trip TPF's plan/apply consistency
@@ -1247,7 +1264,13 @@ func modelToInput(ctx context.Context, m *windowsScheduledTaskModel) (winclient.
 	input.Triggers = make([]winclient.ScheduledTaskTriggerInput, len(triggers))
 	for i, t := range triggers {
 		var dows []string
-		diags.Append(t.DaysOfWeek.ElementsAs(ctx, &dows, false)...)
+		// days_of_week is Optional+Computed: on a first plan with no prior
+		// state the value is Unknown. ElementsAs rejects unknowns, and an
+		// unset weekday set means "no restriction" to winclient either way,
+		// so only extract when known.
+		if !t.DaysOfWeek.IsNull() && !t.DaysOfWeek.IsUnknown() {
+			diags.Append(t.DaysOfWeek.ElementsAs(ctx, &dows, false)...)
+		}
 		enabled := true
 		if !t.Enabled.IsNull() && !t.Enabled.IsUnknown() {
 			enabled = t.Enabled.ValueBool()

@@ -33,6 +33,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -167,6 +169,71 @@ func TestSTResource_Schema_StateUseStateForUnknown(t *testing.T) {
 	}
 	if len(stateAttr.PlanModifiers) != 1 || !reflect.DeepEqual(stateAttr.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
 		t.Errorf("state must carry exactly UseStateForUnknown, got %v", stateAttr.PlanModifiers)
+	}
+}
+
+// TestSTResource_Schema_TriggerNestedUseStateForUnknown (issues #322/#324):
+// every Optional+Computed attribute nested inside the triggers SetNested
+// object must carry UseStateForUnknown (or a real Windows Default, like
+// enabled). Without it, a first plan leaves Unknown values inside planned
+// set elements and Set correlation fails with "planned set element does not
+// correlate with any element in actual" once Read fills Windows defaults
+// (e.g. days_interval 1 for a Daily trigger planned with only
+// type/start_boundary/enabled).
+func TestSTResource_Schema_TriggerNestedUseStateForUnknown(t *testing.T) {
+	r := &windowsScheduledTaskResource{}
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	trigAttr, ok := resp.Schema.Attributes["triggers"].(schema.SetNestedAttribute)
+	if !ok {
+		t.Fatalf("triggers: expected schema.SetNestedAttribute, got %T", resp.Schema.Attributes["triggers"])
+	}
+	nested := trigAttr.NestedObject.Attributes
+
+	for _, name := range []string{"end_boundary", "execution_time_limit", "delay", "user_id", "subscription"} {
+		a, ok := nested[name].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.StringAttribute, got %T", name, nested[name])
+		}
+		if !a.Optional || !a.Computed {
+			t.Errorf("%s must be Optional+Computed, got optional=%v computed=%v", name, a.Optional, a.Computed)
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], stringplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", name, a.PlanModifiers)
+		}
+	}
+
+	for _, name := range []string{"days_interval", "weeks_interval"} {
+		a, ok := nested[name].(schema.Int64Attribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.Int64Attribute, got %T", name, nested[name])
+		}
+		if !a.Optional || !a.Computed {
+			t.Errorf("%s must be Optional+Computed, got optional=%v computed=%v", name, a.Optional, a.Computed)
+		}
+		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], int64planmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", name, a.PlanModifiers)
+		}
+	}
+
+	dows, ok := nested["days_of_week"].(schema.SetAttribute)
+	if !ok {
+		t.Fatalf("days_of_week: expected schema.SetAttribute, got %T", nested["days_of_week"])
+	}
+	if !dows.Optional || !dows.Computed {
+		t.Errorf("days_of_week must be Optional+Computed, got optional=%v computed=%v", dows.Optional, dows.Computed)
+	}
+	if len(dows.PlanModifiers) != 1 || !reflect.DeepEqual(dows.PlanModifiers[0], setplanmodifier.UseStateForUnknown()) {
+		t.Errorf("days_of_week must carry exactly UseStateForUnknown, got %v", dows.PlanModifiers)
+	}
+
+	enabled, ok := nested["enabled"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("enabled: expected schema.BoolAttribute, got %T", nested["enabled"])
+	}
+	if enabled.Default == nil {
+		t.Error("enabled must keep its Windows Default (true)")
 	}
 }
 
@@ -1013,6 +1080,92 @@ func TestBuildTriggerObject_UnknownIntervalResolvesToNull(t *testing.T) {
 			t.Errorf("intervals = (%v, %v), want (null, null)", tm.DaysInterval, tm.WeeksInterval)
 		}
 	})
+}
+
+// TestBuildTriggerObject_DailyDefaultsResolveKnown is a regression test for
+// the #324 acceptance failure ("planned set element does not correlate with
+// any element in actual"). A Daily trigger planned with only
+// type/start_boundary/enabled leaves every other nested attribute Unknown
+// (all Optional+Computed, first plan has no prior state). When Windows
+// reports its defaults for such a trigger (DaysInterval 1, everything else
+// empty), the mapped object must contain no Unknown values: unknowns inside
+// a planned Set element break correlation, while known values (and nulls
+// for unset fields) correlate cleanly.
+func TestBuildTriggerObject_DailyDefaultsResolveKnown(t *testing.T) {
+	ctx := context.Background()
+
+	// First-plan shape: only type/start_boundary/enabled known.
+	prior := &windowsScheduledTaskTriggerModel{
+		Type:               types.StringValue("Daily"),
+		Enabled:            types.BoolValue(true),
+		StartBoundary:      types.StringValue("2026-01-01T00:00:00Z"),
+		EndBoundary:        types.StringUnknown(),
+		ExecutionTimeLimit: types.StringUnknown(),
+		Delay:              types.StringUnknown(),
+		DaysInterval:       types.Int64Unknown(),
+		DaysOfWeek:         types.SetUnknown(types.StringType),
+		WeeksInterval:      types.Int64Unknown(),
+		UserID:             types.StringUnknown(),
+		Subscription:       subscriptionXMLValue{StringValue: types.StringUnknown()},
+	}
+	// Windows report for a default Daily trigger: interval default 1, all
+	// optional strings empty.
+	st := winclient.ScheduledTaskTriggerState{
+		Type: "Daily", Enabled: true,
+		StartBoundary: "2026-01-01T00:00:00Z", DaysInterval: 1,
+	}
+	v, d := buildTriggerObject(ctx, st, prior)
+	if d.HasError() {
+		t.Fatalf("diags: %v", d)
+	}
+	obj, ok := v.(types.Object)
+	if !ok {
+		t.Fatalf("expected types.Object, got %T", v)
+	}
+	var tm windowsScheduledTaskTriggerModel
+	if d := obj.As(ctx, &tm, basetypes.ObjectAsOptions{}); d.HasError() {
+		t.Fatalf("obj.As: %v", d)
+	}
+
+	for name, unknown := range map[string]bool{
+		"end_boundary":         tm.EndBoundary.IsUnknown(),
+		"execution_time_limit": tm.ExecutionTimeLimit.IsUnknown(),
+		"delay":                tm.Delay.IsUnknown(),
+		"days_interval":        tm.DaysInterval.IsUnknown(),
+		"days_of_week":         tm.DaysOfWeek.IsUnknown(),
+		"weeks_interval":       tm.WeeksInterval.IsUnknown(),
+		"user_id":              tm.UserID.IsUnknown(),
+		"subscription":         tm.Subscription.IsUnknown(),
+	} {
+		if unknown {
+			t.Errorf("%s must not be Unknown after apply (breaks Set correlation)", name)
+		}
+	}
+	if tm.DaysInterval.IsNull() || tm.DaysInterval.ValueInt64() != 1 {
+		t.Errorf("days_interval = %v, want 1 (Windows default)", tm.DaysInterval)
+	}
+	for name, field := range map[string]struct {
+		null bool
+		val  string
+	}{
+		"end_boundary":         {tm.EndBoundary.IsNull(), tm.EndBoundary.ValueString()},
+		"execution_time_limit": {tm.ExecutionTimeLimit.IsNull(), tm.ExecutionTimeLimit.ValueString()},
+		"delay":                {tm.Delay.IsNull(), tm.Delay.ValueString()},
+		"user_id":              {tm.UserID.IsNull(), tm.UserID.ValueString()},
+	} {
+		if !field.null {
+			t.Errorf("%s = %q, want null (Windows reports empty)", name, field.val)
+		}
+	}
+	if !tm.Subscription.IsNull() {
+		t.Errorf("subscription = %v, want null (Windows reports empty)", tm.Subscription)
+	}
+	if !tm.DaysOfWeek.IsNull() {
+		t.Errorf("days_of_week = %v, want null (Windows reports none)", tm.DaysOfWeek)
+	}
+	if !tm.WeeksInterval.IsNull() {
+		t.Errorf("weeks_interval = %v, want null (not applicable to Daily)", tm.WeeksInterval)
+	}
 }
 
 // TestStateToModel_PriorTriggersConsumeOnce pins the consume-once alignment
