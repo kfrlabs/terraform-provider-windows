@@ -85,23 +85,10 @@ type ntpStatePayload struct {
 // trimmed stdout of w32tm /query /source gated on $LASTEXITCODE — an
 // opaque peer name, never parsed — and degrades to "" when the query
 // fails (e.g. the service is registered but stopped).
-const psNTPHeader = `
-$ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'SilentlyContinue'
-$WarningPreference     = 'SilentlyContinue'
-[System.Threading.Thread]::CurrentThread.CurrentCulture   = [System.Globalization.CultureInfo]::InvariantCulture
-[System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+const psNTPHeader = psEnvelopePrelude + psNTPRemainder
 
-function Emit-OK([object]$Data) {
-  $obj = [ordered]@{ ok = $true; data = $Data }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Emit-Err([string]$Kind, [string]$Message, [hashtable]$Ctx) {
-  if (-not $Ctx) { $Ctx = @{} }
-  $obj = [ordered]@{ ok = $false; kind = $Kind; message = $Message; context = $Ctx }
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 8 -Compress))
-}
-function Classify-NTP([object]$Rec) {
+// psNTPRemainder Classifier and time-source bodies stay here; envelope emitters come from the prelude.
+const psNTPRemainder = `function Classify-NTP([object]$Rec) {
   $msg = ''
   try { $msg = [string]$Rec.Exception.Message } catch { $msg = [string]$Rec }
   if ($msg -match 'Access is denied' -or $msg -match 'PermissionDenied' -or $msg -match 'UnauthorizedAccess' -or $msg -match 'Unauthorized' -or $msg -match 'requires elevation' -or $msg -match 'Requested registry access is not allowed') { return 'access_denied' }
