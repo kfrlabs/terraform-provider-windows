@@ -50,6 +50,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- CI verifies downloaded module cache contents and allows 300 seconds per
+  package for race-enabled unit tests (#354).
+
 - Data source hygiene, safe subset (#328):
   - `windows_local_users` / `windows_local_groups`: the shared per-element
     schema builders no longer panic on an unsupported attribute type; they

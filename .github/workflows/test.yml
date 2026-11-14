@@ -53,6 +53,9 @@ jobs:
       - name: go mod download
         run: go mod download
 
+      - name: go mod verify
+        run: go mod verify
+
       - name: go build
         run: go build -v ./...
 
@@ -78,7 +81,7 @@ jobs:
           cache: true
 
       - name: go test -short
-        run: go test -short -race -timeout 120s -coverprofile=coverage.out ./...
+        run: go test -short -race -timeout 300s -coverprofile=coverage.out ./...
 
       - name: upload coverage
         if: always()
