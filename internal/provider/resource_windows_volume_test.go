@@ -498,8 +498,8 @@ func TestVolumeCreate_Handler_HappyPath(t *testing.T) {
 	if m.ID.ValueString() != okVolumeUniqueID {
 		t.Errorf("id = %q, want the volume UniqueId", m.ID.ValueString())
 	}
-	if m.FileSystem.ValueString() != "NTFS" {
-		t.Errorf("state file_system = %q, want canonical NTFS", m.FileSystem.ValueString())
+	if m.FileSystem.ValueString() != "ntfs" {
+		t.Errorf("state file_system = %q, want planned spelling %q (canonical lands on refresh)", m.FileSystem.ValueString(), "ntfs")
 	}
 	if m.FileSystemLabel.ValueString() != "TFDATA" {
 		t.Errorf("state label = %q", m.FileSystemLabel.ValueString())
@@ -848,34 +848,38 @@ func TestVolumeImportState_NotFound(t *testing.T) {
 func TestVolumeFileSystemCanonicalizeModifier(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
-		name string
-		in   string
-		want string
+		name  string
+		in    string
+		prior types.String
+		want  string
 	}{
-		{"lower", "ntfs", "NTFS"},
-		{"upper", "NTFS", "NTFS"},
-		{"refs", "refs", "ReFS"},
-		{"exfat", "EXFAT", "exFAT"},
-		{"fat32", "fat32", "FAT32"},
+		{"lower, no prior", "ntfs", types.StringNull(), "ntfs"},
+		{"upper, no prior", "NTFS", types.StringNull(), "NTFS"},
+		{"lower, matching prior", "ntfs", types.StringValue("NTFS"), "NTFS"},
+		{"upper, matching prior", "NTFS", types.StringValue("NTFS"), "NTFS"},
+		{"refs, matching prior", "refs", types.StringValue("ReFS"), "ReFS"},
+		{"exfat, matching prior", "EXFAT", types.StringValue("exFAT"), "exFAT"},
+		{"fat32, matching prior", "fat32", types.StringValue("FAT32"), "FAT32"},
+		{"lower, different prior", "ntfs", types.StringValue("ReFS"), "ntfs"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := volumeFileSystemCanonicalizeModifier{}
-			resp := &planmodifier.StringResponse{}
-			m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringValue(tc.in)}, resp)
+			resp := &planmodifier.StringResponse{PlanValue: types.StringValue(tc.in)}
+			m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringValue(tc.in), StateValue: tc.prior}, resp)
 			if resp.PlanValue.ValueString() != tc.want {
-				t.Errorf("fs plan = %q, want canonical %q", resp.PlanValue.ValueString(), tc.want)
+				t.Errorf("fs plan = %q, want %q", resp.PlanValue.ValueString(), tc.want)
 			}
 		})
 	}
 
 	// Null and invalid values pass through for validators to handle.
 	m := volumeFileSystemCanonicalizeModifier{}
-	resp := &planmodifier.StringResponse{}
+	resp := &planmodifier.StringResponse{PlanValue: types.StringNull()}
 	m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringNull()}, resp)
 	if resp.PlanValue != (types.StringNull()) && !resp.PlanValue.IsNull() {
 		t.Errorf("null fs plan must pass through, got %v", resp.PlanValue)
 	}
-	resp = &planmodifier.StringResponse{}
+	resp = &planmodifier.StringResponse{PlanValue: types.StringValue("ext4")}
 	m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringValue("ext4")}, resp)
 	if resp.PlanValue.ValueString() == "NTFS" {
 		t.Errorf("invalid fs plan must not canonicalize, got %q", resp.PlanValue.ValueString())

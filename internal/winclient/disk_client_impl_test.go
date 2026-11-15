@@ -185,13 +185,18 @@ func TestDiskScripts_MutationsCarryNoConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildDiskInitializeScript: %v", err)
 	}
+	if !strings.Contains(init, "-Confirm:$false") {
+		t.Errorf("initialize: Initialize-Disk supports Confirm and must carry -Confirm:$false")
+	}
+	// Set-Disk declares no Confirm parameter on current Windows builds
+	// (Server 2025): binding -Confirm there is fatal, so these scripts
+	// must not carry it.
 	for name, s := range map[string]string{
-		"initialize": init,
-		"set_off":    buildDiskSetOfflineScript("U", true),
-		"set_ro":     buildDiskSetReadOnlyScript("U", false),
+		"set_off": buildDiskSetOfflineScript("U", true),
+		"set_ro":  buildDiskSetReadOnlyScript("U", false),
 	} {
-		if !strings.Contains(s, "-Confirm:$false") {
-			t.Errorf("%s: mutating cmdlet must carry -Confirm:$false", name)
+		if strings.Contains(s, "-Confirm:$false") {
+			t.Errorf("%s: Set-Disk has no Confirm parameter; -Confirm:$false would fail the call", name)
 		}
 	}
 }
@@ -199,13 +204,19 @@ func TestDiskScripts_MutationsCarryNoConfirm(t *testing.T) {
 // TestDiskScripts_LocationMatchTrims pins the documented case-insensitive,
 // trim-tolerant location match: the host side is trimmed just like the
 // serial branch, while -eq keeps the comparison case-insensitive and both
-// selector values are upper-cased Go-side via NormalizeDiskIdentity.
+// selector values are upper-cased Go-side via NormalizeDiskIdentity. The
+// unique_id branch follows the same rule: XenServer PVDISK UniqueIds carry
+// a trailing space, which previously made every unique_id adoption fail
+// with disk_not_found on such hosts.
 func TestDiskScripts_LocationMatchTrims(t *testing.T) {
 	if !strings.Contains(psDiskFunctions, "([string]$d.Location).Trim() -eq $selLocation") {
 		t.Error("Resolve-Disk must trim the host location before comparing, mirroring the serial branch")
 	}
 	if !strings.Contains(psDiskFunctions, "([string]$d.SerialNumber).Trim() -eq $selSerial") {
 		t.Error("Resolve-Disk must keep trimming the host serial number before comparing")
+	}
+	if !strings.Contains(psDiskFunctions, "([string]$d.UniqueId).Trim() -eq $selUniqueID") {
+		t.Error("Resolve-Disk must trim the host UniqueId before comparing (XenServer IDs have trailing spaces)")
 	}
 	script := buildDiskReadScript(DiskSelectorByLocation("  pci slot 0  "))
 	if !strings.Contains(script, "$selLocation = 'PCI SLOT 0'") {

@@ -35,6 +35,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -148,6 +149,9 @@ func windowsPartitionSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:    true,
 				Computed:    true,
 				Description: "Desired partition size in bytes. Grows in place (`Resize-Partition`, which extends the file system with it for NTFS/ReFS); shrinking is refused with `shrink_not_supported` in v1. Conflicts with `use_maximum_size`.",
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Validators: []validator.Int64{
 					int64validator.AtLeast(1),
 				},
@@ -164,6 +168,7 @@ func windowsPartitionSchemaDefinition(ctx context.Context) schema.Schema {
 				Computed:    true,
 				Description: "Explicit partition offset in bytes (`New-Partition -Offset`). Null (default) places the partition at the first fitting extent. ForceNew.",
 				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
 					int64planmodifier.RequiresReplace(),
 				},
 				Validators: []validator.Int64{
@@ -174,6 +179,9 @@ func windowsPartitionSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:    true,
 				Computed:    true,
 				Description: "Single drive letter D-Z (upper-cased), assigned explicitly after creation (`Set-Partition -NewDriveLetter`; removal via `Remove-PartitionAccessPath`). Null removes the letter. A, B and C are rejected (floppy- and system-reserved). A letter already in use is a `drive_letter_in_use` error.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
 						driveLetterPattern,
@@ -183,8 +191,10 @@ func windowsPartitionSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 			"gpt_type": schema.StringAttribute{
 				Optional:    true,
-				Description: "GPT partition type: alias `basic_data` (default, `{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}`), `msr`, `recovery`, or a literal GUID. GPT disks only (validated against the disk style at apply). ForceNew. Conflicts with `mbr_type`. Aliases are stored and planned in canonical GUID form.",
+				Computed:    true,
+				Description: "GPT partition type: alias `basic_data` (default, `{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}`), `msr`, `recovery`, or a literal GUID. GPT disks only (validated against the disk style at apply). ForceNew. Conflicts with `mbr_type`. The plan keeps the configured spelling on create (Terraform forbids planning a value that disagrees with non-null config without prior state); the canonical GUID lands in state at apply/refresh, after which the plan converges on it via the prior-state exemption.",
 				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 					partitionGPTTypeCanonicalizeModifier{},
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -194,8 +204,10 @@ func windowsPartitionSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 			"mbr_type": schema.StringAttribute{
 				Optional:    true,
-				Description: "MBR partition type byte: alias `IFS` (default, `0x07`), `FAT32`, `FAT32_LBA`, `EXTENDED`, `NTFS`, a hex byte (`0x00`-`0xFF`) or a decimal byte (`0`-`255`). MBR disks only (validated against the disk style at apply). ForceNew. Conflicts with `gpt_type`. Aliases and decimal bytes are stored and planned in canonical `0x..` form.",
+				Computed:    true,
+				Description: "MBR partition type byte: alias `IFS` (default, `0x07`), `FAT32`, `FAT32_LBA`, `EXTENDED`, `NTFS`, a hex byte (`0x00`-`0xFF`) or a decimal byte (`0`-`255`). MBR disks only (validated against the disk style at apply). ForceNew. Conflicts with `gpt_type`. The plan keeps the configured spelling on create (Terraform forbids planning a value that disagrees with non-null config without prior state); the canonical `0x..` form lands in state at apply/refresh, after which the plan converges on it via the prior-state exemption.",
 				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 					partitionMBRTypeCanonicalizeModifier{},
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -207,35 +219,59 @@ func windowsPartitionSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:    true,
 				Computed:    true,
 				Description: "Whether the partition is hidden (`Set-Partition -IsHidden`). Null (unset) leaves the observed state unmanaged.",
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"is_active": schema.BoolAttribute{
 				Optional:    true,
 				Computed:    true,
 				Description: "Whether the partition is active (`Set-Partition -IsActive`). MBR only. Null (unset) leaves the observed state unmanaged.",
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"partition_number": schema.Int64Attribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Partition PartitionNumber, as observed on the host. Scan-time assignment, informational only: identity never relies on it.",
 			},
 			"guid": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Partition Guid, as observed on the host. The stable identity on GPT disks; empty on MBR disks (whose identity is the offset).",
 			},
 			"access_paths": schema.ListAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 				ElementType: types.StringType,
 				Description: "Get-Partition AccessPaths, as observed on the host.",
 			},
 			"is_boot": schema.BoolAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether the partition is the boot partition, as observed on the host. Boot partitions are refused with protected_storage.",
 			},
 			"is_system": schema.BoolAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Whether the partition is the system partition, as observed on the host. System partitions are refused with protected_storage.",
 			},
 			"operational_status": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Partition OperationalStatus (e.g. Online), as observed on the host.",
 			},
 
@@ -366,11 +402,17 @@ func partitionModelFromInfo(ctx context.Context, info *winclient.PartitionInfo, 
 }
 
 // canonicalPartitionGptState converges a preserved gpt_type value to its
-// canonical GUID form; null, unknown, empty and invalid values pass through
-// untouched (validators report the invalid ones).
+// canonical GUID form; null, empty and invalid values pass through
+// untouched (validators report the invalid ones). Unknown values become
+// null: the state must be fully known after apply, and an unset type has
+// no observed value to project (the host value lands in state on refresh,
+// when keep carries the recorded prior value).
 func canonicalPartitionGptState(v types.String) types.String {
-	if v.IsNull() || v.IsUnknown() {
+	if v.IsNull() {
 		return v
+	}
+	if v.IsUnknown() {
+		return types.StringNull()
 	}
 	if strings.TrimSpace(v.ValueString()) == "" {
 		return v
@@ -382,11 +424,17 @@ func canonicalPartitionGptState(v types.String) types.String {
 }
 
 // canonicalPartitionMbrState converges a preserved mbr_type value to its
-// canonical 0x.. form; null, unknown, empty and invalid values pass through
-// untouched (validators report the invalid ones).
+// canonical 0x.. form; null, empty and invalid values pass through untouched
+// (validators report the invalid ones). Unknown values become null: the
+// state must be fully known after apply, and an unset type has no observed
+// value to project (the host value lands in state on refresh, when keep
+// carries the recorded prior value).
 func canonicalPartitionMbrState(v types.String) types.String {
-	if v.IsNull() || v.IsUnknown() {
+	if v.IsNull() {
 		return v
+	}
+	if v.IsUnknown() {
+		return types.StringNull()
 	}
 	if strings.TrimSpace(v.ValueString()) == "" {
 		return v
@@ -398,8 +446,12 @@ func canonicalPartitionMbrState(v types.String) types.String {
 }
 
 // partitionGPTTypeCanonicalizeModifier converges a configured gpt_type alias
-// to its canonical GUID at plan time, so the planned value compares equal
-// to the canonical state recorded on Create and Import.
+// to its canonical GUID at plan time, but only when the canonical value
+// matches the prior state: Terraform forbids planning a value that disagrees
+// with a non-null configuration unless it exactly matches prior state (the
+// "functionally equivalent" signal), so on create (no prior state) or when
+// the type actually changes (replacement), the configured spelling is left
+// untouched and the state records the canonical form at apply time.
 type partitionGPTTypeCanonicalizeModifier struct{}
 
 func (m partitionGPTTypeCanonicalizeModifier) Description(_ context.Context) string {
@@ -418,12 +470,23 @@ func (m partitionGPTTypeCanonicalizeModifier) PlanModifyString(_ context.Context
 	if err != nil {
 		return // the attribute validator reports malformed input
 	}
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+		return // create (or first plan): leave the configured spelling
+	}
+	if normalised != req.StateValue.ValueString() {
+		return // genuine type change: leave it, RequiresReplace takes over
+	}
 	resp.PlanValue = types.StringValue(normalised)
 }
 
 // partitionMBRTypeCanonicalizeModifier converges a configured mbr_type alias
-// or decimal byte to its canonical 0x.. form at plan time, so the planned
-// value compares equal to the canonical state recorded on Create and Import.
+// or decimal byte to its canonical 0x.. form at plan time, but only when the
+// canonical value matches the prior state: Terraform forbids planning a
+// value that disagrees with a non-null configuration unless it exactly
+// matches prior state (the "functionally equivalent" signal), so on create
+// (no prior state) or when the type actually changes (replacement), the
+// configured spelling is left untouched and the state records the canonical
+// form at apply time.
 type partitionMBRTypeCanonicalizeModifier struct{}
 
 func (m partitionMBRTypeCanonicalizeModifier) Description(_ context.Context) string {
@@ -441,6 +504,12 @@ func (m partitionMBRTypeCanonicalizeModifier) PlanModifyString(_ context.Context
 	normalised, err := winclient.CanonicalizeMBRType(req.PlanValue.ValueString())
 	if err != nil {
 		return // the attribute validator reports malformed input
+	}
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+		return // create (or first plan): leave the configured spelling
+	}
+	if normalised != req.StateValue.ValueString() {
+		return // genuine type change: leave it, RequiresReplace takes over
 	}
 	resp.PlanValue = types.StringValue(normalised)
 }
@@ -578,17 +647,20 @@ func (r *windowsPartitionResource) Create(ctx context.Context, req resource.Crea
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// The state keeps the normalized letter (upper-cased D-Z) and the
-	// canonical partition types (GUID / 0x..) rather than the raw configured
-	// spellings, matching ImportState.
+	// The state keeps the normalized letter (upper-cased D-Z). Partition
+	// types keep the planned spelling here: on create there is no prior
+	// state, so the plan must equal the configuration and the state must
+	// equal the plan. The canonical form lands in state on the next
+	// refresh (Read stores canonical), after which the plan modifier
+	// converges on it via the prior-state exemption.
 	if opts.DriveLetter != "" {
 		m.DriveLetter = types.StringValue(opts.DriveLetter)
 	}
-	if opts.GptType != "" {
-		m.GptType = types.StringValue(opts.GptType)
+	if !plan.GptType.IsNull() && !plan.GptType.IsUnknown() {
+		m.GptType = plan.GptType
 	}
-	if opts.MbrType != "" {
-		m.MbrType = types.StringValue(opts.MbrType)
+	if !plan.MbrType.IsNull() && !plan.MbrType.IsUnknown() {
+		m.MbrType = plan.MbrType
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }

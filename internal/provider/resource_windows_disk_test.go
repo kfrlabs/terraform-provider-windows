@@ -429,6 +429,52 @@ func TestDiskCreate_Handler_HappyPathAdopt(t *testing.T) {
 	}
 }
 
+// Adopting by unique_id leaves the other selectors unknown in the plan
+// (Optional+Computed, no state yet). The state must still be fully known
+// after apply: unconfigured coordinates fall back to the observed host
+// values instead of leaking unknowns (core rejects unknown state with
+// "invalid result object after apply"). Found live on a XenServer host.
+func TestDiskCreate_Handler_UnconfiguredSelectorsObserved(t *testing.T) {
+	fake := &fakeDiskClient{readOut: okDiskInfo()}
+	r := &windowsDiskResource{disks: fake}
+	schemaDef := windowsDiskSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: diskObj(map[string]tftypes.Value{
+			"unique_id":     tftypes.NewValue(tftypes.String, "SCSI\\DISK&VEN_MSFT&PROD_VIRTUAL_DISK&REV_1.0"),
+			"serial_number": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+			"location":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+			"number":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: diskObj(nil)},
+	}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diags: %v", resp.Diagnostics)
+	}
+	var m windowsDiskModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.SerialNumber.IsUnknown() || m.SerialNumber.IsNull() {
+		t.Errorf("serial_number must resolve to the observed value, got %v", m.SerialNumber)
+	} else if m.SerialNumber.ValueString() != okDiskInfo().SerialNumber {
+		t.Errorf("serial_number = %q, want observed %q", m.SerialNumber.ValueString(), okDiskInfo().SerialNumber)
+	}
+	if m.Location.IsUnknown() || m.Location.IsNull() {
+		t.Errorf("location must resolve to the observed value, got %v", m.Location)
+	} else if m.Location.ValueString() != okDiskInfo().Location {
+		t.Errorf("location = %q, want observed %q", m.Location.ValueString(), okDiskInfo().Location)
+	}
+	if m.Number.IsUnknown() || m.Number.IsNull() {
+		t.Errorf("number must resolve to the observed value, got %v", m.Number)
+	} else if m.Number.ValueInt64() != int64(okDiskInfo().Number) {
+		t.Errorf("number = %d, want observed %d", m.Number.ValueInt64(), okDiskInfo().Number)
+	}
+}
+
 func TestDiskCreate_Handler_NumberWarns(t *testing.T) {
 	fake := &fakeDiskClient{readOut: okDiskInfo()}
 	r := &windowsDiskResource{disks: fake}

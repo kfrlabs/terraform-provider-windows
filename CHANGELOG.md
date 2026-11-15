@@ -610,6 +610,33 @@ All notable changes to this project will be documented in this file.
   fixed as well. Both found by a manual lab run: a profile tuning
   only `log_blocked` + `log_max_size_kilobytes` could never converge.
 
+- `windows_partition`: alias configurations (`gpt_type = "basic_data"`,
+  `mbr_type = "IFS"`) can be created again. The canonicalising plan
+  modifiers rewrote the configured value unconditionally, which Terraform
+  rejects on create ("planned value does not match config value") since
+  there is no prior state to converge against. They now only rewrite when
+  the canonical value matches the prior state; on create the configured
+  spelling is kept in state and the canonical form lands on refresh, and a
+  genuine type change still forces replacement. The attributes are now
+  `Computed` and every `Optional+Computed` setting carries
+  `UseStateForUnknown`, so unset values plan prior state instead of
+  `unknown` (which forced perpetual replacement through `RequiresReplace`).
+- `windows_disk`: adoption by `unique_id` failed on hosts whose IDs carry
+  surrounding whitespace (e.g. XenServer `XENSRC ...` IDs with a trailing
+  space): the selector is normalised Go-side but the PowerShell match
+  compared the raw host value. The host side is now trimmed like the
+  `serial_number` / `location` branches. Unconfigured selector coordinates
+  now resolve to the observed host values instead of leaking `unknown`
+  into state ("invalid result object after apply" on every adopt).
+- `windows_partition` / `windows_volume`: `New-Partition`, `Set-Disk`
+  and `Set-Volume` declare no `Confirm` parameter on current Windows
+  builds (Server 2025), so the blanket `-Confirm:$false` made every
+  create fail with "parameter cannot be found". The flag is dropped for
+  exactly those three cmdlets. `New-Partition -GptType` additionally
+  rejects the bare GUID on these hosts, so the provider now sends the
+  braced form. All found by a manual lab run against a secondary test
+  disk (adopt -> carve -> format -> idempotence verified live).
+
 ## [0.4.0] - 2026-11-11
 
 ### Added

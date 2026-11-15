@@ -472,13 +472,16 @@ func TestVolumeScripts_NeverUseExit(t *testing.T) {
 }
 
 func TestVolumeScripts_MutationsCarryNoConfirm(t *testing.T) {
-	for name, s := range map[string]string{
-		"format": buildVolumeFormatScript(okVolumeFormatOpts()),
-		"label":  buildVolumeLabelScript("U", "TFDATA"),
-	} {
-		if !strings.Contains(s, "-Confirm:$false") {
-			t.Errorf("%s: mutating cmdlet must carry -Confirm:$false", name)
-		}
+	format := buildVolumeFormatScript(okVolumeFormatOpts())
+	if !strings.Contains(format, "-Confirm:$false") {
+		t.Errorf("format: Format-Volume supports Confirm and must carry -Confirm:$false")
+	}
+	// Set-Volume declares no Confirm parameter on current Windows builds
+	// (Server 2025): binding -Confirm there is a fatal "parameter cannot
+	// be found" error, so the label script must not carry it.
+	label := buildVolumeLabelScript("U", "TFDATA")
+	if strings.Contains(label, "-Confirm:$false") {
+		t.Errorf("label: Set-Volume has no Confirm parameter; -Confirm:$false would fail the call")
 	}
 }
 

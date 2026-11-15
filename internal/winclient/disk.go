@@ -16,7 +16,10 @@
 //     long-lived PowerShell session, where `exit` would kill the session
 //     instead of just the call).
 //   - Every mutating cmdlet carries -Confirm:$false so a non-interactive
-//     session never blocks on a confirmation prompt, and every read refreshes
+//     session never blocks on a confirmation prompt, except the cmdlets
+//     that declare no Confirm parameter at all (New-Partition, Set-Disk,
+//     Set-Volume on current Windows builds: binding -Confirm there is a
+//     fatal "parameter cannot be found" error). Every read refreshes
 //     the storage cache with Update-HostStorageCache first.
 //
 // Reused helpers from the same package:
@@ -87,7 +90,7 @@ function Resolve-Disk {
   foreach ($d in $all) {
     $hit = $false
     if ($selUniqueID -ne '') {
-      if ([string]$d.UniqueId -eq $selUniqueID) { $hit = $true }
+      if (([string]$d.UniqueId).Trim() -eq $selUniqueID) { $hit = $true }
     } elseif ($selSerial -ne '') {
       if (([string]$d.SerialNumber).Trim() -eq $selSerial) { $hit = $true }
     } elseif ($selLocation -ne '') {
@@ -272,7 +275,11 @@ func buildDiskSetOfflineScript(uniqueID string, offline bool) string {
     return
   }
   try {
-    Set-Disk -Number ([int]$d.Number) -IsOffline:%s -Confirm:$false -ErrorAction Stop
+    # NOTE: no Confirm switch: Set-Disk declares no Confirm parameter on
+    # current Windows builds (Server 2025) and binding one is fatal
+    # "parameter cannot be found" error. The cmdlet performs without
+    # prompting under the default ConfirmPreference.
+    Set-Disk -Number ([int]$d.Number) -IsOffline:%s -ErrorAction Stop
   } catch {
     Emit-Err (Classify-Storage $_) ([string]$_.Exception.Message) @{ phase = '%s'; unique_id = [string]$d.UniqueId; number = [string]$d.Number }
     return
@@ -301,7 +308,11 @@ func buildDiskSetReadOnlyScript(uniqueID string, readOnly bool) string {
     return
   }
   try {
-    Set-Disk -Number ([int]$d.Number) -IsReadOnly:%s -Confirm:$false -ErrorAction Stop
+    # NOTE: no Confirm switch: Set-Disk declares no Confirm parameter on
+    # current Windows builds (Server 2025) and binding one is fatal
+    # "parameter cannot be found" error. The cmdlet performs without
+    # prompting under the default ConfirmPreference.
+    Set-Disk -Number ([int]$d.Number) -IsReadOnly:%s -ErrorAction Stop
   } catch {
     Emit-Err (Classify-Storage $_) ([string]$_.Exception.Message) @{ phase = 'set_read_only'; unique_id = [string]$d.UniqueId; number = [string]$d.Number }
     return

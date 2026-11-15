@@ -478,7 +478,6 @@ func TestPartitionScripts_NeverUseExit(t *testing.T) {
 func TestPartitionScripts_MutationsCarryNoConfirm(t *testing.T) {
 	hidden := true
 	for name, s := range map[string]string{
-		"create": buildPartitionCreateScript(okPartitionCreateOpts()),
 		"grow":   buildPartitionGrowScript("U", "K", 33554432),
 		"letter": buildPartitionLetterScript("U", "K", "E"),
 		"flags":  buildPartitionFlagsScript("U", "K", &hidden, nil),
@@ -487,6 +486,17 @@ func TestPartitionScripts_MutationsCarryNoConfirm(t *testing.T) {
 		if !strings.Contains(s, "-Confirm:$false") {
 			t.Errorf("%s: mutating cmdlet must carry -Confirm:$false", name)
 		}
+	}
+	// New-Partition declares no Confirm parameter on current Windows builds
+	// (Server 2025): binding -Confirm there is a fatal "parameter cannot be
+	// found" error, so the create script must not carry it on the
+	// New-Partition call (the letter-assignment Set-Partition keeps its own).
+	create := buildPartitionCreateScript(okPartitionCreateOpts())
+	if strings.Contains(create, "New-Partition @params -Confirm") {
+		t.Errorf("create: New-Partition has no Confirm parameter; -Confirm:$false would fail the call")
+	}
+	if !strings.Contains(create, "Set-Partition -NewDriveLetter") {
+		t.Errorf("create: letter assignment must go through Set-Partition")
 	}
 }
 
@@ -502,6 +512,21 @@ func TestPartitionCreateScript_AssignDriveLetterFalse(t *testing.T) {
 	}
 	if !strings.Contains(s, "'E'") {
 		t.Errorf("create must carry the quoted drive letter:\n%s", s)
+	}
+}
+
+// New-Partition -GptType rejects the bare canonical GUID ("The specified
+// partition type is not valid" on Server 2025); the create script must send
+// the braced form.
+func TestPartitionCreateScript_GptTypeBraced(t *testing.T) {
+	s := buildPartitionCreateScript(PartitionCreateOptions{
+		DiskUniqueID:   "U",
+		UseMaximumSize: true,
+		DriveLetter:    "E",
+		GptType:        GPTBasicDataPartitionGUID,
+	})
+	if !strings.Contains(s, "$gptType = '{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}'") {
+		t.Errorf("create must brace the GPT type GUID")
 	}
 }
 

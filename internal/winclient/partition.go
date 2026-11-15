@@ -19,7 +19,10 @@
 //     long-lived PowerShell session, where `exit` would kill the session
 //     instead of just the call).
 //   - Every mutating cmdlet carries -Confirm:$false so a non-interactive
-//     session never blocks on a confirmation prompt, and every read refreshes
+//     session never blocks on a confirmation prompt, except New-Partition,
+//     which declares no Confirm parameter on current Windows builds
+//     (binding it there is fatal "parameter cannot be found"
+//     error). Every read refreshes
 //     the storage cache with Update-HostStorageCache first.
 //
 // Reused helpers from the same package:
@@ -193,6 +196,18 @@ func partitionScript(diskUniqueID, body string) string {
 // [uint64] where it needs them, and negative values are rejected by the
 // validators before a script is ever built); bools render as $true/$false
 // tokens.
+// bracedGPTType wraps a canonical (brace-free, upper-case) GPT type GUID
+// for New-Partition -GptType, which rejects the bare form with "The
+// specified partition type is not valid" on current Windows builds
+// (Server 2025; verified live: braced creates, bare fails). Empty passes
+// through so no -GptType entry is emitted at all.
+func bracedGPTType(guid string) string {
+	if strings.TrimSpace(guid) == "" {
+		return ""
+	}
+	return "{" + guid + "}"
+}
+
 func psPartitionVars(sizeBytes int64, useMax bool, hasOffset bool, offsetBytes int64, driveLetter, gptType, mbrType, key string, newSize int64) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "$partKey = %s\n", psQuote(key))
@@ -209,7 +224,7 @@ func psPartitionVars(sizeBytes int64, useMax bool, hasOffset bool, offsetBytes i
 	}
 	fmt.Fprintf(&b, "$offsetBytes = %s\n", strconv.FormatInt(offsetBytes, 10))
 	fmt.Fprintf(&b, "$driveLetter = %s\n", psQuote(driveLetter))
-	fmt.Fprintf(&b, "$gptType = %s\n", psQuote(gptType))
+	fmt.Fprintf(&b, "$gptType = %s\n", psQuote(bracedGPTType(gptType)))
 	fmt.Fprintf(&b, "$mbrType = %s\n", psQuote(mbrType))
 	fmt.Fprintf(&b, "$newSize = %s\n", strconv.FormatInt(newSize, 10))
 	return b.String()
@@ -276,7 +291,11 @@ const psPartitionCreateBody = `
   elseif ($mbrType -ne '') { $params['MbrType'] = $mbrType }
   $created = $null
   try {
-    $created = New-Partition @params -Confirm:$false
+    # NOTE: no Confirm switch here: New-Partition declares no Confirm parameter
+    # on current Windows builds (Server 2025) and binding one is fatal
+    # "parameter cannot be found" error. The cmdlet performs without
+    # prompting under the default ConfirmPreference.
+    $created = New-Partition @params
   } catch {
     Emit-Err (Classify-Partition $_) ([string]$_.Exception.Message) @{ phase = 'create'; unique_id = [string]$d.UniqueId }
     return
