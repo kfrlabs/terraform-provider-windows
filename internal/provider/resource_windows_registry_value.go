@@ -355,9 +355,14 @@ func (registryValueTypeDataValidator) ValidateResource(ctx context.Context, req 
 
 	switch t {
 	case "REG_SZ", "REG_EXPAND_SZ":
-		if valueString.IsNull() || (!valueString.IsUnknown() && valueString.ValueString() == "") {
-			resp.Diagnostics.AddAttributeError(path.Root("value_string"), "Required attribute missing or empty",
-				fmt.Sprintf("value_string is required and must be non-empty when type = %q (CV-1).", t))
+		// Empty string is legitimate Windows state (e.g. an application
+		// clearing a value without deleting it), so only a missing (null)
+		// value_string is rejected here. Unknown values are validated once
+		// known. DWORD/QWORD keep the non-empty rule because "" is never a
+		// valid decimal encoding (their parse check reports it clearly).
+		if valueString.IsNull() {
+			resp.Diagnostics.AddAttributeError(path.Root("value_string"), "Required attribute missing",
+				fmt.Sprintf("value_string is required when type = %q (CV-1).", t))
 		}
 		if valueStringsSet {
 			resp.Diagnostics.AddAttributeError(path.Root("value_strings"), "Forbidden attribute for this type",
