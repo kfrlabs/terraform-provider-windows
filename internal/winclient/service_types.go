@@ -178,7 +178,7 @@ type ServiceInput struct {
 // ---------------------------------------------------------------------------
 
 // ServiceState holds the observed state of a Windows service as returned by
-// Read (Get-Service + sc.exe qc + sc.exe qdescription).
+// Read (Get-Service + sc.exe qc + CIM Win32_Service description).
 //
 // ServicePassword is intentionally absent: the SCM never exposes passwords.
 // The Read handler in the resource implementation copies service_password
@@ -190,7 +190,8 @@ type ServiceState struct {
 	// DisplayName is the human-readable name from Get-Service.DisplayName.
 	DisplayName string
 
-	// Description is the service description from sc.exe qdescription.
+	// Description is the service description from CIM Win32_Service (Unicode-safe;
+	// sc.exe qdescription folds non-ASCII through the console codepage).
 	// Empty string when Windows returns no description.
 	Description string
 
@@ -247,7 +248,7 @@ type WindowsServiceClient interface {
 	Create(ctx context.Context, input ServiceInput) (*ServiceState, error)
 
 	// Read retrieves the current state of the named service using
-	// Get-Service + sc.exe qc + sc.exe qdescription.
+	// Get-Service + sc.exe qc + CIM Win32_Service description.
 	//
 	// Returns (nil, nil) when the service does not exist (Win32 1060, EC-2).
 	// The resource handler must call resp.State.RemoveResource() on (nil, nil).

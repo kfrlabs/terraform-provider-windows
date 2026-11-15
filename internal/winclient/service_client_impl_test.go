@@ -827,3 +827,26 @@ func firstContainingLine(s, needle string) string {
 	}
 	return fmt.Sprintf("(no line contained %q)", needle)
 }
+
+// -----------------------------------------------------------------------------
+// Unicode-safe description regression (aggressive campaign finding)
+// -----------------------------------------------------------------------------
+
+// TestReadStateBody_DescriptionFromCIM asserts the read-state script no longer
+// round-trips the description through sc.exe qdescription (console OEM
+// codepage folds non-ASCII, e.g. em-dash U+2014 becomes '-', producing
+// "inconsistent result after apply") and instead reads the exact string via
+// CIM Win32_Service.
+func TestReadStateBody_DescriptionFromCIM(t *testing.T) {
+	if strings.Contains(psReadStateBody, "& sc.exe qdescription") ||
+		strings.Contains(psReadStateBody, "sc.exe qdescription $") {
+		t.Errorf("read-state script must not invoke sc.exe qdescription (lossy for non-ASCII): %s",
+			firstContainingLine(psReadStateBody, "qdescription"))
+	}
+	if !strings.Contains(psReadStateBody, "Get-CimInstance Win32_Service") {
+		t.Error("read-state script must read the description via Get-CimInstance Win32_Service")
+	}
+	if !strings.Contains(psReadStateBody, ".Description") {
+		t.Error("read-state script must reference the CIM Description property")
+	}
+}
