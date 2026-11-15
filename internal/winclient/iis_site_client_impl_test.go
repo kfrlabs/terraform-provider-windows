@@ -386,7 +386,8 @@ func TestIISSiteCreate_ScriptContent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, want := range []string{
-		"New-Item", "bindings = @()", // zero-binding create: no transient *:80:http
+		"New-Item", `bindings = @{protocol="http";bindingInformation="*:80:"}`, // boot binding...
+		"Remove-WebBinding", // ...removed immediately: zero-binding create, no transient *:80:http
 		"already_exists", "terraform import",
 		"id_conflict",                // site-ID precheck
 		"app_pool_not_found",         // pool precheck
