@@ -39,6 +39,7 @@ var (
 	_ resource.ResourceWithImportState      = (*windowsScheduledTaskResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsScheduledTaskResource)(nil)
 	_ resource.ResourceWithUpgradeState     = (*windowsScheduledTaskResource)(nil)
+	_ resource.ResourceWithModifyPlan       = (*windowsScheduledTaskResource)(nil)
 )
 
 // NewWindowsScheduledTaskResource is the constructor registered in provider.go.
@@ -137,6 +138,43 @@ func (r *windowsScheduledTaskResource) Create(ctx context.Context, req resource.
 // ---------------------------------------------------------------------------
 // CRUD — Read
 // ---------------------------------------------------------------------------
+
+// ModifyPlan marks volatile runtime attributes Unknown when a
+// schedule-affecting update is planned. next_run_time/state/last_run_time/
+// last_task_result legitimately change as a side effect of trigger, settings
+// or enabled updates (e.g. changing days_interval re-times the next run), so
+// carrying the prior value into the plan via UseStateForUnknown would trip
+// "inconsistent result after apply" on every such update. Unknown planned
+// values accept whatever the host reports after apply; no-op plans keep the
+// stable UseStateForUnknown behaviour and stay diff-free.
+func (r *windowsScheduledTaskResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+	var plan, prior windowsScheduledTaskModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	scheduleChanged := !plan.Triggers.Equal(prior.Triggers) ||
+		!plan.Settings.Equal(prior.Settings) ||
+		!plan.Enabled.Equal(prior.Enabled)
+	if !scheduleChanged {
+		return
+	}
+	for _, attrPath := range []path.Path{
+		path.Root("next_run_time"),
+		path.Root("state"),
+		path.Root("last_run_time"),
+	} {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, attrPath, types.StringUnknown())...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("last_task_result"), types.Int64Unknown())...)
+}
 
 // Read refreshes state from the Windows host.
 func (r *windowsScheduledTaskResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
