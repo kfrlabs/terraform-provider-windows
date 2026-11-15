@@ -235,6 +235,12 @@ func (r *windowsTimezoneResource) ImportState(ctx context.Context, req resource.
 		return
 	}
 
+	if r.tz == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	tflog.Debug(ctx, "Importing windows_timezone (singleton: live zone is adopted)")
 
 	// No prior state exists at import time, so a configured timeouts.read

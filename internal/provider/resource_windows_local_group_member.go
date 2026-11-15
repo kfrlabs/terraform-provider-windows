@@ -555,6 +555,12 @@ func (r *windowsLocalGroupMemberResource) ImportState(
 	groupStr := importID[:slashIdx]
 	memberStr := importID[slashIdx+1:]
 
+	if r.client == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	// Step 1: Resolve group to SID (ADR-LGM-6).
 	grpState, resolveErr := winclient.ResolveGroup(ctx, r.client, groupStr)
 	if resolveErr != nil {

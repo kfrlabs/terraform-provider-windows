@@ -346,6 +346,12 @@ func (r *windowsScheduledTaskResource) Delete(ctx context.Context, req resource.
 // ImportState imports a Scheduled Task by its composite ID.
 func (r *windowsScheduledTaskResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	id := req.ID
+
+	if r.stClient == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
 	// No prior state exists at import time, so a configured timeouts.read
 	// cannot be honoured; bound the remote call with stDefaultTimeout instead.
 	ctx, cancel := context.WithTimeout(ctx, stDefaultTimeout)

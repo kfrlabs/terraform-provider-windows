@@ -1025,6 +1025,12 @@ func (r *windowsLocalUserResource) ImportState(
 	importID := req.ID
 
 	var us *winclient.UserState
+	if r.user == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	var err error
 
 	if strings.HasPrefix(importID, "S-") {

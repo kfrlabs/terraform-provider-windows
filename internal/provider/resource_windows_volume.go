@@ -730,6 +730,12 @@ func (r *windowsVolumeResource) ImportState(ctx context.Context, req resource.Im
 			fmt.Sprintf("Import ID must be the volume UniqueId or a drive letter such as E:; got %q.", req.ID))
 		return
 	}
+
+	if r.volumes == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
 	tflog.Debug(ctx, "Importing windows_volume", map[string]interface{}{"id": req.ID})
 
 	// No prior state exists at import time, so a configured timeouts block

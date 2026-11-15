@@ -683,6 +683,12 @@ func (r *windowsIISSiteResource) ImportState(ctx context.Context, req resource.I
 		return
 	}
 
+	if r.site == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	tflog.Debug(ctx, "Importing Windows IIS site", map[string]any{
 		"name": name,
 	})

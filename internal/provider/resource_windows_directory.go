@@ -500,6 +500,12 @@ func (r *windowsDirectoryResource) ImportState(ctx context.Context, req resource
 		return
 	}
 
+	if r.client == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	tflog.Debug(ctx, "windows_directory ImportState", map[string]interface{}{"path": path})
 
 	ds, err := r.client.Read(ctx, path)
