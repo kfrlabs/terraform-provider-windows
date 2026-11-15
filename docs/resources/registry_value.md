@@ -153,7 +153,7 @@ resource "windows_registry_value" "default_value" {
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `value_binary` (String, Sensitive) Binary value for REG_BINARY/REG_NONE as a lowercase hex string (e.g. "deadbeef", "" for zero bytes). Sensitive: registry values may carry secrets and Terraform displays/plans this attribute masked.
 - `value_string` (String, Sensitive) String value for REG_SZ, REG_EXPAND_SZ, REG_DWORD (decimal uint32), REG_QWORD (decimal uint64). Sensitive: registry values may carry secrets and Terraform displays/plans this attribute masked.
-- `value_strings` (List of String) Multi-string value for REG_MULTI_SZ. Empty list [] is valid (EC-10).
+- `value_strings` (List of String, Sensitive) Multi-string value for REG_MULTI_SZ. Empty list [] is valid (EC-10). Sensitive: registry values may carry secrets and Terraform displays/plans this attribute masked.
 
 ### Read-Only
 

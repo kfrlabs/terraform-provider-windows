@@ -125,6 +125,30 @@ func runEnvelope(
 				Cause:     ctxErr,
 			}
 		}
+		// A valid envelope on stdout wins over the transport error: some
+		// hosts emit the Emit-OK/Emit-Err envelope and then close the
+		// channel with a non-nil status. Preserving the typed kind keeps
+		// callers on the structured remote path instead of a generic
+		// transport failure.
+		if line := extractLastJSONLine(stdout); line != "" {
+			var tresp Envelope
+			if jerr := json.Unmarshal([]byte(line), &tresp); jerr == nil && hasEnvelopeOK(line) {
+				if !tresp.OK {
+					remote := make(map[string]string, len(tresp.Context)+len(baseContext)+1)
+					for k, v := range tresp.Context {
+						remote[k] = v
+					}
+					return &tresp, &EnvelopeError{
+						Stage:      EnvelopeStageRemote,
+						Operation:  op,
+						RemoteKind: tresp.Kind,
+						Message:    tresp.Message,
+						Context:    envelopeContext(remote, op, baseContext),
+					}
+				}
+				return &tresp, nil
+			}
+		}
 		return nil, &EnvelopeError{
 			Stage:     EnvelopeStageTransport,
 			Operation: op,
@@ -157,6 +181,7 @@ func runEnvelope(
 			Operation: op,
 			Message:   fmt.Sprintf("invalid JSON envelope from %q", op),
 			Context: envelopeContext(baseContext, op, map[string]string{
+				"stderr": truncate(stderr, 2048),
 				"stdout": truncate(stdout, 2048),
 			}),
 			Cause: jerr,
@@ -181,22 +206,63 @@ func runEnvelope(
 	return &resp, nil
 }
 
-// extractLastJSONLine scans stdout and returns the last line that starts with
-// '{' — the JSON envelope produced by Emit-OK/Emit-Err. Any preceding PS
-// warning lines are ignored.
+// extractLastJSONLine scans stdout newest-first and returns the last line
+// that parses as a JSON object carrying an `ok` boolean field — the JSON
+// envelope produced by Emit-OK/Emit-Err. A trailing `{...}` noise line
+// without an `ok` field never shadows a real envelope; a truncated JSON
+// line is returned so the caller reports invalid_json (with stderr in
+// context) instead of silently scanning past it. Any preceding PS warning
+// lines are ignored.
 func extractLastJSONLine(stdout string) string {
 	lines := strings.Split(strings.ReplaceAll(stdout, "\r\n", "\n"), "\n")
+	// Pass 1 (newest-first): a line that parses with an `ok` boolean wins,
+	// so trailing noise objects cannot shadow the real envelope.
 	for i := len(lines) - 1; i >= 0; i-- {
-		// Belt-and-braces for #102: strip one leading BOM before the
-		// prefix match so a BOM-emitting encoder cannot hide the envelope.
-		// Trim on both sides of the BOM so "  \uFEFF{...}" and "\uFEFF  {...}"
-		// normalize before the HasPrefix check.
-		trim := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "\uFEFF"))
-		if strings.HasPrefix(trim, "{") {
+		trim := envelopeLineTrim(lines[i])
+		if !strings.HasPrefix(trim, "{") {
+			continue
+		}
+		if hasEnvelopeOK(trim) {
+			return trim
+		}
+	}
+	// Pass 2 (newest-first): a truncated `{...` line that fails to parse is
+	// still envelope-shaped, so surface it for an invalid_json diagnostic
+	// rather than reporting no_envelope.
+	for i := len(lines) - 1; i >= 0; i-- {
+		trim := envelopeLineTrim(lines[i])
+		if !strings.HasPrefix(trim, "{") {
+			continue
+		}
+		var probe any
+		if err := json.Unmarshal([]byte(trim), &probe); err != nil {
 			return trim
 		}
 	}
 	return ""
+}
+
+// envelopeLineTrim normalises one stdout line before the envelope prefix
+// match. Belt-and-braces for #102: strip one leading BOM before the prefix
+// match so a BOM-emitting encoder cannot hide the envelope. Trim on both
+// sides of the BOM so "  \uFEFF{...}" and "\uFEFF  {...}" normalize before
+// the HasPrefix check; surrounding whitespace is stripped so indented or
+// BOM-prefixed envelopes still parse.
+func envelopeLineTrim(line string) string {
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "\uFEFF"))
+}
+
+// hasEnvelopeOK reports whether s parses as a JSON object with a boolean
+// `ok` field, distinguishing a real Emit-OK/Emit-Err envelope from trailing
+// `{...}` noise.
+func hasEnvelopeOK(s string) bool {
+	var probe struct {
+		OK *bool `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(s), &probe); err != nil {
+		return false
+	}
+	return probe.OK != nil
 }
 
 func truncate(s string, maxLen int) string {

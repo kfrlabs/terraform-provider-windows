@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -232,6 +233,9 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				Computed: true,
 				Description: "Rule group (RuleGroup). Immutable after creation (ForceNew). " +
 					"Set-NetFirewallRule cannot rename a Group.",
+				Validators: []validator.String{
+					firewallSafeStringValidator{},
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
@@ -281,7 +285,7 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 					"Valid only when protocol is `TCP` or `UDP` (CV-2). Populated from Get-NetFirewallPortFilter.",
 				Validators: []validator.List{
 					listvalidator.ValueStringsAre(
-						stringvalidator.RegexMatches(firewallPortRe, firewallPortDesc),
+						firewallPortValidator{},
 					),
 				},
 			},
@@ -297,7 +301,7 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 					"Populated from Get-NetFirewallPortFilter.",
 				Validators: []validator.List{
 					listvalidator.ValueStringsAre(
-						stringvalidator.RegexMatches(firewallPortRe, firewallPortDesc),
+						firewallPortValidator{},
 					),
 				},
 			},
@@ -311,6 +315,11 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				},
 				Description: "Local IP addresses, CIDR ranges, or address keywords. " +
 					"Populated from Get-NetFirewallAddressFilter.",
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(
+						firewallAddressValidator{},
+					),
+				},
 			},
 
 			"remote_address": schema.ListAttribute{
@@ -322,6 +331,11 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				},
 				Description: "Remote addresses. Same constraints as local_address. " +
 					"Populated from Get-NetFirewallAddressFilter.",
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(
+						firewallAddressValidator{},
+					),
+				},
 			},
 
 			"program": schema.StringAttribute{
@@ -331,6 +345,9 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 					stringplanmodifier.UseStateForUnknown(),
 				},
 				Description: "Full path to the matched program executable, or `\"Any\"`. Populated from Get-NetFirewallApplicationFilter.",
+				Validators: []validator.String{
+					firewallSafeStringValidator{},
+				},
 			},
 
 			"service": schema.StringAttribute{
@@ -340,6 +357,9 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 					stringplanmodifier.UseStateForUnknown(),
 				},
 				Description: "Short name of the matched Windows service, or `\"Any\"`. Populated from Get-NetFirewallServiceFilter.",
+				Validators: []validator.String{
+					firewallSafeStringValidator{},
+				},
 			},
 
 			"interface_type": schema.StringAttribute{
@@ -837,10 +857,121 @@ func addFirewallDiag(d *diag.Diagnostics, summary string, err error) {
 // time (#324): the `Any` keyword (case-insensitive, as Windows reports
 // `Any`), a single numeric port, or a numeric range. Protocol scoping
 // (ports only valid with TCP/UDP) stays in firewallRulePortProtocolValidator
-// (CV-2); numeric bounds (0-65535) are enforced by Windows at apply time.
+// (CV-2); numeric bounds (0-65535) and reversed ranges are enforced by
+// firewallPortValidator at plan time.
 var firewallPortRe = regexp.MustCompile(`^(?i)(ANY|[0-9]+(-[0-9]+)?)$`)
 
-const firewallPortDesc = "must be `Any`, a numeric port (e.g. `80`), or a numeric range (e.g. `8000-8100`)"
+const firewallPortDesc = "must be `Any`, a numeric port 0-65535 (e.g. `80`), or a numeric range within 0-65535 with start <= end (e.g. `8000-8100`)"
+
+// firewallPortValidator tightens firewallPortRe at plan time: `Any`
+// (case-insensitive), a single numeric port 0-65535, or a numeric range
+// where both ends are 0-65535 and start <= end (reversed ranges rejected).
+type firewallPortValidator struct{}
+
+func (v firewallPortValidator) Description(_ context.Context) string {
+	return "Port " + firewallPortDesc + "."
+}
+
+func (v firewallPortValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v firewallPortValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	if strings.EqualFold(val, "Any") {
+		return
+	}
+	if !firewallPortRe.MatchString(val) {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid port value",
+			fmt.Sprintf("port %q "+firewallPortDesc+".", val))
+		return
+	}
+	if strings.Contains(val, "-") {
+		parts := strings.SplitN(val, "-", 2)
+		lo, errLo := strconv.Atoi(parts[0])
+		hi, errHi := strconv.Atoi(parts[1])
+		if errLo != nil || errHi != nil || lo < 0 || lo > 65535 || hi < 0 || hi > 65535 {
+			resp.Diagnostics.AddAttributeError(req.Path, "Invalid port value",
+				fmt.Sprintf("port range %q must have both ends within 0-65535.", val))
+			return
+		}
+		if lo > hi {
+			resp.Diagnostics.AddAttributeError(req.Path, "Invalid port value",
+				fmt.Sprintf("port range %q is reversed: start must be <= end.", val))
+			return
+		}
+		return
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil || n < 0 || n > 65535 {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid port value",
+			fmt.Sprintf("port %q must be within 0-65535.", val))
+		return
+	}
+}
+
+// firewallAddressValidator accepts `Any` (case-insensitive), a single IP
+// address, or a CIDR range. Anything else — including shell metacharacters
+// (`;`, `$`, `(`, `)`, quotes, backticks) — is rejected at plan time so a
+// crafted address can never reach the PowerShell command line.
+type firewallAddressValidator struct{}
+
+func (v firewallAddressValidator) Description(_ context.Context) string {
+	return "Address must be `Any`, an IP address, or a CIDR range."
+}
+
+func (v firewallAddressValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v firewallAddressValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	if strings.EqualFold(strings.TrimSpace(val), "Any") {
+		return
+	}
+	if ip := net.ParseIP(strings.TrimSpace(val)); ip != nil {
+		return
+	}
+	if _, _, err := net.ParseCIDR(strings.TrimSpace(val)); err == nil {
+		return
+	}
+	resp.Diagnostics.AddAttributeError(req.Path, "Invalid address value",
+		fmt.Sprintf("address %q must be `Any`, an IP address, or a CIDR range.", val))
+}
+
+// firewallSafeStringValidator guards program/service/group: values travel
+// through psQuote, but plan-time rejection of line breaks, null bytes and
+// shell/PowerShell metacharacters (`;`, `$`, `(`, `)`, backtick, quotes,
+// `&`, `|`, `<`, `>`) keeps obvious injection payloads out of config.
+type firewallSafeStringValidator struct{}
+
+func (v firewallSafeStringValidator) Description(_ context.Context) string {
+	return "must not contain line breaks, null bytes, or characters ; $ ( ) ` \" ' & | < >"
+}
+
+func (v firewallSafeStringValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v firewallSafeStringValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	if val == "" {
+		return
+	}
+	if strings.ContainsAny(val, "\r\n\x00;$()`\"'&|<>") {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid value",
+			fmt.Sprintf("value %q must not contain line breaks, null bytes, or characters ; $ ( ) ` \" ' & | < >.", val))
+	}
+}
 
 // firewallProtocolValidator validates that the protocol attribute value is
 // either a well-known keyword or a numeric string in the range 0-255.

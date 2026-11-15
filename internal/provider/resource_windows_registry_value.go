@@ -184,7 +184,8 @@ func windowsRegistryValueSchemaDefinition(ctx context.Context) schema.Schema {
 			"value_strings": schema.ListAttribute{
 				ElementType: types.StringType,
 				Optional:    true,
-				Description: "Multi-string value for REG_MULTI_SZ. Empty list [] is valid (EC-10).",
+				Sensitive:   true,
+				Description: "Multi-string value for REG_MULTI_SZ. Empty list [] is valid (EC-10). Sensitive: registry values may carry secrets and Terraform displays/plans this attribute masked.",
 			},
 			"value_binary": schema.StringAttribute{
 				Optional:  true,
