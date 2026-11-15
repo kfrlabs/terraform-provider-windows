@@ -177,14 +177,15 @@ func windowsCertificateSchemaDefinition(ctx context.Context) schema.Schema {
 
 			"certificate_pem": schema.StringAttribute{
 				Optional: true,
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
 					certificatePEMNormalizeModifier{},
+					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
 					certificatePEMValidator{},
 				},
-				Description: "PEM-encoded certificate (the CERTIFICATE block; surrounding text such as a chain or private key is ignored, only the first certificate is imported). Exactly one of `certificate_pem` and `pfx_base64_wo` must be set. Stored in state in normalised form. Changing it replaces the certificate.",
+				Description: "PEM-encoded certificate (the CERTIFICATE block; surrounding text such as a chain or private key is ignored, only the first certificate is imported). Exactly one of `certificate_pem` and `pfx_base64_wo` must be set. Stored in state in normalised form (CRLF and re-wrapped spellings converge at plan time, so files with Windows line endings apply cleanly). Changing it replaces the certificate.",
 			},
 
 			"pfx_base64_wo": schema.StringAttribute{
