@@ -7,10 +7,24 @@
 package winclient
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 )
+
+// ---------------------------------------------------------------------------
+// runIISPowerShell test seam
+// ---------------------------------------------------------------------------
+
+// stubIISRun replaces the package-level runIISPowerShell hook (production:
+// one-shot Windows PowerShell 5.1, see RunPowerShell5WithInput) with a
+// deterministic fake. It returns a restorer closure the caller must defer.
+func stubIISRun(fn func(ctx context.Context, c *Client, script, stdin string) (string, string, error)) func() {
+	prev := runIISPowerShell
+	runIISPowerShell = fn
+	return func() { runIISPowerShell = prev }
+}
 
 // ---------------------------------------------------------------------------
 // psIISHeader content

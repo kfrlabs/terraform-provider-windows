@@ -19,6 +19,7 @@
 package winclient
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -81,6 +82,17 @@ function Ensure-IIS {
   return $true
 }
 `
+
+// runIISPowerShell is the package-level indirection used by the IIS clients.
+// Tests may override it; production code must not. It always runs in a
+// one-shot Windows PowerShell 5.1 process: the WebAdministration module (and
+// its IIS: drive) is not discoverable from the persistent pwsh 7 session, so
+// on any host with pwsh installed every IIS call would otherwise fail with
+// iis_not_installed/missing_module despite IIS being present (same class of
+// limitation as Invoke-DscResource, see RunPowerShell5WithInput).
+var runIISPowerShell = func(ctx context.Context, c *Client, script, stdin string) (string, string, error) {
+	return c.RunPowerShell5WithInput(ctx, script, stdin)
+}
 
 // ---------------------------------------------------------------------------
 // IIS TimeSpan <-> Terraform minutes

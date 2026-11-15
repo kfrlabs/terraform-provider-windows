@@ -24,7 +24,7 @@
 //   - psQuote                  — safe single-quote escaping (psquote.go)
 //   - psEscapeWildcard         — backtick-escape of * ? [ ] (iis_common.go)
 //   - runEnvelope              — shared JSON envelope pipeline (envelope.go)
-//   - runPowerShell / runPSInput — package-level hooks, stubbed in tests
+//   - runIISPowerShell — package-level hook (one-shot 5.1), stubbed in tests
 //   - psResponse               — Emit-OK / Emit-Err envelope (service.go)
 package winclient
 
@@ -252,7 +252,7 @@ func (a *IISAppPoolClient) runAppPoolEnvelope(ctx context.Context, op, name, scr
 	baseContext := map[string]string{"name": name, "host": a.c.cfg.Host}
 	resp, eerr := runEnvelope(ctx,
 		func(ctx context.Context, full, stdin string) (string, string, error) {
-			return runPowerShell(ctx, a.c, full)
+			return runIISPowerShell(ctx, a.c, full, stdin)
 		},
 		op, psIISHeader+"\n"+iisAppPoolReadFragment+"\n"+script, "", baseContext)
 	if eerr == nil {
@@ -272,7 +272,7 @@ func (a *IISAppPoolClient) runAppPoolEnvelopeWithInput(ctx context.Context, op, 
 	baseContext := map[string]string{"name": name, "host": a.c.cfg.Host}
 	resp, eerr := runEnvelope(ctx,
 		func(ctx context.Context, full, stdin string) (string, string, error) {
-			return runPSInput(ctx, a.c, full, stdin)
+			return runIISPowerShell(ctx, a.c, full, stdin)
 		},
 		op, psIISHeader+"\n"+iisAppPoolReadFragment+"\n"+script, stdin, baseContext)
 	if eerr == nil {

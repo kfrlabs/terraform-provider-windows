@@ -1,6 +1,6 @@
 // Package winclient — unit tests for IISAppPoolClient (issue #283 B).
 //
-// These tests stub the package-level runPowerShell / runPSInput seams (shared
+// These tests stub the package-level runIISPowerShell seam (one-shot 5.1, shared
 // with service.go / local_user.go) so no real SSH connection is needed.
 //
 // Coverage targets:
@@ -77,10 +77,10 @@ func testIISAppPoolState() map[string]any {
 	}
 }
 
-// iisStubSequence stubs runPowerShell with a fixed ordered list of responses.
+// iisStubSequence stubs runIISPowerShell with a fixed ordered list of responses.
 func iisStubSequence(responses []frResponse) func() {
 	i := 0
-	return stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	return stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		r := responses[i]
 		if i < len(responses)-1 {
 			i++
@@ -258,7 +258,7 @@ func TestBuildIISAppPoolSetStatements_UserValueQuoting(t *testing.T) {
 
 func TestIISAppPoolScripts_ShipPreludeAndGate(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisOK(t, testIISAppPoolState()), "", nil
 	})
@@ -286,12 +286,7 @@ func TestIISAppPoolScripts_ShipPreludeAndGate(t *testing.T) {
 
 func TestIISAppPoolCreate_ScriptContent(t *testing.T) {
 	var gotScript, gotStdin string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
-		gotScript = script
-		return iisOK(t, testIISAppPoolState()), "", nil
-	})
-	defer restore()
-	restoreInput := stubRunInput(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+	restoreInput := stubIISRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
 		gotScript = script
 		gotStdin = stdin
 		return iisOK(t, testIISAppPoolState()), "", nil
@@ -327,19 +322,12 @@ func TestIISAppPoolCreate_ScriptContent(t *testing.T) {
 }
 
 func TestIISAppPoolUpdate_NoPasswordStdin(t *testing.T) {
-	var gotScript string
-	usedInput := false
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
-		gotScript = script
+	var gotScript, gotStdin string
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		gotScript, gotStdin = script, stdin
 		return iisOK(t, testIISAppPoolState()), "", nil
 	})
 	defer restore()
-	restoreInput := stubRunInput(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
-		usedInput = true
-		gotScript = script
-		return iisOK(t, testIISAppPoolState()), "", nil
-	})
-	defer restoreInput()
 
 	c := iisNewClient(t)
 	mode := "Classic"
@@ -348,8 +336,8 @@ func TestIISAppPoolUpdate_NoPasswordStdin(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if usedInput {
-		t.Error("update without a password must not use the stdin transport")
+	if gotStdin != "" {
+		t.Errorf("update without a password must not use the stdin transport, got stdin %q", gotStdin)
 	}
 	if strings.Contains(gotScript, "ReadLine") || strings.Contains(gotScript, "processModel.password") {
 		t.Errorf("update without a password must not touch the credential, got:\n%s", gotScript)
@@ -361,7 +349,7 @@ func TestIISAppPoolUpdate_NoPasswordStdin(t *testing.T) {
 
 func TestIISAppPoolDelete_RefusesInUse(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisOK(t, map[string]any{"deleted": true}), "", nil
 	})
@@ -395,12 +383,7 @@ func TestIISAppPoolRead_MissingIsNil(t *testing.T) {
 
 func TestIISAppPoolValidation_ShortCircuits(t *testing.T) {
 	called := false
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		called = true
-		return "", "", nil
-	})
-	defer restore()
-	restoreInput := stubRunInput(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+	restoreInput := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		called = true
 		return "", "", nil
 	})
@@ -434,7 +417,7 @@ func TestIISAppPoolWrite_RetriesFlakeThenConfigLocked(t *testing.T) {
 	defer func() { iisRetryBackoff = oldBackoff }()
 
 	calls := 0
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		calls++
 		return iisErr(t, "unknown", "Cannot commit configuration changes because the file has changed on disk."), "", nil
 	})
@@ -459,7 +442,7 @@ func TestIISAppPoolWrite_FlakeRecovers(t *testing.T) {
 	defer func() { iisRetryBackoff = oldBackoff }()
 
 	calls := 0
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		calls++
 		if calls == 1 {
 			return iisErr(t, "unknown", "Cannot commit configuration changes because the file has changed on disk."), "", nil
@@ -519,7 +502,7 @@ func TestIISAppPoolCreate_FlakeThenAlreadyExistsIsConfigLocked(t *testing.T) {
 
 func TestIISAppPoolWrite_OtherErrorsNotRetried(t *testing.T) {
 	calls := 0
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		calls++
 		return iisErr(t, "access_denied", "Access is denied"), "", nil
 	})
