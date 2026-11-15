@@ -30,6 +30,10 @@ connection and multiplexes operations over it. Hosts without `pwsh.exe` fall
 back to one `powershell.exe` process per call (slower, same semantics).
 Carve-out: `windows_dsc_resource` requires Windows PowerShell 5.1
 (`Invoke-DscResource`, DSC 1.1) and does not support PowerShell 7 / DSCv3.
+PowerShell must run in `FullLanguage` mode: WDAC/AppLocker constrained
+language mode (`ConstrainedLanguage`, `RestrictedLanguage`, `NoLanguage`) or
+a JEA restricted endpoint is unsupported and fails closed (no fallback — the
+one-shot transport requires `FullLanguage` too).
 
 ### Privileges
 

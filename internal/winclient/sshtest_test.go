@@ -88,6 +88,12 @@ type testServerOptions struct {
 	// session handshake then fails and it must fall back to one-shot.
 	refusePwsh bool
 
+	// announceLanguageMode overrides the language mode announced on the
+	// LANG handshake line. Empty means FullLanguage (the healthy default);
+	// tests set it to ConstrainedLanguage (or another non-FullLanguage
+	// value) to prove the client fails closed without falling back.
+	announceLanguageMode string
+
 	// responseDelay, when > 0, pauses before serving each canned response
 	// while the request counts as in-flight, so concurrent callers overlap
 	// deterministically — for pool-concurrency tests (issue #180).
@@ -278,6 +284,15 @@ func (s *testServer) serveConn(conn net.Conn, cfg *ssh.ServerConfig, opts testSe
 	}
 }
 
+// langMode returns the language mode the fake REPL announces on its LANG
+// handshake line: the test override, or FullLanguage by default.
+func langMode(opts testServerOptions) string {
+	if opts.announceLanguageMode != "" {
+		return opts.announceLanguageMode
+	}
+	return "FullLanguage"
+}
+
 // handleSession plays the role of the REPL bootstrap (psReplBootstrap in
 // session.go): a ready handshake, then a framed canned response per request.
 func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opts testServerOptions) {
@@ -325,6 +340,7 @@ func (s *testServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, opt
 			}
 		}()
 
+		_, _ = fmt.Fprintf(ch, "%s%s%s\n", replLangPrefix, langMode(opts), replLangSuffix)
 		_, _ = fmt.Fprintf(ch, "%s%s%s\n", replReadyPrefix, nonce, replReadySuffix)
 
 		in := bufio.NewReader(ch)
