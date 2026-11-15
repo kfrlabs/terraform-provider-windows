@@ -334,3 +334,73 @@ jobs:
           terraform -chdir="$base/plain" validate
           terraform -chdir="$base/writeonly" init -input=false -backend=false
           terraform -chdir="$base/writeonly" validate
+
+  ps-parse:
+    # PowerShell parse gate for issue #396: every winclient script builder is
+    # rendered with representative + adversarial inputs by TestPSParseEmitCorpus
+    # (internal/winclient/psparse_corpus_test.go) and parsed here with the
+    # .NET parser. Hermetic: go test + local pwsh only — no Windows host, no
+    # credentials, no network beyond the runner image. The Go-side
+    # registry/single-literal assertions already run inside the `test` job's
+    # `go test ./...`; this job adds the authoritative AST proof
+    # (Parser::ParseInput must report zero ParseErrors).
+    #
+    # Dialect caveat: the runner parses with PowerShell 7 (pwsh on
+    # ubuntu-latest). The provider also targets Windows PowerShell 5.1
+    # through the one-shot fallback transport (see ADR-0010), whose language
+    # surface is a subset of 7.x for the constructs used here. This gate
+    # catches syntax errors and broken quoting (the injection surface), not
+    # version-specific cmdlet availability — which stays covered by the
+    # Windows acceptance suite.
+    #
+    # PSScriptAnalyzer is deliberately NOT run here: installing it needs a
+    # PSGallery download, which would break this job's hermetic property.
+    # Revisit if the module ever ships in the runner image.
+    name: PowerShell parse corpus (pwsh)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: emit .ps1 corpus
+        env:
+          PSPARSE_OUT: ${{ runner.temp }}/psparse-out
+        run: go test ./internal/winclient/ -run 'TestPSParseEmitCorpus' -count=1 -timeout 120s
+
+      - name: parse every .ps1 with Parser::ParseInput
+        shell: pwsh
+        env:
+          PSPARSE_OUT: ${{ runner.temp }}/psparse-out
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem -LiteralPath $env:PSPARSE_OUT -Filter *.ps1 -File)
+          if ($files.Count -eq 0) { Write-Error "no .ps1 corpus found in $env:PSPARSE_OUT"; exit 1 }
+          $report = [System.Collections.Generic.List[string]]::new()
+          foreach ($f in $files) {
+            $src = Get-Content -LiteralPath $f.FullName -Raw
+            $tokens = $null
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$tokens, [ref]$errs)
+            foreach ($e in $errs) {
+              $report.Add(("{0}: {1} (line {2}, col {3})" -f $f.Name, $e.Message, $e.Extent.StartLineNumber, $e.Extent.StartColumnNumber))
+            }
+          }
+          $report | Out-File -LiteralPath (Join-Path $env:PSPARSE_OUT 'parse-errors.txt') -Encoding utf8
+          if ($report.Count -gt 0) {
+            $report | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+          "Parsed $($files.Count) files, 0 errors."
+
+      - name: upload corpus + parse report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: psparse-corpus
+          path: ${{ runner.temp }}/psparse-out
+          retention-days: 7
