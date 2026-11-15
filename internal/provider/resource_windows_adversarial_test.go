@@ -13,10 +13,15 @@ package provider
 import (
 	"context"
 	"encoding/base64"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	dschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	schema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -207,4 +212,128 @@ func TestAdversarialHelpersUnicodeAndLongNames(t *testing.T) {
 	for _, p := range []string{`C:\CON.txt`, `C:\PRN\file.txt`, `C:\foo\NUL.txt`} {
 		_ = runStringValidator(t, v, p)
 	}
+}
+
+// TestAdversarialAllResourcesRequiredStringsRejectEmpty walks EVERY
+// registered resource and data source schema and asserts that each Required
+// string attribute rejects "" at plan time. An empty-but-set value must fail
+// fast instead of reaching the host (or silently meaning "unset").
+//
+// Exceptions (empty is a legitimate configured value there) are allowlisted
+// with justification:
+//   - windows_environment_variable.value: Windows supports empty env values.
+func TestAdversarialAllResourcesRequiredStringsRejectEmpty(t *testing.T) {
+	ctx := context.Background()
+	p := New("test")()
+
+	emptyAllowed := map[string]bool{
+		"windows_environment_variable.value": true,
+	}
+
+	// checkAttr runs every validator of one Required string attribute
+	// against "" and requires at least one of them to fail: the framework
+	// rejects the value as soon as any validator errors, so per-validator
+	// reporting would flag defence-in-depth helpers (e.g. traversal checks
+	// that sit next to a shape regex) that are correct in combination.
+	checkAttr := func(kind, typeName, attrPath string, vs []validator.String) {
+		t.Helper()
+		if len(vs) == 0 {
+			t.Errorf("%s %s %s: Required string has no validators (accepts empty)", kind, typeName, attrPath)
+			return
+		}
+		rejected := false
+		for _, v := range vs {
+			if strings.Contains(reflect.TypeOf(v).String(), "AlsoRequires") {
+				continue // needs a full config; covered by resource-level tests
+			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Errorf("%s %s %s: validator %T panicked on empty value: %v", kind, typeName, attrPath, v, r)
+					}
+				}()
+				resp := &validator.StringResponse{}
+				v.ValidateString(ctx, validator.StringRequest{
+					Path:        path.Root(attrPath),
+					ConfigValue: types.StringValue(""),
+				}, resp)
+				if resp.Diagnostics.HasError() {
+					rejected = true
+				}
+			}()
+		}
+		if !rejected {
+			t.Errorf("%s %s %s: Required string accepts empty value (no validator rejects it)", kind, typeName, attrPath)
+		}
+	}
+
+	var names []string
+	for _, ctor := range p.Resources(ctx) {
+		r := ctor()
+		metaResp := &resource.MetadataResponse{}
+		r.Metadata(ctx, resource.MetadataRequest{ProviderTypeName: "windows"}, metaResp)
+		schemaResp := &resource.SchemaResponse{}
+		r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+		names = append(names, metaResp.TypeName)
+		checkAttrs(t, "R", metaResp.TypeName, schemaResp.Schema.Attributes, schemaResp.Schema.Blocks, emptyAllowed, checkAttr)
+	}
+	for _, ctor := range p.DataSources(ctx) {
+		d := ctor()
+		metaResp := &datasource.MetadataResponse{}
+		d.Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "windows"}, metaResp)
+		schemaResp := &datasource.SchemaResponse{}
+		d.Schema(ctx, datasource.SchemaRequest{}, schemaResp)
+		names = append(names, metaResp.TypeName)
+		checkDSAttrs(t, "D", metaResp.TypeName, schemaResp.Schema.Attributes, schemaResp.Schema.Blocks, emptyAllowed, checkAttr)
+	}
+	if len(names) != 70 {
+		t.Errorf("expected 34 resources + 36 data sources = 70 schemas, walked %d", len(names))
+	}
+}
+
+func checkAttrs(t *testing.T, kind, typeName string, attrs map[string]schema.Attribute, blocks map[string]schema.Block, emptyAllowed map[string]bool, check func(string, string, string, []validator.String)) {
+	t.Helper()
+	for name, a := range attrs {
+		sa, ok := a.(schema.StringAttribute)
+		if !ok || !sa.Required {
+			continue
+		}
+		if emptyAllowed[typeName+"."+name] {
+			continue
+		}
+		check(kind, typeName, name, sa.Validators)
+	}
+	for bname, b := range blocks {
+		var nested map[string]schema.Attribute
+		switch nb := b.(type) {
+		case schema.ListNestedBlock:
+			nested = nb.NestedObject.Attributes
+		case schema.SetNestedBlock:
+			nested = nb.NestedObject.Attributes
+		case schema.SingleNestedBlock:
+			nested = nb.Attributes
+		default:
+			continue
+		}
+		for name, a := range nested {
+			if sa, ok := a.(schema.StringAttribute); ok && sa.Required {
+				check(kind, typeName, bname+"."+name, sa.Validators)
+			}
+		}
+	}
+}
+
+func checkDSAttrs(t *testing.T, kind, typeName string, attrs map[string]dschema.Attribute, blocks map[string]dschema.Block, emptyAllowed map[string]bool, check func(string, string, string, []validator.String)) {
+	t.Helper()
+	for name, a := range attrs {
+		sa, ok := a.(dschema.StringAttribute)
+		if !ok || !sa.Required {
+			continue
+		}
+		if emptyAllowed[typeName+"."+name] {
+			continue
+		}
+		check(kind, typeName, name, sa.Validators)
+	}
+	_ = blocks
 }

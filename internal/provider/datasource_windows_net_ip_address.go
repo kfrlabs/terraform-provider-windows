@@ -13,8 +13,10 @@ import (
 	"strings"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -78,7 +80,10 @@ func (d *windowsNetIPAddressDataSource) Schema(ctx context.Context, _ datasource
 				Description: "Data source identifier: `<interface_alias>|<canonical ip_address>`.",
 			},
 			"ip_address": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "IP address to look up, in canonical or any parseable spelling.",
 			},
 			"interface_alias": schema.StringAttribute{

@@ -158,8 +158,8 @@ func NormalizeNTPFlags(flags string) (string, error) {
 }
 
 // ValidateNTPPeerAddress rejects empty addresses and addresses containing
-// whitespace or commas (both would corrupt the space/comma-separated
-// NtpServer value).
+// whitespace, commas or NUL (all would corrupt the space/comma-separated
+// NtpServer value or truncate the address if it reached the host).
 func ValidateNTPPeerAddress(address string) error {
 	if address == "" {
 		return NewNTPError(
@@ -169,10 +169,10 @@ func ValidateNTPPeerAddress(address string) error {
 			map[string]string{"address": address},
 		)
 	}
-	if strings.ContainsAny(address, " \t\r\n\v\f,") {
+	if strings.ContainsAny(address, " \t\r\n\v\f,\x00") || strings.IndexFunc(address, isControlRune) >= 0 {
 		return NewNTPError(
 			NTPErrorInvalidPeer,
-			fmt.Sprintf("invalid NTP peer address %q: must not contain whitespace or commas", address),
+			fmt.Sprintf("invalid NTP peer address %q: must not contain whitespace, commas or control characters", address),
 			nil,
 			map[string]string{"address": address},
 		)

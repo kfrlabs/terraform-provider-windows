@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -150,6 +151,7 @@ func windowsTimezoneSchemaDefinition(ctx context.Context) schema.Schema {
 				Description:         "Windows time zone ID (e.g. Romance Standard Time). Windows IDs never contain '/'; IANA IDs such as Europe/Paris are not supported.",
 				MarkdownDescription: "Windows time zone ID (e.g. `Romance Standard Time`). Windows IDs never contain `/`; IANA IDs such as `Europe/Paris` are not supported — use the Windows ID instead. Comparison is **case-insensitive**.",
 				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
 					timezoneIDValidator{},
 				},
 			},

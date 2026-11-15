@@ -316,11 +316,18 @@ func dnsClientBoolOrFalse(b *bool) bool {
 // Client-side input validation (defence in depth; the schema validates first)
 // ---------------------------------------------------------------------------
 
-// ValidateDnsClientAlias rejects blank aliases before any remote call.
+// ValidateDnsClientAlias rejects blank aliases before any remote call, as
+// well as aliases carrying whitespace/control characters: Windows interface
+// aliases never contain them, and a truncated alias would match the wrong
+// interface (or none) at apply time.
 func ValidateDnsClientAlias(alias string) error {
 	if strings.TrimSpace(alias) == "" {
 		return NewDnsClientError(DnsClientErrorInterfaceNotFound,
 			"interface alias must not be empty", nil, nil)
+	}
+	if strings.IndexFunc(alias, isControlRune) >= 0 {
+		return NewDnsClientError(DnsClientErrorInterfaceNotFound,
+			"interface alias must not contain control characters", nil, nil)
 	}
 	return nil
 }

@@ -74,7 +74,7 @@ const directoryDefaultTimeout = 10 * time.Minute
 // forbids in a path (EC-8). A bare drive root (e.g. "C:\") is rejected
 // (EC-10): recreating/deleting a drive root does not make sense for this
 // resource.
-var windowsDirectoryPathRegex = regexp.MustCompile(`^([A-Za-z]:\\|\\\\[^\\/:*?"<>|]+\\[^\\/:*?"<>|]+\\)[^<>:"|?*\x00]+$`)
+var windowsDirectoryPathRegex = regexp.MustCompile(`^([A-Za-z]:\\|\\\\[^\\/:*?"<>|\x00-\x1f]+\\[^\\/:*?"<>|\x00-\x1f]+\\)[^<>:"|?*\x00-\x1f]+$`)
 
 // ---------------------------------------------------------------------------
 // Metadata / Schema

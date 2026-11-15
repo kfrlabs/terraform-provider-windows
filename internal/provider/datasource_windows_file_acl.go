@@ -13,8 +13,10 @@ import (
 	"fmt"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -77,7 +79,10 @@ func (d *windowsFileACLDataSource) Schema(ctx context.Context, _ datasource.Sche
 				Description: "Data source identifier: the normalised absolute path of the secured target.",
 			},
 			"path": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Absolute path of the file or directory whose security descriptor is read. The target must already exist.",
 			},
 			"owner": schema.StringAttribute{

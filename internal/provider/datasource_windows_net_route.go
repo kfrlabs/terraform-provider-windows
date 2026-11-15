@@ -15,8 +15,10 @@ import (
 	"strings"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -83,7 +85,10 @@ func (d *windowsNetRouteDataSource) Schema(ctx context.Context, _ datasource.Sch
 				Description: "Data source identifier: `<interface_alias>|<destination_prefix>|<next_hop>` of the winning route.",
 			},
 			"destination_prefix": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Route destination in CIDR form (e.g. `\"198.51.100.0/24\"`, `\"0.0.0.0/0\"` for the IPv4 default route).",
 			},
 			"interface_alias": schema.StringAttribute{

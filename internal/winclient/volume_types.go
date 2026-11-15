@@ -65,10 +65,12 @@ var VolumeLabelMaxLength = map[string]int{
 	VolumeFileSystemFAT32: 11,
 }
 
-// ValidateVolumeLabel rejects labels that exceed the file-system limit. The
-// empty label is always valid: it formats the volume with the host default
-// (empty) label. fs must be canonical (see CanonicalizeVolumeFileSystem);
-// an unrecognized fs falls back to the 32-character limit.
+// ValidateVolumeLabel rejects labels that exceed the file-system limit and
+// labels containing control characters (which would truncate the label if
+// they reached Format-Volume). The empty label is always valid: it formats
+// the volume with the host default (empty) label. fs must be canonical (see
+// CanonicalizeVolumeFileSystem); an unrecognized fs falls back to the
+// 32-character limit.
 func ValidateVolumeLabel(fs, label string) error {
 	limit := 32
 	if m, ok := VolumeLabelMaxLength[fs]; ok {
@@ -77,6 +79,11 @@ func ValidateVolumeLabel(fs, label string) error {
 	if len([]rune(label)) > limit {
 		return NewVolumeError(VolumeErrorUnknown,
 			fmt.Sprintf("invalid file system label %q for %s: at most %d characters", label, fs, limit),
+			nil, map[string]string{"file_system": fs, "file_system_label": label})
+	}
+	if strings.IndexFunc(label, isControlRune) >= 0 {
+		return NewVolumeError(VolumeErrorUnknown,
+			fmt.Sprintf("invalid file system label %q for %s: must not contain control characters", label, fs),
 			nil, map[string]string{"file_system": fs, "file_system_label": label})
 	}
 	return nil

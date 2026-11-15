@@ -134,9 +134,18 @@ func IISMinutesToTimeSpan(minutes int64) string {
 // the wildcard characters PowerShell -Name parameters would expand.
 const iisAppPoolForbiddenChars = `/\[]:;,?*"<>|`
 
+// isControlRune reports whether r is a C0 control or DEL: characters that
+// can never appear in an IIS, DNS or NTP name and that would truncate (NUL)
+// or corrupt (CR/LF in XML config) the value if they reached the host.
+func isControlRune(r rune) bool {
+	return r < 0x20 || r == 0x7f
+}
+
 // ValidateIISAppPoolName rejects names IIS cannot carry: anything outside
 // 1-64 characters, the forbidden / \ [ ] : ; , ? * " < > | set (which also
-// keeps wildcard expansion impossible), and leading/trailing spaces.
+// keeps wildcard expansion impossible), leading/trailing spaces, and control
+// characters (NUL/CR/LF would truncate or corrupt the applicationHost.config
+// XML entry at apply time, so they fail fast here instead).
 func ValidateIISAppPoolName(name string) error {
 	if len(name) < 1 || len(name) > 64 {
 		return fmt.Errorf("invalid IIS application pool name %q: must be 1-64 characters", name)
@@ -146,6 +155,9 @@ func ValidateIISAppPoolName(name string) error {
 	}
 	if strings.ContainsAny(name, iisAppPoolForbiddenChars) {
 		return fmt.Errorf("invalid IIS application pool name %q: must not contain any of / \\ [ ] : ; , ? * \" < > |", name)
+	}
+	if strings.IndexFunc(name, isControlRune) >= 0 {
+		return fmt.Errorf("invalid IIS application pool name %q: must not contain control characters", name)
 	}
 	return nil
 }

@@ -10,10 +10,12 @@ import (
 	"time"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
@@ -56,7 +58,10 @@ func (d *windowsScheduledTaskDataSource) Schema(ctx context.Context, _ datasourc
 				MarkdownDescription: "Composite ID `<TaskPath><TaskName>`.",
 			},
 			"name": schema.StringAttribute{
-				Required:            true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				MarkdownDescription: "Task leaf name.",
 			},
 			"path": schema.StringAttribute{

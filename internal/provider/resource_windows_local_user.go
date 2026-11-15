@@ -118,12 +118,14 @@ type windowsLocalUserModel struct {
 
 // localUserNameRegex enforces structural constraints for Windows local SAM
 // account names (EC-10): 1..20 characters, none of which are the forbidden
-// characters / \ [ ] : ; | = , + * ? < > "
+// characters / \ [ ] : ; | = , + * ? < > " or C0/C1 controls and DEL
+// (a truncated or multi-line SAM name would corrupt identity at apply time,
+// so they fail fast here instead).
 //
 // Written as a double-quoted Go string (NOT a raw backtick string) to avoid
 // the backtick-truncation issue documented in ADR-LU-5 / ADR-LG-9.
 var localUserNameRegex = regexp.MustCompile(
-	"^[^/\\\\\\[\\]:;|=,+*?<>\"]{1,20}$",
+	"^[^/\\\\\\[\\]:;|=,+*?<>\"\x00-\x1f\x7f]{1,20}$",
 )
 
 // localUserNameValidator enforces whitespace rules for the name attribute (EC-10).
