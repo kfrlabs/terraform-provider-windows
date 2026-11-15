@@ -67,6 +67,12 @@ func (c *ScheduledTaskClientImpl) Read(ctx context.Context, id string) (*Schedul
 func (c *ScheduledTaskClientImpl) Create(ctx context.Context, input ScheduledTaskInput) (*ScheduledTaskState, error) {
 	id := input.Path + input.Name
 
+	if input.Principal != nil && input.Principal.Password != nil && strings.ContainsAny(*input.Principal.Password, "\r\n") {
+		return nil, NewScheduledTaskError(ScheduledTaskErrorInvalidInput,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, map[string]string{"id": id})
+	}
+
 	// Builtin guard (ADR-ST-6 / EC-13)
 	if strings.HasPrefix(strings.ToLower(input.Path), `\microsoft\windows\`) {
 		return nil, NewScheduledTaskError(ScheduledTaskErrorBuiltinTask,
@@ -184,6 +190,11 @@ try {
 
 // Update implements ScheduledTaskClient.Update.
 func (c *ScheduledTaskClientImpl) Update(ctx context.Context, id string, input ScheduledTaskInput) (*ScheduledTaskState, error) {
+	if input.Principal != nil && input.Principal.Password != nil && strings.ContainsAny(*input.Principal.Password, "\r\n") {
+		return nil, NewScheduledTaskError(ScheduledTaskErrorInvalidInput,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, map[string]string{"id": id})
+	}
 	taskPath, taskName := splitTaskID(id)
 
 	var sb strings.Builder

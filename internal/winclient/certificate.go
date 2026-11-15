@@ -708,6 +708,11 @@ func (n *CertificateClientImpl) Create(ctx context.Context, input CertificateInp
 	if input.PFXPassword != nil {
 		password = *input.PFXPassword
 	}
+	if strings.ContainsAny(password, "\r\n") {
+		return nil, NewCertificateError(CertificateErrorCorruptCertificate,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, baseCtx)
+	}
 	stdin := password + "\n" + strings.TrimSpace(input.PFXBase64)
 	resp, rerr := n.runCertificateEnvelope(ctx, "create",
 		buildCertificateCreatePFX(location, store, input.FriendlyName, input.Exportable), stdin, baseCtx)

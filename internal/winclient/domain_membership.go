@@ -418,6 +418,11 @@ type domainJoinDataPayload struct {
 
 // Join joins the host to the given domain.
 func (d *DomainMembershipClient) Join(ctx context.Context, in DomainJoinInput) (*DomainMembershipState, *DomainJoinResult, error) {
+	if strings.ContainsAny(in.Password, "\r\n") {
+		return nil, nil, NewDomainMembershipError(DomainMembershipErrorInvalidParameter,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, map[string]string{"domain": in.Domain})
+	}
 	if strings.TrimSpace(in.Domain) == "" {
 		return nil, nil, NewDomainMembershipError(DomainMembershipErrorInvalidParameter, "domain is empty", nil, nil)
 	}
@@ -499,6 +504,11 @@ type domainUnjoinDataPayload struct {
 
 // Unjoin removes the host from its domain into the given workgroup.
 func (d *DomainMembershipClient) Unjoin(ctx context.Context, in DomainUnjoinInput) (*DomainMembershipState, *DomainUnjoinResult, error) {
+	if strings.ContainsAny(in.Password, "\r\n") {
+		return nil, nil, NewDomainMembershipError(DomainMembershipErrorInvalidParameter,
+			"password must not contain carriage return or line feed characters: secrets are read with ReadLine().",
+			nil, nil)
+	}
 	if strings.TrimSpace(in.Username) == "" {
 		return nil, nil, NewDomainMembershipError(DomainMembershipErrorInvalidParameter, "unjoin username is empty", nil, nil)
 	}
