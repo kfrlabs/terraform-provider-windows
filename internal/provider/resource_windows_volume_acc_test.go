@@ -242,6 +242,29 @@ func TestAccWindowsVolume_NTFSLifecycle(t *testing.T) {
 							return nil
 						}),
 					resource.TestCheckResourceAttr("windows_volume.acc", "partition_id", partitionID),
+					// Regression: the host reports Get-Partition Guid with braces
+					// and original case plus padded Get-Disk UniqueId; the import
+					// must canonicalise to the windows_partition ID form
+					// (trimmed disk, GUID upper without braces) so it matches the
+					// owning partition resource instead of forcing a destructive
+					// replacement on spelling.
+					resource.TestCheckResourceAttrWith("windows_volume.acc", "partition_id",
+						func(v string) error {
+							parts := strings.SplitN(v, "|", 2)
+							if len(parts) != 2 {
+								return fmt.Errorf("imported partition_id %q must be <disk_unique_id>|<key>", v)
+							}
+							if strings.TrimSpace(parts[0]) != parts[0] || strings.TrimSpace(parts[1]) != parts[1] {
+								return fmt.Errorf("imported partition_id %q must be trimmed", v)
+							}
+							if strings.ContainsAny(parts[1], "{}") {
+								return fmt.Errorf("imported partition key %q must not carry braces", parts[1])
+							}
+							if parts[1] != strings.ToUpper(parts[1]) {
+								return fmt.Errorf("imported GPT partition key %q must be upper-case", parts[1])
+							}
+							return nil
+						}),
 				),
 			},
 			{
@@ -258,6 +281,7 @@ func TestAccWindowsVolume_NTFSLifecycle(t *testing.T) {
 							}
 							return nil
 						}),
+					resource.TestCheckResourceAttr("windows_volume.acc", "partition_id", partitionID),
 				),
 			},
 		},
