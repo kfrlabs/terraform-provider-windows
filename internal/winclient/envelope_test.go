@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // envelopeRunner returns a runner that serves one canned result and records
@@ -185,5 +186,37 @@ func TestRunEnvelopeNilRunner(t *testing.T) {
 	}
 	if eerr.Context["operation"] != "read" {
 		t.Errorf("Context = %#v", eerr.Context)
+	}
+}
+
+func TestTruncateBacksOffToARuneBoundary(t *testing.T) {
+	// French and Chinese text: 1-, 2- and 3-byte runes, so most cut offsets land inside one
+	s := strings.Repeat("Accès refusé — 失败 ", 64)
+	for maxLen := 0; maxLen <= len(s); maxLen++ {
+		got := truncate(s, maxLen)
+		if !utf8.ValidString(got) {
+			t.Fatalf("truncate(%q, %d) is not valid UTF-8: %q", s[:32], maxLen, got)
+		}
+		body := strings.TrimSuffix(got, "...[truncated]")
+		if !strings.HasPrefix(s, body) {
+			t.Fatalf("truncate(s, %d) dropped or changed bytes: %q", maxLen, body)
+		}
+		if maxLen < len(s) && len(body) > maxLen {
+			t.Fatalf("truncate(s, %d) kept %d bytes", maxLen, len(body))
+		}
+	}
+	// a 2-byte rune cut after its first byte has nothing whole to keep
+	if got := truncate("é", 1); got != "...[truncated]" {
+		t.Fatalf("truncate(\"é\", 1) = %q, want just the marker", got)
+	}
+	// a 4-byte rune cut inside keeps only the whole prefix (worst-case back-off of 3)
+	if got := truncate("a💥b", 2); got != "a...[truncated]" {
+		t.Fatalf("truncate(\"a💥b\", 2) = %q, want %q", got, "a...[truncated]")
+	}
+	if got := truncate("a💥b", 5); got != "a💥...[truncated]" {
+		t.Fatalf("truncate(\"a💥b\", 5) = %q, want %q", got, "a💥...[truncated]")
+	}
+	if got := truncate("ok", 5); got != "ok" {
+		t.Fatalf("truncate(\"ok\", 5) = %q, want the string unchanged", got)
 	}
 }
