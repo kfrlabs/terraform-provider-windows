@@ -29,8 +29,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
-	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
-	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -42,6 +40,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
@@ -81,26 +81,26 @@ const certificateDefaultTimeout = 10 * time.Minute
 // windows_certificate. Every tfsdk tag matches an attribute key in
 // windowsCertificateSchemaDefinition.
 type windowsCertificateModel struct {
-	ID               types.String   `tfsdk:"id"`
-	StoreLocation    types.String   `tfsdk:"store_location"`
-	StoreName        types.String   `tfsdk:"store_name"`
+	ID               types.String        `tfsdk:"id"`
+	StoreLocation    types.String        `tfsdk:"store_location"`
+	StoreName        types.String        `tfsdk:"store_name"`
 	CertificatePEM   certificatePEMValue `tfsdk:"certificate_pem"`
-	PFXBase64WO      types.String   `tfsdk:"pfx_base64_wo"`
-	PFXPasswordWO    types.String   `tfsdk:"pfx_password_wo"`
-	PFXWOVersion     types.Int64    `tfsdk:"pfx_wo_version"`
-	Exportable       types.Bool     `tfsdk:"exportable"`
-	FriendlyName     types.String   `tfsdk:"friendly_name"`
-	DeletePrivateKey types.Bool     `tfsdk:"delete_private_key"`
-	Thumbprint       types.String   `tfsdk:"thumbprint"`
-	ThumbprintSHA256 types.String   `tfsdk:"thumbprint_sha256"`
-	Subject          types.String   `tfsdk:"subject"`
-	Issuer           types.String   `tfsdk:"issuer"`
-	SerialNumber     types.String   `tfsdk:"serial_number"`
-	NotBefore        types.String   `tfsdk:"not_before"`
-	NotAfter         types.String   `tfsdk:"not_after"`
-	DNSNames         types.List     `tfsdk:"dns_names"`
-	HasPrivateKey    types.Bool     `tfsdk:"has_private_key"`
-	Timeouts         timeouts.Value `tfsdk:"timeouts"`
+	PFXBase64WO      types.String        `tfsdk:"pfx_base64_wo"`
+	PFXPasswordWO    types.String        `tfsdk:"pfx_password_wo"`
+	PFXWOVersion     types.Int64         `tfsdk:"pfx_wo_version"`
+	Exportable       types.Bool          `tfsdk:"exportable"`
+	FriendlyName     types.String        `tfsdk:"friendly_name"`
+	DeletePrivateKey types.Bool          `tfsdk:"delete_private_key"`
+	Thumbprint       types.String        `tfsdk:"thumbprint"`
+	ThumbprintSHA256 types.String        `tfsdk:"thumbprint_sha256"`
+	Subject          types.String        `tfsdk:"subject"`
+	Issuer           types.String        `tfsdk:"issuer"`
+	SerialNumber     types.String        `tfsdk:"serial_number"`
+	NotBefore        types.String        `tfsdk:"not_before"`
+	NotAfter         types.String        `tfsdk:"not_after"`
+	DNSNames         types.List          `tfsdk:"dns_names"`
+	HasPrivateKey    types.Bool          `tfsdk:"has_private_key"`
+	Timeouts         timeouts.Value      `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ func windowsCertificateSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"certificate_pem": schema.StringAttribute{
-				Optional: true,
+				Optional:   true,
 				CustomType: certificatePEMType{},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
