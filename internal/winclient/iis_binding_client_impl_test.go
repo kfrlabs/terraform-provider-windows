@@ -1,6 +1,6 @@
 // Package winclient — unit tests for IISBindingClient (issue #285).
 //
-// These tests stub the package-level runPowerShell seam (shared with
+// These tests stub the package-level runIISPowerShell seam (shared with
 // service.go) and the iisBindingManagementPath probe seam so no real SSH
 // connection is needed.
 //
@@ -74,10 +74,10 @@ func testIISBindingState() map[string]any {
 	}
 }
 
-// iisBindingStubSequence stubs runPowerShell with a fixed ordered list of responses.
+// iisBindingStubSequence stubs runIISPowerShell with a fixed ordered list of responses.
 func iisBindingStubSequence(responses []frResponse) func() {
 	i := 0
-	return stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	return stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		r := responses[i]
 		if i < len(responses)-1 {
 			i++
@@ -113,7 +113,7 @@ func iisBindingCreateInput() IISBindingInput {
 func TestIISBindingScripts_ShipPreludeAndGate(t *testing.T) {
 	defer stubIISBindingManagementPath(22)()
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisBindingOK(t, testIISBindingState()), "", nil
 	})
@@ -163,7 +163,7 @@ func TestIISBindingScripts_ShipPreludeAndGate(t *testing.T) {
 func TestIISBindingCreate_ScriptDecisions(t *testing.T) {
 	defer stubIISBindingManagementPath(22)()
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisBindingOK(t, testIISBindingState()), "", nil
 	})
@@ -198,7 +198,7 @@ func TestIISBindingCreate_ScriptDecisions(t *testing.T) {
 func TestIISBindingCreate_HTTPOmitsCertFlow(t *testing.T) {
 	defer stubIISBindingManagementPath(22)()
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisBindingOK(t, map[string]any{
 			"protocol": "http", "binding_information": "*:80:",
@@ -233,7 +233,7 @@ func TestIISBindingCreate_HTTPOmitsCertFlow(t *testing.T) {
 func TestIISBindingUpdate_ScriptContent(t *testing.T) {
 	defer stubIISBindingManagementPath(22)()
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisBindingOK(t, testIISBindingState()), "", nil
 	})
@@ -265,7 +265,7 @@ func TestIISBindingUpdate_ScriptContent(t *testing.T) {
 
 func TestIISBindingDelete_ScriptContent(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisBindingOK(t, map[string]any{"deleted": true}), "", nil
 	})
@@ -290,7 +290,7 @@ func TestIISBindingDelete_ScriptContent(t *testing.T) {
 
 func TestIISBindingRead_ScriptContent(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisBindingOK(t, testIISBindingState()), "", nil
 	})
@@ -339,7 +339,7 @@ func TestIISBindingCreate_LockoutOnProviderPort(t *testing.T) {
 func TestIISBindingCreate_LockoutOnServerPort(t *testing.T) {
 	defer stubIISBindingManagementPath(2222)()
 	var called bool
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		called = true
 		return iisBindingOK(t, testIISBindingState()), "", nil
 	})
@@ -364,7 +364,7 @@ func TestIISBindingCreate_LockoutProbeFailureClosed(t *testing.T) {
 	defer func() { iisBindingManagementPath = prev }()
 
 	var called bool
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		called = true
 		return iisBindingOK(t, testIISBindingState()), "", nil
 	})
@@ -383,7 +383,7 @@ func TestIISBindingCreate_LockoutProbeFailureClosed(t *testing.T) {
 
 func TestIISBindingCreate_NonSSHPortPassesGuard(t *testing.T) {
 	defer stubIISBindingManagementPath(22)()
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return iisBindingOK(t, testIISBindingState()), "", nil
 	})
 	defer restore()
@@ -428,7 +428,7 @@ func TestIISBindingCRUD_RemoteKinds(t *testing.T) {
 }
 
 func TestIISBindingRead_NullMeansAbsent(t *testing.T) {
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return iisBindingOK(t, nil), "", nil
 	})
 	defer restore()
@@ -444,7 +444,7 @@ func TestIISBindingRead_NullMeansAbsent(t *testing.T) {
 }
 
 func TestIISBindingRead_BadJSON(t *testing.T) {
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return iisBindingOK(t, "not-an-object"), "", nil
 	})
 	defer restore()
@@ -476,7 +476,7 @@ func TestIISBindingCreate_RetryOnFlake(t *testing.T) {
 func TestIISBindingCreate_NoRetryOnConflict(t *testing.T) {
 	defer stubIISBindingManagementPath(22)()
 	calls := 0
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		calls++
 		return iisBindingErr(t, "conflict", "taken"), "", nil
 	})
@@ -494,7 +494,7 @@ func TestIISBindingCreate_NoRetryOnConflict(t *testing.T) {
 func TestIISBindingValidation_ShortCircuits(t *testing.T) {
 	defer stubIISBindingManagementPath(22)()
 	var called bool
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		called = true
 		return iisBindingOK(t, testIISBindingState()), "", nil
 	})
@@ -517,7 +517,7 @@ func TestIISBindingValidation_ShortCircuits(t *testing.T) {
 }
 
 func TestIISBindingDelete_MissingIsAbsent(t *testing.T) {
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return iisBindingOK(t, map[string]any{"deleted": true, "note": "already_absent"}), "", nil
 	})
 	defer restore()

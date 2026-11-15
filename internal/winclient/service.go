@@ -176,9 +176,16 @@ function Read-ServiceState([string]$Name) {
     throw "sc.exe qc failed (exit=$qcCode): $qcRaw"
   }
 
-  # sc.exe qdescription (non-fatal on failure)
-  $descRaw  = & sc.exe qdescription $Name 2>&1 | Out-String
-  $descCode = $LASTEXITCODE
+  # Description via CIM (Unicode-safe). sc.exe qdescription round-trips the
+  # description through the console OEM codepage and irreversibly folds
+  # non-ASCII (e.g. em-dash U+2014 becomes '-'), which produced
+  # "inconsistent result after apply" for non-ASCII descriptions. WMI keeps
+  # the exact string Set-Service wrote. Non-fatal on failure, as before.
+  $description = ''
+  try {
+    $cimDesc = Get-CimInstance Win32_Service -Filter ("Name='$Name'") -ErrorAction Stop
+    if ($null -ne $cimDesc.Description) { $description = $cimDesc.Description.Trim() }
+  } catch { $description = '' }
 
   # Parse qc
   $binary     = ''
@@ -213,14 +220,7 @@ function Read-ServiceState([string]$Name) {
     }
   }
 
-  # Parse description (skip header line “[SC] QueryServiceConfig2 SUCCESS”)
-  $description = ''
-  if ($descCode -eq 0) {
-    foreach ($raw in ($descRaw -split [char]10)) {
-      $line = $raw.TrimEnd()
-      if ($line -match '^\s*DESCRIPTION\s*:\s*(.*)$') { $description = $Matches[1].Trim(); break }
-    }
-  }
+  # (description already populated from CIM above)
 
   # Map Get-Service status enum -> provider values
   $statusName = [string]$svc.Status

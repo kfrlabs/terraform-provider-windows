@@ -1,6 +1,6 @@
 // Package winclient — unit tests for IISSiteClient (issue #284).
 //
-// These tests stub the package-level runPowerShell seam (shared with
+// These tests stub the package-level runIISPowerShell seam (shared with
 // service.go / local_user.go) so no real SSH connection is needed.
 //
 // Coverage targets:
@@ -84,10 +84,10 @@ func testIISSiteStateBound() map[string]any {
 	return m
 }
 
-// iisSiteStubSequence stubs runPowerShell with a fixed ordered list of responses.
+// iisSiteStubSequence stubs runIISPowerShell with a fixed ordered list of responses.
 func iisSiteStubSequence(responses []frResponse) func() {
 	i := 0
-	return stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	return stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		r := responses[i]
 		if i < len(responses)-1 {
 			i++
@@ -298,7 +298,7 @@ func TestBuildIISSiteStateStatement(t *testing.T) {
 // literal, never single-quote doubling (invalid in XPath 1.0).
 func TestIISSiteScripts_XPathNameQuoting(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisSiteOK(t, testIISSiteState()), "", nil
 	})
@@ -310,7 +310,7 @@ func TestIISSiteScripts_XPathNameQuoting(t *testing.T) {
 	}
 	for _, want := range []string{
 		`site[@name="`,
-		`'"]/application[@path=''/']'`,
+		`'"]/application[@path=''/'']'`,
 	} {
 		if !strings.Contains(gotScript, want) {
 			t.Errorf("read script must build the XPath filter with a double-quoted literal, missing %q", want)
@@ -335,7 +335,7 @@ func TestIISSiteScripts_XPathNameQuoting(t *testing.T) {
 
 func TestIISSiteScripts_ShipPreludeAndGate(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisSiteOK(t, testIISSiteState()), "", nil
 	})
@@ -366,7 +366,7 @@ func TestIISSiteScripts_ShipPreludeAndGate(t *testing.T) {
 
 func TestIISSiteCreate_ScriptContent(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisSiteOK(t, testIISSiteState()), "", nil
 	})
@@ -386,7 +386,8 @@ func TestIISSiteCreate_ScriptContent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, want := range []string{
-		"New-Item", "bindings = @()", // zero-binding create: no transient *:80:http
+		"New-Item", `bindings = @{protocol="http";bindingInformation="*:80:"}`, // boot binding...
+		"Remove-WebBinding", // ...removed immediately: zero-binding create, no transient *:80:http
 		"already_exists", "terraform import",
 		"id_conflict",                // site-ID precheck
 		"app_pool_not_found",         // pool precheck
@@ -411,7 +412,7 @@ func TestIISSiteCreate_ScriptContent(t *testing.T) {
 
 func TestIISSiteCreate_UnmanagedPoolAndPathAreNull(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisSiteOK(t, testIISSiteState()), "", nil
 	})
@@ -438,7 +439,7 @@ func TestIISSiteCreate_UnmanagedPoolAndPathAreNull(t *testing.T) {
 
 func TestIISSiteUpdate_ScriptContent(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisSiteOK(t, testIISSiteState()), "", nil
 	})
@@ -474,7 +475,7 @@ func TestIISSiteUpdate_ScriptContent(t *testing.T) {
 
 func TestIISSiteDelete_ScriptContent(t *testing.T) {
 	var gotScript string
-	restore := stubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		gotScript = script
 		return iisSiteOK(t, map[string]any{"deleted": true}), "", nil
 	})
@@ -511,7 +512,7 @@ func TestIISSiteRead_MissingIsNil(t *testing.T) {
 
 func TestIISSiteValidation_ShortCircuits(t *testing.T) {
 	called := false
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		called = true
 		return "", "", nil
 	})
@@ -557,7 +558,7 @@ func TestIISSiteWrite_RetriesFlake(t *testing.T) {
 	defer func() { iisRetryBackoff = oldBackoff }()
 
 	calls := 0
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		calls++
 		return iisSiteErr(t, "unknown", "Cannot commit configuration changes because the file has changed on disk."), "", nil
 	})
@@ -582,7 +583,7 @@ func TestIISSiteWrite_FlakeRecovers(t *testing.T) {
 	defer func() { iisRetryBackoff = oldBackoff }()
 
 	calls := 0
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		calls++
 		if calls == 1 {
 			return iisSiteErr(t, "unknown", "Cannot commit configuration changes because the file has changed on disk."), "", nil
@@ -642,7 +643,7 @@ func TestIISSiteCreate_FlakeThenAlreadyExistsKeepsFlake(t *testing.T) {
 
 func TestIISSiteWrite_OtherErrorsNotRetried(t *testing.T) {
 	calls := 0
-	restore := stubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		calls++
 		return iisSiteErr(t, "access_denied", "Access is denied"), "", nil
 	})

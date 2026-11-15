@@ -6,9 +6,10 @@
 // envelope (Emit-OK/Emit-Err) so stdout is machine-parseable regardless of
 // Windows locale.
 //
-// Bindings are deliberately NOT managed here: the site is always created
-// with zero bindings (New-Item -Bindings @(), so no transient *:80:http
-// binding ever exists) and the bindings attribute is a read-only view
+// Bindings are deliberately NOT managed here: the site is booted with the
+// inert default *:80: (New-Item requires a binding) and the boot binding is
+// removed immediately, so the site carries zero bindings and no transient
+// *:80:http listener conflict. The bindings attribute is a read-only view
 // (protocol plus binding_information) owned by the
 // windows_iis_binding resource (issue #285).
 //
@@ -31,7 +32,7 @@
 //   - IISConfigChangedOnDisk   — concurrent-writer flake detector
 //   - iisRetryBackoff          — short retry backoff, stubbed in tests
 //   - runEnvelope              — shared JSON envelope pipeline (envelope.go)
-//   - runPowerShell            — package-level hook, stubbed in tests
+//   - runIISPowerShell          — package-level hook (one-shot 5.1), stubbed in tests
 //   - psResponse               — Emit-OK / Emit-Err envelope (service.go)
 package winclient
 
@@ -75,7 +76,7 @@ const iisSiteReadFragment = `
 function Get-SiteData([string]$Name) {
   $site = Get-ChildItem 'IIS:\Sites' -ErrorAction Stop | Where-Object { $_.Name -eq $Name }
   if (-not $site) { return $null }
-  $appFilter = ('system.applicationHost/sites/site[@name="' + $Name + '"]/application[@path=''/']')
+  $appFilter = ('system.applicationHost/sites/site[@name="' + $Name + '"]/application[@path=''/'']')
   $vdirFilter = ($appFilter + "/virtualDirectory[@path='/']")
   $pool = (Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $appFilter -Name 'applicationPool' -ErrorAction Stop).Value
   $phys = (Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $vdirFilter -Name 'physicalPath' -ErrorAction Stop).Value
@@ -185,7 +186,7 @@ func buildIISSiteStateStatement(state *string, escapedName string) string {
 // $AppPool / $SiteId inputs ($null when unmanaged).
 func iisSitePreamble() string {
 	return `
-$appFilter = ('system.applicationHost/sites/site[@name="' + $Name + '"]/application[@path=''/']')
+$appFilter = ('system.applicationHost/sites/site[@name="' + $Name + '"]/application[@path=''/'']')
 $vdirFilter = ($appFilter + "/virtualDirectory[@path='/']")
 `
 }
@@ -241,7 +242,7 @@ func (a *IISSiteClient) runSiteEnvelope(ctx context.Context, op, name, script st
 	baseContext := map[string]string{"name": name, "host": a.c.cfg.Host}
 	resp, eerr := runEnvelope(ctx,
 		func(ctx context.Context, full, stdin string) (string, string, error) {
-			return runPowerShell(ctx, a.c, full)
+			return runIISPowerShell(ctx, a.c, full, stdin)
 		},
 		op, psIISHeader+"\n"+iisSiteReadFragment+"\n"+script, "", baseContext)
 	if eerr == nil {
@@ -425,9 +426,15 @@ if ($null -ne $SiteId) {
 %s
 %s
 try {
-  $newParams = @{ physicalPath = $PhysicalPath; bindings = @(); ErrorAction = 'Stop' }
+  # New-Item requires at least one binding (-Bindings @() is rejected by
+  # parameter validation), so the site is booted with the inert default
+  # *:80: and the boot binding is removed immediately: the provider manages
+  # bindings exclusively through windows_iis_binding, and a site with zero
+  # bindings can never transiently steal *:80:http from another site.
+  $newParams = @{ physicalPath = $PhysicalPath; bindings = @{protocol="http";bindingInformation="*:80:"}; ErrorAction = 'Stop' }
   if ($null -ne $SiteId) { $newParams.id = $SiteId }
   New-Item $sitePath @newParams | Out-Null
+  Remove-WebBinding -Name %s -BindingInformation '*:80:' -ErrorAction Stop
   try {
 %s
 %s
@@ -446,6 +453,7 @@ try {
 		psSiteOptionalLiteral(in.Settings.ApplicationPool),
 		iisSitePreamble(),
 		iisSiteGuardFragment,
+		psQuote(psEscapeWildcard(in.Name)),
 		buildIISSiteSetStatements(in.Settings),
 		buildIISSiteStateStatement(in.Settings.State, psQuote(psEscapeWildcard(in.Name))),
 		psQuote(psEscapeWildcard(in.Name)),
