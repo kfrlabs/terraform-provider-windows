@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Envelope is the JSON object produced by the Emit-OK/Emit-Err helpers.
@@ -277,9 +278,14 @@ func hasEnvelopeOK(s string) bool {
 	return probe.OK != nil
 }
 
+// truncate cuts s to at most maxLen bytes plus a marker, backing off to a rune
+// boundary so a localized stdout/stderr excerpt never ends inside a character.
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
+	}
+	for maxLen > 0 && !utf8.RuneStart(s[maxLen]) {
+		maxLen--
 	}
 	return s[:maxLen] + "...[truncated]"
 }
