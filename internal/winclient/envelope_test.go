@@ -209,6 +209,13 @@ func TestTruncateBacksOffToARuneBoundary(t *testing.T) {
 	if got := truncate("é", 1); got != "...[truncated]" {
 		t.Fatalf("truncate(\"é\", 1) = %q, want just the marker", got)
 	}
+	// a 4-byte rune cut inside keeps only the whole prefix (worst-case back-off of 3)
+	if got := truncate("a💥b", 2); got != "a...[truncated]" {
+		t.Fatalf("truncate(\"a💥b\", 2) = %q, want %q", got, "a...[truncated]")
+	}
+	if got := truncate("a💥b", 5); got != "a💥...[truncated]" {
+		t.Fatalf("truncate(\"a💥b\", 5) = %q, want %q", got, "a💥...[truncated]")
+	}
 	if got := truncate("ok", 5); got != "ok" {
 		t.Fatalf("truncate(\"ok\", 5) = %q, want the string unchanged", got)
 	}
