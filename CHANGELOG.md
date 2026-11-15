@@ -527,6 +527,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `winclient`: `truncate()` now backs off to a UTF-8 rune boundary before slicing diagnostic output so multi-byte characters are not split (#404).
+
 - `windows_dsc_resource`: the provider no longer fails to compile on 32-bit
   targets (`386`, `arm`), which would have broken the next release
   (`math.MaxInt64` compared to a `uint`). Found by the GoReleaser snapshot

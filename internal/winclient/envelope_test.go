@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // envelopeRunner returns a runner that serves one canned result and records
@@ -185,5 +186,27 @@ func TestRunEnvelopeNilRunner(t *testing.T) {
 	}
 	if eerr.Context["operation"] != "read" {
 		t.Errorf("Context = %#v", eerr.Context)
+	}
+}
+
+func TestTruncateUTF8Boundary(t *testing.T) {
+	samples := []string{
+		"Accès refusé par le serveur",
+		"total: €1234.56",
+		"status 🚀 ok ✅ done",
+	}
+	for _, sample := range samples {
+		for maxLen := 0; maxLen <= len(sample)+1; maxLen++ {
+			got := truncate(sample, maxLen)
+			if !utf8.ValidString(got) {
+				t.Fatalf("truncate(%q, %d) produced invalid UTF-8: %q", sample, maxLen, got)
+			}
+			if maxLen >= len(sample) && got != sample {
+				t.Fatalf("truncate(%q, %d) = %q, want %q", sample, maxLen, got, sample)
+			}
+			if maxLen < len(sample) && !strings.HasSuffix(got, "...[truncated]") {
+				t.Fatalf("truncate(%q, %d) = %q, expected truncation suffix", sample, maxLen, got)
+			}
+		}
 	}
 }

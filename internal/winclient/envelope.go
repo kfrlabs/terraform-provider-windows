@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Envelope is the JSON object produced by the Emit-OK/Emit-Err helpers.
@@ -280,6 +281,12 @@ func hasEnvelopeOK(s string) bool {
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
+	}
+	if maxLen <= 0 {
+		return "...[truncated]"
+	}
+	for maxLen > 0 && !utf8.RuneStart(s[maxLen]) {
+		maxLen--
 	}
 	return s[:maxLen] + "...[truncated]"
 }
