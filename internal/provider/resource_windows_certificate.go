@@ -14,6 +14,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -28,6 +29,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -81,7 +84,7 @@ type windowsCertificateModel struct {
 	ID               types.String   `tfsdk:"id"`
 	StoreLocation    types.String   `tfsdk:"store_location"`
 	StoreName        types.String   `tfsdk:"store_name"`
-	CertificatePEM   types.String   `tfsdk:"certificate_pem"`
+	CertificatePEM   certificatePEMValue `tfsdk:"certificate_pem"`
 	PFXBase64WO      types.String   `tfsdk:"pfx_base64_wo"`
 	PFXPasswordWO    types.String   `tfsdk:"pfx_password_wo"`
 	PFXWOVersion     types.Int64    `tfsdk:"pfx_wo_version"`
@@ -177,9 +180,9 @@ func windowsCertificateSchemaDefinition(ctx context.Context) schema.Schema {
 
 			"certificate_pem": schema.StringAttribute{
 				Optional: true,
+				CustomType: certificatePEMType{},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
-					certificatePEMNormalizeModifier{},
 				},
 				Validators: []validator.String{
 					certificatePEMValidator{},
@@ -397,29 +400,109 @@ func (v certificateBase64Validator) ValidateString(_ context.Context, req valida
 	}
 }
 
-// certificatePEMNormalizeModifier converges cosmetic PEM spellings (CRLF,
-// leading/trailing text, re-wrapped base64) to the canonical normalised
-// form at plan time, so importing the same bytes never shows a perpetual
-// diff against the normalised state.
-type certificatePEMNormalizeModifier struct{}
-
-func (m certificatePEMNormalizeModifier) Description(_ context.Context) string {
-	return "Normalises the PEM to its canonical form."
+// certificatePEMValue is the framework value type for the certificate_pem
+// attribute. It implements value-semantic equality so that cosmetic
+// spellings of the same certificate (CRLF line endings from Windows-edited
+// files, re-wrapped base64, surrounding text) compare equal, avoiding both a
+// "provider produced invalid plan" error on create and a false diff on later
+// refresh (windows_scheduled_task durationValue precedent).
+//
+// The state value is never rewritten: the normalised spelling the provider
+// stores is kept as-is. Equality is only relaxed at comparison time.
+type certificatePEMValue struct {
+	basetypes.StringValue
 }
 
-func (m certificatePEMNormalizeModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
+func certificatePEMValueOf(s string) certificatePEMValue {
+	return certificatePEMValue{StringValue: types.StringValue(s)}
 }
 
-func (m certificatePEMNormalizeModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
-		return
+func certificatePEMNull() certificatePEMValue {
+	return certificatePEMValue{StringValue: types.StringNull()}
+}
+
+func (v certificatePEMValue) Equal(o attr.Value) bool {
+	other, ok := o.(certificatePEMValue)
+	if !ok {
+		return false
 	}
-	normalised, err := winclient.NormalizeCertificatePEM(req.PlanValue.ValueString())
+	return v.StringValue.Equal(other.StringValue)
+}
+
+func (v certificatePEMValue) Type(_ context.Context) attr.Type {
+	return certificatePEMType{}
+}
+
+func (v certificatePEMValue) StringSemanticEquals(_ context.Context, newValuable basetypes.StringValuable) (bool, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	other, ok := newValuable.(certificatePEMValue)
+	if !ok {
+		diags.AddError("Semantic Equality Check Error",
+			fmt.Sprintf("expected certificatePEMValue, got %T", newValuable))
+		return false, diags
+	}
+	if v.IsNull() || v.IsUnknown() || other.IsNull() || other.IsUnknown() {
+		return false, diags
+	}
+	return certificatePEMsEquivalent(v.ValueString(), other.ValueString()), diags
+}
+
+// certificatePEMType is the attr.Type counterpart of certificatePEMValue.
+type certificatePEMType struct {
+	basetypes.StringType
+}
+
+func (t certificatePEMType) Equal(o attr.Type) bool {
+	other, ok := o.(certificatePEMType)
+	if !ok {
+		return false
+	}
+	return t.StringType.Equal(other.StringType)
+}
+
+func (t certificatePEMType) String() string {
+	return "certificatePEMType"
+}
+
+func (t certificatePEMType) ValueFromString(_ context.Context, in basetypes.StringValue) (basetypes.StringValuable, diag.Diagnostics) {
+	return certificatePEMValue{StringValue: in}, nil
+}
+
+func (t certificatePEMType) ValueFromTerraform(ctx context.Context, in tftypes.Value) (attr.Value, error) {
+	attrValue, err := t.StringType.ValueFromTerraform(ctx, in)
 	if err != nil {
-		return // the attribute validator reports malformed input
+		return nil, err
 	}
-	resp.PlanValue = types.StringValue(normalised)
+	stringValue, ok := attrValue.(basetypes.StringValue)
+	if !ok {
+		return nil, fmt.Errorf("unexpected value type %T for certificatePEMType", attrValue)
+	}
+	valuable, diags := t.ValueFromString(ctx, stringValue)
+	if diags.HasError() {
+		return nil, fmt.Errorf("error converting StringValue to certificatePEMValue: %v", diags)
+	}
+	return valuable, nil
+}
+
+func (t certificatePEMType) ValueType(context.Context) attr.Value {
+	return certificatePEMValue{}
+}
+
+// certificatePEMsEquivalent reports whether two PEM spellings denote the same
+// certificate (identical DER bytes). It falls back to exact string equality
+// when either side is byte-identical, and returns false when either side
+// cannot be parsed, so an unexpected value still compares strictly rather
+// than silently matching something else.
+func certificatePEMsEquivalent(a, b string) bool {
+	if a == b {
+		return true
+	}
+	da, errA := winclient.ParseCertificatePEM(a)
+	db, errB := winclient.ParseCertificatePEM(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(da, db)
 }
 
 // certificateConfigValidator enforces the cross-field security rules:
@@ -440,7 +523,7 @@ func (v certificateConfigValidator) ValidateResource(ctx context.Context, req re
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("store_location"), &location)...)
 	var storeName types.String
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("store_name"), &storeName)...)
-	var pem types.String
+	var pem certificatePEMValue
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("certificate_pem"), &pem)...)
 	var exportable types.Bool
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("exportable"), &exportable)...)
@@ -600,9 +683,9 @@ func certificateStateToModel(ctx context.Context, plan windowsCertificateModel, 
 	m.PFXPasswordWO = types.StringNull()
 	m.PFXWOVersion = plan.PFXWOVersion
 	if plan.CertificatePEM.IsNull() {
-		m.CertificatePEM = types.StringNull()
+		m.CertificatePEM = certificatePEMNull()
 	} else if info.NormalizedPEM != "" {
-		m.CertificatePEM = types.StringValue(info.NormalizedPEM)
+		m.CertificatePEM = certificatePEMValueOf(info.NormalizedPEM)
 	} else {
 		m.CertificatePEM = plan.CertificatePEM
 	}
@@ -961,7 +1044,7 @@ func (r *windowsCertificateResource) ImportState(ctx context.Context, req resour
 	if info.HasPrivateKey {
 		plan.PFXWOVersion = types.Int64Value(1)
 	} else if info.NormalizedPEM != "" {
-		plan.CertificatePEM = types.StringValue(info.NormalizedPEM)
+		plan.CertificatePEM = certificatePEMValueOf(info.NormalizedPEM)
 	}
 	m, md := certificateStateToModel(ctx, plan, info)
 	resp.Diagnostics.Append(md...)
