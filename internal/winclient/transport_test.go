@@ -443,7 +443,7 @@ func TestTransportInsecureOptOutConnects(t *testing.T) {
 
 	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
-		PrivateKey: string(keyPEM), InsecureIgnoreHostKey: true, Timeout: testTimeout,
+		PrivateKey: string(keyPEM), InsecureIgnoreHostKey: BoolPtr(true), Timeout: testTimeout,
 	})
 	if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
 		t.Errorf("stdout = %q", stdout)
@@ -1383,7 +1383,7 @@ func TestDialStalledHandshakeBoundedByTimeout(t *testing.T) {
 	host, port := startSilentListener(t)
 	c := newTransportTestClient(t, Config{
 		Host: host, Port: port, Username: "tester",
-		Password: "secret", InsecureIgnoreHostKey: true, Timeout: 2 * time.Second,
+		Password: "secret", InsecureIgnoreHostKey: BoolPtr(true), Timeout: 2 * time.Second,
 	})
 
 	start := time.Now()
@@ -1412,7 +1412,7 @@ func TestDialStalledHandshakeAbortedByContextCancel(t *testing.T) {
 	_, port := startSilentListener(t)
 	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: port, Username: "tester",
-		Password: "secret", InsecureIgnoreHostKey: true, Timeout: 5 * time.Minute,
+		Password: "secret", InsecureIgnoreHostKey: BoolPtr(true), Timeout: 5 * time.Minute,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1462,7 +1462,7 @@ func TestFirstCallDialErrorDoesNotPinOneShot(t *testing.T) {
 	noAgent(t)
 	c := newTransportTestClient(t, Config{
 		Host: "127.0.0.1", Port: closedPort(t), Username: "tester",
-		Password: "secret", InsecureIgnoreHostKey: true, Timeout: testTimeout,
+		Password: "secret", InsecureIgnoreHostKey: BoolPtr(true), Timeout: testTimeout,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)

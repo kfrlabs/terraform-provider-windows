@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/pem"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -259,8 +260,8 @@ func TestHostKeyCallbackRejectsAmbiguousConfig(t *testing.T) {
 	_, authorizedKey, _ := newTestKey(t)
 	cases := map[string]Config{
 		"host_key and known_hosts_path": {HostKey: authorizedKey, KnownHostsPath: "/tmp/known_hosts"},
-		"insecure and host_key":         {InsecureIgnoreHostKey: true, HostKey: authorizedKey},
-		"insecure and known_hosts_path": {InsecureIgnoreHostKey: true, KnownHostsPath: "/tmp/known_hosts"},
+		"insecure and host_key":         {InsecureIgnoreHostKey: BoolPtr(true), HostKey: authorizedKey},
+		"insecure and known_hosts_path": {InsecureIgnoreHostKey: BoolPtr(true), KnownHostsPath: "/tmp/known_hosts"},
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -272,7 +273,7 @@ func TestHostKeyCallbackRejectsAmbiguousConfig(t *testing.T) {
 }
 
 func TestHostKeyCallbackInsecureOptOut(t *testing.T) {
-	cb, algos, err := hostKeyCallback(Config{InsecureIgnoreHostKey: true})
+	cb, algos, err := hostKeyCallback(Config{InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -421,7 +422,9 @@ func TestResolveFromEnvNewFields(t *testing.T) {
 	t.Setenv(EnvInsecureIgnoreHostKey, "true")
 
 	var cfg Config
-	ResolveFromEnv(&cfg)
+	if err := ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("ResolveFromEnv: %v", err)
+	}
 
 	if cfg.PrivateKey != "PEM-BODY" {
 		t.Errorf("PrivateKey = %q", cfg.PrivateKey)
@@ -441,7 +444,7 @@ func TestResolveFromEnvNewFields(t *testing.T) {
 	if cfg.UseAgent == nil || !*cfg.UseAgent {
 		t.Error("UseAgent should be true")
 	}
-	if !cfg.InsecureIgnoreHostKey {
+	if cfg.InsecureIgnoreHostKey == nil || !*cfg.InsecureIgnoreHostKey {
 		t.Error("InsecureIgnoreHostKey should be true")
 	}
 }
@@ -450,10 +453,13 @@ func TestResolveFromEnvNewFields(t *testing.T) {
 func TestResolveFromEnvDoesNotOverrideExplicitValues(t *testing.T) {
 	t.Setenv(EnvPrivateKey, "from-env")
 	t.Setenv(EnvUseAgent, "true")
+	t.Setenv(EnvInsecureIgnoreHostKey, "true")
 
 	no := false
-	cfg := Config{PrivateKey: "from-config", UseAgent: &no}
-	ResolveFromEnv(&cfg)
+	cfg := Config{PrivateKey: "from-config", UseAgent: &no, InsecureIgnoreHostKey: &no}
+	if err := ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("ResolveFromEnv: %v", err)
+	}
 
 	if cfg.PrivateKey != "from-config" {
 		t.Errorf("PrivateKey = %q, want from-config", cfg.PrivateKey)
@@ -461,15 +467,21 @@ func TestResolveFromEnvDoesNotOverrideExplicitValues(t *testing.T) {
 	if cfg.UseAgent == nil || *cfg.UseAgent {
 		t.Error("explicit UseAgent=false must survive ResolveFromEnv")
 	}
+	if cfg.InsecureIgnoreHostKey == nil || *cfg.InsecureIgnoreHostKey {
+		t.Error("explicit InsecureIgnoreHostKey=false must survive ResolveFromEnv")
+	}
 }
 
-// WINDOWS_PORT fills in only when no port was configured, and a value that is
-// not a usable TCP port is ignored rather than dialed.
+// WINDOWS_PORT fills in only when no port was configured. A set-but-malformed
+// or out-of-range value is an error rather than a silent fallback to 22, and
+// an explicit port wins even over a malformed variable.
 func TestResolveFromEnvPort(t *testing.T) {
 	t.Run("fills empty port", func(t *testing.T) {
 		t.Setenv(EnvPort, "2222")
 		var cfg Config
-		ResolveFromEnv(&cfg)
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("ResolveFromEnv: %v", err)
+		}
 		if cfg.Port != 2222 {
 			t.Errorf("Port = %d, want 2222", cfg.Port)
 		}
@@ -478,31 +490,63 @@ func TestResolveFromEnvPort(t *testing.T) {
 	t.Run("explicit port wins", func(t *testing.T) {
 		t.Setenv(EnvPort, "2222")
 		cfg := Config{Port: 2200}
-		ResolveFromEnv(&cfg)
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("ResolveFromEnv: %v", err)
+		}
 		if cfg.Port != 2200 {
 			t.Errorf("Port = %d, want the explicit 2200", cfg.Port)
 		}
 	})
 
-	for _, bad := range []string{"", "twenty-two", "0", "-1", "65536", "22 "} {
-		t.Run("ignores "+bad, func(t *testing.T) {
+	t.Run("explicit port wins over malformed env", func(t *testing.T) {
+		t.Setenv(EnvPort, "not-a-port")
+		cfg := Config{Port: 2200}
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("explicit port must skip env validation, got: %v", err)
+		}
+		if cfg.Port != 2200 {
+			t.Errorf("Port = %d, want the explicit 2200", cfg.Port)
+		}
+	})
+
+	t.Run("empty means unset", func(t *testing.T) {
+		t.Setenv(EnvPort, "")
+		var cfg Config
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("empty WINDOWS_PORT must count as unset, got: %v", err)
+		}
+		if cfg.Port != 0 {
+			t.Errorf("empty WINDOWS_PORT should leave Port unset, got %d", cfg.Port)
+		}
+	})
+
+	for _, bad := range []string{"twenty-two", "0", "-1", "65536", "22 "} {
+		t.Run("rejects "+bad, func(t *testing.T) {
 			t.Setenv(EnvPort, bad)
 			var cfg Config
-			ResolveFromEnv(&cfg)
+			err := ResolveFromEnv(&cfg)
+			if err == nil {
+				t.Fatalf("WINDOWS_PORT=%q should be an error, got Port=%d", bad, cfg.Port)
+			}
+			assertEnvError(t, err, EnvPort, "port")
 			if cfg.Port != 0 {
-				t.Errorf("WINDOWS_PORT=%q should leave Port unset for New to default, got %d", bad, cfg.Port)
+				t.Errorf("WINDOWS_PORT=%q should leave Port unset, got %d", bad, cfg.Port)
 			}
 		})
 	}
 }
 
-// WINDOWS_TIMEOUT fills in only when no timeout was configured, and a value
-// that is not a positive Go duration is ignored in favour of New's default.
+// WINDOWS_TIMEOUT fills in only when no timeout was configured. A
+// set-but-malformed or non-positive value is an error rather than a silent
+// fallback to 30s, and an explicit timeout wins even over a malformed
+// variable.
 func TestResolveFromEnvTimeout(t *testing.T) {
 	t.Run("fills empty timeout", func(t *testing.T) {
 		t.Setenv(EnvTimeout, "45s")
 		var cfg Config
-		ResolveFromEnv(&cfg)
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("ResolveFromEnv: %v", err)
+		}
 		if cfg.Timeout != 45*time.Second {
 			t.Errorf("Timeout = %v, want 45s", cfg.Timeout)
 		}
@@ -511,32 +555,64 @@ func TestResolveFromEnvTimeout(t *testing.T) {
 	t.Run("explicit timeout wins", func(t *testing.T) {
 		t.Setenv(EnvTimeout, "45s")
 		cfg := Config{Timeout: 15 * time.Second}
-		ResolveFromEnv(&cfg)
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("ResolveFromEnv: %v", err)
+		}
 		if cfg.Timeout != 15*time.Second {
 			t.Errorf("Timeout = %v, want the explicit 15s", cfg.Timeout)
 		}
 	})
 
-	for _, bad := range []string{"", "soon", "0", "0s", "-5s"} {
-		t.Run("ignores "+bad, func(t *testing.T) {
+	t.Run("explicit timeout wins over malformed env", func(t *testing.T) {
+		t.Setenv(EnvTimeout, "soon")
+		cfg := Config{Timeout: 15 * time.Second}
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("explicit timeout must skip env validation, got: %v", err)
+		}
+		if cfg.Timeout != 15*time.Second {
+			t.Errorf("Timeout = %v, want the explicit 15s", cfg.Timeout)
+		}
+	})
+
+	t.Run("empty means unset", func(t *testing.T) {
+		t.Setenv(EnvTimeout, "")
+		var cfg Config
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("empty WINDOWS_TIMEOUT must count as unset, got: %v", err)
+		}
+		if cfg.Timeout != 0 {
+			t.Errorf("empty WINDOWS_TIMEOUT should leave Timeout unset, got %v", cfg.Timeout)
+		}
+	})
+
+	for _, bad := range []string{"soon", "0", "0s", "-5s"} {
+		t.Run("rejects "+bad, func(t *testing.T) {
 			t.Setenv(EnvTimeout, bad)
 			var cfg Config
-			ResolveFromEnv(&cfg)
+			err := ResolveFromEnv(&cfg)
+			if err == nil {
+				t.Fatalf("WINDOWS_TIMEOUT=%q should be an error, got Timeout=%v", bad, cfg.Timeout)
+			}
+			assertEnvError(t, err, EnvTimeout, "timeout")
 			if cfg.Timeout != 0 {
-				t.Errorf("WINDOWS_TIMEOUT=%q should leave Timeout unset for New to default, got %v", bad, cfg.Timeout)
+				t.Errorf("WINDOWS_TIMEOUT=%q should leave Timeout unset, got %v", bad, cfg.Timeout)
 			}
 		})
 	}
 }
 
-// WINDOWS_MAX_SESSIONS fills in only when no pool size was configured, and
-// a value that is not a positive integer is ignored in favour of New's
-// default.
+// WINDOWS_MAX_SESSIONS fills in only when no pool size was configured. A
+// set-but-malformed or non-positive value is an error rather than a silent
+// fallback, and an explicit pool size wins even over a malformed variable.
+// Values above MaxMaxSessions are applied here so the caller's max_sessions
+// attribute check reports them.
 func TestResolveFromEnvMaxSessions(t *testing.T) {
 	t.Run("fills empty pool size", func(t *testing.T) {
 		t.Setenv(EnvMaxSessions, "2")
 		var cfg Config
-		ResolveFromEnv(&cfg)
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("ResolveFromEnv: %v", err)
+		}
 		if cfg.MaxSessions != 2 {
 			t.Errorf("MaxSessions = %d, want 2", cfg.MaxSessions)
 		}
@@ -545,37 +621,138 @@ func TestResolveFromEnvMaxSessions(t *testing.T) {
 	t.Run("explicit pool size wins", func(t *testing.T) {
 		t.Setenv(EnvMaxSessions, "2")
 		cfg := Config{MaxSessions: 6}
-		ResolveFromEnv(&cfg)
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("ResolveFromEnv: %v", err)
+		}
 		if cfg.MaxSessions != 6 {
 			t.Errorf("MaxSessions = %d, want the explicit 6", cfg.MaxSessions)
 		}
 	})
 
-	for _, bad := range []string{"", "many", "0", "-1", "4.5"} {
-		t.Run("ignores "+bad, func(t *testing.T) {
+	t.Run("explicit pool size wins over malformed env", func(t *testing.T) {
+		t.Setenv(EnvMaxSessions, "soon")
+		cfg := Config{MaxSessions: 6}
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("explicit pool size must skip env validation, got: %v", err)
+		}
+		if cfg.MaxSessions != 6 {
+			t.Errorf("MaxSessions = %d, want the explicit 6", cfg.MaxSessions)
+		}
+	})
+
+	t.Run("empty means unset", func(t *testing.T) {
+		t.Setenv(EnvMaxSessions, "")
+		var cfg Config
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("empty WINDOWS_MAX_SESSIONS must count as unset, got: %v", err)
+		}
+		if cfg.MaxSessions != 0 {
+			t.Errorf("empty WINDOWS_MAX_SESSIONS should leave MaxSessions unset, got %d", cfg.MaxSessions)
+		}
+	})
+
+	t.Run("above MaxMaxSessions applies for caller to reject", func(t *testing.T) {
+		t.Setenv(EnvMaxSessions, "33")
+		var cfg Config
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("ResolveFromEnv: %v", err)
+		}
+		if cfg.MaxSessions != 33 {
+			t.Errorf("MaxSessions = %d, want 33 for the caller to reject", cfg.MaxSessions)
+		}
+	})
+
+	for _, bad := range []string{"many", "0", "-1", "4.5"} {
+		t.Run("rejects "+bad, func(t *testing.T) {
 			t.Setenv(EnvMaxSessions, bad)
 			var cfg Config
-			ResolveFromEnv(&cfg)
+			err := ResolveFromEnv(&cfg)
+			if err == nil {
+				t.Fatalf("WINDOWS_MAX_SESSIONS=%q should be an error, got MaxSessions=%d", bad, cfg.MaxSessions)
+			}
+			assertEnvError(t, err, EnvMaxSessions, "max_sessions")
 			if cfg.MaxSessions != 0 {
-				t.Errorf("WINDOWS_MAX_SESSIONS=%q should leave MaxSessions unset for New to default, got %d", bad, cfg.MaxSessions)
+				t.Errorf("WINDOWS_MAX_SESSIONS=%q should leave MaxSessions unset, got %d", bad, cfg.MaxSessions)
 			}
 		})
 	}
 }
 
-// An unparseable WINDOWS_USE_AGENT must not silently read as false.
-func TestResolveFromEnvIgnoresMalformedBools(t *testing.T) {
-	t.Setenv(EnvUseAgent, "yes-please")
-	t.Setenv(EnvInsecureIgnoreHostKey, "maybe")
+// A set-but-malformed WINDOWS_USE_AGENT or WINDOWS_INSECURE_IGNORE_HOST_KEY
+// is an error rather than a silent fallback; an explicit value wins even over
+// a malformed variable, and an empty string counts as unset.
+func TestResolveFromEnvRejectsMalformedBools(t *testing.T) {
+	t.Run("malformed use_agent is an error", func(t *testing.T) {
+		t.Setenv(EnvUseAgent, "yes-please")
+		var cfg Config
+		err := ResolveFromEnv(&cfg)
+		if err == nil {
+			t.Fatal("malformed WINDOWS_USE_AGENT should be an error")
+		}
+		assertEnvError(t, err, EnvUseAgent, "use_agent")
+		if cfg.UseAgent != nil {
+			t.Errorf("malformed WINDOWS_USE_AGENT should leave UseAgent unset, got %v", *cfg.UseAgent)
+		}
+	})
 
-	var cfg Config
-	ResolveFromEnv(&cfg)
+	t.Run("malformed insecure is an error", func(t *testing.T) {
+		t.Setenv(EnvInsecureIgnoreHostKey, "maybe")
+		var cfg Config
+		err := ResolveFromEnv(&cfg)
+		if err == nil {
+			t.Fatal("malformed WINDOWS_INSECURE_IGNORE_HOST_KEY should be an error")
+		}
+		assertEnvError(t, err, EnvInsecureIgnoreHostKey, "insecure_ignore_host_key")
+		if cfg.InsecureIgnoreHostKey != nil {
+			t.Error("malformed WINDOWS_INSECURE_IGNORE_HOST_KEY must not enable the opt-out")
+		}
+	})
 
-	if cfg.UseAgent != nil {
-		t.Errorf("malformed WINDOWS_USE_AGENT should leave UseAgent unset, got %v", *cfg.UseAgent)
+	t.Run("empty means unset", func(t *testing.T) {
+		t.Setenv(EnvUseAgent, "")
+		t.Setenv(EnvInsecureIgnoreHostKey, "")
+		var cfg Config
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("empty bool env must count as unset, got: %v", err)
+		}
+		if cfg.UseAgent != nil {
+			t.Errorf("empty WINDOWS_USE_AGENT should leave UseAgent unset, got %v", *cfg.UseAgent)
+		}
+		if cfg.InsecureIgnoreHostKey != nil {
+			t.Errorf("empty WINDOWS_INSECURE_IGNORE_HOST_KEY should leave InsecureIgnoreHostKey unset, got %v", *cfg.InsecureIgnoreHostKey)
+		}
+	})
+
+	t.Run("explicit false wins over malformed env", func(t *testing.T) {
+		t.Setenv(EnvUseAgent, "yes-please")
+		t.Setenv(EnvInsecureIgnoreHostKey, "maybe")
+		no := false
+		cfg := Config{UseAgent: &no, InsecureIgnoreHostKey: &no}
+		if err := ResolveFromEnv(&cfg); err != nil {
+			t.Fatalf("explicit false must skip env validation, got: %v", err)
+		}
+		if cfg.UseAgent == nil || *cfg.UseAgent {
+			t.Error("explicit UseAgent=false must survive malformed env")
+		}
+		if cfg.InsecureIgnoreHostKey == nil || *cfg.InsecureIgnoreHostKey {
+			t.Error("explicit InsecureIgnoreHostKey=false must survive malformed env")
+		}
+	})
+}
+
+// assertEnvError checks that err is an *EnvError naming the expected variable
+// and attribute, so Configure can map it to an attribute-scoped diagnostic.
+func assertEnvError(t *testing.T, err error, wantVar, wantAttr string) {
+	t.Helper()
+	var envErr *EnvError
+	if !errors.As(err, &envErr) {
+		t.Fatalf("error type = %T, want *EnvError (%v)", err, err)
 	}
-	if cfg.InsecureIgnoreHostKey {
-		t.Error("malformed WINDOWS_INSECURE_IGNORE_HOST_KEY must not enable the opt-out")
+	if envErr.Var != wantVar {
+		t.Errorf("error Var = %q, want %q", envErr.Var, wantVar)
+	}
+	if envErr.Attr != wantAttr {
+		t.Errorf("error Attr = %q, want %q", envErr.Attr, wantAttr)
 	}
 }
 

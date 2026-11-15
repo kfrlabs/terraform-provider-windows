@@ -44,9 +44,11 @@ func testAccNTPPreCheck(t *testing.T) {
 // instead.
 func newAccNTPClient() (*winclient.NTPClient, error) {
 	cfg := winclient.Config{Timeout: 60 * time.Second}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		return nil, err
+	}
 	if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
-		cfg.InsecureIgnoreHostKey = true
+		cfg.InsecureIgnoreHostKey = winclient.BoolPtr(true)
 	}
 	c, err := winclient.New(cfg)
 	if err != nil {

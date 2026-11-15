@@ -169,7 +169,7 @@ func TestNewPoolSize(t *testing.T) {
 	noAgent(t)
 
 	t.Run("zero defaults to 4", func(t *testing.T) {
-		c, err := New(Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
+		c, err := New(Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: BoolPtr(true)})
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestNewPoolSize(t *testing.T) {
 
 	for _, bad := range []int{-1, -100, MaxMaxSessions + 1} {
 		t.Run("rejects pool size", func(t *testing.T) {
-			if _, err := New(Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true, MaxSessions: bad}); err == nil {
+			if _, err := New(Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: BoolPtr(true), MaxSessions: bad}); err == nil {
 				t.Errorf("New with MaxSessions=%d should fail", bad)
 			}
 		})

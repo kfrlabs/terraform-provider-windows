@@ -41,7 +41,7 @@ func TestDNSClientDataSourceConfigure(t *testing.T) {
 	if !resp.Diagnostics.HasError() {
 		t.Error("wrong-type ProviderData should produce an error diagnostic")
 	}
-	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
+	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: winclient.BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)
 	}

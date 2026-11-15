@@ -33,7 +33,7 @@ import (
 // naNewClient returns a *NetworkAdaptersClient for tests.
 func naNewClient(t *testing.T) *NetworkAdaptersClient {
 	t.Helper()
-	c, err := New(Config{Host: "winna01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
+	c, err := New(Config{Host: "winna01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

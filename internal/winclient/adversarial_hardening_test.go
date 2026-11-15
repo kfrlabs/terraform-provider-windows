@@ -10,7 +10,7 @@ import (
 )
 
 func TestAdversarialNewRejectsBadPortAndTimeout(t *testing.T) {
-	base := Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true}
+	base := Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: BoolPtr(true)}
 	for _, port := range []int{-1, -22, 65536, 100000} {
 		cfg := base
 		cfg.Port = port

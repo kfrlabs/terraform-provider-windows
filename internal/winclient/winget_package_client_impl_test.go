@@ -31,7 +31,7 @@ import (
 // wpNewClient returns a *WingetPackageClientImpl.
 func wpNewClient(t *testing.T) *WingetPackageClientImpl {
 	t.Helper()
-	c, err := New(Config{Host: "winpkg01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
+	c, err := New(Config{Host: "winpkg01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1231,7 +1231,7 @@ func TestWPRunRetryable_SourceUnreachable_ContextCancelDuringWait(t *testing.T) 
 // ---------------------------------------------------------------------------
 
 func TestWPNewClient_StoredCorrectly(t *testing.T) {
-	c, err := New(Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
+	c, err := New(Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

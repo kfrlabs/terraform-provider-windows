@@ -36,7 +36,7 @@ import (
 // fpNewClient returns a *FirewallProfileClient for tests.
 func fpNewClient(t *testing.T) *FirewallProfileClient {
 	t.Helper()
-	c, err := New(Config{Host: "winfp01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
+	c, err := New(Config{Host: "winfp01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -768,7 +768,7 @@ func TestFirewallProfileApply_ShipsGuard(t *testing.T) {
 // mustFPClientWithPort builds a client whose SSH port is port.
 func mustFPClientWithPort(t *testing.T, port int) *Client {
 	t.Helper()
-	c, err := New(Config{Host: "winfp01", Port: port, Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
+	c, err := New(Config{Host: "winfp01", Port: port, Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

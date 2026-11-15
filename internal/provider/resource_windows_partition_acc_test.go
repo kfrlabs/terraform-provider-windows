@@ -107,9 +107,11 @@ func testAccCheckPartitionDestroyed(uniqueID string, lastID *string) resource.Te
 			return fmt.Errorf("parse captured partition id: %w", err)
 		}
 		cfg := winclient.Config{Timeout: 60 * time.Second}
-		winclient.ResolveFromEnv(&cfg)
+		if err := winclient.ResolveFromEnv(&cfg); err != nil {
+			return err
+		}
 		if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
-			cfg.InsecureIgnoreHostKey = true
+			cfg.InsecureIgnoreHostKey = winclient.BoolPtr(true)
 		}
 		c, err := winclient.New(cfg)
 		if err != nil {

@@ -153,7 +153,7 @@ func agentAuthMethod() (ssh.AuthMethod, io.Closer, error) {
 func hostKeyCallback(cfg Config) (ssh.HostKeyCallback, []string, error) {
 	pinned := strings.TrimSpace(cfg.HostKey)
 
-	if cfg.InsecureIgnoreHostKey {
+	if cfg.InsecureIgnoreHostKey != nil && *cfg.InsecureIgnoreHostKey {
 		if pinned != "" || cfg.KnownHostsPath != "" {
 			return nil, nil, errors.New("winclient: insecure_ignore_host_key cannot be combined with host_key or " +
 				"known_hosts_path; drop insecure_ignore_host_key to keep verifying the server")

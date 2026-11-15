@@ -34,7 +34,7 @@ import (
 // iisBindingNewClient returns an *IISBindingClient for tests.
 func iisBindingNewClient(t *testing.T) *IISBindingClient {
 	t.Helper()
-	c, err := New(Config{Host: "winiis01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
+	c, err := New(Config{Host: "winiis01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

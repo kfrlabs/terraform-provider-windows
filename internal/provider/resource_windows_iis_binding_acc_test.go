@@ -39,9 +39,11 @@ func testAccIISBindingPreCheck(t *testing.T) {
 // testAccCheckIISBindingDestroy asserts every managed binding is gone from IIS.
 func testAccCheckIISBindingDestroy(s *terraform.State) error {
 	cfg := winclient.Config{Timeout: 60 * time.Second}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		return err
+	}
 	if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
-		cfg.InsecureIgnoreHostKey = true
+		cfg.InsecureIgnoreHostKey = winclient.BoolPtr(true)
 	}
 	c, err := winclient.New(cfg)
 	if err != nil {
@@ -252,7 +254,9 @@ func TestAccWindowsIISBinding_Lockout(t *testing.T) {
 	accEnsureIIS(t)
 
 	cfg := winclient.Config{Timeout: 60 * time.Second}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	sshPort := cfg.Port
 	if sshPort <= 0 || sshPort > 65535 {
 		sshPort = 22

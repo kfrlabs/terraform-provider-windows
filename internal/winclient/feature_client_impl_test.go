@@ -35,7 +35,7 @@ func newFeatTestClient(t *testing.T) *Client {
 		Username:              "u",
 		Password:              "p",
 		Timeout:               30 * time.Second,
-		InsecureIgnoreHostKey: true,
+		InsecureIgnoreHostKey: BoolPtr(true),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
