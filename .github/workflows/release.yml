@@ -7,8 +7,16 @@
 #
 # The `gate` job must pass before anything is published: the tagged commit
 # has to be on main, and build/vet, unit tests and golangci-lint must be
-# green on it. The latest testacc-windows result for the commit is reported
-# as a warning only (it depends on a live Windows host, see #352).
+# green on it. The latest testacc-windows run for the tagged commit must
+# also have concluded success with the full suite (a push-to-main or plain
+# workflow_dispatch run, mode=full): selective PR and run_filter runs do
+# not qualify, and docs-only/mode=none commits (which leave no run) must
+# use the auditable workflow_dispatch bypass below.
+#
+# Manual releases (workflow_dispatch for a tag) may set
+# allow_acceptance_bypass together with a bypass_justification. The bypass
+# is honoured only on workflow_dispatch, is echoed to the step summary,
+# and is appended to the release notes. Tag pushes can never bypass.
 #
 # Each release also ships an SPDX SBOM per archive (GoReleaser + syft) and a
 # GitHub build provenance attestation (Sigstore) covering every file listed
@@ -30,6 +38,20 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to release (e.g. v0.2.0); must point to a commit on main."
+        required: true
+      allow_acceptance_bypass:
+        description: "Skip the blocking testacc-windows gate (auditable override; justification required)."
+        required: false
+        default: false
+        type: boolean
+      bypass_justification:
+        description: "Why the acceptance gate is bypassed (recorded in the step summary and release notes)."
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -44,30 +66,144 @@ jobs:
     permissions:
       contents: read
       actions: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      bypassed: ${{ steps.acceptance.outputs.bypassed }}
+      bypass_justification: ${{ steps.acceptance.outputs.justification }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
+      - name: resolve release tag
+        id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          # Tag pushes release GITHUB_REF_NAME; manual runs release the tag input.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *)
+              echo "::error::tag '$TAG' does not match v*"
+              exit 1
+              ;;
+          esac
+          SHA=$(git rev-list -n 1 "$TAG") || {
+            echo "::error::tag '$TAG' not found"
+            exit 1
+          }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
       - name: tagged commit is on main
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          TAG_SHA: ${{ steps.resolve.outputs.sha }}
         run: |
           git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::tag ${GITHUB_REF_NAME} points to ${GITHUB_SHA}, which is not on main"
+          if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+            echo "::error::tag $TAG points to $TAG_SHA, which is not on main"
             exit 1
           fi
 
-      - name: testacc-windows status (advisory)
+      - name: testacc-windows gate (blocking)
+        id: acceptance
         env:
           GH_TOKEN: ${{ github.token }}
+          BYPASS: ${{ inputs.allow_acceptance_bypass }}
+          JUSTIFICATION: ${{ inputs.bypass_justification }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          TAG_SHA: ${{ steps.resolve.outputs.sha }}
         run: |
-          conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
-            --workflow testacc-windows.yml --limit 1 --json conclusion --jq '.[0].conclusion // "none"' || echo "unknown")
-          if [ "$conclusion" = "success" ]; then
-            echo "testacc-windows succeeded on ${GITHUB_SHA}"
-          else
-            echo "::warning::latest testacc-windows run on ${GITHUB_SHA}: ${conclusion}"
+          # The bypass is an auditable override for manual releases only:
+          # tag pushes always require a green full acceptance run.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$BYPASS" = "true" ]; then
+            if [ -z "$(printf '%s' "$JUSTIFICATION" | tr -d '[:space:]')" ]; then
+              echo "::error::allow_acceptance_bypass requires bypass_justification"
+              exit 1
+            fi
+            {
+              echo "### release gate: acceptance bypassed"
+              echo ""
+              echo "$JUSTIFICATION"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "bypassed=true" >> "$GITHUB_OUTPUT"
+            DELIM="BYPASS_EOF_${GITHUB_RUN_ID}_${RANDOM}_${RANDOM}"
+            {
+              echo "justification<<$DELIM"
+              echo "$JUSTIFICATION"
+              echo "$DELIM"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "bypassed=false" >> "$GITHUB_OUTPUT"
+          echo "justification=" >> "$GITHUB_OUTPUT"
+          # Latest testacc-windows run for the tagged commit (fail-closed:
+          # unknown results block the release; the bypass covers them).
+          run_json=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$TAG_SHA" \
+            --workflow testacc-windows.yml --limit 1 \
+            --json databaseId,url,headSha,headBranch,event,conclusion) || {
+            echo "::error::could not query testacc-windows runs on $TAG_SHA (fail-closed; manual releases may use allow_acceptance_bypass with a justification)"
+            exit 1
+          }
+          if [ -z "$run_json" ] || [ "$run_json" = "[]" ]; then
+            echo "::error::no testacc-windows run on $TAG_SHA (tag $TAG): docs-only/mode=none commits leave no run and must use the workflow_dispatch bypass with a justification"
+            exit 1
+          fi
+          run_id=$(echo "$run_json" | jq -r '.[0].databaseId // "unknown"')
+          run_url=$(echo "$run_json" | jq -r '.[0].url // "unknown"')
+          run_head=$(echo "$run_json" | jq -r '.[0].headSha // "unknown"')
+          run_branch=$(echo "$run_json" | jq -r '.[0].headBranch // "unknown"')
+          run_event=$(echo "$run_json" | jq -r '.[0].event // "unknown"')
+          conclusion=$(echo "$run_json" | jq -r '.[0].conclusion // "unknown"')
+          if [ "$run_head" != "$TAG_SHA" ]; then
+            echo "::error::testacc-windows run $run_url is for head $run_head, expected $TAG_SHA (tag $TAG)"
+            exit 1
+          fi
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::latest testacc-windows run on $TAG_SHA concluded '$conclusion' ($run_url): the gate requires success"
+            exit 1
+          fi
+          # Only full-suite runs qualify: selective PR and run_filter runs do not.
+          case "$run_event" in
+            push|workflow_dispatch) ;;
+            *)
+              echo "::error::testacc-windows run $run_url used event '$run_event': only full runs (push to main, plain workflow_dispatch) qualify"
+              exit 1
+              ;;
+          esac
+          if [ "$run_branch" != "main" ]; then
+            echo "::error::testacc-windows run $run_url ran on branch '$run_branch': only runs on main qualify"
+            exit 1
+          fi
+          job_names=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" \
+            --paginate -q '.jobs[].name') || {
+            echo "::error::could not inspect jobs of testacc-windows run $run_url (fail-closed; manual releases may use allow_acceptance_bypass with a justification)"
+            exit 1
+          }
+          if ! echo "$job_names" | grep -q '^acceptance '; then
+            echo "::error::testacc-windows run $run_url ran no acceptance jobs (mode=none): releases for such commits must use the workflow_dispatch bypass with a justification"
+            exit 1
+          fi
+          if echo "$job_names" | grep -q 'run-filter'; then
+            echo "::error::testacc-windows run $run_url used run_filter (mode=filter): only full runs qualify"
+            exit 1
+          fi
+          echo "testacc-windows run $run_id $run_url head $run_head event $run_event branch $run_branch conclusion $conclusion mode full"
+          {
+            echo "### release gate: testacc-windows"
+            echo ""
+            echo "- run: $run_url"
+            echo "- head SHA: $run_head (tag $TAG -> $TAG_SHA)"
+            echo "- event: $run_event / branch: $run_branch"
+            echo "- conclusion: $conclusion"
+            echo "- mode: full (push-to-main/plain-dispatch run with acceptance jobs, no run-filter)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
@@ -101,6 +237,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Manual runs check out the triggering branch, so move to the tag the
+      # gate approved; tag pushes already sit on it.
+      - name: checkout release tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ needs.gate.outputs.tag }}
+        run: git checkout "$TAG"
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
@@ -127,7 +271,11 @@ jobs:
 
       - name: resolve checksums file
         id: sums
-        run: echo "path=dist/terraform-provider-windows_${GITHUB_REF_NAME#v}_SHA256SUMS" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ needs.gate.outputs.tag }}
+        # GITHUB_REF_NAME is the branch on workflow_dispatch, so the tag
+        # comes from the gate (push ref or dispatch input).
+        run: echo "path=dist/terraform-provider-windows_${TAG#v}_SHA256SUMS" >> "$GITHUB_OUTPUT"
 
       # SHA256SUMS lists the archives, the registry manifest and the SBOMs,
       # so a single attestation covers every published file.
@@ -135,3 +283,21 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: ${{ steps.sums.outputs.path }}
+
+      # The bypass is already in the gate step summary; appending it here
+      # keeps the published release itself auditable.
+      - name: annotate acceptance bypass in release notes
+        if: needs.gate.outputs.bypassed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.gate.outputs.tag }}
+          BYPASS_JUSTIFICATION: ${{ needs.gate.outputs.bypass_justification }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/release-notes.md"
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "> **Acceptance gate bypassed:** $BYPASS_JUSTIFICATION"
+          } >> "$RUNNER_TEMP/release-notes.md"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-notes.md"
