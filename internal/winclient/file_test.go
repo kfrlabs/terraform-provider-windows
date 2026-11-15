@@ -248,15 +248,72 @@ func TestBuildFileSetScript_TargetDownloadRequiresChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildFileSetScript: %v", err)
 	}
-	if stdin != "" {
-		t.Error("target-side download must not use stdin")
-	}
 	if !strings.Contains(script, "Invoke-WebRequest") {
 		t.Error("expected a target-side download")
 	}
-	// Deterministic, sorted header rendering.
-	if !strings.Contains(script, "@{'Accept' = '*/*'; 'Authorization' = 'Bearer t'}") {
-		t.Errorf("headers not rendered deterministically:\n%s", script)
+	// The URL is not secret and stays in the script body.
+	if !strings.Contains(script, "https://repo.example.com/app.msi") {
+		t.Error("expected the download URL in the script body")
+	}
+	// The Sensitive headers travel as JSON on stdin, never as an embedded
+	// hashtable literal in the script body.
+	if strings.Contains(script, "Bearer t") || strings.Contains(script, "Authorization") {
+		t.Errorf("headers leaked into the script body; they must travel on stdin only:\n%s", script)
+	}
+	var decoded map[string]string
+	if jerr := json.Unmarshal([]byte(stdin), &decoded); jerr != nil {
+		t.Fatalf("stdin is not header JSON: %v\nstdin: %s", jerr, stdin)
+	}
+	if decoded["Authorization"] != "Bearer t" || decoded["Accept"] != "*/*" {
+		t.Errorf("stdin headers = %v", decoded)
+	}
+	if !strings.Contains(script, "[Console]::In.ReadToEnd()") {
+		t.Error("script should decode its header payload from stdin")
+	}
+}
+
+// The Sensitive download headers must travel as JSON on stdin and never
+// appear in the script body — including special characters that would need
+// PowerShell quoting.
+func TestFileSet_TargetDownloadHeadersOnStdinOnly(t *testing.T) {
+	fc := newFileTestClient(t)
+
+	headers := map[string]string{
+		"Authorization": "Bearer s3cr3t-t0ken",
+		"X-Custom":      "it's a $ecret with `backtick`",
+	}
+	var gotScript, gotStdin string
+	defer stubFileRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		gotScript, gotStdin = script, stdin
+		return fileOKEnvelope(t, sampleFileData()), "", nil
+	})()
+
+	if _, err := fc.Set(context.Background(), FileInput{
+		Path:             `C:\tmp\app.msi`,
+		DownloadOnTarget: true,
+		SourceURL:        "https://repo.example.com/app.msi",
+		SourceURLSHA256:  strings.Repeat("a", 64),
+		SourceURLHeaders: headers,
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	for _, secret := range []string{"Bearer s3cr3t-t0ken", "it's a $ecret with `backtick`", "Authorization", "X-Custom"} {
+		if strings.Contains(gotScript, secret) {
+			t.Errorf("script embeds header secret %q; headers must travel on stdin only", secret)
+		}
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(gotStdin), &decoded); err != nil {
+		t.Fatalf("stdin is not header JSON: %v\nstdin: %s", err, gotStdin)
+	}
+	for k, want := range headers {
+		if decoded[k] != want {
+			t.Errorf("stdin header %q = %q, want %q", k, decoded[k], want)
+		}
+	}
+	if !strings.Contains(gotScript, "https://repo.example.com/app.msi") {
+		t.Error("expected the non-secret URL in the script body")
 	}
 }
 
@@ -288,11 +345,5 @@ func TestNormaliseFileAttributes(t *testing.T) {
 	// EC/CV-6.
 	if _, err := NormaliseFileAttributes([]string{"system", "temporary"}); !IsFileError(err, FileErrorInvalidInput) {
 		t.Errorf("system + temporary must be rejected, got %v", err)
-	}
-}
-
-func TestPsHeadersHashtable_Empty(t *testing.T) {
-	if got := psHeadersHashtable(nil); got != "@{}" {
-		t.Errorf("got %q, want @{}", got)
 	}
 }

@@ -6,7 +6,8 @@
 //	EC-3  Type conflict detection (type_conflict response from PS)
 //	EC-4  Read: value not found → (nil, nil) — not an error
 //	EC-12 Delete: idempotent — not_found silently treated as success
-//	buildPSValueExpr: all 7 types, overflow rejection, nil-value errors
+//	buildRVSetStdin: all 7 types, overflow rejection, nil-value errors
+//	Set stdin transport: secrets travel as JSON on stdin, never in the script
 //	parseMultiStringPayload: JSON array, PS single-element quirk, null, malformed
 //	parseDataPayload: all 7 value kinds + found=false + malformed JSON
 //	runScript: context cancellation, transport error, missing envelope, bad JSON
@@ -46,7 +47,7 @@ func newRVTestClient(t *testing.T) *RegistryValueClientImpl {
 
 // stubRVRun replaces runRegistryValuePowerShell for the duration of a test.
 // Returns a restore closure that must be deferred.
-func stubRVRun(fn func(ctx context.Context, c *Client, script string) (string, string, error)) func() {
+func stubRVRun(fn func(ctx context.Context, c *Client, script, stdin string) (string, string, error)) func() {
 	prev := runRegistryValuePowerShell
 	runRegistryValuePowerShell = fn
 	return func() { runRegistryValuePowerShell = prev }
@@ -227,37 +228,53 @@ func TestMapRegistryValueErrorKind(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildPSValueExpr — all 7 types + edge cases
+// buildRVSetStdin — all 7 types + edge cases
+//
+// The secret value payload travels as JSON on stdin, never in the script
+// body. These tests pin the payload shape and the Go-side validation
+// (DWORD/QWORD range checks, nil-value errors, unknown kinds).
 // ---------------------------------------------------------------------------
 
-func TestBuildPSValueExpr_REG_SZ(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+// rvStdinPayload decodes the stdin JSON document produced by buildRVSetStdin.
+func rvStdinPayload(t *testing.T, raw string) rvSetStdin {
+	t.Helper()
+	var p rvSetStdin
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatalf("stdin is not valid JSON: %v\nraw: %s", err, raw)
+	}
+	return p
+}
+
+func TestBuildRVSetStdin_REG_SZ(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindString,
 		ValueString: rvPtr("hello world"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if expr != "'hello world'" {
-		t.Errorf("REG_SZ expr = %q", expr)
+	if got := rvStdinPayload(t, raw).ValueString; got == nil || *got != "hello world" {
+		t.Errorf("value_string = %v, want %q", got, "hello world")
 	}
 }
 
-func TestBuildPSValueExpr_REG_SZ_SingleQuoteEscape(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_SZ_SingleQuotePreserved(t *testing.T) {
+	// No PS quoting happens Go-side any more: the raw value must round-trip
+	// byte-for-byte through the JSON payload.
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindString,
 		ValueString: rvPtr("it's a test"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(expr, "''") {
-		t.Errorf("single-quote not escaped in expr: %q", expr)
+	if got := rvStdinPayload(t, raw).ValueString; got == nil || *got != "it's a test" {
+		t.Errorf("value_string = %v, want single quotes preserved verbatim", got)
 	}
 }
 
-func TestBuildPSValueExpr_REG_SZ_NilValueString(t *testing.T) {
-	_, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_SZ_NilValueString(t *testing.T) {
+	_, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindString,
 		ValueString: nil,
 	})
@@ -269,24 +286,21 @@ func TestBuildPSValueExpr_REG_SZ_NilValueString(t *testing.T) {
 	}
 }
 
-func TestBuildPSValueExpr_REG_EXPAND_SZ(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_EXPAND_SZ(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindExpandString,
 		ValueString: rvPtr(`%SystemRoot%\system32`),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(expr, "'") {
-		t.Errorf("REG_EXPAND_SZ expr should be a PS single-quoted literal: %q", expr)
-	}
-	if !strings.Contains(expr, "SystemRoot") {
-		t.Errorf("expr missing value: %q", expr)
+	if got := rvStdinPayload(t, raw).ValueString; got == nil || *got != `%SystemRoot%\system32` {
+		t.Errorf("value_string = %v, want the raw expand string", got)
 	}
 }
 
-func TestBuildPSValueExpr_REG_EXPAND_SZ_NilValueString(t *testing.T) {
-	_, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_EXPAND_SZ_NilValueString(t *testing.T) {
+	_, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindExpandString,
 		ValueString: nil,
 	})
@@ -298,37 +312,34 @@ func TestBuildPSValueExpr_REG_EXPAND_SZ_NilValueString(t *testing.T) {
 	}
 }
 
-func TestBuildPSValueExpr_REG_DWORD_Valid(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_DWORD_Valid(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindDWord,
 		ValueString: rvPtr("4294967295"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(expr, "4294967295") {
-		t.Errorf("DWORD expr missing value: %q", expr)
-	}
-	if !strings.Contains(expr, "BitConverter") {
-		t.Errorf("DWORD expr should use BitConverter for signed cast: %q", expr)
+	if got := rvStdinPayload(t, raw).ValueString; got == nil || *got != "4294967295" {
+		t.Errorf("value_string = %v, want %q", got, "4294967295")
 	}
 }
 
-func TestBuildPSValueExpr_REG_DWORD_Zero(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_DWORD_Zero(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindDWord,
 		ValueString: rvPtr("0"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(expr, "0") {
-		t.Errorf("DWORD zero expr = %q", expr)
+	if got := rvStdinPayload(t, raw).ValueString; got == nil || *got != "0" {
+		t.Errorf("value_string = %v, want %q", got, "0")
 	}
 }
 
-func TestBuildPSValueExpr_REG_DWORD_Overflow(t *testing.T) {
-	_, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_DWORD_Overflow(t *testing.T) {
+	_, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindDWord,
 		ValueString: rvPtr("4294967296"), // exceeds uint32 max
 	})
@@ -340,15 +351,15 @@ func TestBuildPSValueExpr_REG_DWORD_Overflow(t *testing.T) {
 	}
 }
 
-func TestBuildPSValueExpr_REG_DWORD_NilValueString(t *testing.T) {
-	_, err := buildPSValueExpr(RegistryValueInput{Kind: RegistryValueKindDWord})
+func TestBuildRVSetStdin_REG_DWORD_NilValueString(t *testing.T) {
+	_, err := buildRVSetStdin(RegistryValueInput{Kind: RegistryValueKindDWord})
 	if err == nil {
 		t.Error("expected error for nil ValueString with REG_DWORD")
 	}
 }
 
-func TestBuildPSValueExpr_REG_DWORD_NonNumeric(t *testing.T) {
-	_, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_DWORD_NonNumeric(t *testing.T) {
+	_, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindDWord,
 		ValueString: rvPtr("not-a-number"),
 	})
@@ -357,21 +368,21 @@ func TestBuildPSValueExpr_REG_DWORD_NonNumeric(t *testing.T) {
 	}
 }
 
-func TestBuildPSValueExpr_REG_QWORD_Valid(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_QWORD_Valid(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindQWord,
 		ValueString: rvPtr("18446744073709551615"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(expr, "18446744073709551615") {
-		t.Errorf("QWORD expr missing value: %q", expr)
+	if got := rvStdinPayload(t, raw).ValueString; got == nil || *got != "18446744073709551615" {
+		t.Errorf("value_string = %v, want uint64 max", got)
 	}
 }
 
-func TestBuildPSValueExpr_REG_QWORD_Overflow(t *testing.T) {
-	_, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_QWORD_Overflow(t *testing.T) {
+	_, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindQWord,
 		ValueString: rvPtr("18446744073709551616"), // exceeds uint64 max
 	})
@@ -383,113 +394,108 @@ func TestBuildPSValueExpr_REG_QWORD_Overflow(t *testing.T) {
 	}
 }
 
-func TestBuildPSValueExpr_REG_QWORD_NilValueString(t *testing.T) {
-	_, err := buildPSValueExpr(RegistryValueInput{Kind: RegistryValueKindQWord})
+func TestBuildRVSetStdin_REG_QWORD_NilValueString(t *testing.T) {
+	_, err := buildRVSetStdin(RegistryValueInput{Kind: RegistryValueKindQWord})
 	if err == nil {
 		t.Error("expected error for nil ValueString with REG_QWORD")
 	}
 }
 
-func TestBuildPSValueExpr_REG_MULTI_SZ_MultipleItems(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_MULTI_SZ_MultipleItems(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:         RegistryValueKindMultiString,
 		ValueStrings: []string{"line1", "line2", "line3"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(expr, "[string[]]@(") {
-		t.Errorf("MULTI_SZ expr missing prefix: %q", expr)
-	}
-	if !strings.Contains(expr, "'line1'") || !strings.Contains(expr, "'line2'") {
-		t.Errorf("MULTI_SZ expr missing items: %q", expr)
+	got := rvStdinPayload(t, raw).ValueStrings
+	if len(got) != 3 || got[0] != "line1" || got[1] != "line2" || got[2] != "line3" {
+		t.Errorf("value_strings = %v, want the three items verbatim", got)
 	}
 }
 
-func TestBuildPSValueExpr_REG_MULTI_SZ_Empty(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_MULTI_SZ_Empty(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:         RegistryValueKindMultiString,
 		ValueStrings: []string{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if expr != "[string[]]@()" {
-		t.Errorf("empty MULTI_SZ expr = %q", expr)
+	if got := rvStdinPayload(t, raw).ValueStrings; len(got) != 0 {
+		t.Errorf("value_strings = %v, want empty", got)
 	}
 }
 
-func TestBuildPSValueExpr_REG_MULTI_SZ_Nil(t *testing.T) {
+func TestBuildRVSetStdin_REG_MULTI_SZ_Nil(t *testing.T) {
 	// nil slice treated as empty
-	expr, err := buildPSValueExpr(RegistryValueInput{
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:         RegistryValueKindMultiString,
 		ValueStrings: nil,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if expr != "[string[]]@()" {
-		t.Errorf("nil MULTI_SZ expr = %q", expr)
+	if got := rvStdinPayload(t, raw).ValueStrings; len(got) != 0 {
+		t.Errorf("value_strings = %v, want empty", got)
 	}
 }
 
-func TestBuildPSValueExpr_REG_BINARY_Valid(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_BINARY_Valid(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindBinary,
 		ValueBinary: rvPtr("deadbeef"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(expr, "Hex-To-Bytes") {
-		t.Errorf("BINARY expr should call Hex-To-Bytes: %q", expr)
-	}
-	if !strings.Contains(expr, "'deadbeef'") {
-		t.Errorf("BINARY expr missing hex value: %q", expr)
+	if got := rvStdinPayload(t, raw).ValueBinary; got == nil || *got != "deadbeef" {
+		t.Errorf("value_binary = %v, want %q", got, "deadbeef")
 	}
 }
 
-func TestBuildPSValueExpr_REG_BINARY_Empty(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_BINARY_Empty(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindBinary,
 		ValueBinary: rvPtr(""),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if expr != "[byte[]]@()" {
-		t.Errorf("empty BINARY expr = %q", expr)
+	if got := rvStdinPayload(t, raw).ValueBinary; got == nil || *got != "" {
+		t.Errorf("value_binary = %v, want empty (zero-length byte array)", got)
 	}
 }
 
-func TestBuildPSValueExpr_REG_NONE_NilBinary(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_NONE_NilBinary(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindNone,
 		ValueBinary: nil,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if expr != "[byte[]]@()" {
-		t.Errorf("REG_NONE nil binary expr = %q", expr)
+	if got := rvStdinPayload(t, raw).ValueBinary; got == nil || *got != "" {
+		t.Errorf("value_binary = %v, want empty (zero-length byte array)", got)
 	}
 }
 
-func TestBuildPSValueExpr_REG_NONE_WithBinary(t *testing.T) {
-	expr, err := buildPSValueExpr(RegistryValueInput{
+func TestBuildRVSetStdin_REG_NONE_WithBinary(t *testing.T) {
+	raw, err := buildRVSetStdin(RegistryValueInput{
 		Kind:        RegistryValueKindNone,
 		ValueBinary: rvPtr("0102"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(expr, "'0102'") {
-		t.Errorf("REG_NONE with binary expr = %q", expr)
+	if got := rvStdinPayload(t, raw).ValueBinary; got == nil || *got != "0102" {
+		t.Errorf("value_binary = %v, want %q", got, "0102")
 	}
 }
 
-func TestBuildPSValueExpr_UnknownKind(t *testing.T) {
-	_, err := buildPSValueExpr(RegistryValueInput{Kind: RegistryValueKind("REG_BOGUS")})
+func TestBuildRVSetStdin_UnknownKind(t *testing.T) {
+	_, err := buildRVSetStdin(RegistryValueInput{Kind: RegistryValueKind("REG_BOGUS")})
 	if err == nil {
 		t.Error("expected error for unknown kind")
 	}
@@ -771,9 +777,9 @@ func TestParseDataPayload_Malformed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistryValueSet_HappyPath_REG_SZ(t *testing.T) {
-	var capturedScript string
-	defer stubRVRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
-		capturedScript = script
+	var capturedScript, capturedStdin string
+	defer stubRVRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		capturedScript, capturedStdin = script, stdin
 		return rvOKEnvelope(t, rvFoundData("REG_SZ", "1.0.0")), "", nil
 	})()
 
@@ -797,17 +803,169 @@ func TestRegistryValueSet_HappyPath_REG_SZ(t *testing.T) {
 	if state.ValueString == nil || *state.ValueString != "1.0.0" {
 		t.Errorf("ValueString = %v", state.ValueString)
 	}
-	// Verify script contains expected PS single-quoted literals
-	for _, want := range []string{"'HKLM'", `'SOFTWARE\MyApp'`, "'Version'", "'REG_SZ'", "'1.0.0'"} {
+	// Non-secret addressing (hive/path/name/kind) stays in the script body.
+	for _, want := range []string{"'HKLM'", `'SOFTWARE\MyApp'`, "'Version'", "'REG_SZ'"} {
 		if !strings.Contains(capturedScript, want) {
 			t.Errorf("Set script missing %q", want)
 		}
 	}
+	// The secret value travels on stdin, never in the script body.
+	if strings.Contains(capturedScript, "1.0.0") {
+		t.Error("Set script must not embed the secret value_string; it travels on stdin")
+	}
+	if got := rvStdinPayload(t, capturedStdin).ValueString; got == nil || *got != "1.0.0" {
+		t.Errorf("stdin value_string = %v, want %q", got, "1.0.0")
+	}
+	if !strings.Contains(capturedScript, "[Console]::In.ReadToEnd()") {
+		t.Error("Set script should decode its stdin payload with ReadToEnd")
+	}
+}
+
+// TestRegistryValueSet_SecretsTravelOnStdinOnly pins the fail-closed
+// invariant for every kind: the secret value must appear in the stdin JSON
+// payload and nowhere in the script body.
+func TestRegistryValueSet_SecretsTravelOnStdinOnly(t *testing.T) {
+	qwordMax := "18446744073709551615"
+	binaryHex := "deadbeef0102"
+	empty := ""
+	special := "it's a $ecret with `backtick` and 'quotes'"
+	cases := []struct {
+		name       string
+		input      RegistryValueInput
+		secret     string
+		checkStdin func(t *testing.T, p rvSetStdin)
+	}{
+		{
+			name:   "REG_SZ",
+			input:  RegistryValueInput{Kind: RegistryValueKindString, ValueString: rvPtr("s3cr3t-sz-value")},
+			secret: "s3cr3t-sz-value",
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueString == nil || *p.ValueString != "s3cr3t-sz-value" {
+					t.Errorf("stdin value_string = %v", p.ValueString)
+				}
+			},
+		},
+		{
+			name:   "REG_EXPAND_SZ",
+			input:  RegistryValueInput{Kind: RegistryValueKindExpandString, ValueString: rvPtr("s3cr3t-expand-%PATH%")},
+			secret: "s3cr3t-expand-%PATH%",
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueString == nil || *p.ValueString != "s3cr3t-expand-%PATH%" {
+					t.Errorf("stdin value_string = %v", p.ValueString)
+				}
+			},
+		},
+		{
+			name:   "REG_MULTI_SZ",
+			input:  RegistryValueInput{Kind: RegistryValueKindMultiString, ValueStrings: []string{"s3cr3t-multi-a", "s3cr3t-multi-b"}},
+			secret: "s3cr3t-multi-a",
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if len(p.ValueStrings) != 2 || p.ValueStrings[0] != "s3cr3t-multi-a" || p.ValueStrings[1] != "s3cr3t-multi-b" {
+					t.Errorf("stdin value_strings = %v", p.ValueStrings)
+				}
+			},
+		},
+		{
+			name:   "REG_DWORD",
+			input:  RegistryValueInput{Kind: RegistryValueKindDWord, ValueString: rvPtr("4294967295")},
+			secret: "4294967295",
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueString == nil || *p.ValueString != "4294967295" {
+					t.Errorf("stdin value_string = %v", p.ValueString)
+				}
+			},
+		},
+		{
+			name:   "REG_QWORD max",
+			input:  RegistryValueInput{Kind: RegistryValueKindQWord, ValueString: rvPtr(qwordMax)},
+			secret: qwordMax,
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueString == nil || *p.ValueString != qwordMax {
+					t.Errorf("stdin value_string = %v", p.ValueString)
+				}
+			},
+		},
+		{
+			name:   "REG_BINARY",
+			input:  RegistryValueInput{Kind: RegistryValueKindBinary, ValueBinary: rvPtr(binaryHex)},
+			secret: binaryHex,
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueBinary == nil || *p.ValueBinary != binaryHex {
+					t.Errorf("stdin value_binary = %v", p.ValueBinary)
+				}
+			},
+		},
+		{
+			name:   "REG_NONE with binary",
+			input:  RegistryValueInput{Kind: RegistryValueKindNone, ValueBinary: rvPtr(binaryHex)},
+			secret: binaryHex,
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueBinary == nil || *p.ValueBinary != binaryHex {
+					t.Errorf("stdin value_binary = %v", p.ValueBinary)
+				}
+			},
+		},
+		{
+			name:   "REG_BINARY empty",
+			input:  RegistryValueInput{Kind: RegistryValueKindBinary, ValueBinary: rvPtr("")},
+			secret: `"value_binary":""`,
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueBinary == nil || *p.ValueBinary != "" {
+					t.Errorf("stdin value_binary = %v, want empty", p.ValueBinary)
+				}
+			},
+		},
+		{
+			name:   "empty string",
+			input:  RegistryValueInput{Kind: RegistryValueKindString, ValueString: &empty},
+			secret: `"value_string":""`,
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueString == nil || *p.ValueString != "" {
+					t.Errorf("stdin value_string = %v, want empty", p.ValueString)
+				}
+			},
+		},
+		{
+			name:   "special chars",
+			input:  RegistryValueInput{Kind: RegistryValueKindString, ValueString: rvPtr(special)},
+			secret: special,
+			checkStdin: func(t *testing.T, p rvSetStdin) {
+				if p.ValueString == nil || *p.ValueString != special {
+					t.Errorf("stdin value_string = %v, want special chars verbatim", p.ValueString)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotScript, gotStdin string
+			defer stubRVRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+				gotScript, gotStdin = script, stdin
+				return rvOKEnvelope(t, map[string]any{"found": true, "kind": string(tc.input.Kind)}), "", nil
+			})()
+			in := tc.input
+			in.Hive = "HKLM"
+			in.Path = `SOFTWARE\Test`
+			in.Name = "V"
+			if _, err := newRVTestClient(t).Set(context.Background(), in); err != nil {
+				t.Fatalf("Set: %v", err)
+			}
+			if strings.Contains(gotScript, tc.secret) {
+				t.Errorf("Set script embeds the secret %q; it must travel on stdin only", tc.secret)
+			}
+			if gotStdin == "" {
+				t.Fatal("Set must stream the value payload on stdin")
+			}
+			tc.checkStdin(t, rvStdinPayload(t, gotStdin))
+		})
+	}
 }
 
 func TestRegistryValueSet_HappyPath_REG_MULTI_SZ(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
-		return rvOKEnvelope(t, rvFoundMulti([]string{"a", "b"})), "", nil
+	var gotScript, gotStdin string
+	defer stubRVRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		gotScript, gotStdin = script, stdin
+		return rvOKEnvelope(t, rvFoundMulti([]string{"alpha", "beta"})), "", nil
 	})()
 	rv := newRVTestClient(t)
 	state, err := rv.Set(context.Background(), RegistryValueInput{
@@ -815,7 +973,7 @@ func TestRegistryValueSet_HappyPath_REG_MULTI_SZ(t *testing.T) {
 		Path:         `SOFTWARE\Test`,
 		Name:         "Multi",
 		Kind:         RegistryValueKindMultiString,
-		ValueStrings: []string{"a", "b"},
+		ValueStrings: []string{"alpha", "beta"},
 	})
 	if err != nil {
 		t.Fatalf("Set MULTI_SZ: %v", err)
@@ -823,10 +981,18 @@ func TestRegistryValueSet_HappyPath_REG_MULTI_SZ(t *testing.T) {
 	if len(state.ValueStrings) != 2 {
 		t.Errorf("ValueStrings len = %d", len(state.ValueStrings))
 	}
+	if strings.Contains(gotScript, "'alpha'") || strings.Contains(gotScript, "'beta'") {
+		t.Error("Set script must not embed value_strings; they travel on stdin")
+	}
+	if got := rvStdinPayload(t, gotStdin).ValueStrings; len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Errorf("stdin value_strings = %v", got)
+	}
 }
 
 func TestRegistryValueSet_HappyPath_REG_BINARY(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	var gotScript, gotStdin string
+	defer stubRVRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
+		gotScript, gotStdin = script, stdin
 		return rvOKEnvelope(t, rvFoundBinary("REG_BINARY", "deadbeef")), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -843,15 +1009,26 @@ func TestRegistryValueSet_HappyPath_REG_BINARY(t *testing.T) {
 	if state.ValueBinary == nil || *state.ValueBinary != "deadbeef" {
 		t.Errorf("ValueBinary = %v", state.ValueBinary)
 	}
+	if strings.Contains(gotScript, "deadbeef") {
+		t.Error("Set script must not embed value_binary; it travels on stdin")
+	}
+	if got := rvStdinPayload(t, gotStdin).ValueBinary; got == nil || *got != "deadbeef" {
+		t.Errorf("stdin value_binary = %v", got)
+	}
 }
 
 func TestRegistryValueSet_HappyPath_DefaultValue(t *testing.T) {
 	// Default value: name="" (empty string)
-	defer stubRVRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	var gotStdin string
+	defer stubRVRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {
 		// Verify name is quoted as empty string ''
 		if !strings.Contains(script, "''") {
 			t.Errorf("script should contain '' for default value name")
 		}
+		if strings.Contains(script, "'default'") {
+			t.Error("script must not embed the secret value; it travels on stdin")
+		}
+		gotStdin = stdin
 		return rvOKEnvelope(t, rvFoundData("REG_SZ", "default")), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -868,10 +1045,13 @@ func TestRegistryValueSet_HappyPath_DefaultValue(t *testing.T) {
 	if state == nil {
 		t.Fatal("expected non-nil state")
 	}
+	if got := rvStdinPayload(t, gotStdin).ValueString; got == nil || *got != "default" {
+		t.Errorf("stdin value_string = %v", got)
+	}
 }
 
 func TestRegistryValueSet_ExpandTrue_ScriptContainsTrueFlag(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		if !strings.Contains(script, "$true") {
 			t.Errorf("expand=true should produce '$true' in script")
 		}
@@ -893,7 +1073,7 @@ func TestRegistryValueSet_ExpandTrue_ScriptContainsTrueFlag(t *testing.T) {
 
 // EC-3: type conflict
 func TestRegistryValueSet_EC3_TypeConflict(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "type_conflict",
 			"type_conflict: existing=REG_SZ declared=REG_DWORD",
 			map[string]string{"existing_type": "REG_SZ", "declared_type": "REG_DWORD"},
@@ -916,7 +1096,7 @@ func TestRegistryValueSet_EC3_TypeConflict(t *testing.T) {
 }
 
 func TestRegistryValueSet_PermissionDenied(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -933,7 +1113,7 @@ func TestRegistryValueSet_PermissionDenied(t *testing.T) {
 }
 
 func TestRegistryValueSet_TransportError(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "", "connection refused", fmt.Errorf("transport error")
 	})()
 	rv := newRVTestClient(t)
@@ -950,7 +1130,7 @@ func TestRegistryValueSet_TransportError(t *testing.T) {
 }
 
 func TestRegistryValueSet_MissingEnvelope(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "Warning: some PS warning\nno json line here\n", "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -964,7 +1144,7 @@ func TestRegistryValueSet_MissingEnvelope(t *testing.T) {
 }
 
 func TestRegistryValueSet_MalformedJSON(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "{malformed}\n", "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -981,7 +1161,7 @@ func TestRegistryValueSet_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before call
 
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("cancelled")
 	})()
 
@@ -1003,7 +1183,7 @@ func TestRegistryValueSet_ContextCancelled(t *testing.T) {
 }
 
 func TestRegistryValueSet_InvalidInput_BuildExprFails(t *testing.T) {
-	// buildPSValueExpr fails before runScript is reached
+	// buildRVSetStdin fails before runScript is reached
 	rv := newRVTestClient(t)
 	_, err := rv.Set(context.Background(), RegistryValueInput{
 		Hive: "HKLM", Path: `SOFTWARE\Test`, Name: "V",
@@ -1022,7 +1202,7 @@ func TestRegistryValueSet_InvalidInput_BuildExprFails(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistryValueRead_HappyPath(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvOKEnvelope(t, rvFoundData("REG_SZ", "hello")), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1040,7 +1220,7 @@ func TestRegistryValueRead_HappyPath(t *testing.T) {
 
 func TestRegistryValueRead_EC4_NotFound_FoundFalse(t *testing.T) {
 	// PS returns ok=true, data.found=false → (nil, nil)
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvOKEnvelope(t, map[string]any{"found": false}), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1055,7 +1235,7 @@ func TestRegistryValueRead_EC4_NotFound_FoundFalse(t *testing.T) {
 
 func TestRegistryValueRead_EC4_NotFound_ErrorKind(t *testing.T) {
 	// PS returns ok=false, kind=not_found → (nil, nil) via EC-4 path in Read
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "not_found", "value absent", nil), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1069,7 +1249,7 @@ func TestRegistryValueRead_EC4_NotFound_ErrorKind(t *testing.T) {
 }
 
 func TestRegistryValueRead_PermissionDenied(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1084,7 +1264,7 @@ func TestRegistryValueRead_PermissionDenied(t *testing.T) {
 
 func TestRegistryValueRead_ScriptContainsExpandTrueFlag(t *testing.T) {
 	var script string
-	defer stubRVRun(func(_ context.Context, _ *Client, s string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, s, _ string) (string, string, error) {
 		script = s
 		return rvOKEnvelope(t, rvFoundData("REG_EXPAND_SZ", "%PATH%")), "", nil
 	})()
@@ -1097,7 +1277,7 @@ func TestRegistryValueRead_ScriptContainsExpandTrueFlag(t *testing.T) {
 }
 
 func TestRegistryValueRead_MissingEnvelope(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "no json here\n", "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1108,7 +1288,7 @@ func TestRegistryValueRead_MissingEnvelope(t *testing.T) {
 }
 
 func TestRegistryValueRead_TransportError(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("connection refused")
 	})()
 	rv := newRVTestClient(t)
@@ -1123,7 +1303,7 @@ func TestRegistryValueRead_TransportError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistryValueDelete_HappyPath(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvOKEnvelope(t, map[string]any{"deleted": true}), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1135,7 +1315,7 @@ func TestRegistryValueDelete_HappyPath(t *testing.T) {
 
 // EC-12: Delete is idempotent — not_found treated as success.
 func TestRegistryValueDelete_EC12_Idempotent(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "not_found", "value does not exist", nil), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1147,7 +1327,7 @@ func TestRegistryValueDelete_EC12_Idempotent(t *testing.T) {
 
 func TestRegistryValueDelete_KeyNotFound_OKResponse(t *testing.T) {
 	// PS returns ok=true when parent key is absent (key_not_found reason)
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvOKEnvelope(t, map[string]any{"deleted": false, "reason": "key_not_found"}), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1158,7 +1338,7 @@ func TestRegistryValueDelete_KeyNotFound_OKResponse(t *testing.T) {
 }
 
 func TestRegistryValueDelete_PermissionDenied(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return rvErrEnvelope(t, "permission_denied", "access denied", nil), "", nil
 	})()
 	rv := newRVTestClient(t)
@@ -1172,7 +1352,7 @@ func TestRegistryValueDelete_PermissionDenied(t *testing.T) {
 }
 
 func TestRegistryValueDelete_TransportError(t *testing.T) {
-	defer stubRVRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
 		return "", "", fmt.Errorf("connection refused")
 	})()
 	rv := newRVTestClient(t)
@@ -1184,7 +1364,7 @@ func TestRegistryValueDelete_TransportError(t *testing.T) {
 
 func TestRegistryValueDelete_ScriptContainsExpectedLiterals(t *testing.T) {
 	var capturedScript string
-	defer stubRVRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
+	defer stubRVRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
 		capturedScript = script
 		return rvOKEnvelope(t, map[string]any{"deleted": true}), "", nil
 	})()

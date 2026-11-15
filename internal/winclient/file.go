@@ -16,13 +16,16 @@
 //
 // Security invariants:
 //   - Every user-supplied string reaching a script goes through psQuote.
-//   - The content base64 is validated Go-side before transport.
+//     The content base64 is validated Go-side before transport.
+//   - source_url_headers is Sensitive and NEVER appears in the script body.
+//     It travels as JSON on stdin via RunPowerShellWithInput and is decoded
+//     remote-side with [Console]::In.ReadToEnd() | ConvertFrom-Json
+//     (multi-line safe); a parse failure is invalid_input without echo.
 package winclient
 
 import (
 	"context"
 	"encoding/json"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -241,8 +244,36 @@ const psFileAcquireStdin = `      $b64 = [Console]::In.ReadToEnd()
       $bytes = [Convert]::FromBase64String($b64.Trim())
       [System.IO.File]::WriteAllBytes($tmp, $bytes)`
 
+// psFileAcquireStdinHeaders reads the download header map streamed as JSON
+// on stdin (Sensitive: never embedded in the script body) and materialises
+// it as $__wcHeaders for the download fragment below. A JSON parse failure
+// is invalid_input and never echoes the payload. An empty stdin document
+// means no headers.
+const psFileAcquireStdinHeaders = `      try {
+        $__wcHeadersRaw = [Console]::In.ReadToEnd()
+        $__wcHeaders = @{}
+        if (-not [string]::IsNullOrWhiteSpace($__wcHeadersRaw)) {
+          $__wcParsed = ($__wcHeadersRaw | ConvertFrom-Json)
+          if ($null -ne $__wcParsed) {
+            if (($__wcParsed -is [System.Collections.IDictionary]) -or ($__wcParsed -is [System.Management.Automation.PSCustomObject])) {
+              foreach ($__wcProp in $__wcParsed.PSObject.Properties) { $__wcHeaders[$__wcProp.Name] = [string]$__wcProp.Value }
+            } else {
+              Emit-Err 'invalid_input' 'invalid download headers payload on stdin' @{}
+              return
+            }
+          }
+        }
+      } catch {
+        Emit-Err 'invalid_input' 'invalid download headers payload on stdin' @{}
+        return
+      }`
+
 // psFileAcquireDownload downloads on the target host (download_on = "target").
-// Placeholders: @@URL@@ @@HEADERS@@ @@SKIPTLS@@.
+// Placeholders: @@URL@@, @@DOWNLOAD@@.
+//
+// Headers are NOT a placeholder here: they arrive as JSON on stdin (see
+// psFileAcquireStdinHeaders) and are passed to the shared fragment as the
+// $__wcHeaders variable. Only the URL (non-secret) is interpolated.
 //
 // The download itself is psInvokeDownload (see download.go): a single
 // TLS-safe implementation shared with windows_legacy_package, honouring
@@ -365,7 +396,8 @@ type fileDataPayload struct {
 
 // runScript executes a PS script and parses the JSON envelope through the
 // shared runEnvelope helper (#198). stdin carries the file bytes for the
-// content-bearing paths and is never copied into error context or logs.
+// content-bearing paths, or the download header JSON for target-side
+// downloads, and is never copied into error context or logs.
 func (f *FileClientImpl) runScript(ctx context.Context, op, script, stdin string) (*filePSResponse, error) {
 	baseContext := map[string]string{"host": f.c.cfg.Host}
 	resp, eerr := runEnvelope(ctx,
@@ -400,25 +432,6 @@ func mapFileErrorKind(k string) FileErrorKind {
 	}
 }
 
-// psHeadersHashtable renders an HTTP header map as a PowerShell hashtable
-// literal. Keys are sorted so the generated script is deterministic (which the
-// unit tests rely on), and both keys and values go through psQuote.
-func psHeadersHashtable(h map[string]string) string {
-	if len(h) == 0 {
-		return "@{}"
-	}
-	keys := make([]string, 0, len(h))
-	for k := range h {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, psQuote(k)+" = "+psQuote(h[k]))
-	}
-	return "@{" + strings.Join(parts, "; ") + "}"
-}
-
 // parseFileDataPayload converts the JSON data blob into a *FileState.
 // Returns (nil, nil) when found=false.
 func parseFileDataPayload(raw json.RawMessage, path string) (*FileState, error) {
@@ -446,7 +459,8 @@ func parseFileDataPayload(raw json.RawMessage, path string) (*FileState, error) 
 }
 
 // buildFileSetScript renders the Set script and returns it together with the
-// stdin payload (empty when the target host performs the download itself).
+// stdin payload: the base64 content for provider-side uploads, or the header
+// JSON for target-side downloads.
 func buildFileSetScript(input FileInput) (script, stdin string, err error) {
 	if strings.TrimSpace(input.Path) == "" {
 		return "", "", &FileError{Resource: "windows_file", Kind: FileErrorInvalidInput, Message: "path must not be empty"}
@@ -468,11 +482,20 @@ func buildFileSetScript(input FileInput) (script, stdin string, err error) {
 			return "", "", &FileError{Resource: "windows_file", Kind: FileErrorInvalidInput,
 				Message: `download_on = "target" requires source_url_sha256: without a pinned checksum the provider cannot verify what the host downloaded`}
 		}
-		acquire = psFileAcquireDownloadBody(
+		// source_url_headers is Sensitive: it travels as JSON on stdin,
+		// never as an embedded hashtable literal. The URL itself is not
+		// secret and stays in the script body.
+		headersJSON, merr := json.Marshal(input.SourceURLHeaders)
+		if merr != nil {
+			return "", "", &FileError{Resource: "windows_file", Kind: FileErrorInvalidInput,
+				Message: "cannot encode source_url_headers", Cause: merr}
+		}
+		acquire = psFileAcquireStdinHeaders + "\n" + psFileAcquireDownloadBody(
 			psQuote(input.SourceURL),
-			psHeadersHashtable(input.SourceURLHeaders),
+			"$__wcHeaders",
 			"$"+psBool(input.SourceURLInsecureSkipVerify),
 		)
+		stdin = string(headersJSON)
 	} else {
 		if _, verr := ValidateFileContentBase64(input.ContentBase64); verr != nil {
 			return "", "", verr
