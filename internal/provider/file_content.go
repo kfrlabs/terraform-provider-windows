@@ -141,11 +141,22 @@ func downloadSource(ctx context.Context, url string, headers map[string]string, 
 
 	client := &http.Client{Timeout: fileDownloadTimeout}
 	if insecureSkipVerify {
-		client.Transport = &http.Transport{
+		// Clone the default transport so proxy settings (HTTP_PROXY,
+		// HTTPS_PROXY, NO_PROXY) and other defaults survive the opt-out.
+		// Building a bare &http.Transport{} would silently bypass the
+		// operator's proxy, which is both a connectivity and a
+		// data-exfiltration surprise.
+		base, ok := http.DefaultTransport.(*http.Transport)
+		if !ok || base == nil {
+			return nil, fmt.Errorf("invalid source_url %q: cannot configure insecure transport", url)
+		}
+		cloned := base.Clone()
+		cloned.TLSClientConfig = &tls.Config{
 			// #nosec G402 -- explicit, documented opt-out for internal CAs;
 			// the provider raises a warning diagnostic when it is enabled.
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			InsecureSkipVerify: true,
 		}
+		client.Transport = cloned
 	}
 
 	var lastErr error
@@ -210,9 +221,23 @@ func readDownloadBody(resp *http.Response, url string) (body []byte, retryable b
 // encodeBase64 is a thin wrapper kept for symmetry and testability.
 func encodeBase64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
+// stripBase64Whitespace removes all ASCII whitespace so wrapped or
+// file()-sourced base64 (trailing newlines, CRLF line wraps, spaces) decodes.
+// Standard base64 has no whitespace alphabet; rejecting it would turn
+// legitimate PEM-style wrapping into a spurious invalid-input error.
+func stripBase64Whitespace(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\r', '\n', '\v', '\f':
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // decodeBase64 validates and decodes a user-supplied base64 payload.
 func decodeBase64(s string) ([]byte, error) {
-	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
+	b, err := base64.StdEncoding.DecodeString(stripBase64Whitespace(s))
 	if err != nil {
 		return nil, fmt.Errorf("value is not valid standard base64: %w", err)
 	}

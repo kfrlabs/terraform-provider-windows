@@ -108,6 +108,7 @@ func windowsDirectorySchemaDefinition(ctx context.Context) schema.Schema {
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(windowsDirectoryPathRegex,
 						`must be an absolute Windows path (C:\\dir\\subdir) or a UNC path (\\\\server\\share\\dir), and not a bare drive root`),
+					directoryNoTraversalValidator{},
 				},
 				Description: "Absolute path of the directory on the target host. ForceNew.",
 			},
@@ -535,4 +536,34 @@ func dirNullTimeouts() timeouts.Value {
 		"update": types.StringType,
 		"delete": types.StringType,
 	})}
+}
+
+// directoryNoTraversalValidator rejects ".." segments and wildcards in
+// windows_directory paths. The directory path regex already blocks most
+// illegal characters, but it permits ".." segments (e.g. `C:\foo\..\bar` or
+// the forward-slash variant `C:\foo/../bar`), which would resolve outside
+// the declared tree. Trailing separators are allowed for directories, unlike
+// windows_file.
+type directoryNoTraversalValidator struct{}
+
+func (v directoryNoTraversalValidator) Description(_ context.Context) string {
+	return `must not contain ".." segments or wildcards`
+}
+func (v directoryNoTraversalValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+func (v directoryNoTraversalValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	p := req.ConfigValue.ValueString()
+	if containsDotDotSegment(p) {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
+			fmt.Sprintf(`path %q must not contain ".." segments`, p))
+		return
+	}
+	if containsPathWildcard(p) {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
+			fmt.Sprintf("path %q must not contain wildcards", p))
+	}
 }

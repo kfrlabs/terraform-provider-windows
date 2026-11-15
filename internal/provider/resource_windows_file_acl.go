@@ -319,21 +319,19 @@ func (v fileACLPathValidator) ValidateString(_ context.Context, req validator.St
 		return
 	}
 	p := req.ConfigValue.ValueString()
-	for _, seg := range strings.Split(p, `\`) {
-		if seg == ".." {
-			resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
-				fmt.Sprintf(`path %q must not contain ".." segments`, p))
-			return
-		}
+	if containsDotDotSegment(p) {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
+			fmt.Sprintf(`path %q must not contain ".." segments`, p))
+		return
 	}
-	if strings.ContainsAny(strings.TrimPrefix(p, `\\`), "*?") {
+	if containsPathWildcard(p) {
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 			fmt.Sprintf("path %q must not contain wildcards", p))
 		return
 	}
-	// A drive root (C:\) is legitimately the only path allowed to end with a
-	// separator.
-	if strings.HasSuffix(p, `\`) && len(strings.TrimSuffix(p, `\`)) > 2 {
+	// A drive root (C:\ or C:/) is legitimately the only path allowed to end
+	// with a separator.
+	if hasTrailingSeparator(p) && len(strings.TrimRight(p, `\/`)) > 2 {
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 			fmt.Sprintf("path %q must not end with a separator", p))
 	}

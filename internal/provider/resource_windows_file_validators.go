@@ -33,7 +33,43 @@ import (
 // ---------------------------------------------------------------------------
 
 // fileNoTraversalValidator rejects ".." segments and wildcards (CV-7).
+//
+// Adversarial hardening: Windows accepts both `\` and `/` as separators, so
+// the check splits on both. Splitting on `\` alone lets `C:\foo/../bar` or
+// `C:\foo/..\bar` through, and the wildcard/UNC handling must recognise the
+// `//` UNC form as well.
 type fileNoTraversalValidator struct{}
+
+// containsDotDotSegment reports whether p contains a ".." path segment when
+// split on either Windows separator (`\` or `/`).
+func containsDotDotSegment(p string) bool {
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '\\' || r == '/' }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// stripUNCLeader removes a leading UNC leader (`\\` or `//`) so wildcard
+// detection does not trip on the leader itself.
+func stripUNCLeader(p string) string {
+	if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, `//`) {
+		return p[2:]
+	}
+	return p
+}
+
+// containsPathWildcard reports whether p (minus any UNC leader) contains a
+// `*` or `?` wildcard.
+func containsPathWildcard(p string) bool {
+	return strings.ContainsAny(stripUNCLeader(p), "*?")
+}
+
+// hasTrailingSeparator reports a trailing `\` or `/`.
+func hasTrailingSeparator(p string) bool {
+	return strings.HasSuffix(p, `\`) || strings.HasSuffix(p, "/")
+}
 
 func (v fileNoTraversalValidator) Description(_ context.Context) string {
 	return `must not contain ".." segments or wildcards`
@@ -46,18 +82,16 @@ func (v fileNoTraversalValidator) ValidateString(_ context.Context, req validato
 		return
 	}
 	p := req.ConfigValue.ValueString()
-	for _, seg := range strings.Split(p, `\`) {
-		if seg == ".." {
-			resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
-				fmt.Sprintf(`path %q must not contain ".." segments`, p))
-			return
-		}
+	if containsDotDotSegment(p) {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
+			fmt.Sprintf(`path %q must not contain ".." segments`, p))
+		return
 	}
-	if strings.ContainsAny(strings.TrimPrefix(p, `\\`), "*?") {
+	if containsPathWildcard(p) {
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 			fmt.Sprintf("path %q must not contain wildcards", p))
 	}
-	if strings.HasSuffix(p, `\`) {
+	if hasTrailingSeparator(p) {
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 			fmt.Sprintf("path %q must point at a file, not a directory", p))
 	}
