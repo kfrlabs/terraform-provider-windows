@@ -976,11 +976,54 @@ func TestReadReplResponseBareMarkerDoesNotDesyncNextCall(t *testing.T) {
 func TestReadReplReadyStripsBOM(t *testing.T) {
 	const marker = "0123456789abcdef0123456789abcdef"
 	stdout := bufio.NewReader(strings.NewReader(
-		"\uFEFF" + replReadyPrefix + marker + replReadySuffix + "\n"))
+		"\uFEFF" + replLangPrefix + "FullLanguage" + replLangSuffix + "\n" +
+			replReadyPrefix + marker + replReadySuffix + "\n"))
 	if got, err := readReplReady(stdout); err != nil {
 		t.Fatalf("readReplReady with BOM: %v", err)
 	} else if got != marker {
 		t.Errorf("readReplReady with BOM = %q, want %q", got, marker)
+	}
+}
+
+// Constrained language mode fails closed: the fake REPL announces
+// ConstrainedLanguage, so RunPowerShell must return the typed
+// language-mode error without pinning one-shot and without a fallback
+// connection. The one-shot transport requires FullLanguage too.
+func TestTransportLanguageModeConstrainedFailsClosed(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey:        pub,
+		stdout:               "ok",
+		announceLanguageMode: "ConstrainedLanguage",
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	_, _, err := c.RunPowerShell(ctx, "Get-Thing")
+	if err == nil {
+		t.Fatal("constrained language mode must fail")
+	}
+	var langErr *replLanguageModeError
+	if !errors.As(err, &langErr) {
+		t.Fatalf("expected *replLanguageModeError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "ConstrainedLanguage") || !strings.Contains(err.Error(), "FullLanguage") {
+		t.Errorf("language-mode error must name the mode and the FullLanguage requirement, got: %v", err)
+	}
+	if c.oneShot {
+		t.Error("language-mode failure must not pin one-shot")
+	}
+	if got := srv.Connections(); got != 1 {
+		t.Errorf("connections = %d, want 1 (no fallback connection)", got)
+	}
+	if got := len(srv.Requests()); got != 0 {
+		t.Errorf("requests = %d, want 0 (no script must run)", got)
 	}
 }
 

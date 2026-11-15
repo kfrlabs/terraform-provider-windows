@@ -21,7 +21,11 @@ Windows Server 2025 is the tested target (`windows-latest` CI plus a
 `windows-2025` lab host); 2022 / 2019 / 2016 and client SKUs are
 best-effort and untested. Operations run over a persistent PowerShell 7
 (`pwsh.exe`) session with a one-shot `powershell.exe` fallback, except
-`windows_dsc_resource` which requires Windows PowerShell 5.1. Most resources
+`windows_dsc_resource` which requires Windows PowerShell 5.1. PowerShell must
+run in `FullLanguage` mode: WDAC/AppLocker constrained language mode
+(`ConstrainedLanguage`, `RestrictedLanguage`, `NoLanguage`) or a JEA
+restricted endpoint is unsupported and fails closed (no fallback — the
+one-shot transport requires `FullLanguage` too). Most resources
 need an administrator connection. See the
 [provider docs](https://registry.terraform.io/providers/kfrlabs/windows/latest/docs#compatibility-and-requirements)
 for the full compatibility notes.

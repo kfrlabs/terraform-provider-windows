@@ -217,6 +217,9 @@ func (c *Client) RunPowerShell5WithInput(ctx context.Context, script, stdin stri
 // only then: transport-level failures (dial, handshake, cancelled context)
 // are returned as-is without changing the client mode, so a transient blip
 // on the first call does not silently slow every later one (#170).
+// A non-FullLanguage PowerShell (WDAC/AppLocker CLM, JEA restricted endpoint)
+// never falls back: it returns the *replLanguageModeError immediately,
+// unpinned, because the one-shot transport requires FullLanguage too.
 func (c *Client) run(ctx context.Context, script, secret string) (string, string, error) {
 	if c == nil {
 		return "", "", fmt.Errorf("winclient: nil client")
@@ -259,6 +262,13 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 		var err error
 		ps, err = newPersistentSession(ctx, c)
 		if err != nil {
+			// A constrained language mode fails closed without fallback:
+			// the one-shot transport requires FullLanguage too, so
+			// pinning it would only hide the cause. Return unpinned.
+			var langErr *replLanguageModeError
+			if errors.As(err, &langErr) {
+				return "", "", err
+			}
 			// Fall back to one-shot only when the failure positively
 			// indicates that pwsh.exe is unavailable: the SSH connection
 			// is healthy but the remote end did not speak the REPL

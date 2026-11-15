@@ -22,6 +22,8 @@ import (
 const (
 	replReadyPrefix     = "##WINCLIENT-READY:"
 	replReadySuffix     = "##"
+	replLangPrefix      = "##WINCLIENT-LANG:"
+	replLangSuffix      = "##"
 	replEndStdoutPrefix = "##WINCLIENT-END:"
 	replEndStdoutSuffix = "##"
 )
@@ -38,6 +40,12 @@ const (
 // unmodified: ReadToEnd() hits the end of the secret's own MemoryStream, not
 // the outer pipe, so it never blocks waiting for the next request.
 //
+// The first statement announces the session language mode
+// ($ExecutionContext.SessionState.LanguageMode) on its own LANG line, using
+// only CLM-permitted syntax (a plain Write-Output of a string concatenation)
+// before any New-Object / [Console] / [ScriptBlock] use, so a constrained
+// host still reports its mode instead of failing the handshake silently.
+//
 // Console encoding is forced to UTF-8 once, before the handshake marker, so
 // it covers every write for the whole session rather than being re-applied per
 // call (#102): with a redirected stdout [Console]::OutputEncoding is the
@@ -52,6 +60,7 @@ const (
 // guarded because $ErrorActionPreference is 'Stop': a host that refuses them
 // must degrade to the previous behaviour instead of failing the handshake.
 const psReplBootstrap = `$ErrorActionPreference = 'Stop'
+Write-Output ('` + replLangPrefix + `' + $ExecutionContext.SessionState.LanguageMode + '` + replLangSuffix + `')
 $__wcUtf8NoBom = New-Object Text.UTF8Encoding $false
 try { [Console]::OutputEncoding = $__wcUtf8NoBom } catch { }
 try { $OutputEncoding = $__wcUtf8NoBom } catch { }
@@ -220,15 +229,36 @@ func readReplResponse(stdout, stderr *bufio.Reader, nonce string) (out, errOut s
 	return so.out, se.out, so.status, nil
 }
 
-// readReplReady blocks for the REPL's startup handshake line and returns the
-// per-session marker it announces. Any other first line (or a closed pipe)
-// means the remote side is not our bootstrap — surfaced as an error rather
-// than silently treated as script output.
+// readReplReady blocks for the REPL's startup handshake lines and returns
+// the per-session marker they announce. The bootstrap first emits its
+// PowerShell language mode (##WINCLIENT-LANG:<mode>##) using
+// CLM-permitted syntax, then the ready marker (##WINCLIENT-READY:<nonce>##).
+// Any other first lines (or a closed pipe) mean the remote side is not our
+// bootstrap — surfaced as an error rather than silently treated as script
+// output.
+//
+// A non-FullLanguage mode (ConstrainedLanguage, RestrictedLanguage,
+// NoLanguage — WDAC/AppLocker CLM or a JEA restricted endpoint) fails closed
+// with a *replLanguageModeError: the provider requires FullLanguage, and the
+// one-shot transport requires it too, so there is no fallback.
 func readReplReady(stdout *bufio.Reader) (marker string, err error) {
-	line, err := stdout.ReadString('\n')
-	trimmed := strings.TrimRight(line, "\r\n")
+	langLine, err := stdout.ReadString('\n')
+	trimmedLang := strings.TrimRight(langLine, "\r\n")
 	// Belt-and-braces for #102: a BOM-emitting encoder would prefix the
 	// handshake marker with U+FEFF and break the HasPrefix match.
+	trimmedLang = strings.TrimPrefix(trimmedLang, "\uFEFF")
+	if !strings.HasPrefix(trimmedLang, replLangPrefix) || !strings.HasSuffix(trimmedLang, replLangSuffix) {
+		if err == nil {
+			err = fmt.Errorf("unexpected handshake line %q", trimmedLang)
+		}
+		return "", &replHandshakeError{err: err}
+	}
+	mode := strings.TrimSuffix(strings.TrimPrefix(trimmedLang, replLangPrefix), replLangSuffix)
+	if mode != "FullLanguage" {
+		return "", &replLanguageModeError{mode: mode}
+	}
+	line, err := stdout.ReadString('\n')
+	trimmed := strings.TrimRight(line, "\r\n")
 	trimmed = strings.TrimPrefix(trimmed, "\uFEFF")
 	if !strings.HasPrefix(trimmed, replReadyPrefix) || !strings.HasSuffix(trimmed, replReadySuffix) {
 		if err == nil {
@@ -237,4 +267,17 @@ func readReplReady(stdout *bufio.Reader) (marker string, err error) {
 		return "", &replHandshakeError{err: err}
 	}
 	return strings.TrimSuffix(strings.TrimPrefix(trimmed, replReadyPrefix), replReadySuffix), nil
+}
+
+// replLanguageModeError reports that the remote PowerShell runs in a
+// non-FullLanguage mode (ConstrainedLanguage, RestrictedLanguage, NoLanguage
+// — WDAC/AppLocker CLM or a JEA restricted endpoint). It is distinct from
+// replHandshakeError so Client.run can fail closed without pinning the
+// one-shot fallback: the one-shot transport requires FullLanguage too.
+type replLanguageModeError struct {
+	mode string
+}
+
+func (e *replLanguageModeError) Error() string {
+	return fmt.Sprintf("winclient: PowerShell language mode %s requires FullLanguage (WDAC/AppLocker CLM or JEA restricted endpoint unsupported); refusing to run in %s mode with no fallback: the one-shot transport requires FullLanguage too", e.mode, e.mode)
 }
