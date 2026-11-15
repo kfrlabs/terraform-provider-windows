@@ -1580,3 +1580,106 @@ func TestOneShotCancelMidStream(t *testing.T) {
 	}
 	t.Logf("cancelled one-shot call returned after %v", elapsed)
 }
+
+// A multi-key server (ECDSA+ed25519+RSA, as Windows OpenSSH presents) must
+// still verify against the pinned or listed type instead of failing on the
+// negotiated one (issue #393). Without HostKeyAlgorithms the handshake
+// prefers ECDSA first while the pin lists ed25519 or RSA, a false MITM.
+func TestTransportMultiHostKeyNegotiation(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	signers := testMultiHostSigners(t)
+	srv := startTestServer(t, testServerOptions{authorizedKey: pub, stdout: "ok", hostSigners: signers})
+
+	edKey := srv.HostKeyByType(t, "ssh-ed25519")
+	rsaKey := srv.HostKeyByType(t, "ssh-rsa")
+	if len(srv.HostKeys) != 3 {
+		t.Fatalf("multi-key server offers %d keys, want 3", len(srv.HostKeys))
+	}
+
+	t.Run("ed25519 pin", func(t *testing.T) {
+		noAgent(t)
+		c := newTransportTestClient(t, Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLineFor(edKey), Timeout: testTimeout,
+		})
+		if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+			t.Errorf("stdout = %q, want %q", stdout, "ok")
+		}
+	})
+
+	t.Run("rsa pin", func(t *testing.T) {
+		noAgent(t)
+		c := newTransportTestClient(t, Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLineFor(rsaKey), Timeout: testTimeout,
+		})
+		if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+			t.Errorf("stdout = %q, want %q", stdout, "ok")
+		}
+	})
+
+	t.Run("ed25519 known_hosts", func(t *testing.T) {
+		noAgent(t)
+		c := newTransportTestClient(t, Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), KnownHostsPath: knownHostsFile(t, srv.Addr, edKey), Timeout: testTimeout,
+		})
+		if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+			t.Errorf("stdout = %q, want %q", stdout, "ok")
+		}
+	})
+
+	t.Run("rsa known_hosts", func(t *testing.T) {
+		noAgent(t)
+		c := newTransportTestClient(t, Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), KnownHostsPath: knownHostsFile(t, srv.Addr, rsaKey), Timeout: testTimeout,
+		})
+		if stdout, _ := mustRun(t, c, "Get-Thing"); stdout != "ok" {
+			t.Errorf("stdout = %q, want %q", stdout, "ok")
+		}
+	})
+
+	t.Run("wrong key of pinned type fails", func(t *testing.T) {
+		noAgent(t)
+		otherPub, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("generate key: %v", err)
+		}
+		impostor, err := ssh.NewPublicKey(otherPub)
+		if err != nil {
+			t.Fatalf("wrap key: %v", err)
+		}
+		c := newTransportTestClient(t, Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), HostKey: string(ssh.MarshalAuthorizedKey(impostor)), Timeout: testTimeout,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+		defer cancel()
+		if _, _, err := c.RunPowerShell(ctx, "Get-Thing"); err == nil {
+			t.Fatal("a wrong key of the pinned type must be rejected")
+		}
+	})
+
+	t.Run("unknown host fails closed", func(t *testing.T) {
+		noAgent(t)
+		empty := filepath.Join(t.TempDir(), "known_hosts")
+		if err := os.WriteFile(empty, []byte("\n"), 0o600); err != nil {
+			t.Fatalf("write known_hosts: %v", err)
+		}
+		c := newTransportTestClient(t, Config{
+			Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+			PrivateKey: string(keyPEM), KnownHostsPath: empty, Timeout: testTimeout,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+		defer cancel()
+		_, _, err := c.RunPowerShell(ctx, "Get-Thing")
+		if err == nil {
+			t.Fatal("an unlisted multi-key host must be refused")
+		}
+		if !strings.Contains(err.Error(), "ssh-keyscan") {
+			t.Errorf("error should say how to add the host, got: %v", err)
+		}
+	})
+}

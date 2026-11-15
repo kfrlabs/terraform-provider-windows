@@ -2,8 +2,11 @@ package winclient
 
 import (
 	"bufio"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -95,6 +98,12 @@ type testServerOptions struct {
 	// closed) rather than mis-framing the response.
 	bareMarkers bool
 
+	// hostSigners, when set, replaces the default single ed25519 host key
+	// with these signers (e.g. a multi-key server for issue #393). Nil
+	// keeps the historical single-ed25519 server so existing callers are
+	// unaffected.
+	hostSigners []ssh.Signer
+
 	// freezeAfterCalls, when > 0, makes the session go silent after serving
 	// that many requests: it keeps the channel and connection open but
 	// answers neither data nor channel requests, like a half-open
@@ -113,6 +122,10 @@ type testServer struct {
 	Addr    string
 	Port    int
 	HostKey ssh.PublicKey
+	// HostKeys holds every host key the server offers, in signer order.
+	// HostKey above is HostKeys[0], kept so single-key callers are
+	// unaffected.
+	HostKeys []ssh.PublicKey
 
 	listener net.Listener
 	wg       sync.WaitGroup
@@ -145,17 +158,26 @@ func tcpAddr(t *testing.T, ln net.Listener) *net.TCPAddr {
 func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 	t.Helper()
 
-	hostPub, hostPriv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("generate host key: %v", err)
-	}
-	hostSigner, err := ssh.NewSignerFromKey(hostPriv)
-	if err != nil {
-		t.Fatalf("host signer: %v", err)
-	}
-	hostPubKey, err := ssh.NewPublicKey(hostPub)
-	if err != nil {
-		t.Fatalf("host public key: %v", err)
+	signers, hostPubs := opts.hostSigners, []ssh.PublicKey(nil)
+	if len(signers) == 0 {
+		hostPub, hostPriv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("generate host key: %v", err)
+		}
+		hostSigner, err := ssh.NewSignerFromKey(hostPriv)
+		if err != nil {
+			t.Fatalf("host signer: %v", err)
+		}
+		hostPubKey, err := ssh.NewPublicKey(hostPub)
+		if err != nil {
+			t.Fatalf("host public key: %v", err)
+		}
+		signers = []ssh.Signer{hostSigner}
+		hostPubs = []ssh.PublicKey{hostPubKey}
+	} else {
+		for _, signer := range signers {
+			hostPubs = append(hostPubs, signer.PublicKey())
+		}
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -166,7 +188,8 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 	s := &testServer{
 		Addr:     ln.Addr().String(),
 		Port:     tcpAddr(t, ln).Port,
-		HostKey:  hostPubKey,
+		HostKey:  hostPubs[0],
+		HostKeys: hostPubs,
 		listener: ln,
 	}
 
@@ -177,7 +200,9 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 			s.mu.Unlock()
 		},
 	}
-	cfg.AddHostKey(hostSigner)
+	for _, signer := range signers {
+		cfg.AddHostKey(signer)
+	}
 
 	if opts.authorizedKey != nil {
 		want := string(opts.authorizedKey.Marshal())
@@ -474,6 +499,70 @@ func (s *testServer) AuthAttempts() []string {
 // ready for the provider's host_key attribute.
 func (s *testServer) AuthorizedKeyLine() string {
 	return string(ssh.MarshalAuthorizedKey(s.HostKey))
+}
+
+// AuthorizedKeyLineFor renders an arbitrary host key in authorized_keys
+// form, for pinning a non-primary key of a multi-key server.
+func (s *testServer) AuthorizedKeyLineFor(key ssh.PublicKey) string {
+	return string(ssh.MarshalAuthorizedKey(key))
+}
+
+// HostKeyByType returns the server's first host key of the given type,
+// failing the test when the server offers none.
+func (s *testServer) HostKeyByType(t *testing.T, typ string) ssh.PublicKey {
+	t.Helper()
+	for _, key := range s.HostKeys {
+		if key.Type() == typ {
+			return key
+		}
+	}
+	t.Fatalf("server offers no %s host key (has %v)", typ, hostKeyTypes(s.HostKeys))
+	return nil
+}
+
+func hostKeyTypes(keys []ssh.PublicKey) []string {
+	types := make([]string, 0, len(keys))
+	for _, key := range keys {
+		types = append(types, key.Type())
+	}
+	return types
+}
+
+// testMultiHostSigners builds ECDSA (P-256), ed25519 and RSA host signers:
+// the multi-key shape Windows OpenSSH servers present in the wild, where an
+// unrestricted handshake prefers ECDSA first and a pinned ed25519 or RSA key
+// would otherwise never be offered (issue #393).
+func testMultiHostSigners(t *testing.T) []ssh.Signer {
+	t.Helper()
+
+	ecdsaPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ecdsa host key: %v", err)
+	}
+	ecdsaSigner, err := ssh.NewSignerFromKey(ecdsaPriv)
+	if err != nil {
+		t.Fatalf("ecdsa host signer: %v", err)
+	}
+
+	_, edPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ed25519 host key: %v", err)
+	}
+	edSigner, err := ssh.NewSignerFromKey(edPriv)
+	if err != nil {
+		t.Fatalf("ed25519 host signer: %v", err)
+	}
+
+	rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa host key: %v", err)
+	}
+	rsaSigner, err := ssh.NewSignerFromKey(rsaPriv)
+	if err != nil {
+		t.Fatalf("rsa host signer: %v", err)
+	}
+
+	return []ssh.Signer{ecdsaSigner, edSigner, rsaSigner}
 }
 
 // newClientKeypair returns a PEM private key and its ssh.PublicKey.

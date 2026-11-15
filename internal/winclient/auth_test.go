@@ -1,8 +1,11 @@
 package winclient
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/pem"
 	"net"
 	"os"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // newTestKey returns a fresh ed25519 keypair as an unencrypted PEM private key
@@ -221,7 +225,7 @@ func TestParseHostKey(t *testing.T) {
 // known_hosts file must fail closed rather than connect blindly.
 func TestHostKeyCallbackFailsClosedByDefault(t *testing.T) {
 	setHome(t, t.TempDir())
-	_, err := hostKeyCallback(Config{Host: "192.0.2.10"})
+	_, _, err := hostKeyCallback(Config{Host: "192.0.2.10"})
 	if err == nil {
 		t.Fatal("expected an error when no known_hosts file exists")
 	}
@@ -232,9 +236,12 @@ func TestHostKeyCallbackFailsClosedByDefault(t *testing.T) {
 
 func TestHostKeyCallbackPinnedKey(t *testing.T) {
 	_, authorizedKey, pub := newTestKey(t)
-	cb, err := hostKeyCallback(Config{HostKey: authorizedKey})
+	cb, algos, err := hostKeyCallback(Config{HostKey: authorizedKey})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(algos) != 1 || algos[0] != "ssh-ed25519" {
+		t.Errorf("pinned ed25519 should restrict negotiation to ssh-ed25519, got %v", algos)
 	}
 
 	addr := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 22}
@@ -257,7 +264,7 @@ func TestHostKeyCallbackRejectsAmbiguousConfig(t *testing.T) {
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := hostKeyCallback(cfg); err == nil {
+			if _, _, err := hostKeyCallback(cfg); err == nil {
 				t.Fatal("expected a configuration error")
 			}
 		})
@@ -265,9 +272,12 @@ func TestHostKeyCallbackRejectsAmbiguousConfig(t *testing.T) {
 }
 
 func TestHostKeyCallbackInsecureOptOut(t *testing.T) {
-	cb, err := hostKeyCallback(Config{InsecureIgnoreHostKey: true})
+	cb, algos, err := hostKeyCallback(Config{InsecureIgnoreHostKey: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(algos) != 0 {
+		t.Errorf("opt-out must not restrict algorithms, got %v", algos)
 	}
 	_, _, pub := newTestKey(t)
 	addr := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 22}
@@ -286,7 +296,7 @@ func TestKnownHostsVerification(t *testing.T) {
 		t.Fatalf("write known_hosts: %v", err)
 	}
 
-	cb, err := hostKeyCallback(Config{KnownHostsPath: path})
+	cb, _, err := hostKeyCallback(Config{KnownHostsPath: path})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -328,7 +338,7 @@ func TestKnownHostsVerification(t *testing.T) {
 }
 
 func TestResolveKnownHostsRejectsMissingExplicitFile(t *testing.T) {
-	_, err := hostKeyCallback(Config{KnownHostsPath: filepath.Join(t.TempDir(), "absent")})
+	_, _, err := hostKeyCallback(Config{KnownHostsPath: filepath.Join(t.TempDir(), "absent")})
 	if err == nil {
 		t.Fatal("expected an error for a known_hosts path that does not exist")
 	}
@@ -602,4 +612,164 @@ func TestNewRejectsMissingCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when no credential is configured")
 	}
+}
+
+// A pinned key must restrict negotiation to its own type (issue #393), so a
+// multi-key server presents the pinned key instead of its preferred one.
+func TestHostKeyAlgorithmsForKey(t *testing.T) {
+	newECDSAPub := func(t *testing.T) ssh.PublicKey {
+		t.Helper()
+		priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("generate ecdsa key: %v", err)
+		}
+		pub, err := ssh.NewPublicKey(priv.Public())
+		if err != nil {
+			t.Fatalf("wrap ecdsa key: %v", err)
+		}
+		return pub
+	}
+	newRSAPub := func(t *testing.T) ssh.PublicKey {
+		t.Helper()
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("generate rsa key: %v", err)
+		}
+		pub, err := ssh.NewPublicKey(priv.Public())
+		if err != nil {
+			t.Fatalf("wrap rsa key: %v", err)
+		}
+		return pub
+	}
+
+	_, _, edPub := newTestKey(t)
+	if got := hostKeyAlgorithmsForKey(edPub); len(got) != 1 || got[0] != "ssh-ed25519" {
+		t.Errorf("ed25519 algorithms = %v, want [ssh-ed25519]", got)
+	}
+	if got := hostKeyAlgorithmsForKey(newECDSAPub(t)); len(got) != 1 || got[0] != "ecdsa-sha2-nistp256" {
+		t.Errorf("ecdsa algorithms = %v, want [ecdsa-sha2-nistp256]", got)
+	}
+	gotRSA := hostKeyAlgorithmsForKey(newRSAPub(t))
+	wantRSA := []string{"rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"}
+	if strings.Join(gotRSA, ",") != strings.Join(wantRSA, ",") {
+		t.Errorf("rsa algorithms = %v, want %v", gotRSA, wantRSA)
+	}
+	if got := hostKeyAlgorithmsForKey(stubPublicKey{typ: "ssh-ed25519-cert-v01@openssh.com"}); len(got) != 1 ||
+		got[0] != "ssh-ed25519-cert-v01@openssh.com" {
+		t.Errorf("cert algorithms = %v, want the cert type itself", got)
+	}
+	if got := hostKeyAlgorithmsForKey(nil); got != nil {
+		t.Errorf("nil key algorithms = %v, want nil", got)
+	}
+}
+
+type stubPublicKey struct{ typ string }
+
+func (s stubPublicKey) Type() string                        { return s.typ }
+func (s stubPublicKey) Marshal() []byte                     { return []byte(s.typ) }
+func (s stubPublicKey) Verify([]byte, *ssh.Signature) error { return nil }
+
+// known_hosts entries restrict negotiation to their recorded types; an
+// unknown host leaves negotiation unrestricted while the callback still
+// refuses it closed.
+func TestKnownHostKeyAlgorithms(t *testing.T) {
+	writeKnownHosts := func(t *testing.T, lines ...string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "known_hosts")
+		content := strings.Join(lines, "\n")
+		if content != "" {
+			content += "\n"
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("write known_hosts: %v", err)
+		}
+		return path
+	}
+
+	_, edLine, _ := newTestKey(t)
+	rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	rsaPub, err := ssh.NewPublicKey(rsaPriv.Public())
+	if err != nil {
+		t.Fatalf("wrap rsa key: %v", err)
+	}
+	rsaLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(rsaPub)))
+
+	host := "192.0.2.10:22"
+	addr := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 22}
+
+	t.Run("ed25519 only", func(t *testing.T) {
+		path := writeKnownHosts(t, "[192.0.2.10]:22 "+edLine)
+		if got := knownHostKeyAlgorithms(path, host, addr); len(got) != 1 || got[0] != "ssh-ed25519" {
+			t.Errorf("algorithms = %v, want [ssh-ed25519]", got)
+		}
+	})
+
+	t.Run("rsa expands", func(t *testing.T) {
+		path := writeKnownHosts(t, "[192.0.2.10]:22 "+rsaLine)
+		got := knownHostKeyAlgorithms(path, host, addr)
+		want := []string{"rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("algorithms = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("unknown host leaves negotiation alone", func(t *testing.T) {
+		path := writeKnownHosts(t, "[192.0.2.10]:22 "+edLine)
+		other := &net.TCPAddr{IP: net.ParseIP("192.0.2.99"), Port: 22}
+		if got := knownHostKeyAlgorithms(path, "192.0.2.99:22", other); got != nil {
+			t.Errorf("algorithms = %v, want nil for an unlisted host", got)
+		}
+	})
+}
+
+// A different-type key with no entry of its own must not be reported as a
+// mismatch: only a same-type difference is a possible MITM (issue #393).
+func TestExplainKnownHostsErrorDistinguishesKeyType(t *testing.T) {
+	_, edLine, _ := newTestKey(t)
+	_, _, impostorEd := newTestKey(t)
+	rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	rsaPub, err := ssh.NewPublicKey(rsaPriv.Public())
+	if err != nil {
+		t.Fatalf("wrap rsa key: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte("[192.0.2.10]:22 "+edLine+"\n"), 0o600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+	raw, err := knownhosts.New(path)
+	if err != nil {
+		t.Fatalf("knownhosts.New: %v", err)
+	}
+	cb := explainKnownHostsError(raw, path)
+	addr := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 22}
+
+	t.Run("same type mismatch", func(t *testing.T) {
+		err := cb("192.0.2.10:22", addr, impostorEd)
+		if err == nil {
+			t.Fatal("a mismatched key must be rejected")
+		}
+		if !strings.Contains(err.Error(), "MISMATCH") {
+			t.Errorf("same-type difference must be flagged as mismatch, got: %v", err)
+		}
+	})
+
+	t.Run("different type without entry", func(t *testing.T) {
+		err := cb("192.0.2.10:22", addr, rsaPub)
+		if err == nil {
+			t.Fatal("an unlisted key type must be rejected")
+		}
+		if strings.Contains(err.Error(), "MISMATCH") {
+			t.Errorf("different-type key must not be reported as mismatch, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "ssh-keyscan") {
+			t.Errorf("different-type key must carry ssh-keyscan guidance, got: %v", err)
+		}
+	})
 }

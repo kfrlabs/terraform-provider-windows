@@ -6,12 +6,15 @@
 package winclient
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -142,39 +145,145 @@ func agentAuthMethod() (ssh.AuthMethod, io.Closer, error) {
 }
 
 // hostKeyCallback builds the server identity check. Verification is on by
-// default: callers must opt out deliberately.
-func hostKeyCallback(cfg Config) (ssh.HostKeyCallback, error) {
+// default: callers must opt out deliberately. The second return value lists
+// the host key algorithms the client may negotiate, so a server offering
+// several host keys presents the one we can actually verify (issue #393):
+// without it the handshake may settle on a key type we never pinned, and a
+// correct pin would then fail as a false man-in-the-middle.
+func hostKeyCallback(cfg Config) (ssh.HostKeyCallback, []string, error) {
 	pinned := strings.TrimSpace(cfg.HostKey)
 
 	if cfg.InsecureIgnoreHostKey {
 		if pinned != "" || cfg.KnownHostsPath != "" {
-			return nil, errors.New("winclient: insecure_ignore_host_key cannot be combined with host_key or " +
+			return nil, nil, errors.New("winclient: insecure_ignore_host_key cannot be combined with host_key or " +
 				"known_hosts_path; drop insecure_ignore_host_key to keep verifying the server")
 		}
 		// #nosec G106 -- deliberate, documented operator opt-out.
-		return ssh.InsecureIgnoreHostKey(), nil
+		return ssh.InsecureIgnoreHostKey(), nil, nil
 	}
 
 	if pinned != "" {
 		if cfg.KnownHostsPath != "" {
-			return nil, errors.New("winclient: host_key and known_hosts_path are mutually exclusive; set only one")
+			return nil, nil, errors.New("winclient: host_key and known_hosts_path are mutually exclusive; set only one")
 		}
 		key, err := parseHostKey(pinned)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return ssh.FixedHostKey(key), nil
+		return ssh.FixedHostKey(key), hostKeyAlgorithmsForKey(key), nil
 	}
 
 	path, err := resolveKnownHosts(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cb, err := knownhosts.New(path)
 	if err != nil {
-		return nil, fmt.Errorf("winclient: load known_hosts %s: %w", path, err)
+		return nil, nil, fmt.Errorf("winclient: load known_hosts %s: %w", path, err)
 	}
-	return explainKnownHostsError(cb, path), nil
+	return explainKnownHostsError(cb, path),
+		knownHostKeyAlgorithms(path, knownHostsProbeID(cfg), knownHostsProbeAddr(cfg)), nil
+}
+
+// hostKeyAlgorithmsForKey restricts algorithm negotiation to the pinned key's
+// type, so a multi-key server presents the key we pinned rather than whatever
+// the handshake prefers first (issue #393). RSA negotiates as rsa-sha2-512,
+// rsa-sha2-256 or the legacy ssh-rsa signature; every other type negotiates
+// under its own name, including certificates.
+func hostKeyAlgorithmsForKey(key ssh.PublicKey) []string {
+	if key == nil {
+		return nil
+	}
+	if key.Type() == "ssh-rsa" {
+		return []string{"rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"}
+	}
+	return []string{key.Type()}
+}
+
+// hostKeyAlgorithmsForKnownKeys restricts negotiation to the key types
+// recorded for the host, expanding RSA as in hostKeyAlgorithmsForKey and
+// de-duplicating while preserving first-seen order.
+func hostKeyAlgorithmsForKnownKeys(keys []knownhosts.KnownKey) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, wk := range keys {
+		if wk.Key == nil {
+			continue
+		}
+		for _, algo := range hostKeyAlgorithmsForKey(wk.Key) {
+			if !seen[algo] {
+				seen[algo] = true
+				out = append(out, algo)
+			}
+		}
+	}
+	return out
+}
+
+// knownHostKeyAlgorithms collects the key types recorded for hostname in the
+// known_hosts file, so negotiation settles on a verifiable type. It probes a
+// throwaway knownhosts callback with a fresh random key and reads the wanted
+// keys from (*knownhosts.KeyError).Want: no new dependency, no file format
+// knowledge. An unknown host (empty Want) or any probe failure returns nil,
+// leaving negotiation unrestricted while the real callback still refuses the
+// host closed with ssh-keyscan guidance.
+func knownHostKeyAlgorithms(path, hostname string, remote net.Addr) []string {
+	if hostname == "" && remote == nil {
+		return nil
+	}
+	rawCb, err := knownhosts.New(path)
+	if err != nil {
+		return nil
+	}
+	probePub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil
+	}
+	probeKey, err := ssh.NewPublicKey(probePub)
+	if err != nil {
+		return nil
+	}
+	err = rawCb(hostname, remote, probeKey)
+	if err == nil {
+		return nil
+	}
+	var keyErr *knownhosts.KeyError
+	if !errors.As(err, &keyErr) {
+		return nil
+	}
+	if len(keyErr.Want) == 0 {
+		return nil
+	}
+	return hostKeyAlgorithmsForKnownKeys(keyErr.Want)
+}
+
+// knownHostsProbeID renders the hostname the handshake will present to the
+// host key callback, so the algorithm probe reads the same entry.
+func knownHostsProbeID(cfg Config) string {
+	host := strings.TrimSpace(cfg.Host)
+	if host == "" {
+		return ""
+	}
+	port := cfg.Port
+	if port == 0 {
+		port = 22
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// knownHostsProbeAddr synthesises the remote address for the algorithm probe
+// when the host is a literal IP. Hostnames resolve only at dial time, so the
+// probe passes nil there and matches on the hostname alone.
+func knownHostsProbeAddr(cfg Config) net.Addr {
+	ip := net.ParseIP(strings.TrimSpace(cfg.Host))
+	if ip == nil {
+		return nil
+	}
+	port := cfg.Port
+	if port == 0 {
+		port = 22
+	}
+	return &net.TCPAddr{IP: ip, Port: port}
 }
 
 // resolveKnownHosts returns the known_hosts file to trust, defaulting to the
@@ -219,10 +328,23 @@ func explainKnownHostsError(cb ssh.HostKeyCallback, path string) ssh.HostKeyCall
 		var keyErr *knownhosts.KeyError
 		if errors.As(err, &keyErr) {
 			if len(keyErr.Want) > 0 {
-				return fmt.Errorf("winclient: HOST KEY MISMATCH for %s: the server presented %s key %s, "+
-					"which does not match the entry in %s. This may be a man-in-the-middle attack. If the host "+
-					"was legitimately rebuilt, remove the stale entry (`ssh-keygen -R %s -f %s`) and re-add it",
-					hostname, key.Type(), ssh.FingerprintSHA256(key), path, hostname, path)
+				// Only a same-type mismatch is a possible MITM. A
+				// different-type key with no entry of its own is an
+				// unlisted key type, not proof the host changed its
+				// key: conflating the two trains operators to ignore
+				// a real attack signal (issue #393).
+				for _, want := range keyErr.Want {
+					if want.Key != nil && want.Key.Type() == key.Type() {
+						return fmt.Errorf("winclient: HOST KEY MISMATCH for %s: the server presented %s key %s, "+
+							"which does not match the entry in %s. This may be a man-in-the-middle attack. If the host "+
+							"was legitimately rebuilt, remove the stale entry (`ssh-keygen -R %s -f %s`) and re-add it",
+							hostname, key.Type(), ssh.FingerprintSHA256(key), path, hostname, path)
+					}
+				}
+				return fmt.Errorf("winclient: host %s has no %s entry in %s (it offered %s key %s). Add it with "+
+					"`ssh-keyscan %s >> %s` after verifying the fingerprint out of band, or pin it with the "+
+					"provider's host_key attribute", hostname, key.Type(), path, key.Type(),
+					ssh.FingerprintSHA256(key), hostname, path)
 			}
 			return fmt.Errorf("winclient: host %s is not present in %s (it offered %s key %s). Add it with "+
 				"`ssh-keyscan %s >> %s` after verifying the fingerprint out of band, or pin it with the "+
