@@ -310,7 +310,7 @@ func TestIISSiteScripts_XPathNameQuoting(t *testing.T) {
 	}
 	for _, want := range []string{
 		`site[@name="`,
-		`'"]/application[@path=''/']'`,
+		`'"]/application[@path=''/'']'`,
 	} {
 		if !strings.Contains(gotScript, want) {
 			t.Errorf("read script must build the XPath filter with a double-quoted literal, missing %q", want)
