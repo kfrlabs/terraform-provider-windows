@@ -123,9 +123,9 @@ function ConvertTo-VolumeJson([object]$V) {
   try {
     $part = Get-Partition -Volume $V -ErrorAction Stop
     $disk = Get-Disk -Number ([int]$part.DiskNumber) -ErrorAction Stop
-    $key = [string]$part.Guid
-    if (($key -eq '') -or ($key -eq '00000000-0000-0000-0000-000000000000')) { $key = [string]([uint64]$part.Offset) }
-    $partId = [string]$disk.UniqueId + '|' + $key
+    $key = ([string]$part.Guid).Trim()
+    if (($key -eq '') -or ($key -eq '00000000-0000-0000-0000-000000000000')) { $key = ([string]([uint64]$part.Offset)).Trim() } else { $key = $key.Trim('{} ').ToUpperInvariant() }
+    $partId = ([string]$disk.UniqueId).Trim() + '|' + $key.Trim()
   } catch {
     $partId = ''
   }
@@ -491,6 +491,33 @@ type volumeJSON struct {
 // trusted. An empty PartitionID is tolerated (the resource keeps the prior
 // value; imports reject it instead). An empty drive letter means "no
 // letter"; the file system is converged to canonical form when recognized.
+// The hosting partition_id is canonicalised to the same
+// "<disk_unique_id>|<GUID_UPPER_NO_BRACES_OR_OFFSET>" form as the
+// windows_partition resource ID (BuildPartitionID/PartitionResourceKey), so
+// an imported volume's partition_id matches the partition resource that
+// owns it instead of forcing a destructive replacement on spelling
+// (host Get-Partition Guid carries braces and original case, Get-Disk
+// UniqueId may carry padding).
+func canonicalizeVolumePartitionID(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parts := strings.SplitN(trimmed, PartitionIDSeparator, 2)
+	if len(parts) != 2 {
+		return trimmed
+	}
+	disk := strings.TrimSpace(parts[0])
+	key := strings.TrimSpace(parts[1])
+	if disk == "" || key == "" {
+		return trimmed
+	}
+	if guidPattern.MatchString(key) {
+		key = strings.ToUpper(strings.Trim(key, "{} "))
+	}
+	return disk + PartitionIDSeparator + key
+}
+
 func parseVolumeInfo(raw json.RawMessage, host string) (*VolumeInfo, error) {
 	ctx := map[string]string{"host": host}
 	if len(raw) == 0 || string(raw) == "null" {
@@ -519,7 +546,7 @@ func parseVolumeInfo(raw json.RawMessage, host string) (*VolumeInfo, error) {
 	}
 	return &VolumeInfo{
 		UniqueID:           strings.TrimSpace(j.UniqueID),
-		PartitionID:        strings.TrimSpace(j.PartitionID),
+		PartitionID:        canonicalizeVolumePartitionID(j.PartitionID),
 		DriveLetter:        strings.ToUpper(strings.TrimSpace(j.DriveLetter)),
 		Path:               strings.TrimSpace(j.Path),
 		FileSystem:         fs,

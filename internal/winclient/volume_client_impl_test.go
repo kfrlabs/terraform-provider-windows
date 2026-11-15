@@ -902,6 +902,48 @@ func TestVolumeLookup_AmbiguousLabel_Unknown(t *testing.T) {
 	}
 }
 
+// Partition IDs from the host carry Get-Partition Guid spelling (braces,
+// original case) and Get-Disk UniqueId padding: canonicalise to the
+// windows_partition ID form (disk trimmed, GUID upper without braces) so an
+// imported volume matches its owning partition resource instead of forcing
+// a destructive replacement.
+func TestCanonicalizeVolumePartitionID(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"already canonical", `SCSI\DISK&VEN_MSFT|EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`, `SCSI\DISK&VEN_MSFT|EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`},
+		{"braced lower guid", "XENSRC  468dfb83-7d18-460f-9e76-7a1894f6a713 |{4c3999b6-0bb8-4f15-8032-e6242c267b7d}", "XENSRC  468dfb83-7d18-460f-9e76-7a1894f6a713|4C3999B6-0BB8-4F15-8032-E6242C267B7D"},
+		{"disk padding trimmed", "  XENSRC  disk1  |  EBD0A0A2-B9E5-4433-87C0-68B6B72699C7  ", "XENSRC  disk1|EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"},
+		{"mbr offset trimmed", "SCSI\\DISK&VEN_X|  1048576  ", `SCSI\DISK&VEN_X|1048576`},
+		{"empty", "", ""},
+		{"no separator", "just-a-disk", "just-a-disk"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := canonicalizeVolumePartitionID(tc.in); got != tc.want {
+				t.Errorf("canonicalizeVolumePartitionID(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseVolumeInfo_CanonicalizesPartitionID(t *testing.T) {
+	raw := json.RawMessage(`{"unique_id":"\\\\?\\Volume{11111111-2222-3333-4444-555555555555}\\","partition_id":"XENSRC  disk1 |{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}","drive_letter":"E","path":"p","file_system":"ntfs","file_system_label":"TFDATA","allocation_unit_size":4096,"size_bytes":16777216,"size_remaining_bytes":16744448,"health_status":"Healthy","operational_status":"OK","drive_type":"Fixed"}`)
+	info, err := parseVolumeInfo(raw, "win01")
+	if err != nil {
+		t.Fatalf("parseVolumeInfo: %v", err)
+	}
+	want := "XENSRC  disk1|EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+	if info.PartitionID != want {
+		t.Errorf("PartitionID = %q, want %q", info.PartitionID, want)
+	}
+	if info.FileSystem != "NTFS" {
+		t.Errorf("FileSystem = %q, want NTFS (canonical)", info.FileSystem)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Compile-time assertion mirror.
 // ---------------------------------------------------------------------------
