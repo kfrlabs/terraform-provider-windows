@@ -3,6 +3,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -78,8 +79,10 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				},
 			},
 			"port": schema.Int64Attribute{
-				Description: "SSH port. Defaults to 22. May also be set via WINDOWS_PORT.",
-				Optional:    true,
+				Description: "SSH port. Defaults to 22. May also be set via WINDOWS_PORT. " +
+					"Precedence: explicit HCL > set WINDOWS_PORT > default 22. A set-but-malformed " +
+					"or out-of-range WINDOWS_PORT is an error.",
+				Optional: true,
 				Validators: []validator.Int64{
 					// Null (unset, env fallback via WINDOWS_PORT) skips validation.
 					int64validator.Between(1, 65535),
@@ -99,7 +102,8 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Description: "Timeout for establishing the SSH connection (TCP dial plus handshake), as a " +
 					"Go duration string (e.g. 30s, 2m). Default: 30s. This does NOT bound how long a " +
 					"PowerShell operation may run: use the per-resource timeouts block for that. May " +
-					"also be set via WINDOWS_TIMEOUT.",
+					"also be set via WINDOWS_TIMEOUT. Precedence: explicit HCL > set WINDOWS_TIMEOUT > " +
+					"default 30s. A set-but-malformed WINDOWS_TIMEOUT is an error.",
 				Optional: true,
 				Validators: []validator.String{
 					// Null (unset, env fallback via WINDOWS_TIMEOUT) skips validation;
@@ -129,7 +133,9 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Description: "Whether to authenticate through the ssh-agent advertised by SSH_AUTH_SOCK. " +
 					"When unset, the agent is used if SSH_AUTH_SOCK is present. Unavailable when " +
 					"Terraform itself runs on Windows, where the agent is a named pipe rather than a " +
-					"Unix socket: use private_key_path there. May also be set via WINDOWS_USE_AGENT.",
+					"Unix socket: use private_key_path there. May also be set via WINDOWS_USE_AGENT. " +
+					"Precedence: explicit HCL > set WINDOWS_USE_AGENT > SSH_AUTH_SOCK default. A " +
+					"set-but-malformed WINDOWS_USE_AGENT is an error.",
 				Optional: true,
 			},
 			"known_hosts_path": schema.StringAttribute{
@@ -149,14 +155,18 @@ func (p *windowsProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Description: "Disable host key verification entirely. This exposes every connection to " +
 					"man-in-the-middle interception and should only be used against disposable hosts on " +
 					"a trusted network. Defaults to false. May also be set via " +
-					"WINDOWS_INSECURE_IGNORE_HOST_KEY.",
+					"WINDOWS_INSECURE_IGNORE_HOST_KEY. Precedence: explicit HCL > set " +
+					"WINDOWS_INSECURE_IGNORE_HOST_KEY > default false, so an explicit false keeps " +
+					"verification on even when the variable is true. A set-but-malformed variable is an error.",
 				Optional: true,
 			},
 			"max_sessions": schema.Int64Attribute{
 				Description: "Maximum number of concurrent SSH/PowerShell sessions against the target host. " +
 					"Terraform's parallelism is otherwise serialised to 1 by the single-session transport: " +
 					"a slow operation blocks every other resource. Defaults to 4, which stays under the " +
-					"OpenSSH default MaxSessions 10. May also be set via WINDOWS_MAX_SESSIONS.",
+					"OpenSSH default MaxSessions 10. May also be set via WINDOWS_MAX_SESSIONS. Precedence: " +
+					"explicit HCL > set WINDOWS_MAX_SESSIONS > default 4. A set-but-malformed " +
+					"WINDOWS_MAX_SESSIONS is an error.",
 				Optional: true,
 				Validators: []validator.Int64{
 					// Null (unset, env fallback via WINDOWS_MAX_SESSIONS) skips validation.
@@ -227,6 +237,11 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		v := data.UseAgent.ValueBool()
 		useAgent = &v
 	}
+	var insecureIgnoreHostKey *bool
+	if !data.InsecureIgnoreHostKey.IsNull() {
+		v := data.InsecureIgnoreHostKey.ValueBool()
+		insecureIgnoreHostKey = &v
+	}
 
 	cfg := winclient.Config{
 		Host:                  data.Host.ValueString(),
@@ -239,44 +254,13 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		UseAgent:              useAgent,
 		KnownHostsPath:        data.KnownHostsPath.ValueString(),
 		HostKey:               data.HostKey.ValueString(),
-		InsecureIgnoreHostKey: data.InsecureIgnoreHostKey.ValueBool(),
+		InsecureIgnoreHostKey: insecureIgnoreHostKey,
 	}
 
-	// An unset max_sessions stays 0 so ResolveFromEnv can apply
-	// WINDOWS_MAX_SESSIONS; New defaults to DefaultMaxSessions when
-	// neither is set.
-	if !data.MaxSessions.IsNull() {
-		cfg.MaxSessions = int(data.MaxSessions.ValueInt64())
-	}
-
-	winclient.ResolveFromEnv(&cfg)
-
-	if cfg.Host == "" {
-		resp.Diagnostics.AddAttributeError(pathAttr("host"), "Missing Windows host",
-			"Set provider attribute 'host' or environment variable WINDOWS_HOST.")
-	}
-	if cfg.Username == "" {
-		resp.Diagnostics.AddAttributeError(pathAttr("username"), "Missing Windows username",
-			"Set provider attribute 'username' or environment variable WINDOWS_USERNAME.")
-	}
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Losing host identity verification is silent and total: the connection
-	// still succeeds, it just no longer proves who answered. Surface it on
-	// every plan and apply rather than only in the docs.
-	if cfg.InsecureIgnoreHostKey {
-		resp.Diagnostics.AddAttributeWarning(
-			pathAttr("insecure_ignore_host_key"),
-			"SSH host key verification is disabled",
-			"The provider will accept any host key presented by "+cfg.Host+", so this connection "+
-				"cannot detect a man-in-the-middle. Credentials and PowerShell payloads may be "+
-				"exposed to an impostor host. Remove 'insecure_ignore_host_key' and set 'host_key' "+
-				"or 'known_hosts_path' instead.",
-		)
-	}
-
+	// Seed explicit HCL values before ResolveFromEnv so the environment is
+	// not even validated when the attribute is set (explicit HCL > set env).
+	// This mirrors the max_sessions seeding below: cfg.Timeout stays 0 only
+	// when the attribute is null, letting WINDOWS_TIMEOUT apply.
 	if !data.Timeout.IsNull() {
 		timeoutStr := data.Timeout.ValueString()
 		if strings.TrimSpace(timeoutStr) == "" {
@@ -297,15 +281,67 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		}
 		cfg.Timeout = d
 	}
-	// When the attribute is unset (null), cfg.Timeout stays 0 so ResolveFromEnv can
-	// apply WINDOWS_TIMEOUT; New defaults to 30s when neither is set.
+
+	// An unset max_sessions stays 0 so ResolveFromEnv can apply
+	// WINDOWS_MAX_SESSIONS; New defaults to DefaultMaxSessions when
+	// neither is set.
+	if !data.MaxSessions.IsNull() {
+		cfg.MaxSessions = int(data.MaxSessions.ValueInt64())
+	}
+
+	// Explicit HCL wins over the environment: ResolveFromEnv only validates
+	// and applies a variable when its attribute is unset (null). A
+	// set-but-malformed variable is an error rather than a silent fallback,
+	// mapped back to its attribute path.
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		var envErr *winclient.EnvError
+		if errors.As(err, &envErr) {
+			resp.Diagnostics.AddAttributeError(pathAttr(envErr.Attr), "Invalid environment configuration",
+				fmt.Sprintf("Environment variable %s=%q is invalid: %s.", envErr.Var, envErr.Value, envErr.Msg))
+			return
+		}
+		resp.Diagnostics.AddError("Unable to read environment configuration", err.Error())
+		return
+	}
+
+	if cfg.Host == "" {
+		resp.Diagnostics.AddAttributeError(pathAttr("host"), "Missing Windows host",
+			"Set provider attribute 'host' or environment variable WINDOWS_HOST.")
+	}
+	if cfg.Username == "" {
+		resp.Diagnostics.AddAttributeError(pathAttr("username"), "Missing Windows username",
+			"Set provider attribute 'username' or environment variable WINDOWS_USERNAME.")
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Losing host identity verification is silent and total: the connection
+	// still succeeds, it just no longer proves who answered. Surface it on
+	// every plan and apply rather than only in the docs.
+	if cfg.InsecureIgnoreHostKey != nil && *cfg.InsecureIgnoreHostKey {
+		resp.Diagnostics.AddAttributeWarning(
+			pathAttr("insecure_ignore_host_key"),
+			"SSH host key verification is disabled",
+			"The provider will accept any host key presented by "+cfg.Host+", so this connection "+
+				"cannot detect a man-in-the-middle. Credentials and PowerShell payloads may be "+
+				"exposed to an impostor host. Remove 'insecure_ignore_host_key' and set 'host_key' "+
+				"or 'known_hosts_path' instead.",
+		)
+	}
+
+	// cfg.Timeout already holds the explicit HCL value seeded before
+	// ResolveFromEnv, or the WINDOWS_TIMEOUT fallback (or 0 for New to
+	// default to 30s). A set-but-malformed WINDOWS_TIMEOUT already failed
+	// above via ResolveFromEnv, and a malformed HCL timeout failed before
+	// ResolveFromEnv so the environment cannot mask it.
 
 	// An explicitly configured max_sessions must stay within the pool bounds.
 	// When unset, cfg.MaxSessions holds the WINDOWS_MAX_SESSIONS fallback (or
 	// 0 for New to default), which is validated the same way so an
 	// out-of-range environment value fails with an attribute path instead of
-	// the generic New error. Malformed env values are still ignored by
-	// ResolveFromEnv and fall back to the default.
+	// the generic New error. A set-but-malformed WINDOWS_MAX_SESSIONS already
+	// failed above via ResolveFromEnv.
 	if !data.MaxSessions.IsNull() {
 		if v := data.MaxSessions.ValueInt64(); v < 1 || v > winclient.MaxMaxSessions {
 			resp.Diagnostics.AddAttributeError(pathAttr("max_sessions"), "Invalid max_sessions",
@@ -316,6 +352,27 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 	if cfg.MaxSessions != 0 && (cfg.MaxSessions < 1 || cfg.MaxSessions > winclient.MaxMaxSessions) {
 		resp.Diagnostics.AddAttributeError(pathAttr("max_sessions"), "Invalid max_sessions",
 			fmt.Sprintf("max_sessions must be between 1 and %d, got %d.", winclient.MaxMaxSessions, cfg.MaxSessions))
+		return
+	}
+
+	// An explicitly configured port must stay within the dialable range.
+	// When null, cfg.Port holds the WINDOWS_PORT fallback (or 0 for New to
+	// default to 22). The null case is indistinguishable from an explicit
+	// port=0 at the cfg level, so check the HCL attribute directly.
+	if !data.Port.IsNull() {
+		if v := data.Port.ValueInt64(); v < 1 || v > 65535 {
+			resp.Diagnostics.AddAttributeError(pathAttr("port"), "Invalid port",
+				fmt.Sprintf("port must be between 1 and 65535, got %d.", v))
+			return
+		}
+	}
+
+	// Port comes from the HCL attribute or WINDOWS_PORT (both validated to
+	// 1..65535); 0 means neither is set and New defaults to 22. Anything
+	// else is a fail-safe attribute error rather than the generic New error.
+	if cfg.Port != 0 && (cfg.Port < 1 || cfg.Port > 65535) {
+		resp.Diagnostics.AddAttributeError(pathAttr("port"), "Invalid port",
+			fmt.Sprintf("port must be between 1 and 65535, got %d.", cfg.Port))
 		return
 	}
 

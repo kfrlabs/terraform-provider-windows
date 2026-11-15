@@ -378,7 +378,7 @@ func TestDiskConfigure_WrongType(t *testing.T) {
 }
 
 func TestDiskConfigure_Valid(t *testing.T) {
-	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
+	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: winclient.BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)
 	}

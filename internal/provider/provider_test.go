@@ -103,6 +103,7 @@ func providerConfigObjectType() tftypes.Object {
 // nil field is a null attribute.
 type providerCfgOptions struct {
 	host                  *string
+	port                  *int64
 	username              *string
 	password              *string
 	timeout               *string
@@ -137,7 +138,7 @@ func providerCfgValue(o providerCfgOptions) tftypes.Value {
 	}
 	return tftypes.NewValue(providerConfigObjectType(), map[string]tftypes.Value{
 		"host":                     s(o.host),
-		"port":                     tftypes.NewValue(tftypes.Number, nil),
+		"port":                     n(o.port),
 		"username":                 s(o.username),
 		"password":                 s(o.password),
 		"timeout":                  s(o.timeout),
@@ -154,10 +155,11 @@ func providerCfgValue(o providerCfgOptions) tftypes.Value {
 
 // clearProviderEnv keeps the ambient environment from leaking into a test:
 // every provider attribute has an env fallback, including the host-key ones.
+// Each variable is set to "" which ResolveFromEnv treats as unset.
 func clearProviderEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		winclient.EnvHost, winclient.EnvUsername, winclient.EnvPassword,
+		winclient.EnvHost, winclient.EnvPort, winclient.EnvUsername, winclient.EnvPassword,
 		winclient.EnvPrivateKey, winclient.EnvPrivateKeyPath, winclient.EnvPrivateKeyPassphrase,
 		winclient.EnvUseAgent, winclient.EnvKnownHosts, winclient.EnvHostKey,
 		winclient.EnvInsecureIgnoreHostKey, winclient.EnvTimeout,
@@ -396,27 +398,27 @@ func TestProvider_Configure_TimeoutAttributeWinsOverEnv(t *testing.T) {
 	}
 }
 
-// A malformed WINDOWS_TIMEOUT must not fail Configure: it falls back to the
-// 30s default, mirroring WINDOWS_PORT.
-func TestProvider_Configure_MalformedTimeoutEnvFallsBackToDefault(t *testing.T) {
-	clearProviderEnv(t)
-	t.Setenv(winclient.EnvTimeout, "soon")
+// A set-but-malformed WINDOWS_TIMEOUT is an error on the timeout attribute
+// rather than a silent fallback to the 30s default (issue #397).
+func TestProvider_Configure_MalformedTimeoutEnvIsError(t *testing.T) {
+	for _, bad := range []string{"soon", "0", "0s", "-5s"} {
+		t.Run(bad, func(t *testing.T) {
+			clearProviderEnv(t)
+			t.Setenv(winclient.EnvTimeout, bad)
 
-	resp := configureProvider(t, providerCfgOptions{
-		host:     strPtr("10.0.0.1"),
-		username: strPtr("admin"),
-		password: strPtr("secret"),
-		hostKey:  strPtr(testHostKey(t)),
-	})
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("malformed WINDOWS_TIMEOUT should fall back to default, got: %v", resp.Diagnostics)
-	}
-	c, ok := resp.ResourceData.(*winclient.Client)
-	if !ok {
-		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
-	}
-	if got := c.Config().Timeout; got != 30*time.Second {
-		t.Errorf("dial timeout = %v, want default 30s", got)
+			resp := configureProvider(t, providerCfgOptions{
+				host:     strPtr("10.0.0.1"),
+				username: strPtr("admin"),
+				password: strPtr("secret"),
+				hostKey:  strPtr(testHostKey(t)),
+			})
+			if !resp.Diagnostics.HasError() {
+				t.Fatalf("expected error diag for WINDOWS_TIMEOUT=%q", bad)
+			}
+			if !configureHasAttributeError(resp, "timeout") {
+				t.Errorf("WINDOWS_TIMEOUT=%q should error on the timeout attribute, got: %v", bad, resp.Diagnostics)
+			}
+		})
 	}
 }
 
@@ -491,8 +493,8 @@ func TestProvider_Configure_MaxSessionsAttributeWinsOverEnv(t *testing.T) {
 }
 
 // WINDOWS_MAX_SESSIONS values are validated like the attribute: an
-// out-of-range value fails on max_sessions, while malformed or
-// non-positive values fall back to the default.
+// out-of-range, malformed or non-positive value fails on max_sessions
+// (issue #397).
 func TestProvider_Configure_MaxSessionsEnvValues(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -500,9 +502,10 @@ func TestProvider_Configure_MaxSessionsEnvValues(t *testing.T) {
 		wantErr bool
 	}{
 		{"above MaxMaxSessions fails", fmt.Sprintf("%d", winclient.MaxMaxSessions+1), true},
-		{"malformed falls back to default", "soon", false},
-		{"zero falls back to default", "0", false},
-		{"negative falls back to default", "-3", false},
+		{"malformed fails", "soon", true},
+		{"zero fails", "0", true},
+		{"negative fails", "-3", true},
+		{"float fails", "4.5", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clearProviderEnv(t)
@@ -830,6 +833,280 @@ func TestProvider_Configure_ValidTimeoutAndMaxSessions(t *testing.T) {
 			}
 			if resp.ResourceData == nil {
 				t.Error("Configure should populate ResourceData")
+			}
+		})
+	}
+}
+
+// Set-but-malformed environment fallbacks are errors on their attribute path
+// (issue #397): explicit HCL > set env > default, and a set env that cannot
+// be parsed is never silently ignored.
+func TestProvider_Configure_MalformedEnvIsError(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T)
+		attr  string
+	}{
+		{"port malformed", func(t *testing.T) { t.Setenv(winclient.EnvPort, "not-a-port") }, "port"},
+		{"port zero", func(t *testing.T) { t.Setenv(winclient.EnvPort, "0") }, "port"},
+		{"port out of range", func(t *testing.T) { t.Setenv(winclient.EnvPort, "65536") }, "port"},
+		{"timeout malformed", func(t *testing.T) { t.Setenv(winclient.EnvTimeout, "soon") }, "timeout"},
+		{"timeout zero", func(t *testing.T) { t.Setenv(winclient.EnvTimeout, "0s") }, "timeout"},
+		{"max_sessions malformed", func(t *testing.T) { t.Setenv(winclient.EnvMaxSessions, "soon") }, "max_sessions"},
+		{"max_sessions zero", func(t *testing.T) { t.Setenv(winclient.EnvMaxSessions, "0") }, "max_sessions"},
+		{"use_agent malformed", func(t *testing.T) { t.Setenv(winclient.EnvUseAgent, "yes-please") }, "use_agent"},
+		{"insecure malformed", func(t *testing.T) { t.Setenv(winclient.EnvInsecureIgnoreHostKey, "maybe") }, "insecure_ignore_host_key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearProviderEnv(t)
+			tc.setup(t)
+
+			resp := configureProvider(t, providerCfgOptions{
+				host:     strPtr("10.0.0.1"),
+				username: strPtr("admin"),
+				password: strPtr("secret"),
+				hostKey:  strPtr(testHostKey(t)),
+			})
+			if !resp.Diagnostics.HasError() {
+				t.Fatalf("expected error diag for %s", tc.name)
+			}
+			if !configureHasAttributeError(resp, tc.attr) {
+				t.Errorf("%s should error on the %q attribute, got: %v", tc.name, tc.attr, resp.Diagnostics)
+			}
+		})
+	}
+}
+
+// An out-of-range WINDOWS_PORT fails on the port attribute rather than
+// silently defaulting to 22 (issue #397).
+func TestProvider_Configure_PortEnvValues(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   string
+		wantErr bool
+		attr    string
+	}{
+		{"valid port", "2222", false, ""},
+		{"zero fails", "0", true, "port"},
+		{"negative fails", "-1", true, "port"},
+		{"above 65535 fails", "65536", true, "port"},
+		{"malformed fails", "twenty-two", true, "port"},
+		{"trailing space fails", "22 ", true, "port"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearProviderEnv(t)
+			t.Setenv(winclient.EnvPort, tc.value)
+
+			resp := configureProvider(t, providerCfgOptions{
+				host:     strPtr("10.0.0.1"),
+				username: strPtr("admin"),
+				password: strPtr("secret"),
+				hostKey:  strPtr(testHostKey(t)),
+			})
+			if tc.wantErr {
+				if !resp.Diagnostics.HasError() {
+					t.Fatalf("expected error diag for WINDOWS_PORT=%q", tc.value)
+				}
+				if !configureHasAttributeError(resp, tc.attr) {
+					t.Errorf("WINDOWS_PORT=%q should error on the %q attribute, got: %v", tc.value, tc.attr, resp.Diagnostics)
+				}
+				return
+			}
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("WINDOWS_PORT=%q should configure cleanly, got: %v", tc.value, resp.Diagnostics)
+			}
+			c, ok := resp.ResourceData.(*winclient.Client)
+			if !ok {
+				t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+			}
+			if got := c.Config().Port; got != 2222 {
+				t.Errorf("Port = %d, want 2222 from WINDOWS_PORT", got)
+			}
+		})
+	}
+}
+
+// An explicit port attribute wins over WINDOWS_PORT, even a malformed one.
+func TestProvider_Configure_PortAttributeWinsOverEnv(t *testing.T) {
+	for _, env := range []string{"2222", "not-a-port"} {
+		t.Run("env_"+env, func(t *testing.T) {
+			clearProviderEnv(t)
+			t.Setenv(winclient.EnvPort, env)
+
+			resp := configureProvider(t, providerCfgOptions{
+				host:     strPtr("10.0.0.1"),
+				port:     int64Ptr(2200),
+				username: strPtr("admin"),
+				password: strPtr("secret"),
+				hostKey:  strPtr(testHostKey(t)),
+			})
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("explicit port should win over WINDOWS_PORT=%q, got: %v", env, resp.Diagnostics)
+			}
+			c, ok := resp.ResourceData.(*winclient.Client)
+			if !ok {
+				t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+			}
+			if got := c.Config().Port; got != 2200 {
+				t.Errorf("Port = %d, want explicit 2200 over WINDOWS_PORT=%q", got, env)
+			}
+		})
+	}
+}
+
+// An explicit insecure_ignore_host_key=false wins over
+// WINDOWS_INSECURE_IGNORE_HOST_KEY=true (issue #397): verification stays on
+// and no opt-out warning is emitted.
+func TestProvider_Configure_InsecureExplicitFalseWinsOverEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvInsecureIgnoreHostKey, "true")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:                  strPtr("10.0.0.1"),
+		username:              strPtr("admin"),
+		password:              strPtr("secret"),
+		hostKey:               strPtr(testHostKey(t)),
+		insecureIgnoreHostKey: boolPtr(false),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("explicit false should win over env true, got: %v", resp.Diagnostics)
+	}
+	if resp.Diagnostics.WarningsCount() != 0 {
+		t.Errorf("explicit false over env true must not warn, got: %v", resp.Diagnostics)
+	}
+	c, ok := resp.ResourceData.(*winclient.Client)
+	if !ok {
+		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+	}
+	if v := c.Config().InsecureIgnoreHostKey; v == nil || *v {
+		t.Error("effective InsecureIgnoreHostKey should be false when HCL false wins over env true")
+	}
+}
+
+// An explicit insecure_ignore_host_key=true still opts out with a warning,
+// and the environment can opt out when HCL is unset.
+func TestProvider_Configure_InsecureEnvTrueOptsOut(t *testing.T) {
+	t.Run("explicit true warns", func(t *testing.T) {
+		clearProviderEnv(t)
+
+		resp := configureProvider(t, providerCfgOptions{
+			host:                  strPtr("10.0.0.1"),
+			username:              strPtr("admin"),
+			password:              strPtr("secret"),
+			insecureIgnoreHostKey: boolPtr(true),
+		})
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected diags: %v", resp.Diagnostics)
+		}
+		if resp.Diagnostics.WarningsCount() == 0 {
+			t.Error("explicit insecure true must warn")
+		}
+	})
+
+	t.Run("env true warns when HCL unset", func(t *testing.T) {
+		clearProviderEnv(t)
+		t.Setenv(winclient.EnvInsecureIgnoreHostKey, "true")
+
+		resp := configureProvider(t, providerCfgOptions{
+			host:     strPtr("10.0.0.1"),
+			username: strPtr("admin"),
+			password: strPtr("secret"),
+		})
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected diags: %v", resp.Diagnostics)
+		}
+		if resp.Diagnostics.WarningsCount() == 0 {
+			t.Error("WINDOWS_INSECURE_IGNORE_HOST_KEY=true should warn when HCL is unset")
+		}
+		c, ok := resp.ResourceData.(*winclient.Client)
+		if !ok {
+			t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+		}
+		if v := c.Config().InsecureIgnoreHostKey; v == nil || !*v {
+			t.Error("effective InsecureIgnoreHostKey should be true from the environment")
+		}
+	})
+
+	t.Run("env true with HCL host_key errors", func(t *testing.T) {
+		clearProviderEnv(t)
+		t.Setenv(winclient.EnvInsecureIgnoreHostKey, "true")
+
+		resp := configureProvider(t, providerCfgOptions{
+			host:     strPtr("10.0.0.1"),
+			username: strPtr("admin"),
+			password: strPtr("secret"),
+			hostKey:  strPtr(testHostKey(t)),
+		})
+		if !resp.Diagnostics.HasError() {
+			t.Fatal("env insecure true combined with HCL host_key should be rejected")
+		}
+	})
+}
+
+// An explicit use_agent wins over the environment, even a malformed value.
+func TestProvider_Configure_UseAgentAttributeWinsOverMalformedEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvUseAgent, "yes-please")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:     strPtr("10.0.0.1"),
+		username: strPtr("admin"),
+		password: strPtr("secret"),
+		useAgent: boolPtr(false),
+		hostKey:  strPtr(testHostKey(t)),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("explicit use_agent should win over malformed env, got: %v", resp.Diagnostics)
+	}
+}
+
+// An explicit timeout wins over the environment, even a malformed value
+// (issue #397): cfg.Timeout is seeded from HCL before ResolveFromEnv so the
+// malformed WINDOWS_TIMEOUT is never validated.
+func TestProvider_Configure_TimeoutAttributeWinsOverMalformedEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv(winclient.EnvTimeout, "soon")
+
+	resp := configureProvider(t, providerCfgOptions{
+		host:     strPtr("10.0.0.1"),
+		username: strPtr("admin"),
+		password: strPtr("secret"),
+		timeout:  strPtr("15s"),
+		hostKey:  strPtr(testHostKey(t)),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("explicit timeout should win over malformed env, got: %v", resp.Diagnostics)
+	}
+	c, ok := resp.ResourceData.(*winclient.Client)
+	if !ok {
+		t.Fatalf("ResourceData = %T, want *winclient.Client", resp.ResourceData)
+	}
+	if got := c.Config().Timeout; got != 15*time.Second {
+		t.Errorf("dial timeout = %v, want explicit 15s over malformed WINDOWS_TIMEOUT", got)
+	}
+}
+
+// An explicit port=0 is not a dialable port and must fail on the port
+// attribute rather than silently defaulting to 22: cfg.Port 0 is
+// indistinguishable from unset, so Configure checks the HCL attribute
+// directly.
+func TestProvider_Configure_ExplicitPortZeroIsError(t *testing.T) {
+	for _, tc := range []int64{0, -1, 70000} {
+		t.Run(fmt.Sprintf("port_%d", tc), func(t *testing.T) {
+			clearProviderEnv(t)
+
+			resp := configureProvider(t, providerCfgOptions{
+				host:     strPtr("10.0.0.1"),
+				port:     int64Ptr(tc),
+				username: strPtr("admin"),
+				password: strPtr("secret"),
+				hostKey:  strPtr(testHostKey(t)),
+			})
+			if !resp.Diagnostics.HasError() {
+				t.Fatalf("expected error diag for explicit port %d", tc)
+			}
+			if !configureHasAttributeError(resp, "port") {
+				t.Errorf("explicit port %d should error on the port attribute, got: %v", tc, resp.Diagnostics)
 			}
 		})
 	}

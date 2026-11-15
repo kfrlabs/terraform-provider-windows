@@ -3,8 +3,10 @@
 package winclient
 
 import (
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,8 +50,10 @@ type Config struct {
 	HostKey string
 	// InsecureIgnoreHostKey disables host identity verification entirely. It
 	// exposes every connection to man-in-the-middle interception and exists
-	// only as an explicit, deliberate opt-out.
-	InsecureIgnoreHostKey bool
+	// only as an explicit, deliberate opt-out. When nil, verification stays
+	// on (false). An explicit false wins over WINDOWS_INSECURE_IGNORE_HOST_KEY,
+	// matching the UseAgent precedent.
+	InsecureIgnoreHostKey *bool
 	// MaxSessions bounds how many SSH/PowerShell sessions the client keeps
 	// open concurrently (issue #180). Each call borrows a slot; beyond the
 	// limit callers wait until a slot frees or ctx is done. Zero means
@@ -88,64 +92,134 @@ const DefaultMaxSessions = 4
 // into a dial storm against sshd's MaxStartups throttle.
 const MaxMaxSessions = 32
 
+// BoolPtr boxes a bool so explicit test and provider configuration can
+// distinguish false from unset (nil), matching the UseAgent precedent.
+func BoolPtr(b bool) *bool { return &b }
+
+// EnvError reports a set-but-malformed environment fallback. Var names the
+// environment variable (for example WINDOWS_PORT) and Attr names the provider
+// attribute it maps to (for example port), so Configure can emit an
+// attribute-scoped diagnostic.
+type EnvError struct {
+	Var   string
+	Attr  string
+	Value string
+	Msg   string
+}
+
+func (e *EnvError) Error() string {
+	return fmt.Sprintf("winclient: %s=%q %s", e.Var, e.Value, e.Msg)
+}
+
+// lookupEnv returns the variable value when it is set to a non-blank string.
+// An unset variable, an empty string and a whitespace-only string all count
+// as unset, preserving the clearProviderEnv test helper semantics where every
+// variable is set to "".
+func lookupEnv(key string) (string, bool) {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return "", false
+	}
+	return v, true
+}
+
 // ResolveFromEnv fills any empty field in cfg with the corresponding
 // environment variable value, if set. It never logs secret values.
-func ResolveFromEnv(cfg *Config) {
+//
+// Precedence is explicit HCL > set environment variable > built-in default:
+// a field that is already set keeps its value and its environment variable is
+// not even validated. A set-but-malformed WINDOWS_PORT, WINDOWS_TIMEOUT,
+// WINDOWS_MAX_SESSIONS, WINDOWS_USE_AGENT or
+// WINDOWS_INSECURE_IGNORE_HOST_KEY is an error rather than a silent fallback,
+// so a typo cannot silently dial the wrong port or disable verification.
+func ResolveFromEnv(cfg *Config) error {
 	if cfg.Host == "" {
-		cfg.Host = os.Getenv(EnvHost)
+		if v, ok := lookupEnv(EnvHost); ok {
+			cfg.Host = v
+		}
 	}
-	// A malformed or out-of-range WINDOWS_PORT is left for New to default to
-	// 22 rather than silently dialing a port the operator did not mean.
 	if cfg.Port == 0 {
-		if v, err := strconv.Atoi(os.Getenv(EnvPort)); err == nil && v > 0 && v <= 65535 {
+		if raw, ok := lookupEnv(EnvPort); ok {
+			v, err := strconv.Atoi(raw)
+			if err != nil || v < 1 || v > 65535 {
+				return &EnvError{Var: EnvPort, Attr: "port", Value: raw, Msg: "must be an integer between 1 and 65535"}
+			}
 			cfg.Port = v
 		}
 	}
 	if cfg.Username == "" {
-		cfg.Username = os.Getenv(EnvUsername)
+		if v, ok := lookupEnv(EnvUsername); ok {
+			cfg.Username = v
+		}
 	}
 	if cfg.Password == "" {
-		cfg.Password = os.Getenv(EnvPassword)
+		if v, ok := lookupEnv(EnvPassword); ok {
+			cfg.Password = v
+		}
 	}
 	if cfg.PrivateKey == "" {
-		cfg.PrivateKey = os.Getenv(EnvPrivateKey)
+		if v, ok := lookupEnv(EnvPrivateKey); ok {
+			cfg.PrivateKey = v
+		}
 	}
 	if cfg.PrivateKeyPath == "" {
-		cfg.PrivateKeyPath = os.Getenv(EnvPrivateKeyPath)
+		if v, ok := lookupEnv(EnvPrivateKeyPath); ok {
+			cfg.PrivateKeyPath = v
+		}
 	}
 	if cfg.PrivateKeyPassphrase == "" {
-		cfg.PrivateKeyPassphrase = os.Getenv(EnvPrivateKeyPassphrase)
+		if v, ok := lookupEnv(EnvPrivateKeyPassphrase); ok {
+			cfg.PrivateKeyPassphrase = v
+		}
 	}
 	if cfg.UseAgent == nil {
-		if v, err := strconv.ParseBool(os.Getenv(EnvUseAgent)); err == nil {
+		if raw, ok := lookupEnv(EnvUseAgent); ok {
+			v, err := strconv.ParseBool(raw)
+			if err != nil {
+				return &EnvError{Var: EnvUseAgent, Attr: "use_agent", Value: raw, Msg: "must be a boolean (true/false)"}
+			}
 			cfg.UseAgent = &v
 		}
 	}
 	if cfg.KnownHostsPath == "" {
-		cfg.KnownHostsPath = os.Getenv(EnvKnownHosts)
-	}
-	if cfg.HostKey == "" {
-		cfg.HostKey = os.Getenv(EnvHostKey)
-	}
-	if !cfg.InsecureIgnoreHostKey {
-		if v, err := strconv.ParseBool(os.Getenv(EnvInsecureIgnoreHostKey)); err == nil {
-			cfg.InsecureIgnoreHostKey = v
+		if v, ok := lookupEnv(EnvKnownHosts); ok {
+			cfg.KnownHostsPath = v
 		}
 	}
-	// A malformed or non-positive WINDOWS_TIMEOUT is left for New to default
-	// to 30s rather than dialing with a surprising timeout — the same stance
-	// as WINDOWS_PORT above.
+	if cfg.HostKey == "" {
+		if v, ok := lookupEnv(EnvHostKey); ok {
+			cfg.HostKey = v
+		}
+	}
+	if cfg.InsecureIgnoreHostKey == nil {
+		if raw, ok := lookupEnv(EnvInsecureIgnoreHostKey); ok {
+			v, err := strconv.ParseBool(raw)
+			if err != nil {
+				return &EnvError{Var: EnvInsecureIgnoreHostKey, Attr: "insecure_ignore_host_key", Value: raw, Msg: "must be a boolean (true/false)"}
+			}
+			cfg.InsecureIgnoreHostKey = &v
+		}
+	}
 	if cfg.Timeout == 0 {
-		if v, err := time.ParseDuration(os.Getenv(EnvTimeout)); err == nil && v > 0 {
+		if raw, ok := lookupEnv(EnvTimeout); ok {
+			v, err := time.ParseDuration(raw)
+			if err != nil || v <= 0 {
+				return &EnvError{Var: EnvTimeout, Attr: "timeout", Value: raw, Msg: "must be a positive Go duration string (e.g. 30s, 2m)"}
+			}
 			cfg.Timeout = v
 		}
 	}
-	// A malformed or non-positive WINDOWS_MAX_SESSIONS is left for New to
-	// default to DefaultMaxSessions rather than serialising the pool or
-	// failing Configure on a typo — the same stance as WINDOWS_PORT above.
 	if cfg.MaxSessions == 0 {
-		if v, err := strconv.Atoi(os.Getenv(EnvMaxSessions)); err == nil && v > 0 {
+		if raw, ok := lookupEnv(EnvMaxSessions); ok {
+			v, err := strconv.Atoi(raw)
+			if err != nil || v < 1 {
+				return &EnvError{Var: EnvMaxSessions, Attr: "max_sessions", Value: raw, Msg: "must be a positive integer"}
+			}
+			// Values above MaxMaxSessions are applied here and rejected by
+			// the caller's max_sessions attribute check, so the diagnostic
+			// points at max_sessions either way.
 			cfg.MaxSessions = v
 		}
 	}
+	return nil
 }

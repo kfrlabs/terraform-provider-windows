@@ -50,7 +50,9 @@ func testAccNetRouteTarget(t *testing.T) string {
 		alias = "Loopback Pseudo-Interface 1"
 	}
 	cfg := winclient.Config{}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	c, err := winclient.New(cfg)
 	if err != nil {
 		t.Skipf("cannot build SSH client for safety check: %v", err)
@@ -135,7 +137,9 @@ func TestAccWindowsNetRoute_Basic(t *testing.T) {
 func testAccNetRoutePersistentStore(alias, prefix, nextHop string) resource.TestCheckFunc {
 	return func(_ *terraform.State) error {
 		cfg := winclient.Config{}
-		winclient.ResolveFromEnv(&cfg)
+		if err := winclient.ResolveFromEnv(&cfg); err != nil {
+			return err
+		}
 		c, err := winclient.New(cfg)
 		if err != nil {
 			return fmt.Errorf("cannot build SSH client for persistence check: %w", err)
@@ -162,7 +166,9 @@ func TestAccWindowsNetRoute_GuardRefusesManagementRoute(t *testing.T) {
 	testAccNetRoutePreCheck(t)
 
 	cfg := winclient.Config{}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	c, err := winclient.New(cfg)
 	if err != nil {
 		t.Skipf("cannot build SSH client: %v", err)

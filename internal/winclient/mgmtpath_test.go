@@ -386,7 +386,7 @@ func TestClientManagementPath_TransportFailsClosed(t *testing.T) {
 	// probe reports unknown instead of guessing.
 	c, err := New(Config{
 		Host: "127.0.0.1", Port: 1, Username: "u", Password: "p",
-		Timeout: 5 * time.Second, InsecureIgnoreHostKey: true,
+		Timeout: 5 * time.Second, InsecureIgnoreHostKey: BoolPtr(true),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

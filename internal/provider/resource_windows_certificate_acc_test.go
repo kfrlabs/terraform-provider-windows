@@ -48,9 +48,11 @@ func testAccCertificatePreCheck(t *testing.T) {
 func accCertificateClient(t *testing.T) (*winclient.Client, *winclient.CertificateClientImpl) {
 	t.Helper()
 	cfg := winclient.Config{Timeout: 60 * time.Second}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
-		cfg.InsecureIgnoreHostKey = true
+		cfg.InsecureIgnoreHostKey = winclient.BoolPtr(true)
 	}
 	c, err := winclient.New(cfg)
 	if err != nil {
@@ -201,9 +203,11 @@ resource "windows_certificate" "test" {
 // gone from the store.
 func testAccCheckWindowsCertificateDestroy(s *terraform.State) error {
 	cfg := winclient.Config{Timeout: 60 * time.Second}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		return err
+	}
 	if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
-		cfg.InsecureIgnoreHostKey = true
+		cfg.InsecureIgnoreHostKey = winclient.BoolPtr(true)
 	}
 	c, err := winclient.New(cfg)
 	if err != nil {

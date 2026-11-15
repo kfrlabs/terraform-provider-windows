@@ -38,7 +38,7 @@ import (
 // isNewClient returns an *InstalledSoftwareClient for tests.
 func isNewClient(t *testing.T) *InstalledSoftwareClient {
 	t.Helper()
-	c, err := New(Config{Host: "winis01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
+	c, err := New(Config{Host: "winis01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

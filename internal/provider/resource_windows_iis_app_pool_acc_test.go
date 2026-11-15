@@ -40,9 +40,11 @@ func testAccIISAppPoolPreCheck(t *testing.T) {
 func accIISAppPoolClient(t *testing.T) *winclient.IISAppPoolClient {
 	t.Helper()
 	cfg := winclient.Config{Timeout: 60 * time.Second}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
-		cfg.InsecureIgnoreHostKey = true
+		cfg.InsecureIgnoreHostKey = winclient.BoolPtr(true)
 	}
 	c, err := winclient.New(cfg)
 	if err != nil {
@@ -62,9 +64,11 @@ func accIISAppPoolClient(t *testing.T) *winclient.IISAppPoolClient {
 func accEnsureIIS(t *testing.T) {
 	t.Helper()
 	cfg := winclient.Config{Timeout: 60 * time.Second}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
-		cfg.InsecureIgnoreHostKey = true
+		cfg.InsecureIgnoreHostKey = winclient.BoolPtr(true)
 	}
 	c, err := winclient.New(cfg)
 	if err != nil {

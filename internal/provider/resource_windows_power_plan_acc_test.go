@@ -44,9 +44,11 @@ func testAccPowerPlanPreCheck(t *testing.T) {
 // instead.
 func newAccPowerPlanClient() (*winclient.PowerPlanClient, error) {
 	cfg := winclient.Config{Timeout: 60 * time.Second}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		return nil, err
+	}
 	if cfg.KnownHostsPath == "" && cfg.HostKey == "" {
-		cfg.InsecureIgnoreHostKey = true
+		cfg.InsecureIgnoreHostKey = winclient.BoolPtr(true)
 	}
 	c, err := winclient.New(cfg)
 	if err != nil {

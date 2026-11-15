@@ -250,7 +250,7 @@ func TestWingetPackageDataSource_Configure_WrongType(t *testing.T) {
 
 func TestWingetPackageDataSource_Configure_HappyPath(t *testing.T) {
 	ds := &windowsWingetPackageDataSource{}
-	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
+	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: winclient.BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)
 	}

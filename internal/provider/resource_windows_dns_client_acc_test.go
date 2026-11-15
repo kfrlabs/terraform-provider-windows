@@ -47,7 +47,9 @@ func testAccDNSClientTarget(t *testing.T) string {
 		t.Skip("WINDOWS_TEST_INTERFACE is not set; refusing to run DNS client tests without an explicit secondary interface")
 	}
 	cfg := winclient.Config{}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	c, err := winclient.New(cfg)
 	if err != nil {
 		t.Skipf("cannot build SSH client for safety check: %v", err)

@@ -37,7 +37,7 @@ func newRKTestClient(t *testing.T) *RegistryKeyClientImpl {
 		Username:              "u",
 		Password:              "p",
 		Timeout:               30 * time.Second,
-		InsecureIgnoreHostKey: true,
+		InsecureIgnoreHostKey: BoolPtr(true),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

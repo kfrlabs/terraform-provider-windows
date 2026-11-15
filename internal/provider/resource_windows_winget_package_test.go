@@ -309,7 +309,7 @@ func TestWingetPackageResource_Configure_WrongType(t *testing.T) {
 
 func TestWingetPackageResource_Configure_HappyPath(t *testing.T) {
 	r := &windowsWingetPackageResource{}
-	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
+	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: winclient.BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -106,7 +106,11 @@ trusted network.
 ### Environment variables
 
 Every connection attribute has an environment fallback, which keeps secrets out
-of `.tf` files and out of Terraform state:
+of `.tf` files and out of Terraform state. Precedence is explicit HCL >
+set environment variable > built-in default; a set-but-malformed
+`WINDOWS_PORT`, `WINDOWS_TIMEOUT`, `WINDOWS_MAX_SESSIONS`, `WINDOWS_USE_AGENT`
+or `WINDOWS_INSECURE_IGNORE_HOST_KEY` is an error rather than a silent
+fallback:
 
 | Variable | Purpose |
 | --- | --- |
@@ -121,7 +125,8 @@ of `.tf` files and out of Terraform state:
 | `WINDOWS_USE_AGENT` | `true`/`false` to force ssh-agent on or off |
 | `WINDOWS_KNOWN_HOSTS` | `known_hosts` file used to verify the host key |
 | `WINDOWS_HOST_KEY` | Expected host public key, pinned inline |
-| `WINDOWS_INSECURE_IGNORE_HOST_KEY` | `true` to disable host key verification |
+| `WINDOWS_INSECURE_IGNORE_HOST_KEY` | `true` to disable host key verification (`false` explicitly keeps it on even when the variable is `true`) |
+| `WINDOWS_MAX_SESSIONS` | Maximum concurrent sessions (default `4`, max `32`) |
 
 Never commit credentials to source control. Use a secret manager (Azure Key
 Vault, HashiCorp Vault, AWS SSM, CI/CD secret store).

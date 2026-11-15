@@ -425,7 +425,7 @@ func TestConfigure_WrongTypeProviderData(t *testing.T) {
 }
 
 func TestConfigure_ValidClient(t *testing.T) {
-	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: true})
+	c, err := winclient.New(winclient.Config{Host: "h", Username: "u", Password: "p", InsecureIgnoreHostKey: winclient.BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("winclient.New: %v", err)
 	}

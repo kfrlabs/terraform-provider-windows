@@ -48,7 +48,9 @@ func testAccNetIPAddressTarget(t *testing.T) string {
 		alias = "Loopback Pseudo-Interface 1"
 	}
 	cfg := winclient.Config{}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	c, err := winclient.New(cfg)
 	if err != nil {
 		t.Skipf("cannot build SSH client for safety check: %v", err)
@@ -142,7 +144,9 @@ func TestAccWindowsNetIPAddress_GuardRefusesManagementAddress(t *testing.T) {
 	testAccNetIPAddressPreCheck(t)
 
 	cfg := winclient.Config{}
-	winclient.ResolveFromEnv(&cfg)
+	if err := winclient.ResolveFromEnv(&cfg); err != nil {
+		t.Fatalf("winclient.ResolveFromEnv: %v", err)
+	}
 	c, err := winclient.New(cfg)
 	if err != nil {
 		t.Skipf("cannot build SSH client: %v", err)

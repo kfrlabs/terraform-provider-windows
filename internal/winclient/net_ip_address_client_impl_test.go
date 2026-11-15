@@ -35,7 +35,7 @@ import (
 // niNewClient returns a *NetIPAddressClientImpl for tests.
 func niNewClient(t *testing.T) *NetIPAddressClientImpl {
 	t.Helper()
-	c, err := New(Config{Host: "winip01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: true})
+	c, err := New(Config{Host: "winip01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
