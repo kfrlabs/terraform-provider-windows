@@ -5,12 +5,16 @@
 // locale-independent, machine-parseable output.
 //
 // Security invariants:
-//   - All user-supplied strings are interpolated via psQuote (single-quoted PS
-//     literal) or injected at a known concatenation point; never raw-concatenated.
-//   - DWORD/QWORD values are validated as uint32/uint64 by Go before appearing
-//     in PS scripts as decimal integer literals.
-//   - Binary values are validated as lowercase hex by Go before appearing as
-//     quoted PS string literals passed to Hex-To-Bytes.
+//   - Hive, path, name and kind are interpolated via psQuote (single-quoted
+//     PS literal); never raw-concatenated.
+//   - Value payloads (value_string, value_strings, value_binary) are Sensitive
+//     and NEVER appear in the script body. They travel as JSON on stdin via
+//     RunPowerShellWithInput and are decoded remote-side with
+//     [Console]::In.ReadToEnd() | ConvertFrom-Json (multi-line safe).
+//   - DWORD/QWORD values are validated as uint32/uint64 by Go before transport
+//     and converted to .NET int32/int64 bit-patterns remote-side.
+//   - Binary values are validated as lowercase hex by the provider schema;
+//     the remote Hex-To-Bytes conversion never echoes the payload.
 package winclient
 
 import (
@@ -116,13 +120,33 @@ function Build-DataResult([string]$KindStr, [object]$RawVal) {
 }
 `
 
-// psRegistryValueSetBody1 is the first part of the Set PS script (up to "$valData = ").
-// The value expression is injected via Go string concatenation between body1 and body2.
-// Placeholders @@HIVE@@, @@PATH@@, @@NAME@@, @@KIND@@ are replaced by strings.NewReplacer.
-const psRegistryValueSetBody1 = `
+// psRegistryValueSetBody is the Set PS script template. The secret value
+// payload arrives as JSON on stdin ($rvInput, decoded with
+// ReadToEnd+ConvertFrom-Json) and is materialised into the .NET-typed
+// $valData here; only hive/path/name/kind travel in the script body.
+// Placeholders @@HIVE@@, @@PATH@@, @@NAME@@, @@KIND@@, @@EXPAND@@ are
+// replaced by strings.NewReplacer. A stdin JSON parse failure is
+// invalid_input and never echoes the payload.
+const psRegistryValueSetBody = `
 & {
   $_rvKey = $null
   try {
+    try { $rvRaw = [Console]::In.ReadToEnd() } catch {
+      Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+      return
+    }
+    if ([string]::IsNullOrWhiteSpace($rvRaw)) {
+      Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+      return
+    }
+    try { $rvInput = ($rvRaw | ConvertFrom-Json) } catch {
+      Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+      return
+    }
+    if ($null -eq $rvInput) {
+      Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+      return
+    }
     $root = Get-RegHive @@HIVE@@
     $_rvKey = $root.CreateSubKey(@@PATH@@)
     if ($null -eq $_rvKey) {
@@ -147,10 +171,49 @@ const psRegistryValueSetBody1 = `
       'REG_BINARY'    { [Microsoft.Win32.RegistryValueKind]::Binary }
       'REG_NONE'      { [Microsoft.Win32.RegistryValueKind]::None }
     }
-    $valData = `
-
-// psRegistryValueSetBody2 is the second part of the Set PS script (after the value expression).
-const psRegistryValueSetBody2 = `
+    switch (@@KIND@@) {
+      'REG_SZ'        {
+        if ($null -eq $rvInput.value_string) {
+          Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+          return
+        }
+        $valData = [string]$rvInput.value_string
+      }
+      'REG_EXPAND_SZ' {
+        if ($null -eq $rvInput.value_string) {
+          Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+          return
+        }
+        $valData = [string]$rvInput.value_string
+      }
+      'REG_DWORD'     {
+        if ($null -eq $rvInput.value_string) {
+          Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+          return
+        }
+        $valData = ([System.BitConverter]::ToInt32([System.BitConverter]::GetBytes([uint32]$rvInput.value_string), 0))
+      }
+      'REG_QWORD'     {
+        if ($null -eq $rvInput.value_string) {
+          Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+          return
+        }
+        $valData = ([System.BitConverter]::ToInt64([System.BitConverter]::GetBytes([uint64]$rvInput.value_string), 0))
+      }
+      'REG_MULTI_SZ'  {
+        if ($null -eq $rvInput.value_strings) { $valData = [string[]]@() }
+        else { $valData = [string[]]$rvInput.value_strings }
+      }
+      default {
+        if ($null -eq $rvInput.value_binary) {
+          Emit-Err 'invalid_input' 'invalid registry value payload on stdin' @{}
+          return
+        }
+        $rvHex = [string]$rvInput.value_binary
+        if ([string]::IsNullOrEmpty($rvHex)) { $valData = [byte[]]@() }
+        else { $valData = (Hex-To-Bytes $rvHex) }
+      }
+    }
     $_rvKey.SetValue(@@NAME@@, $valData, $rvk)
     $postKindStr = RVK-To-Kind ([int]$_rvKey.GetValueKind(@@NAME@@))
     $opts = if (@@EXPAND@@) { [Microsoft.Win32.RegistryValueOptions]::None } else { [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames }
@@ -224,9 +287,13 @@ const psRegistryValueDeleteBody = `
 `
 
 // runRegistryValuePowerShell is the package-level hook for test substitution.
-// Production code must not reassign this outside tests.
-var runRegistryValuePowerShell = func(ctx context.Context, c *Client, script string) (string, string, error) {
-	return c.RunPowerShell(ctx, script)
+// Production code must not reassign this outside tests. When stdin is empty
+// the plain RunPowerShell path is used.
+var runRegistryValuePowerShell = func(ctx context.Context, c *Client, script, stdin string) (string, string, error) {
+	if stdin == "" {
+		return c.RunPowerShell(ctx, script)
+	}
+	return c.RunPowerShellWithInput(ctx, script, stdin)
 }
 
 // rvPSResponse is the parsed JSON envelope for registry value operations. It
@@ -246,14 +313,15 @@ type rvDataPayload struct {
 }
 
 // runScript executes a PS script and parses the JSON envelope through the
-// shared runEnvelope helper (#198).
-func (r *RegistryValueClientImpl) runScript(ctx context.Context, op, script string) (*rvPSResponse, error) {
+// shared runEnvelope helper (#198). stdin carries the secret value payload
+// for Set and is never copied into error context or logs.
+func (r *RegistryValueClientImpl) runScript(ctx context.Context, op, script, stdin string) (*rvPSResponse, error) {
 	baseContext := map[string]string{"host": r.c.cfg.Host}
 	resp, eerr := runEnvelope(ctx,
 		func(ctx context.Context, full, stdin string) (string, string, error) {
-			return runRegistryValuePowerShell(ctx, r.c, full)
+			return runRegistryValuePowerShell(ctx, r.c, full, stdin)
 		},
-		op, script, "", baseContext)
+		op, script, stdin, baseContext)
 	if eerr == nil {
 		return resp, nil
 	}
@@ -281,19 +349,45 @@ func mapRegistryValueErrorKind(k string) RegistryValueErrorKind {
 	}
 }
 
-// buildPSValueExpr returns the PowerShell expression that assigns the correct
-// .NET-typed value to $valData for a SetValue call.
+// rvSetStdin is the JSON document streamed on stdin for Set. It carries the
+// Sensitive value payload (value_string, value_strings, value_binary) so the
+// secret never appears in the script body; the script decodes it with
+// ReadToEnd+ConvertFrom-Json and builds the .NET-typed value remote-side.
+type rvSetStdin struct {
+	ValueString  *string  `json:"value_string,omitempty"`
+	ValueStrings []string `json:"value_strings,omitempty"`
+	ValueBinary  *string  `json:"value_binary,omitempty"`
+}
+
+// isRVHexDigits reports whether s consists only of ASCII hex digits. It backs
+// the Go-side REG_BINARY/REG_NONE validation in buildRVSetStdin so malformed
+// payloads fail closed as invalid_input without echoing the value.
+func isRVHexDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// buildRVSetStdin validates the Set input and encodes the secret value
+// payload as JSON for stdin transport.
 //
-// Security: only validated decimal strings (DWORD/QWORD) and psQuote-escaped
-// strings reach the PS script. User data never appears as unquoted PS syntax.
-func buildPSValueExpr(input RegistryValueInput) (string, error) {
+// Security: DWORD/QWORD decimal strings are validated as uint32/uint64 by Go
+// here (and canonicalised), so the remote [uint32]/[uint64] conversion cannot
+// fail on malformed input. User data never reaches the PS script as code.
+func buildRVSetStdin(input RegistryValueInput) (string, error) {
+	payload := rvSetStdin{}
 	switch input.Kind {
 	case RegistryValueKindString, RegistryValueKindExpandString:
 		if input.ValueString == nil {
 			return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
 				Message: fmt.Sprintf("ValueString is required for %s", input.Kind)}
 		}
-		return psQuote(*input.ValueString), nil
+		payload.ValueString = input.ValueString
 
 	case RegistryValueKindDWord:
 		if input.ValueString == nil {
@@ -303,10 +397,10 @@ func buildPSValueExpr(input RegistryValueInput) (string, error) {
 		u32, err := strconv.ParseUint(*input.ValueString, 10, 32)
 		if err != nil {
 			return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
-				Message: fmt.Sprintf("invalid REG_DWORD value %q", *input.ValueString), Cause: err}
+				Message: "invalid REG_DWORD value: must be decimal 0..4294967295", Cause: err}
 		}
-		// Convert to int32 bit-pattern for .NET SetValue(name, int32, DWord).
-		return fmt.Sprintf("([System.BitConverter]::ToInt32([System.BitConverter]::GetBytes([uint32]%d), 0))", u32), nil
+		s := strconv.FormatUint(u32, 10)
+		payload.ValueString = &s
 
 	case RegistryValueKindQWord:
 		if input.ValueString == nil {
@@ -316,21 +410,17 @@ func buildPSValueExpr(input RegistryValueInput) (string, error) {
 		u64, err := strconv.ParseUint(*input.ValueString, 10, 64)
 		if err != nil {
 			return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
-				Message: fmt.Sprintf("invalid REG_QWORD value %q", *input.ValueString), Cause: err}
+				Message: "invalid REG_QWORD value: must be decimal 0..18446744073709551615", Cause: err}
 		}
-		// Use ::Parse to avoid PS literal overflow for values > Int64.MaxValue.
-		// The digits are routed through psQuote so no hand-rolled quoting
-		// remains in this file (digits contain no quote characters, so this
-		// renders identically to a '%s' template).
-		return fmt.Sprintf("([System.BitConverter]::ToInt64([System.BitConverter]::GetBytes([uint64]::Parse(%s)), 0))",
-			psQuote(strconv.FormatUint(u64, 10))), nil
+		s := strconv.FormatUint(u64, 10)
+		payload.ValueString = &s
 
 	case RegistryValueKindMultiString:
 		strs := input.ValueStrings
 		if strs == nil {
 			strs = []string{}
 		}
-		return "[string[]]" + psQuoteList(strs), nil
+		payload.ValueStrings = strs
 
 	case RegistryValueKindBinary, RegistryValueKindNone:
 		hex := ""
@@ -338,14 +428,26 @@ func buildPSValueExpr(input RegistryValueInput) (string, error) {
 			hex = *input.ValueBinary
 		}
 		if hex == "" {
-			return "[byte[]]@()", nil
+			empty := ""
+			payload.ValueBinary = &empty
+		} else {
+			if len(hex)%2 != 0 || !isRVHexDigits(hex) {
+				return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
+					Message: fmt.Sprintf("invalid %s value: must be even-length hex digits", input.Kind)}
+			}
+			payload.ValueBinary = input.ValueBinary
 		}
-		return fmt.Sprintf("(Hex-To-Bytes %s)", psQuote(hex)), nil
 
 	default:
 		return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
 			Message: fmt.Sprintf("unknown RegistryValueKind: %s", input.Kind)}
 	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", &RegistryValueError{Resource: "windows_registry_value", Kind: RegistryValueErrorInvalidInput,
+			Message: "cannot encode registry value payload", Cause: err}
+	}
+	return string(raw), nil
 }
 
 // parseMultiStringPayload handles the PS ConvertTo-Json quirk where a
@@ -416,9 +518,10 @@ func (r *RegistryValueClientImpl) parseDataPayload(raw json.RawMessage, hive, re
 // Set implements RegistryValueClient.Set.
 //
 // Creates missing parent keys (EC-1), enforces type-conflict guard (EC-3),
-// writes the value, and returns the post-write state.
+// writes the value, and returns the post-write state. The secret value
+// payload travels as JSON on stdin, never in the script body.
 func (r *RegistryValueClientImpl) Set(ctx context.Context, input RegistryValueInput) (*RegistryValueState, error) {
-	valueExpr, err := buildPSValueExpr(input)
+	stdin, err := buildRVSetStdin(input)
 	if err != nil {
 		return nil, err
 	}
@@ -431,12 +534,9 @@ func (r *RegistryValueClientImpl) Set(ctx context.Context, input RegistryValueIn
 		"@@EXPAND@@", "$"+psBool(input.ExpandEnvironmentVariables),
 	)
 
-	script := psRegistryValueHeader + "\n" +
-		repl.Replace(psRegistryValueSetBody1) +
-		valueExpr +
-		repl.Replace(psRegistryValueSetBody2)
+	script := psRegistryValueHeader + "\n" + repl.Replace(psRegistryValueSetBody)
 
-	resp, err := r.runScript(ctx, "set", script)
+	resp, err := r.runScript(ctx, "set", script, stdin)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +558,7 @@ func (r *RegistryValueClientImpl) Read(ctx context.Context, hive, regPath, name 
 
 	script := psRegistryValueHeader + "\n" + repl.Replace(psRegistryValueReadBody)
 
-	resp, err := r.runScript(ctx, "read", script)
+	resp, err := r.runScript(ctx, "read", script, "")
 	if err != nil {
 		// Distinguish not_found from real errors.
 		if IsRegistryValueError(err, RegistryValueErrorNotFound) {
@@ -482,7 +582,7 @@ func (r *RegistryValueClientImpl) Delete(ctx context.Context, hive, regPath, nam
 
 	script := psRegistryValueHeader + "\n" + repl.Replace(psRegistryValueDeleteBody)
 
-	_, err := r.runScript(ctx, "delete", script)
+	_, err := r.runScript(ctx, "delete", script, "")
 	if err != nil {
 		// Idempotent: treat not_found as success.
 		if IsRegistryValueError(err, RegistryValueErrorNotFound) {
