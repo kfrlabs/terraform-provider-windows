@@ -37,7 +37,7 @@
 //   - IISConfigChangedOnDisk   — concurrent-writer flake detector
 //   - iisRetryBackoff          — short retry backoff, stubbed in tests
 //   - runEnvelope              — shared JSON envelope pipeline (envelope.go)
-//   - runPowerShell            — package-level hook, stubbed in tests
+//   - runIISPowerShell          — package-level hook (one-shot 5.1), stubbed in tests
 //   - psResponse               — Emit-OK / Emit-Err envelope (service.go)
 //   - sshProviderPort          — sshd port default (sshpath.go)
 package winclient
@@ -282,7 +282,7 @@ func (b *IISBindingClient) runBindingEnvelope(ctx context.Context, op, site, scr
 	baseContext := map[string]string{"site_name": site, "host": b.c.cfg.Host}
 	resp, eerr := runEnvelope(ctx,
 		func(ctx context.Context, full, stdin string) (string, string, error) {
-			return runPowerShell(ctx, b.c, full)
+			return runIISPowerShell(ctx, b.c, full, stdin)
 		},
 		op, psIISHeader+"\n"+iisBindingWildcardEscape+iisBindingReadFragment+"\n"+script, "", baseContext)
 	if eerr == nil {
