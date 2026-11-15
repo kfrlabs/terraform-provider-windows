@@ -636,6 +636,10 @@ All notable changes to this project will be documented in this file.
   rejects the bare GUID on these hosts, so the provider now sends the
   braced form. All found by a manual lab run against a secondary test
   disk (adopt -> carve -> format -> idempotence verified live).
+- Diagnostic context: `truncate()` cut stdout/stderr excerpts at a byte offset,
+  so on a localized host (e.g. "Accès refusé") the excerpt could end inside a
+  multi-byte character and reach the user as a `U+FFFD` replacement at the cut
+  (#404). It now backs off to the previous rune start.
 
 ## [0.4.0] - 2026-11-11
 
