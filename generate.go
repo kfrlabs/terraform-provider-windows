@@ -7,10 +7,12 @@
 //   3. Renders Markdown files under docs/ using the templates in
 //      templates/ when present, falling back to the built-in defaults.
 //
-// The tool itself is pinned to a specific version through tools/tools.go.
+// The tool itself is pinned to a specific version through the tool
+// directive in tools/go.mod. The tools directory is a separate module so
+// the generator and its dependencies stay out of the provider's go.mod.
 // CI (or a release pipeline) is expected to run `make docs` and fail the
 // build when docs/ drifts from the generated output.
 
 package main
 
-//go:generate go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name windows --rendered-provider-name windows
+//go:generate go run -modfile=tools/go.mod github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name windows --rendered-provider-name windows
