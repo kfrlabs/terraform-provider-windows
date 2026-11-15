@@ -40,7 +40,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -498,38 +497,35 @@ func TestCertificateBase64Validator(t *testing.T) {
 	}
 }
 
-func TestCertificatePEMNormalizeModifier(t *testing.T) {
-	m := certificatePEMNormalizeModifier{}
+func TestCertificatePEMsEquivalent(t *testing.T) {
 	pemText := certFixturePEM(t)
+	// Identical spellings are equivalent.
+	if !certificatePEMsEquivalent(pemText, pemText) {
+		t.Error("identical PEMs must be equivalent")
+	}
+	// CRLF and re-wrapped spellings of the same certificate are equivalent.
+	crlf := strings.ReplaceAll(pemText, "\n", "\r\n")
+	if !certificatePEMsEquivalent(pemText, crlf) {
+		t.Error("CRLF spelling must be equivalent to LF")
+	}
 	normalised, err := winclient.NormalizeCertificatePEM(pemText)
 	if err != nil {
 		t.Fatalf("fixture must normalise: %v", err)
 	}
-	modify := func(v types.String) types.String {
-		// Mirror the framework: the response starts pre-populated with
-		// the proposed value, so an unset PlanValue keeps the original.
-		resp := &planmodifier.StringResponse{PlanValue: v}
-		m.PlanModifyString(context.Background(), planmodifier.StringRequest{
-			Path:      path.Root("certificate_pem"),
-			PlanValue: v,
-		}, resp)
-		return resp.PlanValue
+	if !certificatePEMsEquivalent(pemText, normalised) {
+		t.Error("normalised spelling must be equivalent")
 	}
-	// CRLF converges to the normalised PEM.
-	crlf := strings.ReplaceAll(pemText, "\n", "\r\n")
-	if got := modify(types.StringValue(crlf)); got.ValueString() != normalised {
-		t.Error("CRLF input must converge to the normalised PEM")
+	// A different certificate is not equivalent.
+	other := certFixturePEM(t)
+	if certificatePEMsEquivalent(pemText, other) {
+		t.Error("different certificates must not be equivalent")
 	}
-	// Unparseable input passes through for the validator to report.
-	if got := modify(types.StringValue("garbage")); got.ValueString() != "garbage" {
-		t.Error("unparseable input must pass through for the validator")
+	// Unparseable input never matches (the validator reports it separately).
+	if certificatePEMsEquivalent(pemText, "garbage") {
+		t.Error("unparseable input must not be equivalent")
 	}
-	// Null and unknown are no-ops.
-	if got := modify(types.StringNull()); !got.IsNull() {
-		t.Error("null must stay null")
-	}
-	if got := modify(types.StringUnknown()); !got.IsUnknown() {
-		t.Error("unknown must stay unknown")
+	if certificatePEMsEquivalent("garbage", "garbage2") {
+		t.Error("two unparseable inputs must not be equivalent")
 	}
 }
 
