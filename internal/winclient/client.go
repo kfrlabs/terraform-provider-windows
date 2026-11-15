@@ -101,7 +101,7 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	hostKeys, err := hostKeyCallback(cfg)
+	hostKeys, hostKeyAlgos, err := hostKeyCallback(cfg)
 	if err != nil {
 		if agentConn != nil {
 			_ = agentConn.Close()
@@ -110,10 +110,11 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	sshCfg := &ssh.ClientConfig{
-		User:            cfg.Username,
-		Auth:            auth,
-		Timeout:         cfg.Timeout,
-		HostKeyCallback: hostKeys,
+		User:              cfg.Username,
+		Auth:              auth,
+		Timeout:           cfg.Timeout,
+		HostKeyCallback:   hostKeys,
+		HostKeyAlgorithms: hostKeyAlgos,
 	}
 
 	return &Client{
