@@ -44,7 +44,11 @@ resource "windows_legacy_package" "vlc" {
 
 # MSI that needs secrets on the command line (service account password,
 # license key). install_args_wo is WriteOnly: values never persist in state,
-# and the verbose MSI log is deleted after a successful run (keep_log=false).
+# but they are still passed on the installer command line (Start-Process
+# -ArgumentList/msiexec) and may be visible to host process auditing
+# (CommandLine, Sysmon event 1, Windows Security event 4688) during install; prefer
+# environment/response files when supported. The verbose MSI log is deleted
+# after a successful run (keep_log=false).
 resource "windows_legacy_package" "agent" {
   name                        = "agent"
   installer_type              = "msi"
@@ -83,4 +87,12 @@ variable "vendor_license_key" {
   type      = string
   sensitive = true
   default   = ""
+}
+variable "agent_service_password" {
+  type      = string
+  sensitive = true
+}
+variable "agent_license_key" {
+  type      = string
+  sensitive = true
 }

@@ -342,8 +342,8 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 			"install_args": schema.ListAttribute{
 				ElementType:         types.StringType,
 				Optional:            true,
-				Description:         "Extra args to the installer. MSI defaults injected by provider (/i,/qn,/norestart,/l*v <log>); EXE has no defaults. Values appear in plan output and state: never put secrets here, use install_args_wo. A verbose MSI log records public property values.",
-				MarkdownDescription: "Extra arguments to the installer. MSI defaults injected by provider (`/i`, `/qn`, `/norestart`, `/l*v <log>`); EXE has no defaults. Immutable (ForceNew).\n\n**Warning:** values appear in plan output and state, and a verbose MSI log records public property values in clear text on the host. Never put secrets here — use `install_args_wo`.",
+				Description:         "Extra args to the installer. MSI defaults injected by provider (/i,/qn,/norestart,/l*v <log>); EXE has no defaults. Values appear in plan output and state: never put secrets here, use install_args_wo (note host command-line visibility still applies there). A verbose MSI log records public property values.",
+				MarkdownDescription: "Extra arguments to the installer. MSI defaults injected by provider (`/i`, `/qn`, `/norestart`, `/l*v <log>`); EXE has no defaults. Immutable (ForceNew).\n\n**Warning:** values appear in plan output and state, and a verbose MSI log records public property values in clear text on the host. Never put secrets here — use `install_args_wo` (note host command-line visibility still applies there).",
 				PlanModifiers:       []planmodifier.List{legacyPackageListRequiresReplaceOnKnownPriorState()},
 			},
 
@@ -352,8 +352,8 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Optional:            true,
 				Sensitive:           true,
 				WriteOnly:           true,
-				Description:         "Write-only extra installer args for secrets (passwords, license keys). Concatenated after install_args at exec time; never persisted in state. Requires install_args_wo_version.",
-				MarkdownDescription: "Write-only extra installer arguments for secrets (passwords, license keys). Concatenated after `install_args` at exec time; never persisted in state. Immutable (ForceNew). Requires `install_args_wo_version`: bump the version and re-apply with the new values to rotate. Changing only the values without bumping the version is a no-op.",
+				Description:         "Write-only extra installer args for secrets (passwords, license keys). Concatenated after install_args at exec time; never persisted in state. Values are still passed on the installer command line (Start-Process -ArgumentList/msiexec) and may be visible to host process auditing (CommandLine, Sysmon event 1, Windows Security event 4688) during install; prefer environment/response files when supported. Requires install_args_wo_version.",
+				MarkdownDescription: "Write-only extra installer arguments for secrets (passwords, license keys). Concatenated after `install_args` at exec time; never persisted in state. Immutable (ForceNew). Values are still passed on the installer command line (`Start-Process -ArgumentList`/`msiexec`) and may be visible to host process auditing (`CommandLine`, Sysmon event 1, Windows Security event 4688) during install; prefer environment/response files when supported. Requires `install_args_wo_version`: bump the version and re-apply with the new values to rotate. Changing only the values without bumping the version is a no-op.",
 				PlanModifiers:       []planmodifier.List{listplanmodifier.RequiresReplace()},
 				Validators: []validator.List{
 					listvalidator.AlsoRequires(path.MatchRoot("install_args_wo_version")),
