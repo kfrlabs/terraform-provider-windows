@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestRunEnvelope_TrailingNoiseDoesNotShadowEnvelope(t *testing.T) {
@@ -84,5 +85,55 @@ func TestRunEnvelope_TransportErrorWithValidEnvelopePreservesKind(t *testing.T) 
 	}
 	if resp == nil {
 		t.Fatal("expected the envelope to be returned alongside the remote error")
+	}
+}
+
+// A transport that reports cancellation/expiry maps to the timeout stage
+// even when the outer context has not (yet) observed it: the context may
+// expire between the failed call and the classification check on a loaded
+// machine, and inner deadlines surface as context errors with a live outer
+// context. (A full-suite run on Windows once mapped the stub error below to
+// transport because of exactly this race.)
+func TestRunEnvelope_ContextErrorMapsToTimeoutWithLiveContext(t *testing.T) {
+	for name, err := range map[string]error{
+		"deadline": context.DeadlineExceeded,
+		"canceled": context.Canceled,
+		"wrapped":  errors.Join(errors.New("dial tcp: i/o timeout"), context.DeadlineExceeded),
+	} {
+		resp, eerr := runEnvelope(context.Background(),
+			envelopeRunner("", "boom", err, nil, nil),
+			"list", "Get-Thing", "", map[string]string{"host": "win01"})
+		if eerr == nil {
+			t.Fatalf("%s: expected a timeout error", name)
+		}
+		if resp != nil {
+			t.Errorf("%s: timeout must not return an envelope", name)
+		}
+		if eerr.Stage != EnvelopeStageTimeout {
+			t.Errorf("%s: Stage = %q, want %q", name, eerr.Stage, EnvelopeStageTimeout)
+		}
+	}
+
+	// A genuinely expired outer context still maps to timeout with the
+	// context error as the cause.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	time.Sleep(10 * time.Millisecond)
+	if ctx.Err() == nil {
+		t.Fatal("test setup: context must be expired")
+	}
+	_, eerr := runEnvelope(ctx,
+		envelopeRunner("", "", errors.New("ssh: handshake failed"), nil, nil),
+		"list", "Get-Thing", "", map[string]string{"host": "win01"})
+	if eerr == nil || eerr.Stage != EnvelopeStageTimeout {
+		t.Fatalf("expired context must map to timeout, got %+v", eerr)
+	}
+
+	// A non-context transport error with a live context stays transport.
+	_, eerr = runEnvelope(context.Background(),
+		envelopeRunner("", "boom", errors.New("ssh dial failed"), nil, nil),
+		"list", "Get-Thing", "", map[string]string{"host": "win01"})
+	if eerr == nil || eerr.Stage != EnvelopeStageTransport {
+		t.Fatalf("plain transport error must stay transport, got %+v", eerr)
 	}
 }
