@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -150,6 +151,7 @@ func windowsTimezoneSchemaDefinition(ctx context.Context) schema.Schema {
 				Description:         "Windows time zone ID (e.g. Romance Standard Time). Windows IDs never contain '/'; IANA IDs such as Europe/Paris are not supported.",
 				MarkdownDescription: "Windows time zone ID (e.g. `Romance Standard Time`). Windows IDs never contain `/`; IANA IDs such as `Europe/Paris` are not supported — use the Windows ID instead. Comparison is **case-insensitive**.",
 				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
 					timezoneIDValidator{},
 				},
 			},
@@ -230,6 +232,12 @@ func (r *windowsTimezoneResource) ImportState(ctx context.Context, req resource.
 			"Invalid import ID",
 			"Import requires a non-empty ID (its value is ignored; the live time zone is adopted). For example: terraform import windows_timezone.this current",
 		)
+		return
+	}
+
+	if r.tz == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
 		return
 	}
 

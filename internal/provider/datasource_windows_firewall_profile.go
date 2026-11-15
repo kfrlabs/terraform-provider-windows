@@ -12,8 +12,10 @@ import (
 	"fmt"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -85,7 +87,10 @@ func (d *windowsFirewallProfileDataSource) Schema(ctx context.Context, _ datasou
 				Description: "Data source identifier: the profile name (`Domain`, `Private` or `Public`).",
 			},
 			"name": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Firewall profile name on the target host. One of `Domain`, `Private`, `Public`.",
 			},
 			"enabled": schema.BoolAttribute{

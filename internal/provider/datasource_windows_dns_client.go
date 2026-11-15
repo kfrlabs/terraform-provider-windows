@@ -10,8 +10,10 @@ import (
 	"fmt"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -77,7 +79,10 @@ func (d *windowsDNSClientDataSource) Schema(ctx context.Context, _ datasource.Sc
 				Description: "Data source identifier: the canonical (trimmed) interface alias.",
 			},
 			"interface_alias": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Network interface alias on the target host. Matched exactly and case-insensitively, never as a wildcard.",
 			},
 			"ipv4_server_addresses": schema.ListAttribute{

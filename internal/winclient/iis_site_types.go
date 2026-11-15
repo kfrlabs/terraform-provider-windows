@@ -109,7 +109,8 @@ const iisSiteIDMax = 4294967295
 // ValidateIISAppPoolName (issue #284 open-question decision): 1-64
 // characters, none of the forbidden / \ [ ] : ; , ? * " < > | set (which
 // also keeps wildcard expansion impossible for the -Name parameters that
-// accept wildcards), and no leading/trailing spaces.
+// accept wildcards), no leading/trailing spaces, and no control characters
+// (which would truncate or corrupt the applicationHost.config XML entry).
 func ValidateIISSiteName(name string) error {
 	if len(name) < 1 || len(name) > 64 {
 		return fmt.Errorf("invalid IIS site name %q: must be 1-64 characters", name)
@@ -119,6 +120,9 @@ func ValidateIISSiteName(name string) error {
 	}
 	if strings.ContainsAny(name, iisAppPoolForbiddenChars) {
 		return fmt.Errorf("invalid IIS site name %q: must not contain any of / \\ [ ] : ; , ? * \" < > |", name)
+	}
+	if strings.IndexFunc(name, isControlRune) >= 0 {
+		return fmt.Errorf("invalid IIS site name %q: must not contain control characters", name)
 	}
 	return nil
 }

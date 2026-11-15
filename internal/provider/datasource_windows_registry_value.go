@@ -12,10 +12,12 @@ import (
 	"time"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -77,15 +79,24 @@ func (d *windowsRegistryValueDataSource) Schema(ctx context.Context, _ datasourc
 				Description: "Composite ID: \"<HIVE>\\<PATH>\\<NAME>\". Trailing backslash when name is the Default value.",
 			},
 			"hive": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Registry hive: HKLM, HKCU, HKCR, HKU, or HKCC (case-insensitive).",
 			},
 			"path": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Subkey path under the hive (backslash-separated, no leading/trailing backslash).",
 			},
 			"name": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Value name. Use \"\" (empty string) to read the Default (unnamed) value.",
 			},
 			"expand_environment_variables": schema.BoolAttribute{

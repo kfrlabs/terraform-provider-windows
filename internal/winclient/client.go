@@ -81,8 +81,14 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Port == 0 {
 		cfg.Port = 22
 	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return nil, fmt.Errorf("winclient: port must be between 1 and 65535, got %d", cfg.Port)
+	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
+	}
+	if cfg.Timeout < 0 {
+		return nil, fmt.Errorf("winclient: timeout must be positive, got %s", cfg.Timeout)
 	}
 	if cfg.MaxSessions == 0 {
 		cfg.MaxSessions = DefaultMaxSessions

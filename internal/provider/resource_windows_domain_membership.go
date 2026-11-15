@@ -706,6 +706,12 @@ func (r *windowsDomainMembershipResource) ImportState(ctx context.Context, req r
 		)
 		return
 	}
+
+	if r.dm == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
 	// No prior state exists at import time, so a configured timeouts.read
 	// cannot be honoured; bound the remote call with the read default.
 	ctx, cancel := context.WithTimeout(ctx, domainMembershipDefaultReadTimeout)

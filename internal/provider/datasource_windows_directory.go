@@ -12,9 +12,11 @@ import (
 	"fmt"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -75,7 +77,10 @@ func (d *windowsDirectoryDataSource) Schema(ctx context.Context, _ datasource.Sc
 				Description: "Data source identifier: the normalised absolute path of the directory.",
 			},
 			"path": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Absolute path of the directory on the target host. The directory must already exist.",
 			},
 			"exists_children": schema.BoolAttribute{

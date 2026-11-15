@@ -90,7 +90,9 @@ type windowsLocalGroupModel struct {
 
 // localGroupNameRegex enforces the structural constraint for Windows local
 // group names: 1..256 characters, none of which may be the forbidden
-// characters / \ [ ] : ; | = , + * ? < > "
+// characters / \ [ ] : ; | = , + * ? < > ", C0 controls, or DEL (a
+// truncated or multi-line SAM name would corrupt identity at apply time,
+// so they fail fast here instead).
 //
 // Written as a double-quoted Go string (NOT a raw backtick string) to avoid
 // the backtick-truncation issue documented in ADR-LG-9.
@@ -104,7 +106,7 @@ type windowsLocalGroupModel struct {
 //	:;|=,+*?<>  matched literally (no escaping needed inside a char class)
 //	\"       Go "   → regex "   → matches literal double-quote
 var localGroupNameRegex = regexp.MustCompile(
-	"^[^/\\\\\\[\\]:;|=,+*?<>\"]{1,256}$",
+	"^[^/\\\\\\[\\]:;|=,+*?<>\"\x00-\x1f\x7f]{1,256}$",
 )
 
 // ---------------------------------------------------------------------------
@@ -541,6 +543,12 @@ func (r *windowsLocalGroupResource) ImportState(
 	importID := req.ID
 
 	var gs *winclient.GroupState
+	if r.grp == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	var err error
 
 	if strings.HasPrefix(importID, "S-") {

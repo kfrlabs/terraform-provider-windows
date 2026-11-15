@@ -13,8 +13,10 @@ import (
 	"fmt"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -83,7 +85,10 @@ func (d *windowsEventLogDataSource) Schema(ctx context.Context, _ datasource.Sch
 				Description: "Data source identifier: the exact event log name.",
 			},
 			"name": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Exact event log name (`LogName`) on the target host, e.g. `Application` or `Microsoft-Windows-PowerShell/Operational`.",
 			},
 			"maximum_size_bytes": schema.Int64Attribute{

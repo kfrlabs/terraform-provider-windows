@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 )
 
 // Content size guard rails (T-2).
@@ -156,8 +157,19 @@ type FileClient interface {
 // ValidateFileContentBase64 checks that s is valid standard base64 and that the
 // decoded payload fits within FileMaxContentBytes (T-2). It returns the decoded
 // size so the provider layer can decide whether to emit the 1 MiB warning.
+//
+// ASCII whitespace (spaces, tabs, CR, LF) is stripped before decoding so
+// wrapped base64 (PEM-style line wraps, trailing newlines from file()) is
+// accepted consistently with the provider layer's decodeBase64.
 func ValidateFileContentBase64(s string) (int64, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
+	stripped := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\r', '\n', '\v', '\f':
+			return -1
+		}
+		return r
+	}, s)
+	raw, err := base64.StdEncoding.DecodeString(stripped)
 	if err != nil {
 		return 0, &FileError{Resource: "windows_file",
 			Kind:    FileErrorInvalidInput,

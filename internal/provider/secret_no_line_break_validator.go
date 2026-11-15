@@ -21,7 +21,7 @@ type secretNoLineBreakValidator struct{}
 
 // Description returns a plain-text description.
 func (secretNoLineBreakValidator) Description(_ context.Context) string {
-	return "must not contain carriage return or line feed characters"
+	return "must not contain carriage return, line feed or NUL characters"
 }
 
 // MarkdownDescription returns a Markdown description.
@@ -33,6 +33,9 @@ func (v secretNoLineBreakValidator) MarkdownDescription(ctx context.Context) str
 // values are skipped. For WriteOnly attributes the framework validates the
 // configured value, so wiring this validator on a WriteOnly attribute still
 // covers the operator-supplied secret.
+//
+// NUL (\x00) is rejected as well: it cannot survive the PowerShell/SSH layers
+// intact and would silently truncate or corrupt the secret.
 func (secretNoLineBreakValidator) ValidateString(
 	_ context.Context,
 	req validator.StringRequest,
@@ -41,7 +44,7 @@ func (secretNoLineBreakValidator) ValidateString(
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
-	if strings.ContainsAny(req.ConfigValue.ValueString(), "\r\n") {
+	if strings.ContainsAny(req.ConfigValue.ValueString(), "\r\n\x00") {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Secret must not contain line breaks",

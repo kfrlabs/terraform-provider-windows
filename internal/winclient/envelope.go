@@ -15,6 +15,7 @@ package winclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -116,13 +117,24 @@ func runEnvelope(
 
 	stdout, stderr, err := run(ctx, script, stdin)
 	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		// Timeout classification consults the caller's context AND the
+		// returned error. A transport that reports cancellation or expiry
+		// means the operation timed out even when the outer context has
+		// not (yet) observed it: the context may expire between the failed
+		// call and this check on a loaded machine, and inner deadlines
+		// surface as context errors with a live outer context.
+		ctxErr := ctx.Err()
+		if ctxErr != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			cause := err
+			if ctxErr != nil {
+				cause = ctxErr
+			}
 			return nil, &EnvelopeError{
 				Stage:     EnvelopeStageTimeout,
 				Operation: op,
 				Message:   fmt.Sprintf("operation %q timed out or was cancelled", op),
 				Context:   envelopeContext(baseContext, op, nil),
-				Cause:     ctxErr,
+				Cause:     cause,
 			}
 		}
 		// A valid envelope on stdout wins over the transport error: some

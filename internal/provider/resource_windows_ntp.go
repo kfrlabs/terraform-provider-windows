@@ -682,6 +682,12 @@ func (r *windowsNTPResource) ImportState(ctx context.Context, req resource.Impor
 		return
 	}
 
+	if r.ntp == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	tflog.Debug(ctx, "Importing Windows NTP time source (singleton: live time source is adopted)")
 
 	// No prior state exists at import time, so a configured timeouts.read

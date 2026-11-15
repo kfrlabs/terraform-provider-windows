@@ -917,6 +917,12 @@ func (r *windowsSmbShareResource) ImportState(ctx context.Context, req resource.
 		return
 	}
 
+	if r.client == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	tflog.Debug(ctx, "windows_smb_share ImportState", map[string]interface{}{"name": name})
 
 	// No prior state exists at import time, so a configured timeouts.read

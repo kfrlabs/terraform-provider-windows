@@ -642,6 +642,12 @@ func (r *windowsDiskResource) ImportState(ctx context.Context, req resource.Impo
 			fmt.Sprintf("Import ID must be the disk UniqueId (e.g. Get-Disk UniqueId); got %q.", req.ID))
 		return
 	}
+
+	if r.disks == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
 	tflog.Debug(ctx, "Importing windows_disk", map[string]interface{}{"unique_id": id})
 
 	// No prior state exists at import time, so a configured timeouts block

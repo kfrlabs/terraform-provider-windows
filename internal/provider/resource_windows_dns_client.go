@@ -862,6 +862,12 @@ func (r *windowsDNSClientResource) ImportState(ctx context.Context, req resource
 		return
 	}
 
+	if r.dns == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	tflog.Debug(ctx, "Importing Windows DNS client settings", map[string]any{
 		"interface_alias": alias,
 	})

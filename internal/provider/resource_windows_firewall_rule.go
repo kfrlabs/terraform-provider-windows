@@ -638,6 +638,12 @@ func (r *windowsFirewallRuleResource) ImportState(ctx context.Context, req resou
 		return
 	}
 
+	if r.fw == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	tflog.Debug(ctx, "Importing Windows Firewall rule", map[string]any{
 		"name":         name,
 		"policy_store": policyStore,

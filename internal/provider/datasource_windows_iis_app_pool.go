@@ -12,8 +12,10 @@ import (
 	"fmt"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -92,7 +94,10 @@ func (d *windowsIISAppPoolDataSource) Schema(ctx context.Context, _ datasource.S
 				Description: "Data source identifier: the application pool name.",
 			},
 			"name": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Application pool name on the target host.",
 			},
 			"managed_runtime_version": schema.StringAttribute{

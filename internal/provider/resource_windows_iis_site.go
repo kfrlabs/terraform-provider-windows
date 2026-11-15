@@ -201,7 +201,10 @@ func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"physical_path": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Physical path of the site root on the target host (e.g. `C:\\inetpub\\wwwroot`). The directory must already exist (manage it with `windows_directory`): references to `%SystemDrive%`-style environment variables are expanded host-side for the existence check and stored verbatim. Never created implicitly; updated in place.",
 			},
 
@@ -677,6 +680,12 @@ func (r *windowsIISSiteResource) ImportState(ctx context.Context, req resource.I
 			"Invalid import ID",
 			fmt.Sprintf("Import ID %q is not a valid IIS site name: %s.", req.ID, err),
 		)
+		return
+	}
+
+	if r.site == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
 		return
 	}
 

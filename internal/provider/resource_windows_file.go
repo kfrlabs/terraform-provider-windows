@@ -65,7 +65,7 @@ const (
 
 // windowsFilePathRegex accepts a drive-letter path or a UNC path and rejects
 // the characters Windows forbids in a file name (CV-7, EC-14 companion).
-var windowsFilePathRegex = regexp.MustCompile(`^([A-Za-z]:\\|\\\\[^\\/:*?"<>|]+\\[^\\/:*?"<>|]+\\)[^<>:"|?*\x00]*$`)
+var windowsFilePathRegex = regexp.MustCompile(`^([A-Za-z]:\\|\\\\[^\\/:*?"<>|\x00-\x1f]+\\[^\\/:*?"<>|\x00-\x1f]+\\)[^<>:"|?*\x00-\x1f]*$`)
 
 // ---------------------------------------------------------------------------
 // Configure

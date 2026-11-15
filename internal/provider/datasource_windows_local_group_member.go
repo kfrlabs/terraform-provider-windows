@@ -11,8 +11,10 @@ import (
 	"time"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -74,11 +76,17 @@ func (d *windowsLocalGroupMemberDataSource) Schema(ctx context.Context, _ dataso
 				Description: "Composite data source ID: \"<group_sid>/<member_sid>\".",
 			},
 			"group_name": schema.StringAttribute{
-				Required:    true,
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Name or SID of the target local group (e.g. \"Administrators\" or \"S-1-5-32-544\").",
 			},
 			"member_name": schema.StringAttribute{
 				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				Description: "Name of the member to look up within the group. Matched " +
 					"case-insensitively against the name Windows reports, either bare " +
 					"(\"alice\") or host-qualified (\"HOST\\\\alice\"). Echoed back as " +

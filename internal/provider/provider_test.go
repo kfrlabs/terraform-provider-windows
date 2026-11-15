@@ -261,7 +261,12 @@ func TestProvider_Configure_MissingCredentials(t *testing.T) {
 // must refuse rather than connect blindly.
 func TestProvider_Configure_FailsClosedWithoutHostVerification(t *testing.T) {
 	clearProviderEnv(t)
-	t.Setenv("HOME", t.TempDir())
+	// os.UserHomeDir honours HOME on Unix but %USERPROFILE% on Windows, so
+	// both must point at an empty dir or the test reads the real profile's
+	// known_hosts on Windows and wrongly passes.
+	emptyHome := t.TempDir()
+	t.Setenv("HOME", emptyHome)
+	t.Setenv("USERPROFILE", emptyHome)
 
 	resp := configureProvider(t, providerCfgOptions{
 		host:     strPtr("10.0.0.1"),

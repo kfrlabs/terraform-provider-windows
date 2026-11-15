@@ -235,6 +235,8 @@ func NormalizeIISBindingHostHeader(raw string) string {
 // ValidateIISBindingHostHeader rejects headers that would corrupt the
 // bindingInformation rendering or the import ID: embedded whitespace, "|"
 // (the import-ID separator) and ":" (the bindingInformation separator).
+// NUL and vertical whitespace are rejected too: they can never appear in a
+// DNS host name and would truncate the value if they reached the host.
 func ValidateIISBindingHostHeader(host string) error {
 	if strings.Contains(host, "|") {
 		return fmt.Errorf("invalid IIS binding host header %q: must not contain \"|\"", host)
@@ -242,8 +244,8 @@ func ValidateIISBindingHostHeader(host string) error {
 	if strings.Contains(host, ":") {
 		return fmt.Errorf("invalid IIS binding host header %q: must not contain \":\"", host)
 	}
-	if strings.ContainsAny(host, " \t\r\n") {
-		return fmt.Errorf("invalid IIS binding host header %q: must not contain whitespace", host)
+	if strings.IndexFunc(host, isControlRune) >= 0 || strings.Contains(host, " ") {
+		return fmt.Errorf("invalid IIS binding host header %q: must not contain whitespace or control characters", host)
 	}
 	return nil
 }

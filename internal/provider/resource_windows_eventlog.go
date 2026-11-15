@@ -598,6 +598,12 @@ func (r *windowsEventLogResource) ImportState(ctx context.Context, req resource.
 		return
 	}
 
+	if r.el == nil {
+		resp.Diagnostics.AddError("Provider not configured",
+			"ImportState needs a configured provider client. Configure the windows provider (or WINDOWS_* environment) and retry the import.")
+		return
+	}
+
 	tflog.Debug(ctx, "Importing Windows event log", map[string]any{
 		"name": name,
 	})
