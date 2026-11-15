@@ -255,8 +255,8 @@ func windowsDomainMembershipSchemaDefinition(ctx context.Context) schema.Schema 
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
-				Description:         "When true and the join/unjoin leaves a pending reboot, schedule a detached host reboot ~60s after the operation. Default false.",
-				MarkdownDescription: "When `true` and the join/unjoin leaves a pending reboot, schedule a detached host reboot ~60s after the operation (`shutdown.exe /r /t 60`), so the reboot lands after Terraform records state. When `false` and a reboot is required, `pending_reboot` is set and the host must be rebooted out-of-band. Default `false`.",
+				Description:         "When true and the join/unjoin leaves a pending reboot, schedule a detached host reboot ~60s after the operation completes (shutdown.exe /r /t 60), so the reboot lands after this resource records state. No reboot is scheduled when the operation does not require one. The reboot is scheduled per-resource: enable restart=true on at most one resource per apply (or apply reboot-requiring resources last/separately), since a later in-flight SSH session on the same host can still be dropped by the reboot. When false and a reboot is required, pending_reboot is set and the host must be rebooted out-of-band. Default false.",
+				MarkdownDescription: "When `true` and the join/unjoin leaves a pending reboot, schedule a detached host reboot ~60s after the operation completes (`shutdown.exe /r /t 60`), so the reboot lands after this resource records state. No reboot is scheduled when the operation does not require one. The reboot is scheduled per-resource: enable `restart = true` on at most one resource per apply (or apply reboot-requiring resources last/separately), since a later in-flight SSH session on the same host can still be dropped by the reboot. When `false` and a reboot is required, `pending_reboot` is set and the host must be rebooted out-of-band. Default `false`.",
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.UseStateForUnknown(),
 				},
@@ -937,6 +937,8 @@ func warnDomainReboot(diags *diag.Diagnostics, pending, restart bool, op string)
 		"Deferred reboot scheduled",
 		fmt.Sprintf("The domain %s reported a pending reboot. "+
 			"A detached host reboot was scheduled in ~60s (shutdown.exe /r /t 60) because restart=true. "+
+			"The reboot is scheduled per-resource: a later in-flight SSH session on the same host can still be dropped "+
+			"when several reboot-requiring resources apply together. "+
 			"If the host has not rebooted, reboot it out-of-band; pending_reboot records the requirement.", op),
 	)
 }

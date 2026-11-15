@@ -45,6 +45,23 @@ Servers enforcing stricter `MaxStartups` / `ClientAliveInterval` policies may
 need operator-side review; connection-scale behaviour is tracked in #342
 (no tuning values are recommended here).
 
+### Reboots
+
+Resources that need a reboot (`windows_feature` and `windows_domain_membership`
+with `restart = true`) schedule a detached host reboot ~60s after the operation
+completes (`shutdown.exe /r /t 60`), so the reboot lands after Terraform records
+state. No reboot is scheduled when the operation does not require one; the pending
+flag (`restart_pending` / `pending_reboot`) is set instead and the host must be
+rebooted out-of-band.
+
+The reboot is scheduled per-resource: a reboot tears down every in-flight SSH
+session on the same host, so when several reboot-requiring resources apply
+together a later operation can still be dropped by an earlier reboot. Mitigations:
+enable `restart = true` on at most one resource per apply (a single reboot owner),
+apply reboot-requiring resources last or separately (for example
+`terraform apply -target=<reboot-owner>` followed by a full apply), or order them
+with `depends_on` so the reboot owner runs last.
+
 ## Example Usage
 
 ```terraform
