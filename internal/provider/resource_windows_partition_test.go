@@ -263,6 +263,71 @@ func TestPartitionSchema_ForceNewAttributes(t *testing.T) {
 		}
 	}
 
+	// Every Optional+Computed attribute must carry UseStateForUnknown:
+	// with null config the framework plans unknown, which forces perpetual
+	// replacement through RequiresReplace (offset_bytes, gpt_type,
+	// mbr_type) or perpetual no-op updates elsewhere. Prior state is the
+	// only stable planned value for unconfigured settings.
+	usfuPresent := func(descs []string) bool {
+		for _, d := range descs {
+			if strings.Contains(d, "Once set, the value of this attribute in state will not change") {
+				return true
+			}
+		}
+		return false
+	}
+	for _, name := range []string{"size_bytes", "offset_bytes"} {
+		attr, ok := s.Attributes[name].(rschema.Int64Attribute)
+		if !ok {
+			t.Fatalf("%s attr type = %T", name, s.Attributes[name])
+		}
+		var descs []string
+		for _, m := range attr.PlanModifiers {
+			descs = append(descs, m.Description(context.Background()), m.MarkdownDescription(context.Background()))
+		}
+		if !usfuPresent(descs) {
+			t.Errorf("%s must carry UseStateForUnknown: unset config must plan prior state, not unknown", name)
+		}
+	}
+	for _, name := range []string{"is_hidden", "is_active"} {
+		attr, ok := s.Attributes[name].(rschema.BoolAttribute)
+		if !ok {
+			t.Fatalf("%s attr type = %T", name, s.Attributes[name])
+		}
+		var descs []string
+		for _, m := range attr.PlanModifiers {
+			descs = append(descs, m.Description(context.Background()), m.MarkdownDescription(context.Background()))
+		}
+		if !usfuPresent(descs) {
+			t.Errorf("%s must carry UseStateForUnknown: unset config must plan prior state, not unknown", name)
+		}
+	}
+	for _, name := range []string{"drive_letter", "gpt_type", "mbr_type"} {
+		attr, ok := s.Attributes[name].(rschema.StringAttribute)
+		if !ok {
+			t.Fatalf("%s attr type = %T", name, s.Attributes[name])
+		}
+		if !attr.Computed {
+			t.Errorf("%s must be Computed: its plan modifier rewrites aliases to canonical form", name)
+		}
+		if !attr.Optional {
+			t.Errorf("%s must stay Optional", name)
+		}
+		// Unset config on update must plan prior state, not unknown:
+		// an unknown plan would force perpetual replacement through
+		// RequiresReplace.
+		foundUSFU := false
+		for _, m := range attr.PlanModifiers {
+			d := m.Description(context.Background()) + m.MarkdownDescription(context.Background())
+			if strings.Contains(d, "UseStateForUnknown") || strings.Contains(strings.ToLower(d), "prior state") || strings.Contains(d, "Once set, the value of this attribute in state will not change") {
+				foundUSFU = true
+			}
+		}
+		if !foundUSFU {
+			t.Errorf("%s must carry UseStateForUnknown: unset config must plan prior state, not unknown", name)
+		}
+	}
+
 	numAttr, ok := s.Attributes["offset_bytes"].(rschema.Int64Attribute)
 	if !ok {
 		t.Fatalf("offset_bytes attr type = %T", s.Attributes["offset_bytes"])
@@ -541,8 +606,8 @@ func TestPartitionCreate_Handler_HappyPath(t *testing.T) {
 	if m.DriveLetter.ValueString() != "E" {
 		t.Errorf("state letter = %q, want normalized E", m.DriveLetter.ValueString())
 	}
-	if m.GptType.ValueString() != winclient.GPTBasicDataPartitionGUID {
-		t.Errorf("state gpt_type = %q, want canonical %q", m.GptType.ValueString(), winclient.GPTBasicDataPartitionGUID)
+	if m.GptType.ValueString() != "basic_data" {
+		t.Errorf("state gpt_type = %q, want planned spelling %q (canonical lands via Read)", m.GptType.ValueString(), "basic_data")
 	}
 }
 
@@ -986,50 +1051,62 @@ func TestPartitionImportState_PopulatesStyleType(t *testing.T) {
 }
 
 // Plan-time canonicalization converges alias spellings to the canonical
-// form stored in state, so an alias config never diffs against canonical
-// state on the RequiresReplace pair.
+// form stored in state, but only when the canonical value matches the prior
+// state: Terraform rejects a plan that disagrees with a non-null
+// configuration unless it exactly matches prior state, so rewriting an
+// alias on create (no prior state) is an "invalid plan" error.
 func TestPartitionTypeCanonicalizeModifiers(t *testing.T) {
 	ctx := context.Background()
 
+	guid := winclient.GPTBasicDataPartitionGUID
 	gptCases := []struct {
-		name string
-		in   string
-		want string
+		name  string
+		in    string
+		prior types.String
+		want  string
 	}{
-		{"alias lower", "basic_data", winclient.GPTBasicDataPartitionGUID},
-		{"alias upper", "BASIC_DATA", winclient.GPTBasicDataPartitionGUID},
-		{"braced guid", "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}", winclient.GPTBasicDataPartitionGUID},
-		{"lower guid", "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", winclient.GPTBasicDataPartitionGUID},
+		{"alias lower, no prior", "basic_data", types.StringNull(), "basic_data"},
+		{"alias upper, no prior", "BASIC_DATA", types.StringNull(), "BASIC_DATA"},
+		{"alias, matching prior", "basic_data", types.StringValue(guid), guid},
+		{"braced guid, matching prior", "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}", types.StringValue(guid), guid},
+		{"lower guid, matching prior", "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", types.StringValue(guid), guid},
+		{"alias, different prior", "basic_data", types.StringValue("00000000-0000-0000-0000-000000000000"), "basic_data"},
 	}
 	for _, tc := range gptCases {
 		t.Run("gpt/"+tc.name, func(t *testing.T) {
 			m := partitionGPTTypeCanonicalizeModifier{}
-			resp := &planmodifier.StringResponse{}
-			m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringValue(tc.in)}, resp)
+			// The framework seeds the response with the proposed value;
+			// a no-op modifier must leave it exactly as-is.
+			resp := &planmodifier.StringResponse{PlanValue: types.StringValue(tc.in)}
+			m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringValue(tc.in), StateValue: tc.prior}, resp)
 			if resp.PlanValue.ValueString() != tc.want {
-				t.Errorf("gpt plan = %q, want canonical %q", resp.PlanValue.ValueString(), tc.want)
+				t.Errorf("gpt plan = %q, want %q", resp.PlanValue.ValueString(), tc.want)
 			}
 		})
 	}
 
 	mbrCases := []struct {
-		name string
-		in   string
-		want string
+		name  string
+		in    string
+		prior types.String
+		want  string
 	}{
-		{"alias lower", "ifs", "0x07"},
-		{"alias upper", "IFS", "0x07"},
-		{"decimal", "7", "0x07"},
-		{"short hex", "0x7", "0x07"},
-		{"lower hex", "0xb", "0x0B"},
+		{"alias lower, no prior", "ifs", types.StringNull(), "ifs"},
+		{"alias upper, no prior", "IFS", types.StringNull(), "IFS"},
+		{"decimal, no prior", "7", types.StringNull(), "7"},
+		{"alias, matching prior", "ifs", types.StringValue("0x07"), "0x07"},
+		{"decimal, matching prior", "7", types.StringValue("0x07"), "0x07"},
+		{"short hex, matching prior", "0x7", types.StringValue("0x07"), "0x07"},
+		{"lower hex, matching prior", "0xb", types.StringValue("0x0B"), "0x0B"},
+		{"alias, different prior", "ifs", types.StringValue("0x0B"), "ifs"},
 	}
 	for _, tc := range mbrCases {
 		t.Run("mbr/"+tc.name, func(t *testing.T) {
 			m := partitionMBRTypeCanonicalizeModifier{}
-			resp := &planmodifier.StringResponse{}
-			m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringValue(tc.in)}, resp)
+			resp := &planmodifier.StringResponse{PlanValue: types.StringValue(tc.in)}
+			m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringValue(tc.in), StateValue: tc.prior}, resp)
 			if resp.PlanValue.ValueString() != tc.want {
-				t.Errorf("mbr plan = %q, want canonical %q", resp.PlanValue.ValueString(), tc.want)
+				t.Errorf("mbr plan = %q, want %q", resp.PlanValue.ValueString(), tc.want)
 			}
 		})
 	}
@@ -1045,6 +1122,21 @@ func TestPartitionTypeCanonicalizeModifiers(t *testing.T) {
 	m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: types.StringValue("nope")}, resp)
 	if resp.PlanValue.ValueString() == winclient.GPTBasicDataPartitionGUID {
 		t.Errorf("invalid gpt plan must not canonicalize, got %q", resp.PlanValue.ValueString())
+	}
+}
+
+// Unknown preserved values must not leak into state: the state has to be
+// fully known after apply, and an unset type has no observed spelling to
+// project (the host value lands in state on refresh).
+func TestCanonicalPartitionState_UnknownBecomesNull(t *testing.T) {
+	if got := canonicalPartitionGptState(types.StringUnknown()); !got.IsNull() {
+		t.Errorf("unknown gpt_type must become null, got %v", got)
+	}
+	if got := canonicalPartitionMbrState(types.StringUnknown()); !got.IsNull() {
+		t.Errorf("unknown mbr_type must become null, got %v", got)
+	}
+	if got := canonicalPartitionGptState(types.StringValue("basic_data")); got.ValueString() != winclient.GPTBasicDataPartitionGUID {
+		t.Errorf("alias must canonicalize, got %q", got.ValueString())
 	}
 }
 

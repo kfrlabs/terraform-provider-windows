@@ -87,7 +87,7 @@ function Resolve-Disk {
   foreach ($d in $all) {
     $hit = $false
     if ($selUniqueID -ne '') {
-      if ([string]$d.UniqueId -eq $selUniqueID) { $hit = $true }
+      if (([string]$d.UniqueId).Trim() -eq $selUniqueID) { $hit = $true }
     } elseif ($selSerial -ne '') {
       if (([string]$d.SerialNumber).Trim() -eq $selSerial) { $hit = $true }
     } elseif ($selLocation -ne '') {
