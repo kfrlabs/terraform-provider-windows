@@ -470,7 +470,7 @@ func buildRVValidateReq(t *testing.T, overrides map[string]tftypes.Value) resour
 	return resource.ValidateConfigRequest{Config: rvConfig(t, overrides)}
 }
 
-// CV-1: REG_SZ — value_string required + non-empty
+// CV-1: REG_SZ — value_string required (empty string is valid state, R2-01)
 func TestCV1_REG_SZ_Valid(t *testing.T) {
 	v := registryValueTypeDataValidator{}
 	req := buildRVValidateReq(t, nil) // defaults: type=REG_SZ, value_string="1.0.0"
@@ -500,8 +500,8 @@ func TestCV1_REG_SZ_EmptyValueString(t *testing.T) {
 	})
 	resp := &resource.ValidateConfigResponse{}
 	v.ValidateResource(context.Background(), req, resp)
-	if !resp.Diagnostics.HasError() {
-		t.Error("REG_SZ with empty value_string should fail CV-1")
+	if resp.Diagnostics.HasError() {
+		t.Error("REG_SZ with empty value_string should pass CV-1 (empty string is valid Windows state, R2-01)")
 	}
 }
 

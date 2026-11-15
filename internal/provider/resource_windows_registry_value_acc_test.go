@@ -200,3 +200,49 @@ resource "windows_registry_value" "imp" {
 		},
 	})
 }
+
+// TestAccWindowsRegistryValue_EmptyString — empty REG_SZ is legitimate Windows
+// state (R2-01: CV-1 used to reject value_string = "" at plan). Create empty,
+// verify the empty string round-trips with a clean second plan, update away
+// and back.
+func TestAccWindowsRegistryValue_EmptyString(t *testing.T) {
+	testAccRegistryValuePreCheck(t)
+
+	cfg := func(val string) string {
+		return `
+resource "windows_registry_value" "empty" {
+  hive         = "HKLM"
+  path         = "` + regTestPath + `"
+  name         = "TestEmpty"
+  type         = "REG_SZ"
+  value_string = "` + val + `"
+}
+`
+	}
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(""),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_registry_value.empty", "type", "REG_SZ"),
+					resource.TestCheckResourceAttr("windows_registry_value.empty", "value_string", ""),
+				),
+			},
+			{
+				Config:   cfg(""),
+				PlanOnly: true,
+			},
+			{
+				Config: cfg("not-empty"),
+				Check: resource.TestCheckResourceAttr(
+					"windows_registry_value.empty", "value_string", "not-empty"),
+			},
+			{
+				Config: cfg(""),
+				Check: resource.TestCheckResourceAttr(
+					"windows_registry_value.empty", "value_string", ""),
+			},
+		},
+	})
+}
