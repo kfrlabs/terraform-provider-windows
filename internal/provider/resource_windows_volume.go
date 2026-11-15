@@ -150,6 +150,9 @@ func windowsVolumeSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:    true,
 				Computed:    true,
 				Description: "Volume label, enforced in place (`Set-Volume -NewFileSystemLabel`; empty clears it). Null (unset) leaves the observed label unmanaged. Length limits depend on the file system: 32 characters for NTFS/ReFS, 11 for exFAT/FAT32.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Validators: []validator.String{
 					stringvalidator.LengthAtMost(32),
 				},
@@ -159,6 +162,7 @@ func windowsVolumeSchemaDefinition(ctx context.Context) schema.Schema {
 				Computed:    true,
 				Description: "Allocation unit (cluster) size in bytes, set at format time only. ForceNew. Null (default) selects the host default. Must be a power of two between 512 and 2097152, further narrowed per file system: NTFS 512-65536, FAT32 512-32768, exFAT 512-2097152, ReFS 4096 or 65536 only.",
 				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
 					int64planmodifier.RequiresReplace(),
 				},
 				Validators: []validator.Int64{
@@ -178,31 +182,52 @@ func windowsVolumeSchemaDefinition(ctx context.Context) schema.Schema {
 				Description: "Perform a full format (which scans for bad sectors) instead of the default quick format. A full format can take a long time on large disks; the resource timeouts default to 30m to cover it.",
 			},
 			"drive_letter": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Assigned drive letter (upper-cased), as observed on the host. Empty when the volume has none; manage it with the `drive_letter` of `windows_partition`.",
 			},
 			"path": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Volume Path (the `\\\\?\\Volume{...}\\` object path), as observed on the host.",
 			},
 			"size_bytes": schema.Int64Attribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Volume Size in bytes, as observed on the host.",
 			},
 			"size_remaining_bytes": schema.Int64Attribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Volume SizeRemaining in bytes, as observed on the host.",
 			},
 			"health_status": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Volume HealthStatus (e.g. Healthy), as observed on the host.",
 			},
 			"operational_status": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Volume OperationalStatus (e.g. OK), as observed on the host.",
 			},
 			"drive_type": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Get-Volume DriveType (e.g. Fixed), as observed on the host.",
 			},
 
@@ -436,8 +461,13 @@ func volumeInt64OrNull(v int64) types.Int64 {
 }
 
 // volumeFileSystemCanonicalizeModifier converges a configured file_system
-// spelling to its canonical form at plan time, so a lower-case config never
-// diffs against the canonical state recorded on Create and Import.
+// spelling to its canonical form at plan time, but only when the canonical
+// value matches the prior state: Terraform forbids planning a value that
+// disagrees with a non-null configuration unless it exactly matches prior
+// state (the "functionally equivalent" signal), so on create (no prior
+// state) or when the file system actually changes (replacement), the
+// configured spelling is left untouched and the canonical form lands in
+// state at apply/refresh.
 type volumeFileSystemCanonicalizeModifier struct{}
 
 func (m volumeFileSystemCanonicalizeModifier) Description(_ context.Context) string {
@@ -455,6 +485,12 @@ func (m volumeFileSystemCanonicalizeModifier) PlanModifyString(_ context.Context
 	normalised, err := winclient.CanonicalizeVolumeFileSystem(req.PlanValue.ValueString())
 	if err != nil {
 		return // the attribute validator reports malformed input
+	}
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+		return // create (or first plan): leave the configured spelling
+	}
+	if normalised != req.StateValue.ValueString() {
+		return // genuine file system change: leave it, RequiresReplace takes over
 	}
 	resp.PlanValue = types.StringValue(normalised)
 }
@@ -553,10 +589,18 @@ func (r *windowsVolumeResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
-	// The state keeps the canonical file system (NTFS, ReFS, exFAT, FAT32)
-	// rather than the raw configured spelling, matching ImportState.
+	// The state keeps the planned file system spelling on create: the plan
+	// must equal the configuration when there is no prior state, and the
+	// state must equal the plan. The canonical form (NTFS, ReFS, exFAT,
+	// FAT32) lands in state on refresh (Read stores the observed value),
+	// after which the plan modifier converges on it via the prior-state
+	// exemption.
 	m := volumeModelFromInfo(info, plan, plan.Timeouts)
-	m.FileSystem = types.StringValue(opts.FileSystem)
+	if !plan.FileSystem.IsNull() && !plan.FileSystem.IsUnknown() {
+		m.FileSystem = plan.FileSystem
+	} else {
+		m.FileSystem = types.StringValue(opts.FileSystem)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 

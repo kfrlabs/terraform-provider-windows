@@ -22,7 +22,10 @@
 //     long-lived PowerShell session, where `exit` would kill the session
 //     instead of just the call).
 //   - Every mutating cmdlet carries -Confirm:$false so a non-interactive
-//     session never blocks on a confirmation prompt, and every operation
+//     session never blocks on a confirmation prompt, except Set-Volume,
+//     which declares no Confirm parameter on current Windows builds
+//     (binding it there is fatal "parameter cannot be found"
+//     error). Every operation
 //     refreshes the storage cache with Update-HostStorageCache first.
 //
 // Reused helpers from the same package:
@@ -344,7 +347,11 @@ const psVolumeLabelBody = `
     return
   }
   try {
-    $v | Set-Volume -NewFileSystemLabel $fsLabel -Confirm:$false -ErrorAction Stop
+    # NOTE: no Confirm switch: Set-Volume declares no Confirm parameter on
+    # current Windows builds (Server 2025) and binding one is fatal
+    # "parameter cannot be found" error. The cmdlet performs without
+    # prompting under the default ConfirmPreference.
+    $v | Set-Volume -NewFileSystemLabel $fsLabel -ErrorAction Stop
   } catch {
     Emit-Err (Classify-Volume $_) ([string]$_.Exception.Message) @{ phase = 'set_label'; unique_id = $volId }
     return

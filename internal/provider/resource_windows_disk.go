@@ -356,16 +356,32 @@ func diskModelFromInfo(info *winclient.DiskInfo, sel windowsDiskModel, tm timeou
 		Timeouts:          tm,
 	}
 	// Keep the configured (or previously recorded) selector spellings so a
-	// cosmetic difference (case, padding) never shows a diff; unique_id falls
-	// back to the observed value when it was not the configured selector.
-	if sel.UniqueID.IsNull() || sel.UniqueID.IsUnknown() {
-		m.UniqueID = types.StringValue(info.UniqueID)
-	} else {
+	// cosmetic difference (case, padding) never shows a diff. Coordinates
+	// the plan leaves null or unknown (unconfigured selectors on create)
+	// fall back to the observed values: the state must be fully known
+	// after apply, and the observed identities are the only correct
+	// fill. unique_id additionally falls back to observed when it was not
+	// the configured selector.
+	if !sel.UniqueID.IsNull() && !sel.UniqueID.IsUnknown() && strings.TrimSpace(sel.UniqueID.ValueString()) != "" {
 		m.UniqueID = sel.UniqueID
+	} else {
+		m.UniqueID = types.StringValue(info.UniqueID)
 	}
-	m.SerialNumber = sel.SerialNumber
-	m.Location = sel.Location
-	m.Number = sel.Number
+	if !sel.SerialNumber.IsNull() && !sel.SerialNumber.IsUnknown() && strings.TrimSpace(sel.SerialNumber.ValueString()) != "" {
+		m.SerialNumber = sel.SerialNumber
+	} else {
+		m.SerialNumber = types.StringValue(info.SerialNumber)
+	}
+	if !sel.Location.IsNull() && !sel.Location.IsUnknown() && strings.TrimSpace(sel.Location.ValueString()) != "" {
+		m.Location = sel.Location
+	} else {
+		m.Location = types.StringValue(info.Location)
+	}
+	if !sel.Number.IsNull() && !sel.Number.IsUnknown() {
+		m.Number = sel.Number
+	} else {
+		m.Number = types.Int64Value(int64(info.Number))
+	}
 	return m
 }
 

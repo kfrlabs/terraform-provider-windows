@@ -185,13 +185,18 @@ func TestDiskScripts_MutationsCarryNoConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildDiskInitializeScript: %v", err)
 	}
+	if !strings.Contains(init, "-Confirm:$false") {
+		t.Errorf("initialize: Initialize-Disk supports Confirm and must carry -Confirm:$false")
+	}
+	// Set-Disk declares no Confirm parameter on current Windows builds
+	// (Server 2025): binding -Confirm there is fatal, so these scripts
+	// must not carry it.
 	for name, s := range map[string]string{
-		"initialize": init,
-		"set_off":    buildDiskSetOfflineScript("U", true),
-		"set_ro":     buildDiskSetReadOnlyScript("U", false),
+		"set_off": buildDiskSetOfflineScript("U", true),
+		"set_ro":  buildDiskSetReadOnlyScript("U", false),
 	} {
-		if !strings.Contains(s, "-Confirm:$false") {
-			t.Errorf("%s: mutating cmdlet must carry -Confirm:$false", name)
+		if strings.Contains(s, "-Confirm:$false") {
+			t.Errorf("%s: Set-Disk has no Confirm parameter; -Confirm:$false would fail the call", name)
 		}
 	}
 }
