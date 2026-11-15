@@ -75,7 +75,7 @@ const iisSiteReadFragment = `
 function Get-SiteData([string]$Name) {
   $site = Get-ChildItem 'IIS:\Sites' -ErrorAction Stop | Where-Object { $_.Name -eq $Name }
   if (-not $site) { return $null }
-  $appFilter = ('system.applicationHost/sites/site[@name="' + $Name + '"]/application[@path=''/']')
+  $appFilter = ('system.applicationHost/sites/site[@name="' + $Name + '"]/application[@path=''/'']')
   $vdirFilter = ($appFilter + "/virtualDirectory[@path='/']")
   $pool = (Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $appFilter -Name 'applicationPool' -ErrorAction Stop).Value
   $phys = (Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $vdirFilter -Name 'physicalPath' -ErrorAction Stop).Value
@@ -185,7 +185,7 @@ func buildIISSiteStateStatement(state *string, escapedName string) string {
 // $AppPool / $SiteId inputs ($null when unmanaged).
 func iisSitePreamble() string {
 	return `
-$appFilter = ('system.applicationHost/sites/site[@name="' + $Name + '"]/application[@path=''/']')
+$appFilter = ('system.applicationHost/sites/site[@name="' + $Name + '"]/application[@path=''/'']')
 $vdirFilter = ($appFilter + "/virtualDirectory[@path='/']")
 `
 }
