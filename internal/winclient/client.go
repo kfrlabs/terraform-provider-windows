@@ -42,6 +42,11 @@ import (
 // call (the pre-#81 transport): slower (cold module import per call) but
 // sound, since a single stdin write always lands. The one-shot path borrows
 // the same pool slot, so it is bounded by MaxSessions too (option A).
+//
+// Lifetime: the provider builds one shared Client in Configure and never
+// closes it — there is no framework shutdown hook, and closing it would
+// break every resource sharing the pool (see ADR-0014). Do not wire a
+// close path; process exit reclaims TCP.
 type Client struct {
 	cfg     Config
 	sshCfg  *ssh.ClientConfig
@@ -71,6 +76,8 @@ type Client struct {
 
 // New creates and validates a new SSH Client from the given Config. It does
 // not open a network connection until the first RunPowerShell call.
+// The provider intentionally never closes the returned Client (shared
+// pooled lifetime; see ADR-0014).
 func New(cfg Config) (*Client, error) {
 	if cfg.Host == "" {
 		return nil, fmt.Errorf("winclient: host is required")
@@ -133,7 +140,9 @@ func (c *Client) Config() Config { return c.cfg }
 
 // Close tears down every idle pooled session and marks the pool closed, so
 // sessions still borrowed are closed on return instead of being re-pooled.
-// It also closes the ssh-agent socket, if any. Safe to call on a Client
+// It also closes the ssh-agent socket, if any. It drains the idle pool and
+// agentConn only; the provider intentionally never calls it (shared pooled
+// lifetime — do not wire a close path; see ADR-0014). Safe to call on a Client
 // that never ran a command, and safe to call more than once.
 func (c *Client) Close() error {
 	c.mu.Lock()
