@@ -258,21 +258,25 @@ func windowsLocalGroupSchemaDefinition(ctx context.Context) schema.Schema {
 				},
 			},
 
-			// description — optional+computed, default "", max 256 chars (EC-7)
+			// description — optional+computed, default "", max 48 chars.
+			// New-LocalGroup -Description hard-limits to 48 (PowerShell
+			// parameter validation); longer values fail at apply with
+			// "Cannot validate argument ... fewer than or equal to 48".
+			// Same limit as windows_local_user (ADR-LU-9).
 			"description": schema.StringAttribute{
 				Optional: true,
 				Computed: true,
 				Default:  stringdefault.StaticString(""),
 				Description: "Optional free-text description of the group. " +
-					"Windows caps this at 256 characters (EC-7). " +
+					"Windows caps this at 48 characters (New-LocalGroup limit). " +
 					"An empty string is valid and represents no description. " +
 					"Defaults to an empty string when omitted in HCL.",
 				MarkdownDescription: "Optional free-text description of the group.\n\n" +
-					"Windows caps descriptions at **256 characters** (EC-7). " +
+					"Windows caps descriptions at **48 characters** (New-LocalGroup limit). " +
 					"An empty string (`\"\"`) is valid and clears any existing description. " +
 					"Defaults to `\"\"` when omitted in HCL.",
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(0, 256),
+					stringvalidator.LengthBetween(0, 48),
 				},
 			},
 

@@ -30,16 +30,20 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"math/big"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -526,6 +530,343 @@ func TestCertificatePEMsEquivalent(t *testing.T) {
 	}
 	if certificatePEMsEquivalent("garbage", "garbage2") {
 		t.Error("two unparseable inputs must not be equivalent")
+	}
+}
+
+// certObjectType mirrors the certificate resource schema as tftypes for
+// ModifyPlan tests (plan/state Raw construction).
+func certObjectType() tftypes.Object {
+	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id":                 tftypes.String,
+		"store_location":     tftypes.String,
+		"store_name":         tftypes.String,
+		"certificate_pem":    tftypes.String,
+		"pfx_base64_wo":      tftypes.String,
+		"pfx_password_wo":    tftypes.String,
+		"pfx_wo_version":     tftypes.Number,
+		"exportable":         tftypes.Bool,
+		"friendly_name":      tftypes.String,
+		"delete_private_key": tftypes.Bool,
+		"thumbprint":         tftypes.String,
+		"thumbprint_sha256":  tftypes.String,
+		"subject":            tftypes.String,
+		"issuer":             tftypes.String,
+		"serial_number":      tftypes.String,
+		"not_before":         tftypes.String,
+		"not_after":          tftypes.String,
+		"dns_names":          tftypes.List{ElementType: tftypes.String},
+		"has_private_key":    tftypes.Bool,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"read":   tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		}},
+	}}
+}
+
+func certNullTimeouts() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"create": tftypes.String, "read": tftypes.String, "update": tftypes.String, "delete": tftypes.String,
+	}}, map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, nil),
+		"read":   tftypes.NewValue(tftypes.String, nil),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	})
+}
+
+// rewrappedFixturePEM re-encodes der at a different base64 line width: the
+// same certificate in a textually different PEM spelling (what an import
+// round-trip produces).
+func rewrappedFixturePEM(t *testing.T, pemText string) string {
+	t.Helper()
+	der, err := winclient.ParseCertificatePEM(pemText)
+	if err != nil {
+		t.Fatalf("fixture must parse: %v", err)
+	}
+	b64 := base64.StdEncoding.EncodeToString(der)
+	var sb strings.Builder
+	sb.WriteString("-----BEGIN CERTIFICATE-----\n")
+	for i := 0; i < len(b64); i += 76 {
+		end := i + 76
+		if end > len(b64) {
+			end = len(b64)
+		}
+		sb.WriteString(b64[i:end] + "\n")
+	}
+	sb.WriteString("-----END CERTIFICATE-----\n")
+	out := sb.String()
+	if out == pemText {
+		t.Fatal("rewrapped fixture needs a distinct spelling for this test")
+	}
+	return out
+}
+
+// Aggressive CLI campaign (2026-11-16): ModifyPlan must restore the observed
+// computed attributes from state when the planned PEM is DER-identical
+// (import rewrap), so the plan is empty; a genuinely different certificate
+// or any other attribute change must leave the plan alone.
+func TestCertificateModifyPlan_DERIdenticalRestoresObserved(t *testing.T) {
+	r := &windowsCertificateResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	ctx := context.Background()
+
+	str := func(s string) tftypes.Value { return tftypes.NewValue(tftypes.String, s) }
+	pemText := certFixturePEM(t)
+	rewrapped := rewrappedFixturePEM(t, pemText)
+	base := map[string]tftypes.Value{
+		"id":                 str("LocalMachine/My/THUMB"),
+		"store_location":     str("LocalMachine"),
+		"store_name":         str("My"),
+		"certificate_pem":    str(rewrapped),
+		"pfx_base64_wo":      tftypes.NewValue(tftypes.String, nil),
+		"pfx_password_wo":    tftypes.NewValue(tftypes.String, nil),
+		"pfx_wo_version":     tftypes.NewValue(tftypes.Number, nil),
+		"exportable":         tftypes.NewValue(tftypes.Bool, false),
+		"friendly_name":      str("aggr2-test"),
+		"delete_private_key": tftypes.NewValue(tftypes.Bool, true),
+		"thumbprint":         str("THUMB"),
+		"thumbprint_sha256":  str("SHA256"),
+		"subject":            str("CN=aggr2-test"),
+		"issuer":             str("CN=aggr2-test"),
+		"serial_number":      str("SERIAL"),
+		"not_before":         str("2026-01-01T00:00:00Z"),
+		"not_after":          str("2027-01-01T00:00:00Z"),
+		"dns_names": tftypes.NewValue(tftypes.List{ElementType: tftypes.String},
+			[]tftypes.Value{str("aggr2-test")}),
+		"has_private_key": tftypes.NewValue(tftypes.Bool, false),
+		"timeouts":        certNullTimeouts(),
+	}
+	stateRaw := tftypes.NewValue(certObjectType(), base)
+
+	// Plan: same object but the file() PEM spelling and unknown observed
+	// fields, exactly what core proposes after an import rewrap.
+	planVals := map[string]tftypes.Value{}
+	for k, v := range base {
+		planVals[k] = v
+	}
+	planVals["certificate_pem"] = str(pemText)
+	for _, k := range []string{"subject", "issuer", "serial_number", "not_before", "not_after",
+		"thumbprint", "thumbprint_sha256", "dns_names", "has_private_key"} {
+		planVals[k] = tftypes.NewValue(certObjectType().AttributeTypes[k], tftypes.UnknownValue)
+	}
+	planRaw := tftypes.NewValue(certObjectType(), planVals)
+
+	plan := tfsdk.Plan{Schema: schemaResp.Schema, Raw: planRaw}
+	resp := &resource.ModifyPlanResponse{Plan: plan}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: planRaw.Copy()},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateRaw.Copy()},
+	}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ModifyPlan diagnostics: %v", resp.Diagnostics)
+	}
+	var got windowsCertificateModel
+	if d := resp.Plan.Get(ctx, &got); d.HasError() {
+		t.Fatalf("plan Get: %v", d)
+	}
+	for _, tc := range []struct {
+		name string
+		got  attr.Value
+		want attr.Value
+	}{
+		{"subject", got.Subject, types.StringValue("CN=aggr2-test")},
+		{"thumbprint", got.Thumbprint, types.StringValue("THUMB")},
+		{"certificate_pem", got.CertificatePEM.StringValue, types.StringValue(rewrapped)},
+	} {
+		if !tc.got.Equal(tc.want) {
+			t.Errorf("%s not restored from state: got %v want %v", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// A genuinely different certificate must leave the plan untouched.
+func TestCertificateModifyPlan_DifferentCertUntouched(t *testing.T) {
+	r := &windowsCertificateResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	ctx := context.Background()
+
+	str := func(s string) tftypes.Value { return tftypes.NewValue(tftypes.String, s) }
+	mk := func(pem string) tftypes.Value {
+		return tftypes.NewValue(certObjectType(), map[string]tftypes.Value{
+			"id":                 str("LocalMachine/My/THUMB"),
+			"store_location":     str("LocalMachine"),
+			"store_name":         str("My"),
+			"certificate_pem":    str(pem),
+			"pfx_base64_wo":      tftypes.NewValue(tftypes.String, nil),
+			"pfx_password_wo":    tftypes.NewValue(tftypes.String, nil),
+			"pfx_wo_version":     tftypes.NewValue(tftypes.Number, nil),
+			"exportable":         tftypes.NewValue(tftypes.Bool, false),
+			"friendly_name":      str("aggr2-test"),
+			"delete_private_key": tftypes.NewValue(tftypes.Bool, true),
+			"thumbprint":         str("THUMB"),
+			"thumbprint_sha256":  str("SHA256"),
+			"subject":            str("CN=aggr2-test"),
+			"issuer":             str("CN=aggr2-test"),
+			"serial_number":      str("SERIAL"),
+			"not_before":         str("2026-01-01T00:00:00Z"),
+			"not_after":          str("2027-01-01T00:00:00Z"),
+			"dns_names": tftypes.NewValue(tftypes.List{ElementType: tftypes.String},
+				[]tftypes.Value{str("aggr2-test")}),
+			"has_private_key": tftypes.NewValue(tftypes.Bool, false),
+			"timeouts":        certNullTimeouts(),
+		})
+	}
+	planRaw := mk(certFixturePEM(t))
+	stateRaw := mk(certFixturePEM(t))
+	plan := tfsdk.Plan{Schema: schemaResp.Schema, Raw: planRaw}
+	resp := &resource.ModifyPlanResponse{Plan: plan}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: planRaw.Copy()},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateRaw.Copy()},
+	}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ModifyPlan diagnostics: %v", resp.Diagnostics)
+	}
+	var got windowsCertificateModel
+	if d := resp.Plan.Get(ctx, &got); d.HasError() {
+		t.Fatalf("plan Get: %v", d)
+	}
+	if got.Subject.ValueString() != "CN=aggr2-test" {
+		t.Fatalf("unrelated setup broken: %v", got.Subject)
+	}
+	// The plan PEM must be the (different) planned spelling, not the state one.
+	var wantPlan windowsCertificateModel
+	plan2 := tfsdk.Plan{Schema: schemaResp.Schema, Raw: planRaw.Copy()}
+	if d := plan2.Get(ctx, &wantPlan); d.HasError() {
+		t.Fatalf("plan Get: %v", d)
+	}
+	if !got.CertificatePEM.Equal(wantPlan.CertificatePEM) {
+		t.Error("different certificate must leave the planned PEM untouched")
+	}
+}
+func TestCertificatePEMValueEqualIsDERAware(t *testing.T) {
+	pemText := certFixturePEM(t)
+	// Rewrap the same DER at a different line width: textually different,
+	// DER-identical (this is what an import round-trip produces).
+	der, err := winclient.ParseCertificatePEM(pemText)
+	if err != nil {
+		t.Fatalf("fixture must parse: %v", err)
+	}
+	b64 := base64.StdEncoding.EncodeToString(der)
+	var sb strings.Builder
+	sb.WriteString("-----BEGIN CERTIFICATE-----\n")
+	for i := 0; i < len(b64); i += 76 {
+		end := i + 76
+		if end > len(b64) {
+			end = len(b64)
+		}
+		sb.WriteString(b64[i:end] + "\n")
+	}
+	sb.WriteString("-----END CERTIFICATE-----\n")
+	rewrapped := sb.String()
+	if rewrapped == pemText {
+		t.Fatal("rewrapped fixture needs a distinct spelling for this test")
+	}
+	if !certificatePEMValueOf(pemText).Equal(certificatePEMValueOf(rewrapped)) {
+		t.Error("DER-identical PEM spellings must compare Equal (import rewrap)")
+	}
+	if !certificatePEMValueOf(rewrapped).Equal(certificatePEMValueOf(pemText)) {
+		t.Error("DER-identical PEM spellings must compare Equal in both directions")
+	}
+	// A different certificate is not equal.
+	other := certFixturePEM(t)
+	if certificatePEMValueOf(pemText).Equal(certificatePEMValueOf(other)) {
+		t.Error("different certificates must not compare Equal")
+	}
+	// Exact cases still behave.
+	if !certificatePEMValueOf(pemText).Equal(certificatePEMValueOf(pemText)) {
+		t.Error("identical PEMs must compare Equal")
+	}
+	if !certificatePEMNull().Equal(certificatePEMNull()) {
+		t.Error("null PEMs must compare Equal")
+	}
+	if certificatePEMValueOf(pemText).Equal(certificatePEMNull()) {
+		t.Error("PEM must not equal null")
+	}
+	if certificatePEMNull().Equal(certificatePEMValueOf(pemText)) {
+		t.Error("null must not equal PEM")
+	}
+	// A different attr.Value type is never equal.
+	if certificatePEMValueOf(pemText).Equal(types.StringValue(pemText)) {
+		t.Error("certificatePEMValue must not Equal a plain StringValue")
+	}
+}
+
+// Aggressive CLI campaign (2026-11-16): the framework erases custom value
+// types before invoking plan modifiers (ToStringValue yields a plain
+// basetypes.StringValue), so the modifier receives plain StringValues and
+// must compare DER bytes itself. An import that merely rewraps the PEM must
+// keep the state spelling with no replacement; a genuinely different
+// certificate must still force replacement.
+func TestCertificatePEMRequiresReplaceModifier(t *testing.T) {
+	pemText := certFixturePEM(t)
+	der, err := winclient.ParseCertificatePEM(pemText)
+	if err != nil {
+		t.Fatalf("fixture must parse: %v", err)
+	}
+	b64 := base64.StdEncoding.EncodeToString(der)
+	var sb strings.Builder
+	sb.WriteString("-----BEGIN CERTIFICATE-----\n")
+	for i := 0; i < len(b64); i += 76 {
+		end := i + 76
+		if end > len(b64) {
+			end = len(b64)
+		}
+		sb.WriteString(b64[i:end] + "\n")
+	}
+	sb.WriteString("-----END CERTIFICATE-----\n")
+	rewrapped := sb.String()
+	other := certFixturePEM(t)
+
+	nonNullRaw := tftypes.NewValue(tftypes.String, "x")
+	nullRaw := tftypes.NewValue(tftypes.String, nil)
+	run := func(plan, state types.String, planRaw, stateRaw tftypes.Value) (types.String, bool) {
+		req := planmodifier.StringRequest{
+			Plan:       tfsdk.Plan{Raw: planRaw},
+			State:      tfsdk.State{Raw: stateRaw},
+			PlanValue:  plan,
+			StateValue: state,
+		}
+		resp := &planmodifier.StringResponse{PlanValue: plan}
+		certificatePEMRequiresReplaceModifier{}.PlanModifyString(context.Background(), req, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("modifier diagnostics: %v", resp.Diagnostics)
+		}
+		return resp.PlanValue, resp.RequiresReplace
+	}
+
+	// Import rewrap: DER-identical, textually different -> state kept, no replace.
+	if got, replace := run(types.StringValue(pemText), types.StringValue(rewrapped), nonNullRaw, nonNullRaw); replace {
+		t.Error("DER-identical rewrap must not force replacement")
+	} else if got.ValueString() != rewrapped {
+		t.Error("DER-identical rewrap must keep the state spelling")
+	}
+
+	// Genuinely different certificate -> replacement.
+	if _, replace := run(types.StringValue(other), types.StringValue(pemText), nonNullRaw, nonNullRaw); !replace {
+		t.Error("different certificate must force replacement")
+	}
+
+	// Identical spelling -> no replacement.
+	if _, replace := run(types.StringValue(pemText), types.StringValue(pemText), nonNullRaw, nonNullRaw); replace {
+		t.Error("identical PEM must not force replacement")
+	}
+
+	// Create (null state) and destroy (null plan) never replace.
+	if _, replace := run(types.StringValue(pemText), types.StringNull(), nonNullRaw, nullRaw); replace {
+		t.Error("create must not force replacement")
+	}
+	if _, replace := run(types.StringNull(), types.StringValue(pemText), nullRaw, nonNullRaw); replace {
+		t.Error("destroy must not force replacement")
+	}
+
+	// Unknown plan value passes through untouched.
+	if got, replace := run(types.StringUnknown(), types.StringValue(pemText), nonNullRaw, nonNullRaw); replace || !got.IsUnknown() {
+		t.Error("unknown plan must pass through without replacement")
 	}
 }
 

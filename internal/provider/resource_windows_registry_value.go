@@ -796,6 +796,12 @@ func rvModelToInput(m *windowsRegistryValueModel) (winclient.RegistryValueInput,
 func applyRVState(m *windowsRegistryValueModel, rv *winclient.RegistryValueState, diags *diag.Diagnostics) {
 	m.Type = types.StringValue(string(rv.Kind))
 
+	// Whether value_binary was explicitly tracked (non-null) before the
+	// reset below. Only REG_NONE consults this: a null plan/state value
+	// must stay null (sensitive-attribute consistency), while an explicit
+	// zero-byte value_binary round-trips as observed.
+	wasBinaryNull := m.ValueBinary.IsNull()
+
 	// Reset all value fields.
 	m.ValueString = types.StringNull()
 	m.ValueStrings = types.ListNull(types.StringType)
@@ -817,12 +823,26 @@ func applyRVState(m *windowsRegistryValueModel, rv *winclient.RegistryValueState
 			m.ValueStrings = list
 		}
 
-	case winclient.RegistryValueKindBinary, winclient.RegistryValueKindNone:
+	case winclient.RegistryValueKindBinary:
 		hex := ""
 		if rv.ValueBinary != nil {
 			hex = *rv.ValueBinary
 		}
 		m.ValueBinary = types.StringValue(hex)
+
+	case winclient.RegistryValueKindNone:
+		// REG_NONE carries no payload. A null plan/state value must stay
+		// null: storing "" instead trips "inconsistent values for sensitive
+		// attribute" after every apply (aggressive CLI campaign,
+		// 2026-11-16). An explicit value_binary (zero bytes, permitted by
+		// CV-6) round-trips as the observed hex string.
+		if !wasBinaryNull {
+			hex := ""
+			if rv.ValueBinary != nil {
+				hex = *rv.ValueBinary
+			}
+			m.ValueBinary = types.StringValue(hex)
+		}
 
 	default:
 		if rv.ValueString != nil {

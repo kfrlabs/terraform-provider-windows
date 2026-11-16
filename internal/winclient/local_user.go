@@ -73,6 +73,7 @@ function Classify-LU([string]$Msg, [string]$FQEI) {
   if ($FQEI -match 'AccessDenied' -or $Msg -match 'Access is denied') { return 'permission_denied' }
   if ($FQEI -match 'InvalidPassword' -or $Msg -match 'password' -or $Msg -match 'Password' -or $Msg -match 'complexity' -or $Msg -match 'minimum length') { return 'password_policy' }
   if ($FQEI -match 'InvalidName' -or $Msg -match 'invalid.*name') { return 'invalid_name' }
+  if ($FQEI -match 'ParameterArgumentValidationError|ParameterBinding' -or $Msg -match 'Cannot validate argument') { return 'invalid_parameter' }
   return 'unknown'
 }
 

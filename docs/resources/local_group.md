@@ -90,7 +90,7 @@ Constraints (enforced by schema validators, EC-6):
 
 - `description` (String) Optional free-text description of the group.
 
-Windows caps descriptions at **256 characters** (EC-7). An empty string (`""`) is valid and clears any existing description. Defaults to `""` when omitted in HCL.
+Windows caps descriptions at **48 characters** (New-LocalGroup limit). An empty string (`""`) is valid and clears any existing description. Defaults to `""` when omitted in HCL.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only

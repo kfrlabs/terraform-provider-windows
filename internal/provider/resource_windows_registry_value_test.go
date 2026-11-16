@@ -1154,9 +1154,27 @@ func TestApplyRVState_REG_NONE_NilBinary(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("applyRVState: %v", diags)
 	}
-	// nil ValueBinary should produce empty string
-	if m.ValueBinary.ValueString() != "" {
-		t.Errorf("nil ValueBinary should produce empty string, got %q", m.ValueBinary.ValueString())
+	// Aggressive CLI campaign (2026-11-16): a null plan/state value must
+	// stay null. Storing "" instead trips "inconsistent values for
+	// sensitive attribute" after every REG_NONE apply.
+	if !m.ValueBinary.IsNull() {
+		t.Errorf("null ValueBinary should stay null for REG_NONE, got %q", m.ValueBinary.ValueString())
+	}
+}
+
+func TestApplyRVState_REG_NONE_ExplicitEmptyBinary(t *testing.T) {
+	// An explicit value_binary (zero bytes, permitted by CV-6) round-trips
+	// as the observed hex string instead of collapsing to null.
+	empty := ""
+	rv := &winclient.RegistryValueState{Kind: winclient.RegistryValueKindNone, ValueBinary: &empty}
+	m := &windowsRegistryValueModel{ValueBinary: types.StringValue("")}
+	var diags diag.Diagnostics
+	applyRVState(m, rv, &diags)
+	if diags.HasError() {
+		t.Fatalf("applyRVState: %v", diags)
+	}
+	if m.ValueBinary.IsNull() || m.ValueBinary.ValueString() != "" {
+		t.Errorf("explicit empty ValueBinary should round-trip as %q, got %v", "", m.ValueBinary)
 	}
 }
 

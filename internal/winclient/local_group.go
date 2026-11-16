@@ -62,6 +62,7 @@ function Classify-LG([string]$Msg, [string]$FQEI) {
   if ($FQEI -match 'GroupExists'      -or $Msg -match 'already exists')         { return 'already_exists' }
   if ($FQEI -match 'AccessDenied'     -or $Msg -match 'Access is denied')       { return 'permission_denied' }
   if ($FQEI -match 'InvalidName'      -or $Msg -match 'invalid.*name')          { return 'invalid_name' }
+  if ($FQEI -match 'ParameterArgumentValidationError|ParameterBinding' -or $Msg -match 'Cannot validate argument') { return 'invalid_parameter' }
   return 'unknown'
 }
 `
