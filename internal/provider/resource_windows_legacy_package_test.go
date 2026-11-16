@@ -26,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -56,7 +57,7 @@ func TestLegacyPackageResource_Schema_AllAttributes(t *testing.T) {
 		"id", "name", "installer_type",
 		"source_path", "source_url",
 		"checksum", "insecure_skip_verify",
-		"product_id", "display_name_pattern",
+		"product_id", "display_name_pattern", "display_name_match",
 		"install_args", "install_args_wo", "install_args_wo_version",
 		"uninstall_args", "uninstall_command",
 		"valid_exit_codes", "working_directory",
@@ -350,6 +351,7 @@ func lpSourceTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, sourc
 		"insecure_skip_verify":    b,
 		"product_id":              str,
 		"display_name_pattern":    str,
+		"display_name_match":      str,
 		"install_args":            tftypes.List{ElementType: str},
 		"install_args_wo":         tftypes.List{ElementType: str},
 		"install_args_wo_version": num,
@@ -380,6 +382,7 @@ func lpSourceTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, sourc
 		"insecure_skip_verify":    tftypes.NewValue(b, nil),
 		"product_id":              tftypes.NewValue(str, nil),
 		"display_name_pattern":    tftypes.NewValue(str, nil),
+		"display_name_match":      tftypes.NewValue(str, nil),
 		"install_args":            tftypes.NewValue(tftypes.List{ElementType: str}, nil),
 		"install_args_wo":         tftypes.NewValue(tftypes.List{ElementType: str}, nil),
 		"install_args_wo_version": tftypes.NewValue(num, nil),
@@ -625,6 +628,7 @@ func lpStateWith(overrides map[string]tftypes.Value) tftypes.Value {
 		"insecure_skip_verify":    tftypes.NewValue(b, nil),
 		"product_id":              tftypes.NewValue(str, nil),
 		"display_name_pattern":    tftypes.NewValue(str, nil),
+		"display_name_match":      tftypes.NewValue(str, nil),
 		"install_args":            tftypes.NewValue(tftypes.List{ElementType: str}, nil),
 		"install_args_wo":         tftypes.NewValue(tftypes.List{ElementType: str}, nil),
 		"install_args_wo_version": tftypes.NewValue(num, nil),
@@ -659,6 +663,7 @@ func lpStateWith(overrides map[string]tftypes.Value) tftypes.Value {
 		"insecure_skip_verify":    b,
 		"product_id":              str,
 		"display_name_pattern":    str,
+		"display_name_match":      str,
 		"install_args":            tftypes.List{ElementType: str},
 		"install_args_wo":         tftypes.List{ElementType: str},
 		"install_args_wo_version": num,
@@ -984,5 +989,343 @@ func TestLegacyPackageUpdate_PartialStateOnError(t *testing.T) {
 	}
 	if m.InstalledVersion.ValueString() != "9.9.9" {
 		t.Errorf("partial state must carry the observed installed_version (not prior 1.0.0), got %q", m.InstalledVersion.ValueString())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// display_name_match (issue #405)
+// ---------------------------------------------------------------------------
+
+func TestLegacyPackageResource_Schema_DisplayNameMatch(t *testing.T) {
+	r := &windowsLegacyPackageResource{}
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+	if resp.Schema.Version != 1 {
+		t.Errorf("schema Version = %d, want 1", resp.Schema.Version)
+	}
+	attr, ok := resp.Schema.Attributes["display_name_match"]
+	if !ok {
+		t.Fatal("schema missing display_name_match")
+	}
+	strAttr, ok := attr.(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("display_name_match is %T, want schema.StringAttribute", attr)
+	}
+	if !strAttr.Optional || !strAttr.Computed {
+		t.Errorf("display_name_match must be Optional+Computed, got Optional=%v Computed=%v", strAttr.Optional, strAttr.Computed)
+	}
+	if strAttr.Default == nil {
+		t.Error("display_name_match must carry the legacy default")
+	} else if desc := strAttr.Default.Description(context.Background()); !strings.Contains(desc, "legacy") {
+		t.Errorf("default description = %q, want it to mention legacy", desc)
+	}
+	if len(strAttr.PlanModifiers) != 0 {
+		t.Errorf("display_name_match must NOT be ForceNew (discovery-only, state-only in place), got %d plan modifiers", len(strAttr.PlanModifiers))
+	}
+}
+
+// lpMatchTestConfig builds a tfsdk.Config for the display_name_match
+// validator (empty string = null).
+func lpMatchTestConfig(t *testing.T, schemaResp *resource.SchemaResponse, installerType, pattern, match string) tfsdk.Config {
+	t.Helper()
+	str := tftypes.String
+	b := tftypes.Bool
+	num := tftypes.Number
+	strOrNull := func(s string) tftypes.Value {
+		if s == "" {
+			return tftypes.NewValue(str, nil)
+		}
+		return tftypes.NewValue(str, s)
+	}
+	raw := tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id":                      str,
+		"name":                    str,
+		"installer_type":          str,
+		"source_path":             str,
+		"source_url":              str,
+		"checksum":                str,
+		"insecure_skip_verify":    b,
+		"product_id":              str,
+		"display_name_pattern":    str,
+		"display_name_match":      str,
+		"install_args":            tftypes.List{ElementType: str},
+		"install_args_wo":         tftypes.List{ElementType: str},
+		"install_args_wo_version": num,
+		"uninstall_args":          tftypes.List{ElementType: str},
+		"uninstall_command":       str,
+		"valid_exit_codes":        tftypes.List{ElementType: num},
+		"working_directory":       str,
+		"timeout_seconds":         num,
+		"log_path":                str,
+		"keep_log":                b,
+		"environment":             tftypes.Map{ElementType: str},
+		"installed_version":       str,
+		"installed":               b,
+		"install_date":            str,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"read":   str,
+			"update": str,
+			"delete": str,
+		}},
+	}}, map[string]tftypes.Value{
+		"id":                      tftypes.NewValue(str, nil),
+		"name":                    tftypes.NewValue(str, "pkg"),
+		"installer_type":          strOrNull(installerType),
+		"source_path":             tftypes.NewValue(str, `C:\inst.exe`),
+		"source_url":              tftypes.NewValue(str, nil),
+		"checksum":                tftypes.NewValue(str, nil),
+		"insecure_skip_verify":    tftypes.NewValue(b, nil),
+		"product_id":              tftypes.NewValue(str, nil),
+		"display_name_pattern":    strOrNull(pattern),
+		"display_name_match":      strOrNull(match),
+		"install_args":            tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"install_args_wo":         tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"install_args_wo_version": tftypes.NewValue(num, nil),
+		"uninstall_args":          tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"uninstall_command":       tftypes.NewValue(str, nil),
+		"valid_exit_codes":        tftypes.NewValue(tftypes.List{ElementType: num}, nil),
+		"working_directory":       tftypes.NewValue(str, nil),
+		"timeout_seconds":         tftypes.NewValue(num, nil),
+		"log_path":                tftypes.NewValue(str, nil),
+		"keep_log":                tftypes.NewValue(b, nil),
+		"environment":             tftypes.NewValue(tftypes.Map{ElementType: str}, nil),
+		"installed_version":       tftypes.NewValue(str, nil),
+		"installed":               tftypes.NewValue(b, nil),
+		"install_date":            tftypes.NewValue(str, nil),
+		"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"read":   str,
+			"update": str,
+			"delete": str,
+		}}, nil),
+	})
+	return tfsdk.Config{Schema: schemaResp.Schema, Raw: raw}
+}
+
+func lpMatchValidatorDiags(t *testing.T, installerType, pattern, match string) diag.Diagnostics {
+	t.Helper()
+	ctx := context.Background()
+	r := &windowsLegacyPackageResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	var validator legacyPackageDisplayNameMatchValidator
+	found := false
+	for _, v := range r.ConfigValidators(ctx) {
+		if sv, ok := v.(legacyPackageDisplayNameMatchValidator); ok {
+			validator = sv
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("legacyPackageDisplayNameMatchValidator missing from ConfigValidators")
+	}
+	resp := &resource.ValidateConfigResponse{}
+	validator.ValidateResource(ctx, resource.ValidateConfigRequest{
+		Config: lpMatchTestConfig(t, schemaResp, installerType, pattern, match),
+	}, resp)
+	return resp.Diagnostics
+}
+
+func TestLegacyPackageDisplayNameMatchValidator(t *testing.T) {
+	cases := []struct {
+		name          string
+		installerType string
+		pattern       string
+		match         string
+		wantErrors    int
+		wantWarns     int
+		wantSubstr    string
+	}{
+		{"explicit match without pattern errors", "exe", "", "wildcard", 1, 0, "display_name_pattern"},
+		{"exact without pattern errors", "exe", "", "exact", 1, 0, "display_name_pattern"},
+		{"unset mode without pattern is clean (computed default must not trigger)", "exe", "", "", 0, 0, ""},
+		{"msi ignores explicit match without pattern", "msi", "", "regex", 0, 0, ""},
+		{"msi ignores metachar pattern", "msi", "Foo (64-bit).", "", 0, 0, ""},
+		{"legacy metachar pattern warns", "exe", "VLC media player (64-bit).", "", 0, 1, "Ambiguous"},
+		{"explicit legacy metachar pattern warns", "exe", "VLC media player (64-bit).", "legacy", 0, 1, "Ambiguous"},
+		{"explicit regex suppresses the warning", "exe", "^VLC media player.*$", "regex", 0, 0, ""},
+		{"explicit wildcard is clean on plain pattern", "exe", "VLC media player*", "wildcard", 0, 0, ""},
+		{"explicit exact is clean", "exe", "VLC media player", "exact", 0, 0, ""},
+		{"plain pattern without metachars is clean", "exe", "VLC media player", "", 0, 0, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := lpMatchValidatorDiags(t, tc.installerType, tc.pattern, tc.match)
+			gotErr, gotWarn := lpDiagCounts(diags)
+			if gotErr != tc.wantErrors || gotWarn != tc.wantWarns {
+				t.Errorf("errors=%d warnings=%d, want errors=%d warnings=%d (diags: %v)",
+					gotErr, gotWarn, tc.wantErrors, tc.wantWarns, diags)
+			}
+			if tc.wantSubstr != "" {
+				found := false
+				for _, d := range diags {
+					if strings.Contains(d.Summary(), tc.wantSubstr) || strings.Contains(d.Detail(), tc.wantSubstr) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected a diagnostic containing %q, got: %v", tc.wantSubstr, diags)
+				}
+			}
+		})
+	}
+}
+
+func TestLegacyPackageDisplayNameMatchValidator_MetacharTable(t *testing.T) {
+	warnChars := []string{".", "+", "(", ")", "^", "$", "{", "}", "|", "\\"}
+	for _, c := range warnChars {
+		t.Run("warns on "+c, func(t *testing.T) {
+			diags := lpMatchValidatorDiags(t, "exe", "Foo"+c+"Bar", "")
+			_, gotWarn := lpDiagCounts(diags)
+			if gotWarn != 1 {
+				t.Errorf("pattern containing %q should warn once, got warnings=%d (diags: %v)", c, gotWarn, diags)
+			}
+		})
+	}
+	cleanPatterns := []string{"VLC media player*", "VLC?player", "VLC [a-z] player", "plain name"}
+	for _, p := range cleanPatterns {
+		t.Run("clean on "+p, func(t *testing.T) {
+			diags := lpMatchValidatorDiags(t, "exe", p, "")
+			gotErr, gotWarn := lpDiagCounts(diags)
+			if gotErr != 0 || gotWarn != 0 {
+				t.Errorf("pattern %q should be clean, got errors=%d warnings=%d (diags: %v)", p, gotErr, gotWarn, diags)
+			}
+		})
+	}
+}
+
+// lpV0StateRaw builds a v0 (pre-display_name_match) state value.
+func lpV0StateRaw(name string) tftypes.Value {
+	str := tftypes.String
+	b := tftypes.Bool
+	num := tftypes.Number
+	attrTypes := map[string]tftypes.Type{
+		"id":                      str,
+		"name":                    str,
+		"installer_type":          str,
+		"source_path":             str,
+		"source_url":              str,
+		"checksum":                str,
+		"insecure_skip_verify":    b,
+		"product_id":              str,
+		"display_name_pattern":    str,
+		"install_args":            tftypes.List{ElementType: str},
+		"install_args_wo":         tftypes.List{ElementType: str},
+		"install_args_wo_version": num,
+		"uninstall_args":          tftypes.List{ElementType: str},
+		"uninstall_command":       str,
+		"valid_exit_codes":        tftypes.List{ElementType: num},
+		"working_directory":       str,
+		"timeout_seconds":         num,
+		"log_path":                str,
+		"keep_log":                b,
+		"environment":             tftypes.Map{ElementType: str},
+		"installed_version":       str,
+		"installed":               b,
+		"install_date":            str,
+		"timeouts": tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"read":   str,
+			"update": str,
+			"delete": str,
+		}},
+	}
+	vals := map[string]tftypes.Value{
+		"id":                      tftypes.NewValue(str, "{01234567-89AB-CDEF-0123-456789ABCDEF}"),
+		"name":                    tftypes.NewValue(str, name),
+		"installer_type":          tftypes.NewValue(str, "exe"),
+		"source_path":             tftypes.NewValue(str, `C:\inst.exe`),
+		"source_url":              tftypes.NewValue(str, nil),
+		"checksum":                tftypes.NewValue(str, nil),
+		"insecure_skip_verify":    tftypes.NewValue(b, nil),
+		"product_id":              tftypes.NewValue(str, nil),
+		"display_name_pattern":    tftypes.NewValue(str, "VLC*"),
+		"install_args":            tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"install_args_wo":         tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"install_args_wo_version": tftypes.NewValue(num, nil),
+		"uninstall_args":          tftypes.NewValue(tftypes.List{ElementType: str}, nil),
+		"uninstall_command":       tftypes.NewValue(str, nil),
+		"valid_exit_codes":        tftypes.NewValue(tftypes.List{ElementType: num}, nil),
+		"working_directory":       tftypes.NewValue(str, nil),
+		"timeout_seconds":         tftypes.NewValue(num, nil),
+		"log_path":                tftypes.NewValue(str, nil),
+		"keep_log":                tftypes.NewValue(b, nil),
+		"environment":             tftypes.NewValue(tftypes.Map{ElementType: str}, nil),
+		"installed_version":       tftypes.NewValue(str, "3.0.20"),
+		"installed":               tftypes.NewValue(b, true),
+		"install_date":            tftypes.NewValue(str, "2026-01-15"),
+		"timeouts": tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+			"create": str,
+			"read":   str,
+			"update": str,
+			"delete": str,
+		}}, nil),
+	}
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: attrTypes}, vals)
+}
+
+func TestLegacyPackageUpgradeStateV0ToV1(t *testing.T) {
+	ctx := context.Background()
+	r := &windowsLegacyPackageResource{}
+	upgraders := r.UpgradeState(ctx)
+	up, ok := upgraders[0]
+	if !ok {
+		t.Fatal("UpgradeState must define a 0 -> 1 upgrader")
+	}
+	if up.PriorSchema == nil {
+		t.Fatal("PriorSchema must not be nil")
+	}
+	if up.PriorSchema.Version != 0 {
+		t.Errorf("PriorSchema Version = %d, want 0", up.PriorSchema.Version)
+	}
+	if _, ok := up.PriorSchema.Attributes["display_name_match"]; ok {
+		t.Error("v0 prior schema must not contain display_name_match")
+	}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	req := resource.UpgradeStateRequest{
+		State: &tfsdk.State{Schema: *up.PriorSchema, Raw: lpV0StateRaw("vlc")},
+	}
+	resp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	up.StateUpgrader(ctx, req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("upgrader diags: %v", resp.Diagnostics)
+	}
+	var got windowsLegacyPackageModel
+	if d := resp.State.Get(ctx, &got); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if got.DisplayNameMatch.ValueString() != "legacy" {
+		t.Errorf("DisplayNameMatch = %q, want legacy (zero diff)", got.DisplayNameMatch.ValueString())
+	}
+	if got.Name.ValueString() != "vlc" || got.DisplayNamePattern.ValueString() != "VLC*" {
+		t.Errorf("upgrader must preserve v0 fields, got name=%q pattern=%q", got.Name.ValueString(), got.DisplayNamePattern.ValueString())
+	}
+	if got.InstalledVersion.ValueString() != "3.0.20" || !got.Installed.ValueBool() {
+		t.Errorf("upgrader must preserve computed fields, got version=%q installed=%v", got.InstalledVersion.ValueString(), got.Installed.ValueBool())
+	}
+}
+
+func TestLegacyPackageModelToInput_MapsDisplayNameMatch(t *testing.T) {
+	ctx := context.Background()
+	r := &windowsLegacyPackageResource{}
+	m := windowsLegacyPackageModel{
+		Name:               types.StringValue("vlc"),
+		InstallerType:      types.StringValue("exe"),
+		SourcePath:         types.StringValue(`C:\inst.exe`),
+		DisplayNamePattern: types.StringValue("^VLC.*$"),
+		DisplayNameMatch:   types.StringValue("regex"),
+	}
+	in, diags := r.modelToInput(ctx, m)
+	if diags.HasError() {
+		t.Fatalf("modelToInput diags: %v", diags)
+	}
+	if in.DisplayNameMatch != "regex" {
+		t.Errorf("DisplayNameMatch = %q, want regex", in.DisplayNameMatch)
+	}
+	if in.DisplayNamePattern != "^VLC.*$" {
+		t.Errorf("DisplayNamePattern = %q", in.DisplayNamePattern)
 	}
 }

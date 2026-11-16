@@ -38,6 +38,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -85,6 +86,7 @@ var (
 	_ resource.ResourceWithConfigure        = (*windowsLegacyPackageResource)(nil)
 	_ resource.ResourceWithImportState      = (*windowsLegacyPackageResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsLegacyPackageResource)(nil)
+	_ resource.ResourceWithUpgradeState     = (*windowsLegacyPackageResource)(nil)
 )
 
 // NewWindowsLegacyPackageResource is the constructor registered in provider.go.
@@ -180,6 +182,7 @@ type windowsLegacyPackageModel struct {
 	InsecureSkipVerify   types.Bool     `tfsdk:"insecure_skip_verify"`
 	ProductID            types.String   `tfsdk:"product_id"`
 	DisplayNamePattern   types.String   `tfsdk:"display_name_pattern"`
+	DisplayNameMatch     types.String   `tfsdk:"display_name_match"`
 	InstallArgs          types.List     `tfsdk:"install_args"`
 	InstallArgsWO        types.List     `tfsdk:"install_args_wo"`
 	InstallArgsWOVersion types.Int64    `tfsdk:"install_args_wo_version"`
@@ -207,6 +210,7 @@ func (r *windowsLegacyPackageResource) Metadata(_ context.Context, req resource.
 
 func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version:     1,
 		Description: "Manages legacy Windows installers (.msi via msiexec; .exe via Start-Process) over SSH.",
 		MarkdownDescription: "Installs, updates and uninstalls Windows software distributed as legacy installers " +
 			"(`.exe` wrappers like InstallShield/NSIS/Inno Setup and Windows Installer `.msi` packages).\n\n" +
@@ -332,11 +336,22 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 
 			"display_name_pattern": schema.StringAttribute{
 				Optional:            true,
-				Description:         "Wildcard/regex matched against DisplayName under HKLM Uninstall (and Wow6432Node) to locate EXE installs. Required for exe when uninstall_command is empty.",
-				MarkdownDescription: "Wildcard/regex matched against `DisplayName` under `HKLM:\\SOFTWARE\\...\\Uninstall\\*` (and `Wow6432Node`) to locate EXE installs. Required for `installer_type=exe` when `uninstall_command` is empty. Immutable (ForceNew).",
+				Description:         "Pattern matched against DisplayName under HKLM Uninstall (and Wow6432Node) to locate EXE installs. Interpretation is controlled by display_name_match. Required for exe when uninstall_command is empty.",
+				MarkdownDescription: "Pattern matched against `DisplayName` under `HKLM:\\SOFTWARE\\...\\Uninstall\\*` (and `Wow6432Node`) to locate EXE installs. Interpretation is controlled by `display_name_match`. Required for `installer_type=exe` when `uninstall_command` is empty. Immutable (ForceNew).",
 				PlanModifiers: []planmodifier.String{
 					legacyPackageStringRequiresReplaceOnKnownPriorState(),
 				},
+			},
+
+			"display_name_match": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString("legacy"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("legacy", "wildcard", "regex", "exact"),
+				},
+				Description:         "How display_name_pattern is evaluated: legacy (default, -like then -match union), wildcard (-like only), regex (-match only, unanchored, anchor with ^...$ for a full match) or exact (-ceq). Discovery-only: changing the mode is applied in place. Ignored when installer_type is msi.",
+				MarkdownDescription: "How `display_name_pattern` is evaluated: `legacy` (default, `-like` then `-match` union for backwards compatibility), `wildcard` (`-like` only), `regex` (`-match` only, unanchored — anchor with `^...$` for a full match, e.g. `^VLC media player$`) or `exact` (`-ceq`). Discovery-only: changing the mode is applied in place without reinstalling. Ignored when `installer_type` is `msi`.",
 			},
 
 			"install_args": schema.ListAttribute{
@@ -514,6 +529,7 @@ func (r *windowsLegacyPackageResource) ConfigValidators(_ context.Context) []res
 		// Source integrity: an http:// installer URL without a pinned
 		// checksum is a remote-code-execution vector (issue #175).
 		legacyPackageSourceValidator{},
+		legacyPackageDisplayNameMatchValidator{},
 	}
 }
 
@@ -610,6 +626,164 @@ func (v legacyPackageSourceValidator) ValidateResource(ctx context.Context, req 
 			}
 		}
 	}
+}
+
+// legacyPackageDisplayNameMatchValidator enforces display_name_match /
+// display_name_pattern coherence (issue #405):
+//
+//   - display_name_match set explicitly in config while display_name_pattern
+//     is null requires an error (a mode without a pattern is meaningless).
+//     The config value is checked, not the plan value: the schema default
+//     ("legacy") fills the plan even when the user sets nothing. Ignored
+//     when installer_type is "msi" (the mode is not evaluated for MSI).
+//   - display_name_pattern containing regex-only metacharacters while the
+//     mode is legacy/unset warns that wildcard and regex disagree and
+//     suggests an explicit mode.
+type legacyPackageDisplayNameMatchValidator struct{}
+
+func (v legacyPackageDisplayNameMatchValidator) Description(_ context.Context) string {
+	return "validates display_name_match/display_name_pattern coherence"
+}
+
+func (v legacyPackageDisplayNameMatchValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+// lpRegexOnlyMetachars are .NET regex metacharacters that are literal under
+// -like (apart from * ? [ ] which are wildcard syntax): their presence in a
+// legacy-mode pattern means wildcard and regex evaluation may disagree.
+const lpRegexOnlyMetachars = ".+()^${}|\\"
+
+func (v legacyPackageDisplayNameMatchValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var matchMode types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("display_name_match"), &matchMode)...)
+	var pattern types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("display_name_pattern"), &pattern)...)
+	var installerType types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("installer_type"), &installerType)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !installerType.IsNull() && !installerType.IsUnknown() && installerType.ValueString() == "msi" {
+		return
+	}
+	matchSet := !matchMode.IsNull() && !matchMode.IsUnknown() && strings.TrimSpace(matchMode.ValueString()) != ""
+	patternSet := !pattern.IsNull() && !pattern.IsUnknown() && strings.TrimSpace(pattern.ValueString()) != ""
+	if matchSet && !patternSet {
+		resp.Diagnostics.AddAttributeError(path.Root("display_name_match"),
+			"display_name_match requires display_name_pattern",
+			"display_name_match selects how display_name_pattern is evaluated, so it must not be set when display_name_pattern is null. Either set display_name_pattern or remove display_name_match.")
+		return
+	}
+	if !patternSet {
+		return
+	}
+	mode := ""
+	if matchSet {
+		mode = strings.ToLower(strings.TrimSpace(matchMode.ValueString()))
+	}
+	if mode == "" || mode == "legacy" {
+		if strings.ContainsAny(strings.TrimSpace(pattern.ValueString()), lpRegexOnlyMetachars) {
+			resp.Diagnostics.AddAttributeWarning(path.Root("display_name_pattern"),
+				"Ambiguous display_name_pattern",
+				"display_name_pattern contains characters that are regex metacharacters but literal under wildcard matching, so -like and -match may disagree under the default legacy mode. Set display_name_match explicitly to wildcard, regex or exact.")
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// State upgrade (issue #405: display_name_match added, defaults to legacy)
+// ---------------------------------------------------------------------------
+
+// windowsLegacyPackageModelV0 is the prior (v0) state shape, which lacks the
+// display_name_match attribute.
+type windowsLegacyPackageModelV0 struct {
+	ID                   types.String   `tfsdk:"id"`
+	Name                 types.String   `tfsdk:"name"`
+	InstallerType        types.String   `tfsdk:"installer_type"`
+	SourcePath           types.String   `tfsdk:"source_path"`
+	SourceURL            types.String   `tfsdk:"source_url"`
+	Checksum             types.String   `tfsdk:"checksum"`
+	InsecureSkipVerify   types.Bool     `tfsdk:"insecure_skip_verify"`
+	ProductID            types.String   `tfsdk:"product_id"`
+	DisplayNamePattern   types.String   `tfsdk:"display_name_pattern"`
+	InstallArgs          types.List     `tfsdk:"install_args"`
+	InstallArgsWO        types.List     `tfsdk:"install_args_wo"`
+	InstallArgsWOVersion types.Int64    `tfsdk:"install_args_wo_version"`
+	UninstallArgs        types.List     `tfsdk:"uninstall_args"`
+	UninstallCommand     types.String   `tfsdk:"uninstall_command"`
+	ValidExitCodes       types.List     `tfsdk:"valid_exit_codes"`
+	WorkingDirectory     types.String   `tfsdk:"working_directory"`
+	TimeoutSeconds       types.Int64    `tfsdk:"timeout_seconds"`
+	LogPath              types.String   `tfsdk:"log_path"`
+	KeepLog              types.Bool     `tfsdk:"keep_log"`
+	Environment          types.Map      `tfsdk:"environment"`
+	InstalledVersion     types.String   `tfsdk:"installed_version"`
+	Installed            types.Bool     `tfsdk:"installed"`
+	InstallDate          types.String   `tfsdk:"install_date"`
+	Timeouts             timeouts.Value `tfsdk:"timeouts"`
+}
+
+// windowsLegacyPackagePriorSchemaV0 returns the v0 schema: the current
+// schema without the display_name_match attribute.
+func windowsLegacyPackagePriorSchemaV0(ctx context.Context) *schema.Schema {
+	r := &windowsLegacyPackageResource{}
+	resp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, resp)
+	s := resp.Schema
+	s.Version = 0
+	delete(s.Attributes, "display_name_match")
+	return &s
+}
+
+// UpgradeState maps prior state versions to the current shape.
+func (r *windowsLegacyPackageResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			PriorSchema:   windowsLegacyPackagePriorSchemaV0(ctx),
+			StateUpgrader: upgradeWindowsLegacyPackageStateV0ToV1,
+		},
+	}
+}
+
+// upgradeWindowsLegacyPackageStateV0ToV1 copies every v0 field into the
+// current (v1) state shape, defaulting display_name_match to "legacy" so
+// existing state converges with zero diff (legacy reproduces the v0 union).
+func upgradeWindowsLegacyPackageStateV0ToV1(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+	var prior windowsLegacyPackageModelV0
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	upgraded := windowsLegacyPackageModel{
+		ID:                   prior.ID,
+		Name:                 prior.Name,
+		InstallerType:        prior.InstallerType,
+		SourcePath:           prior.SourcePath,
+		SourceURL:            prior.SourceURL,
+		Checksum:             prior.Checksum,
+		InsecureSkipVerify:   prior.InsecureSkipVerify,
+		ProductID:            prior.ProductID,
+		DisplayNamePattern:   prior.DisplayNamePattern,
+		DisplayNameMatch:     types.StringValue("legacy"),
+		InstallArgs:          prior.InstallArgs,
+		InstallArgsWO:        prior.InstallArgsWO,
+		InstallArgsWOVersion: prior.InstallArgsWOVersion,
+		UninstallArgs:        prior.UninstallArgs,
+		UninstallCommand:     prior.UninstallCommand,
+		ValidExitCodes:       prior.ValidExitCodes,
+		WorkingDirectory:     prior.WorkingDirectory,
+		TimeoutSeconds:       prior.TimeoutSeconds,
+		LogPath:              prior.LogPath,
+		KeepLog:              prior.KeepLog,
+		Environment:          prior.Environment,
+		InstalledVersion:     prior.InstalledVersion,
+		Installed:            prior.Installed,
+		InstallDate:          prior.InstallDate,
+		Timeouts:             prior.Timeouts,
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &upgraded)...)
 }
 
 // ---------------------------------------------------------------------------
@@ -934,6 +1108,7 @@ func (r *windowsLegacyPackageResource) modelToInput(ctx context.Context, m windo
 		InsecureSkipVerify: m.InsecureSkipVerify.ValueBool(),
 		ProductID:          m.ProductID.ValueString(),
 		DisplayNamePattern: m.DisplayNamePattern.ValueString(),
+		DisplayNameMatch:   m.DisplayNameMatch.ValueString(),
 		UninstallCommand:   m.UninstallCommand.ValueString(),
 		WorkingDirectory:   m.WorkingDirectory.ValueString(),
 		LogPath:            m.LogPath.ValueString(),
