@@ -184,7 +184,7 @@ func TestServiceError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("boom")
 	e := NewServiceError(ServiceErrorTimeout, "op timed out", cause, map[string]string{"op": "Delete"})
 
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap mismatch")
 	}
 	msg := e.Error()

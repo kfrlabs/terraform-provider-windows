@@ -318,9 +318,9 @@ func psParseRegistry() []psParseBuilder {
 		{Name: "buildNetworkAdaptersListScript", Render: func(s string) (string, error) {
 			return buildNetworkAdaptersListScript([]string{s}, true, true), nil
 		}},
-		{Name: "buildDnsClientReadScript", Render: func(s string) (string, error) { return buildDnsClientReadScript(s), nil }},
-		{Name: "buildDnsClientApplyScript", Render: func(s string) (string, error) {
-			return buildDnsClientApplyScript(s, DnsClientSettings{
+		{Name: "buildDNSClientReadScript", Render: func(s string) (string, error) { return buildDNSClientReadScript(s), nil }},
+		{Name: "buildDNSClientApplyScript", Render: func(s string) (string, error) {
+			return buildDNSClientApplyScript(s, DNSClientSettings{
 				IPv4Addresses:            []string{s},
 				IPv4Set:                  true,
 				ConnectionSpecificSuffix: psParseStrPtr(s),
@@ -723,7 +723,7 @@ func psParseRegistry() []psParseBuilder {
 		{Name: "lpHeader", Unseeded: true, Render: psParseOk(lpHeader)},
 		{Name: "psSTHeader", Unseeded: true, Render: psParseOk(psSTHeader)},
 		{Name: "psCertificateHeader", Unseeded: true, Render: psParseOk(psCertificateHeader)},
-		{Name: "psDnsClientHeader", Unseeded: true, Render: psParseOk(psDnsClientHeader)},
+		{Name: "psDNSClientHeader", Unseeded: true, Render: psParseOk(psDNSClientHeader)},
 		{Name: "elPsHeader", Unseeded: true, Render: psParseOk(elPsHeader)},
 		{Name: "fpPsHeader", Unseeded: true, Render: psParseOk(fpPsHeader)},
 		{Name: "frPsHeader", Unseeded: true, Render: psParseOk(frPsHeader)},

@@ -1,13 +1,13 @@
-// Package winclient — unit tests for DnsClientClientImpl.
+// Package winclient — unit tests for DNSClientClientImpl.
 //
-// The package-level seam runDnsClientPowerShell (script transport) is
+// The package-level seam runDNSClientPowerShell (script transport) is
 // stubbed so no real SSH connection is needed. Coverage targets (issue
 // #229):
 //
-//	DnsClientError: Error(), Unwrap(), Is(), sentinels
-//	mapDnsClientKind: all known kinds + unknown fallback
-//	ValidateDnsClientAlias / ValidateDnsClientServerAddresses /
-//	ValidateDnsClientSuffix: canonicalisation, family, uniqueness,
+//	DNSClientError: Error(), Unwrap(), Is(), sentinels
+//	mapDNSClientKind: all known kinds + unknown fallback
+//	ValidateDNSClientAlias / ValidateDNSClientServerAddresses /
+//	ValidateDNSClientSuffix: canonicalisation, family, uniqueness,
 //	rejections (loopback allowed)
 //	script builders: user values only via psQuote/psQuoteList, exact -eq
 //	alias match, no wildcard -InterfaceAlias, cross-family merge,
@@ -30,14 +30,14 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// dcNewClient returns a *DnsClientClientImpl for tests.
-func dcNewClient(t *testing.T) *DnsClientClientImpl {
+// dcNewClient returns a *DNSClientClientImpl for tests.
+func dcNewClient(t *testing.T) *DNSClientClientImpl {
 	t.Helper()
 	c, err := New(Config{Host: "windns01", Username: "u", Password: "p", Timeout: 30 * time.Second, InsecureIgnoreHostKey: BoolPtr(true)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return NewDnsClientClient(c)
+	return NewDNSClientClient(c)
 }
 
 // dcOK returns a JSON ok-envelope whose data field is the supplied value.
@@ -62,14 +62,14 @@ func dcErr(t *testing.T, kind, msg string) string {
 	return string(b) + "\n"
 }
 
-// dcStubRun replaces runDnsClientPowerShell for one test.
+// dcStubRun replaces runDNSClientPowerShell for one test.
 func dcStubRun(fn func(ctx context.Context, c *Client, script string) (string, string, error)) func() {
-	prev := runDnsClientPowerShell
-	runDnsClientPowerShell = fn
-	return func() { runDnsClientPowerShell = prev }
+	prev := runDNSClientPowerShell
+	runDNSClientPowerShell = fn
+	return func() { runDNSClientPowerShell = prev }
 }
 
-// testDNSClientState is a minimal valid DnsClientState JSON payload.
+// testDNSClientState is a minimal valid DNSClientState JSON payload.
 func testDNSClientState() map[string]any {
 	return map[string]any{
 		"interface_alias":                  "Ethernet 2",
@@ -94,29 +94,29 @@ func dcStubState(t *testing.T, state map[string]any) func() {
 }
 
 // ---------------------------------------------------------------------------
-// DnsClientError
+// DNSClientError
 // ---------------------------------------------------------------------------
 
-func TestDnsClientError_ErrorWithCause(t *testing.T) {
+func TestDNSClientError_ErrorWithCause(t *testing.T) {
 	cause := errors.New("boom")
-	e := NewDnsClientError(DnsClientErrorPermission, "denied", cause,
+	e := NewDNSClientError(DNSClientErrorPermission, "denied", cause,
 		map[string]string{"host": "win01"})
 	msg := e.Error()
 	if !strings.Contains(msg, "permission_denied") || !strings.Contains(msg, "denied") || !strings.Contains(msg, "boom") {
 		t.Errorf("missing kind/message/cause: %q", msg)
 	}
-	e2 := NewDnsClientError(DnsClientErrorInterfaceNotFound, "bad", nil, nil)
+	e2 := NewDNSClientError(DNSClientErrorInterfaceNotFound, "bad", nil, nil)
 	if strings.Contains(e2.Error(), "<nil>") {
 		t.Errorf("no-cause Error leaks <nil>: %q", e2.Error())
 	}
 }
 
-func TestDnsClientError_Is(t *testing.T) {
-	e := NewDnsClientError(DnsClientErrorInvalidAddress, "x", nil, nil)
-	if !errors.Is(e, ErrDnsClientInvalidAddress) {
+func TestDNSClientError_Is(t *testing.T) {
+	e := NewDNSClientError(DNSClientErrorInvalidAddress, "x", nil, nil)
+	if !errors.Is(e, ErrDNSClientInvalidAddress) {
 		t.Error("errors.Is should match by kind")
 	}
-	if errors.Is(e, ErrDnsClientInvalidSuffix) {
+	if errors.Is(e, ErrDNSClientInvalidSuffix) {
 		t.Error("errors.Is must not match a different kind")
 	}
 	if errors.Is(e, errors.New("other")) {
@@ -124,81 +124,81 @@ func TestDnsClientError_Is(t *testing.T) {
 	}
 }
 
-func TestIsDnsClientError(t *testing.T) {
-	e := NewDnsClientError(DnsClientErrorUnreachable, "down", nil, nil)
-	if !IsDnsClientError(e, DnsClientErrorUnreachable) {
-		t.Error("IsDnsClientError should report the matching kind")
+func TestIsDNSClientError(t *testing.T) {
+	e := NewDNSClientError(DNSClientErrorUnreachable, "down", nil, nil)
+	if !IsDNSClientError(e, DNSClientErrorUnreachable) {
+		t.Error("IsDNSClientError should report the matching kind")
 	}
-	if IsDnsClientError(e, DnsClientErrorUnknown) {
-		t.Error("IsDnsClientError must not report a different kind")
+	if IsDNSClientError(e, DNSClientErrorUnknown) {
+		t.Error("IsDNSClientError must not report a different kind")
 	}
-	if IsDnsClientError(errors.New("plain"), DnsClientErrorUnreachable) {
-		t.Error("IsDnsClientError must be false for plain errors")
+	if IsDNSClientError(errors.New("plain"), DNSClientErrorUnreachable) {
+		t.Error("IsDNSClientError must be false for plain errors")
 	}
 }
 
-func TestDnsClientSentinels(t *testing.T) {
+func TestDNSClientSentinels(t *testing.T) {
 	for _, tc := range []struct {
-		sentinel *DnsClientError
-		kind     DnsClientErrorKind
+		sentinel *DNSClientError
+		kind     DNSClientErrorKind
 	}{
-		{ErrDnsClientInterfaceNotFound, DnsClientErrorInterfaceNotFound},
-		{ErrDnsClientInvalidAddress, DnsClientErrorInvalidAddress},
-		{ErrDnsClientInvalidSuffix, DnsClientErrorInvalidSuffix},
-		{ErrDnsClientPermission, DnsClientErrorPermission},
-		{ErrDnsClientUnreachable, DnsClientErrorUnreachable},
-		{ErrDnsClientUnknown, DnsClientErrorUnknown},
+		{ErrDNSClientInterfaceNotFound, DNSClientErrorInterfaceNotFound},
+		{ErrDNSClientInvalidAddress, DNSClientErrorInvalidAddress},
+		{ErrDNSClientInvalidSuffix, DNSClientErrorInvalidSuffix},
+		{ErrDNSClientPermission, DNSClientErrorPermission},
+		{ErrDNSClientUnreachable, DNSClientErrorUnreachable},
+		{ErrDNSClientUnknown, DNSClientErrorUnknown},
 	} {
-		if !errors.Is(tc.sentinel, &DnsClientError{Resource: "windows_dns_client", Kind: string(tc.kind)}) {
+		if !errors.Is(tc.sentinel, &DNSClientError{Resource: "windows_dns_client", Kind: string(tc.kind)}) {
 			t.Errorf("sentinel for %q does not match", tc.kind)
 		}
 	}
 }
 
 // ---------------------------------------------------------------------------
-// mapDnsClientKind
+// mapDNSClientKind
 // ---------------------------------------------------------------------------
 
-func TestMapDnsClientKind(t *testing.T) {
-	for _, kind := range []DnsClientErrorKind{
-		DnsClientErrorInterfaceNotFound,
-		DnsClientErrorInvalidAddress,
-		DnsClientErrorInvalidSuffix,
-		DnsClientErrorPermission,
+func TestMapDNSClientKind(t *testing.T) {
+	for _, kind := range []DNSClientErrorKind{
+		DNSClientErrorInterfaceNotFound,
+		DNSClientErrorInvalidAddress,
+		DNSClientErrorInvalidSuffix,
+		DNSClientErrorPermission,
 	} {
-		if got := mapDnsClientKind(string(kind)); got != kind {
-			t.Errorf("mapDnsClientKind(%q) = %q, want identity", kind, got)
+		if got := mapDNSClientKind(string(kind)); got != kind {
+			t.Errorf("mapDNSClientKind(%q) = %q, want identity", kind, got)
 		}
 	}
 	for _, unknown := range []string{"", "nope", "management_path_at_risk", "dhcp_enabled"} {
-		if got := mapDnsClientKind(unknown); got != DnsClientErrorUnknown {
-			t.Errorf("mapDnsClientKind(%q) = %q, want unknown", unknown, got)
+		if got := mapDNSClientKind(unknown); got != DNSClientErrorUnknown {
+			t.Errorf("mapDNSClientKind(%q) = %q, want unknown", unknown, got)
 		}
 	}
 }
 
 // ---------------------------------------------------------------------------
-// ValidateDnsClientAlias
+// ValidateDNSClientAlias
 // ---------------------------------------------------------------------------
 
-func TestValidateDnsClientAlias(t *testing.T) {
-	if err := ValidateDnsClientAlias("Ethernet 2"); err != nil {
+func TestValidateDNSClientAlias(t *testing.T) {
+	if err := ValidateDNSClientAlias("Ethernet 2"); err != nil {
 		t.Errorf("valid alias rejected: %v", err)
 	}
 	for _, bad := range []string{"", "   ", "\t"} {
-		err := ValidateDnsClientAlias(bad)
-		if !IsDnsClientError(err, DnsClientErrorInterfaceNotFound) {
+		err := ValidateDNSClientAlias(bad)
+		if !IsDNSClientError(err, DNSClientErrorInterfaceNotFound) {
 			t.Errorf("alias %q: want interface_not_found, got %v", bad, err)
 		}
 	}
 }
 
 // ---------------------------------------------------------------------------
-// ValidateDnsClientServerAddresses (pure-Go)
+// ValidateDNSClientServerAddresses (pure-Go)
 // ---------------------------------------------------------------------------
 
-func TestValidateDnsClientServerAddresses_HappyPath(t *testing.T) {
-	got, err := ValidateDnsClientServerAddresses([]string{"192.0.2.53", "198.51.100.1"}, false)
+func TestValidateDNSClientServerAddresses_HappyPath(t *testing.T) {
+	got, err := ValidateDNSClientServerAddresses([]string{"192.0.2.53", "198.51.100.1"}, false)
 	if err != nil {
 		t.Fatalf("valid IPv4 list rejected: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestValidateDnsClientServerAddresses_HappyPath(t *testing.T) {
 		t.Errorf("order not preserved: %v", got)
 	}
 	// IPv6 canonicalisation preserves order.
-	got6, err := ValidateDnsClientServerAddresses([]string{"2001:DB8::53", "2001:db8::1"}, true)
+	got6, err := ValidateDNSClientServerAddresses([]string{"2001:DB8::53", "2001:db8::1"}, true)
 	if err != nil {
 		t.Fatalf("valid IPv6 list rejected: %v", err)
 	}
@@ -214,20 +214,20 @@ func TestValidateDnsClientServerAddresses_HappyPath(t *testing.T) {
 		t.Errorf("IPv6 not canonicalised in order: %v", got6)
 	}
 	// Loopback is allowed (local resolver).
-	if _, err := ValidateDnsClientServerAddresses([]string{"127.0.0.1", "::1"}, false); err == nil {
+	if _, err := ValidateDNSClientServerAddresses([]string{"127.0.0.1", "::1"}, false); err == nil {
 		t.Error("mixed-family list must fail the IPv4 validator")
-	} else if !IsDnsClientError(err, DnsClientErrorInvalidAddress) {
+	} else if !IsDNSClientError(err, DNSClientErrorInvalidAddress) {
 		t.Errorf("want invalid_address, got %v", err)
 	}
-	if _, err := ValidateDnsClientServerAddresses([]string{"127.0.0.1"}, false); err != nil {
+	if _, err := ValidateDNSClientServerAddresses([]string{"127.0.0.1"}, false); err != nil {
 		t.Errorf("loopback must be allowed: %v", err)
 	}
-	if _, err := ValidateDnsClientServerAddresses([]string{"::1"}, true); err != nil {
+	if _, err := ValidateDNSClientServerAddresses([]string{"::1"}, true); err != nil {
 		t.Errorf("IPv6 loopback must be allowed: %v", err)
 	}
 }
 
-func TestValidateDnsClientServerAddresses_Rejections(t *testing.T) {
+func TestValidateDNSClientServerAddresses_Rejections(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		addrs  []string
@@ -246,8 +246,8 @@ func TestValidateDnsClientServerAddresses_Rejections(t *testing.T) {
 		{"duplicate canonical", []string{"2001:DB8::53", "2001:db8::53"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ValidateDnsClientServerAddresses(tc.addrs, tc.wantV6)
-			if !IsDnsClientError(err, DnsClientErrorInvalidAddress) {
+			_, err := ValidateDNSClientServerAddresses(tc.addrs, tc.wantV6)
+			if !IsDNSClientError(err, DNSClientErrorInvalidAddress) {
 				t.Errorf("want invalid_address, got %v", err)
 			}
 		})
@@ -255,12 +255,12 @@ func TestValidateDnsClientServerAddresses_Rejections(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ValidateDnsClientSuffix (pure-Go)
+// ValidateDNSClientSuffix (pure-Go)
 // ---------------------------------------------------------------------------
 
-func TestValidateDnsClientSuffix(t *testing.T) {
+func TestValidateDNSClientSuffix(t *testing.T) {
 	for _, ok := range []string{"corp", "corp.example.com", "a-b.c0m", "x"} {
-		if err := ValidateDnsClientSuffix(ok); err != nil {
+		if err := ValidateDNSClientSuffix(ok); err != nil {
 			t.Errorf("suffix %q rejected: %v", ok, err)
 		}
 	}
@@ -280,8 +280,8 @@ func TestValidateDnsClientSuffix(t *testing.T) {
 		{"total too long", strings.Repeat("a.", 130) + "com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateDnsClientSuffix(tc.suffix)
-			if !IsDnsClientError(err, DnsClientErrorInvalidSuffix) {
+			err := ValidateDNSClientSuffix(tc.suffix)
+			if !IsDNSClientError(err, DNSClientErrorInvalidSuffix) {
 				t.Errorf("suffix %q: want invalid_suffix, got %v", tc.suffix, err)
 			}
 		})
@@ -292,9 +292,9 @@ func TestValidateDnsClientSuffix(t *testing.T) {
 // Script builders
 // ---------------------------------------------------------------------------
 
-func TestBuildDnsClientScripts_QuotingAndMatching(t *testing.T) {
+func TestBuildDNSClientScripts_QuotingAndMatching(t *testing.T) {
 	nasty := "Eth'er 2"
-	read := buildDnsClientReadScript(nasty)
+	read := buildDNSClientReadScript(nasty)
 	if !strings.Contains(read, "'Eth''er 2'") {
 		t.Errorf("read script must psQuote the alias: %s", read)
 	}
@@ -310,7 +310,7 @@ func TestBuildDnsClientScripts_QuotingAndMatching(t *testing.T) {
 
 	suffix := "corp.example'com"
 	reg, use := true, false
-	apply := buildDnsClientApplyScript(nasty, DnsClientSettings{
+	apply := buildDNSClientApplyScript(nasty, DNSClientSettings{
 		IPv4Set: true, IPv4Addresses: []string{"192.0.2.53"},
 		IPv6Set: true, IPv6Addresses: []string{},
 		SuffixSet: true, ConnectionSpecificSuffix: &suffix,
@@ -333,10 +333,10 @@ func TestBuildDnsClientScripts_QuotingAndMatching(t *testing.T) {
 	}
 }
 
-func TestBuildDnsClientApplyScript_SingleFamilyResetReAddsPreserved(t *testing.T) {
+func TestBuildDNSClientApplyScript_SingleFamilyResetReAddsPreserved(t *testing.T) {
 	// Resetting IPv4 while keeping an IPv6 server must reset all addresses
 	// first and then re-add the preserved family.
-	apply := buildDnsClientApplyScript("Ethernet 2", DnsClientSettings{
+	apply := buildDNSClientApplyScript("Ethernet 2", DNSClientSettings{
 		IPv4Set: true, IPv4Addresses: []string{},
 		IPv6Set: true, IPv6Addresses: []string{"2001:db8::53"},
 	})
@@ -351,10 +351,10 @@ func TestBuildDnsClientApplyScript_SingleFamilyResetReAddsPreserved(t *testing.T
 	}
 }
 
-func TestBuildDnsClientScripts_SurfaceLookupFailures(t *testing.T) {
+func TestBuildDNSClientScripts_SurfaceLookupFailures(t *testing.T) {
 	// Registry and adapter-lookup failures must surface as typed errors
 	// instead of masquerading as empty (automatic) lists.
-	read := buildDnsClientReadScript("Ethernet 2")
+	read := buildDNSClientReadScript("Ethernet 2")
 	for _, want := range []string{
 		"Test-DnsClientAccessDenied",
 		"step = 'read'",
@@ -364,7 +364,7 @@ func TestBuildDnsClientScripts_SurfaceLookupFailures(t *testing.T) {
 			t.Errorf("read script must contain %q", want)
 		}
 	}
-	apply := buildDnsClientApplyScript("Ethernet 2", DnsClientSettings{
+	apply := buildDNSClientApplyScript("Ethernet 2", DNSClientSettings{
 		IPv4Set: true, IPv4Addresses: []string{"192.0.2.53"},
 	})
 	if !strings.Contains(apply, "step = 'read_current'") {
@@ -372,10 +372,10 @@ func TestBuildDnsClientScripts_SurfaceLookupFailures(t *testing.T) {
 	}
 }
 
-func TestBuildDnsClientApplyScript_UnmanagedOmitsSet(t *testing.T) {
+func TestBuildDNSClientApplyScript_UnmanagedOmitsSet(t *testing.T) {
 	// Fully unmanaged settings still render the script, but every write is
 	// guarded so nothing is sent: all managed flags render $false.
-	apply := buildDnsClientApplyScript("Ethernet 2", DnsClientSettings{})
+	apply := buildDNSClientApplyScript("Ethernet 2", DNSClientSettings{})
 	if !strings.Contains(apply, "if ($wantV4Set -or $wantV6Set)") {
 		t.Error("server write must be guarded by the managed-family flags")
 	}
@@ -396,37 +396,37 @@ func TestBuildDnsClientApplyScript_UnmanagedOmitsSet(t *testing.T) {
 // Envelope mapping
 // ---------------------------------------------------------------------------
 
-func TestDnsClientEnvelope_TransportMapsUnreachable(t *testing.T) {
+func TestDNSClientEnvelope_TransportMapsUnreachable(t *testing.T) {
 	c := dcNewClient(t)
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "boom", errors.New("ssh: connection refused")
 	})()
-	_, err := c.runDnsClientEnvelope(context.Background(), "read", "script", nil)
-	if !IsDnsClientError(err, DnsClientErrorUnreachable) {
+	_, err := c.runDNSClientEnvelope(context.Background(), "read", "script", nil)
+	if !IsDNSClientError(err, DNSClientErrorUnreachable) {
 		t.Errorf("transport failure: want unreachable, got %v", err)
 	}
 }
 
-func TestDnsClientEnvelope_TimeoutMapsUnreachable(t *testing.T) {
+func TestDNSClientEnvelope_TimeoutMapsUnreachable(t *testing.T) {
 	c := dcNewClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	defer dcStubRun(func(ctx context.Context, _ *Client, _ string) (string, string, error) {
 		return "", "", ctx.Err()
 	})()
-	_, err := c.runDnsClientEnvelope(ctx, "read", "script", nil)
-	if !IsDnsClientError(err, DnsClientErrorUnreachable) {
+	_, err := c.runDNSClientEnvelope(ctx, "read", "script", nil)
+	if !IsDNSClientError(err, DNSClientErrorUnreachable) {
 		t.Errorf("cancelled context: want unreachable, got %v", err)
 	}
 }
 
-func TestDnsClientEnvelope_RemoteKindMapping(t *testing.T) {
-	for kind, want := range map[string]DnsClientErrorKind{
-		"interface_not_found": DnsClientErrorInterfaceNotFound,
-		"invalid_address":     DnsClientErrorInvalidAddress,
-		"invalid_suffix":      DnsClientErrorInvalidSuffix,
-		"permission_denied":   DnsClientErrorPermission,
-		"something_else":      DnsClientErrorUnknown,
+func TestDNSClientEnvelope_RemoteKindMapping(t *testing.T) {
+	for kind, want := range map[string]DNSClientErrorKind{
+		"interface_not_found": DNSClientErrorInterfaceNotFound,
+		"invalid_address":     DNSClientErrorInvalidAddress,
+		"invalid_suffix":      DNSClientErrorInvalidSuffix,
+		"permission_denied":   DNSClientErrorPermission,
+		"something_else":      DNSClientErrorUnknown,
 	} {
 		c := dcNewClient(t)
 		k := kind
@@ -437,8 +437,8 @@ func TestDnsClientEnvelope_RemoteKindMapping(t *testing.T) {
 			})
 			return string(b) + "\n", "", nil
 		})()
-		_, err := c.runDnsClientEnvelope(context.Background(), "apply", "script", nil)
-		if !IsDnsClientError(err, want) {
+		_, err := c.runDNSClientEnvelope(context.Background(), "apply", "script", nil)
+		if !IsDNSClientError(err, want) {
 			t.Errorf("kind %q: want %q, got %v", k, want, err)
 		}
 	}
@@ -448,7 +448,7 @@ func TestDnsClientEnvelope_RemoteKindMapping(t *testing.T) {
 // Read
 // ---------------------------------------------------------------------------
 
-func TestDnsClientRead_HappyPath(t *testing.T) {
+func TestDNSClientRead_HappyPath(t *testing.T) {
 	c := dcNewClient(t)
 	defer dcStubState(t, testDNSClientState())()
 	got, err := c.Read(context.Background(), "ethernet 2")
@@ -475,7 +475,7 @@ func TestDnsClientRead_HappyPath(t *testing.T) {
 	}
 }
 
-func TestDnsClientRead_InterfaceGoneReturnsNil(t *testing.T) {
+func TestDNSClientRead_InterfaceGoneReturnsNil(t *testing.T) {
 	c := dcNewClient(t)
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return dcErr(t, "interface_not_found", "No interface matches alias"), "", nil
@@ -489,14 +489,14 @@ func TestDnsClientRead_InterfaceGoneReturnsNil(t *testing.T) {
 	}
 }
 
-func TestDnsClientRead_BlankAliasRejected(t *testing.T) {
+func TestDNSClientRead_BlankAliasRejected(t *testing.T) {
 	c := dcNewClient(t)
 	called := false
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		called = true
 		return "", "", nil
 	})()
-	if _, err := c.Read(context.Background(), "  "); !IsDnsClientError(err, DnsClientErrorInterfaceNotFound) {
+	if _, err := c.Read(context.Background(), "  "); !IsDNSClientError(err, DNSClientErrorInterfaceNotFound) {
 		t.Errorf("want interface_not_found, got %v", err)
 	}
 	if called {
@@ -508,7 +508,7 @@ func TestDnsClientRead_BlankAliasRejected(t *testing.T) {
 // Apply
 // ---------------------------------------------------------------------------
 
-func TestDnsClientApply_HappyPath(t *testing.T) {
+func TestDNSClientApply_HappyPath(t *testing.T) {
 	c := dcNewClient(t)
 	var gotScript string
 	defer dcStubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
@@ -517,7 +517,7 @@ func TestDnsClientApply_HappyPath(t *testing.T) {
 	})()
 	suffix := "corp.example.com"
 	reg, use := true, true
-	got, err := c.Apply(context.Background(), "Ethernet 2", DnsClientSettings{
+	got, err := c.Apply(context.Background(), "Ethernet 2", DNSClientSettings{
 		IPv4Set: true, IPv4Addresses: []string{"192.0.2.53"},
 		IPv6Set: true, IPv6Addresses: []string{},
 		SuffixSet: true, ConnectionSpecificSuffix: &suffix,
@@ -534,7 +534,7 @@ func TestDnsClientApply_HappyPath(t *testing.T) {
 	}
 }
 
-func TestDnsClientApply_ValidationGatesTransport(t *testing.T) {
+func TestDNSClientApply_ValidationGatesTransport(t *testing.T) {
 	c := dcNewClient(t)
 	called := false
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
@@ -544,16 +544,16 @@ func TestDnsClientApply_ValidationGatesTransport(t *testing.T) {
 	badSuffix := "bad_suffix.example.com"
 	for _, tc := range []struct {
 		name     string
-		settings DnsClientSettings
-		kind     DnsClientErrorKind
+		settings DNSClientSettings
+		kind     DNSClientErrorKind
 	}{
-		{"bad v4", DnsClientSettings{IPv4Set: true, IPv4Addresses: []string{"999.1.1.1"}}, DnsClientErrorInvalidAddress},
-		{"v6 in v4", DnsClientSettings{IPv4Set: true, IPv4Addresses: []string{"2001:db8::53"}}, DnsClientErrorInvalidAddress},
-		{"dup v4", DnsClientSettings{IPv4Set: true, IPv4Addresses: []string{"192.0.2.53", "192.0.2.53"}}, DnsClientErrorInvalidAddress},
-		{"bad suffix", DnsClientSettings{SuffixSet: true, ConnectionSpecificSuffix: &badSuffix}, DnsClientErrorInvalidSuffix},
+		{"bad v4", DNSClientSettings{IPv4Set: true, IPv4Addresses: []string{"999.1.1.1"}}, DNSClientErrorInvalidAddress},
+		{"v6 in v4", DNSClientSettings{IPv4Set: true, IPv4Addresses: []string{"2001:db8::53"}}, DNSClientErrorInvalidAddress},
+		{"dup v4", DNSClientSettings{IPv4Set: true, IPv4Addresses: []string{"192.0.2.53", "192.0.2.53"}}, DNSClientErrorInvalidAddress},
+		{"bad suffix", DNSClientSettings{SuffixSet: true, ConnectionSpecificSuffix: &badSuffix}, DNSClientErrorInvalidSuffix},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.Apply(context.Background(), "Ethernet 2", tc.settings); !IsDnsClientError(err, tc.kind) {
+			if _, err := c.Apply(context.Background(), "Ethernet 2", tc.settings); !IsDNSClientError(err, tc.kind) {
 				t.Errorf("want %q, got %v", tc.kind, err)
 			}
 		})
@@ -567,7 +567,7 @@ func TestDnsClientApply_ValidationGatesTransport(t *testing.T) {
 // Reset
 // ---------------------------------------------------------------------------
 
-func TestDnsClientReset_HappyPath(t *testing.T) {
+func TestDNSClientReset_HappyPath(t *testing.T) {
 	c := dcNewClient(t)
 	var gotScript string
 	defer dcStubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
@@ -592,7 +592,7 @@ func TestDnsClientReset_HappyPath(t *testing.T) {
 	}
 }
 
-func TestDnsClientReset_MissingInterfaceIsNoop(t *testing.T) {
+func TestDNSClientReset_MissingInterfaceIsNoop(t *testing.T) {
 	c := dcNewClient(t)
 	defer dcStubRun(func(_ context.Context, _ *Client, _ string) (string, string, error) {
 		return dcErr(t, "interface_not_found", "No interface matches alias"), "", nil
@@ -606,7 +606,7 @@ func TestDnsClientReset_MissingInterfaceIsNoop(t *testing.T) {
 	}
 }
 
-func TestDnsClientReset_NothingToDoReads(t *testing.T) {
+func TestDNSClientReset_NothingToDoReads(t *testing.T) {
 	c := dcNewClient(t)
 	ops := 0
 	defer dcStubRun(func(_ context.Context, _ *Client, script string) (string, string, error) {
@@ -626,12 +626,12 @@ func TestDnsClientReset_NothingToDoReads(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// parseDnsClientState
+// parseDNSClientState
 // ---------------------------------------------------------------------------
 
-func TestParseDnsClientState_Canonicalises(t *testing.T) {
+func TestParseDNSClientState_Canonicalises(t *testing.T) {
 	raw, _ := json.Marshal(testDNSClientState())
-	got, err := parseDnsClientState(raw, "h")
+	got, err := parseDNSClientState(raw, "h")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -640,13 +640,13 @@ func TestParseDnsClientState_Canonicalises(t *testing.T) {
 	}
 }
 
-func TestParseDnsClientState_BadJSON(t *testing.T) {
-	if _, err := parseDnsClientState(json.RawMessage("{oops"), "h"); !IsDnsClientError(err, DnsClientErrorUnknown) {
+func TestParseDNSClientState_BadJSON(t *testing.T) {
+	if _, err := parseDNSClientState(json.RawMessage("{oops"), "h"); !IsDNSClientError(err, DNSClientErrorUnknown) {
 		t.Errorf("want unknown, got %v", err)
 	}
 }
 
-func TestParseDnsClientState_BadAddressFails(t *testing.T) {
+func TestParseDNSClientState_BadAddressFails(t *testing.T) {
 	// One unparsable host value fails the operation even when the rest of
 	// the list is valid; bad values are never silently dropped.
 	state := testDNSClientState()
@@ -655,7 +655,7 @@ func TestParseDnsClientState_BadAddressFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if _, err := parseDnsClientState(raw, "h"); !IsDnsClientError(err, DnsClientErrorUnknown) {
+	if _, err := parseDNSClientState(raw, "h"); !IsDNSClientError(err, DNSClientErrorUnknown) {
 		t.Errorf("mixed good/bad host list: want unknown, got %v", err)
 	}
 }

@@ -93,7 +93,7 @@ func fakeDiskData(uniqueID string) map[string]any {
 func TestDiskError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("underlying")
 	e := NewDiskError(DiskErrorUnknown, "timed out", cause, map[string]string{"host": "win01"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap mismatch")
 	}
 	msg := e.Error()

@@ -498,18 +498,11 @@ func (r *windowsIISBindingResource) ConfigValidators(_ context.Context) []resour
 // Configure stores the provider-level SSH client and creates an
 // IISBindingClient for this resource instance.
 func (r *windowsIISBindingResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
-	client, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T.", req.ProviderData),
-		)
-		return
-	}
-	r.binding = winclient.NewIISBindingClient(client)
+	r.binding = winclient.NewIISBindingClient(c)
 }
 
 // ---------------------------------------------------------------------------

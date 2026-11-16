@@ -123,7 +123,7 @@ func TestInstalledSoftwareError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("underlying-cause")
 	e := NewInstalledSoftwareError(InstalledSoftwareErrorTimeout, "operation timed out", cause,
 		map[string]string{"host": "winis01"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap mismatch")
 	}
 	msg := e.Error()

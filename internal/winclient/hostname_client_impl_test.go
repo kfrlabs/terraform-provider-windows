@@ -126,7 +126,7 @@ func TestHostnameError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("underlying-cause")
 	e := NewHostnameError(HostnameErrorUnreachable, "transport failed", cause,
 		map[string]string{"host": "win01"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap mismatch")
 	}
 	msg := e.Error()

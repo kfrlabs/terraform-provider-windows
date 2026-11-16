@@ -128,7 +128,7 @@ func TestWPError_ErrorNoCause(t *testing.T) {
 func TestWPError_Unwrap(t *testing.T) {
 	cause := errors.New("net error")
 	e := NewWingetPackageError(WingetPackageErrorUnknown, "msg", cause, nil)
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap should return the cause")
 	}
 	e2 := NewWingetPackageError(WingetPackageErrorUnknown, "msg", nil, nil)

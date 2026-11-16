@@ -1,4 +1,4 @@
-// Package winclient - DnsClientClient is the concrete DnsClientClient
+// Package winclient - DNSClientClient is the concrete DNSClientClient
 // backed by PowerShell over SSH.
 //
 // Security invariants:
@@ -6,7 +6,7 @@
 //     PowerShell literal with embedded single-quotes doubled); arrays via
 //     psQuoteList; no raw concatenation of user input into PS scripts.
 //   - No credentials are involved in DNS client management; none are written
-//     to DnsClientError.Message or Context.
+//     to DNSClientError.Message or Context.
 //
 // Reused helpers from the same package:
 //   - psQuote, psQuoteList      - safe PS string/array literals (psquote.go)
@@ -22,22 +22,22 @@ import (
 	"strings"
 )
 
-// Compile-time assertion: DnsClientClientImpl satisfies DnsClientClient.
-var _ DnsClientClient = (*DnsClientClientImpl)(nil)
+// Compile-time assertion: DNSClientClientImpl satisfies DNSClientClient.
+var _ DNSClientClient = (*DNSClientClientImpl)(nil)
 
-// DnsClientClientImpl is the PowerShell/SSH-backed DnsClientClient.
-type DnsClientClientImpl struct {
+// DNSClientClientImpl is the PowerShell/SSH-backed DNSClientClient.
+type DNSClientClientImpl struct {
 	c *Client
 }
 
-// NewDnsClientClient wraps the given SSH Client.
-func NewDnsClientClient(c *Client) *DnsClientClientImpl {
-	return &DnsClientClientImpl{c: c}
+// NewDNSClientClient wraps the given SSH Client.
+func NewDNSClientClient(c *Client) *DNSClientClientImpl {
+	return &DNSClientClientImpl{c: c}
 }
 
-// runDnsClientPowerShell is the package-level indirection used by
-// DnsClientClientImpl. Tests may override it; production code must not.
-var runDnsClientPowerShell = func(ctx context.Context, c *Client, script string) (string, string, error) {
+// runDNSClientPowerShell is the package-level indirection used by
+// DNSClientClientImpl. Tests may override it; production code must not.
+var runDNSClientPowerShell = func(ctx context.Context, c *Client, script string) (string, string, error) {
 	return c.RunPowerShell(ctx, script)
 }
 
@@ -45,7 +45,7 @@ var runDnsClientPowerShell = func(ctx context.Context, c *Client, script string)
 // PowerShell header
 // ---------------------------------------------------------------------------
 
-// psDnsClientHeader is prepended to every dns-client PS script. It pins the
+// psDNSClientHeader is prepended to every dns-client PS script. It pins the
 // session culture to InvariantCulture so enum .ToString() values are always
 // English regardless of the host locale, and defines the shared Emit-OK /
 // Emit-Err / Classify-DnsClient helpers.
@@ -53,10 +53,10 @@ var runDnsClientPowerShell = func(ctx context.Context, c *Client, script string)
 // Classify-DnsClient prefers HRESULT codes and cmdlet noun substrings over
 // localized message text (hosts are not all English); substring matches
 // remain as a backstop where no stable code exists.
-const psDnsClientHeader = psEnvelopePrelude + psDnsClientHeaderRemainder
+const psDNSClientHeader = psEnvelopePrelude + psDNSClientHeaderRemainder
 
-// psDnsClientHeaderRemainder Classify + ConvertTo-DnsClientJson stay here; envelope emitters come from the prelude. Emit depth 10->8: payloads are flat dicts and string lists.
-const psDnsClientHeaderRemainder = `
+// psDNSClientHeaderRemainder Classify + ConvertTo-DnsClientJson stay here; envelope emitters come from the prelude. Emit depth 10->8: payloads are flat dicts and string lists.
+const psDNSClientHeaderRemainder = `
 function Classify-DnsClient([object]$Rec) {
   $msg = ''
   try { $msg = [string]$Rec.Exception.Message } catch { $msg = [string]$Rec }
@@ -181,11 +181,11 @@ func dnsClientBoolToken(b bool) string {
 	return "$false"
 }
 
-// buildDnsClientReadScript renders a resolve + full state read.
+// buildDNSClientReadScript renders a resolve + full state read.
 // A missing interface emits interface_not_found; registry or lookup
 // failures emit a typed error instead of an empty (automatic) state.
-func buildDnsClientReadScript(alias string) string {
-	return psDnsClientHeader + fmt.Sprintf(`
+func buildDNSClientReadScript(alias string) string {
+	return psDNSClientHeader + fmt.Sprintf(`
 $alias = %s
 & {
 %s
@@ -199,7 +199,7 @@ $alias = %s
 `, psQuote(alias), dnsClientResolveFragment)
 }
 
-// buildDnsClientApplyScript renders the idempotent write: resolve, read the
+// buildDNSClientApplyScript renders the idempotent write: resolve, read the
 // current static lists, merge unmanaged families from observed state, write
 // server addresses (Set-DnsClientServerAddress, -ResetServerAddresses when
 // the merged list is empty), write suffix/flags (Set-DnsClient) only for the
@@ -210,8 +210,8 @@ $alias = %s
 // cross-family read-modify-write. Resetting one family while keeping the
 // other resets all addresses first and then re-adds the preserved family,
 // so the reset family cannot linger when only the other family is written.
-func buildDnsClientApplyScript(alias string, s DnsClientSettings) string {
-	return psDnsClientHeader + fmt.Sprintf(`
+func buildDNSClientApplyScript(alias string, s DNSClientSettings) string {
+	return psDNSClientHeader + fmt.Sprintf(`
 $alias = %s
 $wantV4Set = %s
 $wantV4 = %s
@@ -299,7 +299,7 @@ $use = %s
 
 // dnsClientSuffixOrEmpty renders the suffix for interpolation ("" when
 // unmanaged; the $suffixSet flag guards its use).
-func dnsClientSuffixOrEmpty(s DnsClientSettings) string {
+func dnsClientSuffixOrEmpty(s DNSClientSettings) string {
 	if s.ConnectionSpecificSuffix == nil {
 		return ""
 	}
@@ -316,61 +316,61 @@ func dnsClientBoolOrFalse(b *bool) bool {
 // Client-side input validation (defence in depth; the schema validates first)
 // ---------------------------------------------------------------------------
 
-// ValidateDnsClientAlias rejects blank aliases before any remote call, as
+// ValidateDNSClientAlias rejects blank aliases before any remote call, as
 // well as aliases carrying whitespace/control characters: Windows interface
 // aliases never contain them, and a truncated alias would match the wrong
 // interface (or none) at apply time.
-func ValidateDnsClientAlias(alias string) error {
+func ValidateDNSClientAlias(alias string) error {
 	if strings.TrimSpace(alias) == "" {
-		return NewDnsClientError(DnsClientErrorInterfaceNotFound,
+		return NewDNSClientError(DNSClientErrorInterfaceNotFound,
 			"interface alias must not be empty", nil, nil)
 	}
 	if strings.IndexFunc(alias, isControlRune) >= 0 {
-		return NewDnsClientError(DnsClientErrorInterfaceNotFound,
+		return NewDNSClientError(DNSClientErrorInterfaceNotFound,
 			"interface alias must not contain control characters", nil, nil)
 	}
 	return nil
 }
 
-// validateDnsClientServerAddress parses one server address, enforces its
+// validateDNSClientServerAddress parses one server address, enforces its
 // family, and rejects values that can never be a DNS server: unparsable,
 // zone IDs, unspecified, multicast and limited IPv4 broadcast
 // (255.255.255.255). Loopback addresses are allowed (a local resolver is a
 // legitimate forwarder target).
-func validateDnsClientServerAddress(raw string, wantV6 bool) (string, error) {
+func validateDNSClientServerAddress(raw string, wantV6 bool) (string, error) {
 	family := "IPv4"
 	if wantV6 {
 		family = "IPv6"
 	}
 	addr, err := netip.ParseAddr(strings.TrimSpace(raw))
 	if err != nil {
-		return "", NewDnsClientError(DnsClientErrorInvalidAddress,
+		return "", NewDNSClientError(DNSClientErrorInvalidAddress,
 			fmt.Sprintf("DNS server address %q is not a valid IP address", raw), nil,
 			map[string]string{"server_address": raw})
 	}
 	if zone := addr.Zone(); zone != "" {
-		return "", NewDnsClientError(DnsClientErrorInvalidAddress,
+		return "", NewDNSClientError(DNSClientErrorInvalidAddress,
 			fmt.Sprintf("DNS server address %q must not carry a zone ID (%q)", raw, zone), nil,
 			map[string]string{"server_address": raw})
 	}
 	addr = addr.Unmap()
 	isV6 := addr.Is6()
 	if isV6 != wantV6 {
-		return "", NewDnsClientError(DnsClientErrorInvalidAddress,
+		return "", NewDNSClientError(DNSClientErrorInvalidAddress,
 			fmt.Sprintf("DNS server address %q is not an %s address", raw, family), nil,
 			map[string]string{"server_address": raw})
 	}
 	switch {
 	case addr.IsUnspecified():
-		return "", NewDnsClientError(DnsClientErrorInvalidAddress,
+		return "", NewDNSClientError(DNSClientErrorInvalidAddress,
 			fmt.Sprintf("DNS server address %q is the unspecified address", raw), nil,
 			map[string]string{"server_address": raw})
 	case addr.IsMulticast():
-		return "", NewDnsClientError(DnsClientErrorInvalidAddress,
+		return "", NewDNSClientError(DNSClientErrorInvalidAddress,
 			fmt.Sprintf("DNS server address %q is a multicast address", raw), nil,
 			map[string]string{"server_address": raw})
 	case addr.Is4() && addr == netip.AddrFrom4([4]byte{255, 255, 255, 255}):
-		return "", NewDnsClientError(DnsClientErrorInvalidAddress,
+		return "", NewDNSClientError(DNSClientErrorInvalidAddress,
 			fmt.Sprintf("DNS server address %q is the limited IPv4 broadcast address (255.255.255.255)", raw), nil,
 			map[string]string{"server_address": raw})
 	}
@@ -379,10 +379,10 @@ func validateDnsClientServerAddress(raw string, wantV6 bool) (string, error) {
 	return addr.String(), nil
 }
 
-// ValidateDnsClientServerAddresses parses and canonicalises one family's
+// ValidateDNSClientServerAddresses parses and canonicalises one family's
 // server list (order preserved), rejecting duplicates after
 // canonicalisation.
-func ValidateDnsClientServerAddresses(addrs []string, wantV6 bool) ([]string, error) {
+func ValidateDNSClientServerAddresses(addrs []string, wantV6 bool) ([]string, error) {
 	family := "IPv4"
 	if wantV6 {
 		family = "IPv6"
@@ -390,12 +390,12 @@ func ValidateDnsClientServerAddresses(addrs []string, wantV6 bool) ([]string, er
 	out := make([]string, 0, len(addrs))
 	seen := make(map[string]struct{}, len(addrs))
 	for _, raw := range addrs {
-		canonical, err := validateDnsClientServerAddress(raw, wantV6)
+		canonical, err := validateDNSClientServerAddress(raw, wantV6)
 		if err != nil {
 			return nil, err
 		}
 		if _, dup := seen[canonical]; dup {
-			return nil, NewDnsClientError(DnsClientErrorInvalidAddress,
+			return nil, NewDNSClientError(DNSClientErrorInvalidAddress,
 				fmt.Sprintf("duplicate %s DNS server address %q", family, raw), nil,
 				map[string]string{"server_address": raw})
 		}
@@ -405,34 +405,34 @@ func ValidateDnsClientServerAddresses(addrs []string, wantV6 bool) ([]string, er
 	return out, nil
 }
 
-// ValidateDnsClientSuffix checks the connection-specific suffix against DNS
+// ValidateDNSClientSuffix checks the connection-specific suffix against DNS
 // name rules: total length, label length, charset and placement. A single
 // label (e.g. "corp") is accepted. An empty suffix is rejected here; clearing
 // the suffix is a destroy-time operation, not a configured value.
-func ValidateDnsClientSuffix(suffix string) error {
+func ValidateDNSClientSuffix(suffix string) error {
 	if suffix == "" {
-		return NewDnsClientError(DnsClientErrorInvalidSuffix,
+		return NewDNSClientError(DNSClientErrorInvalidSuffix,
 			"connection-specific suffix must not be empty; omit it to leave the suffix unmanaged", nil, nil)
 	}
 	if len(suffix) > 253 {
-		return NewDnsClientError(DnsClientErrorInvalidSuffix,
+		return NewDNSClientError(DNSClientErrorInvalidSuffix,
 			fmt.Sprintf("connection-specific suffix %q exceeds 253 characters", suffix), nil,
 			map[string]string{"connection_specific_suffix": suffix})
 	}
 	for _, label := range strings.Split(suffix, ".") {
 		if label == "" {
-			return NewDnsClientError(DnsClientErrorInvalidSuffix,
+			return NewDNSClientError(DNSClientErrorInvalidSuffix,
 				fmt.Sprintf("connection-specific suffix %q contains an empty label", suffix), nil,
 				map[string]string{"connection_specific_suffix": suffix})
 		}
 		if len(label) > 63 {
-			return NewDnsClientError(DnsClientErrorInvalidSuffix,
+			return NewDNSClientError(DNSClientErrorInvalidSuffix,
 				fmt.Sprintf("connection-specific suffix %q contains a label exceeding 63 characters", suffix), nil,
 				map[string]string{"connection_specific_suffix": suffix})
 		}
 		if len(label) == 1 {
 			if !isDNSNameChar(label[0]) {
-				return NewDnsClientError(DnsClientErrorInvalidSuffix,
+				return NewDNSClientError(DNSClientErrorInvalidSuffix,
 					fmt.Sprintf("connection-specific suffix %q contains invalid character %q", suffix, label), nil,
 					map[string]string{"connection_specific_suffix": suffix})
 			}
@@ -440,14 +440,14 @@ func ValidateDnsClientSuffix(suffix string) error {
 		}
 		if !isDNSNameChar(label[0]) || !isDNSNameChar(label[len(label)-1]) ||
 			label[0] == '-' || label[len(label)-1] == '-' {
-			return NewDnsClientError(DnsClientErrorInvalidSuffix,
+			return NewDNSClientError(DNSClientErrorInvalidSuffix,
 				fmt.Sprintf("connection-specific suffix %q has a label that must start and end with a letter or digit", suffix), nil,
 				map[string]string{"connection_specific_suffix": suffix})
 		}
 		for i := 1; i < len(label)-1; i++ {
 			c := label[i]
 			if !isDNSNameChar(c) && c != '-' {
-				return NewDnsClientError(DnsClientErrorInvalidSuffix,
+				return NewDNSClientError(DNSClientErrorInvalidSuffix,
 					fmt.Sprintf("connection-specific suffix %q contains invalid character %q", suffix, string(c)), nil,
 					map[string]string{"connection_specific_suffix": suffix})
 			}
@@ -461,32 +461,32 @@ func isDNSNameChar(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
-// validateDnsClientSettings re-validates every managed attribute before any
+// validateDNSClientSettings re-validates every managed attribute before any
 // remote call and returns the canonicalised settings (order preserved).
-func validateDnsClientSettings(s DnsClientSettings) (DnsClientSettings, error) {
+func validateDNSClientSettings(s DNSClientSettings) (DNSClientSettings, error) {
 	out := s
 	if s.IPv4Set {
-		canonical, err := ValidateDnsClientServerAddresses(nullToEmpty(s.IPv4Addresses), false)
+		canonical, err := ValidateDNSClientServerAddresses(nullToEmpty(s.IPv4Addresses), false)
 		if err != nil {
-			return DnsClientSettings{}, err
+			return DNSClientSettings{}, err
 		}
 		out.IPv4Addresses = canonical
 	}
 	if s.IPv6Set {
-		canonical, err := ValidateDnsClientServerAddresses(nullToEmpty(s.IPv6Addresses), true)
+		canonical, err := ValidateDNSClientServerAddresses(nullToEmpty(s.IPv6Addresses), true)
 		if err != nil {
-			return DnsClientSettings{}, err
+			return DNSClientSettings{}, err
 		}
 		out.IPv6Addresses = canonical
 	}
 	if s.SuffixSet {
 		if s.ConnectionSpecificSuffix == nil {
-			return DnsClientSettings{}, NewDnsClientError(DnsClientErrorInvalidSuffix,
+			return DNSClientSettings{}, NewDNSClientError(DNSClientErrorInvalidSuffix,
 				"connection-specific suffix is marked managed but has no value", nil, nil)
 		}
 		if *s.ConnectionSpecificSuffix != "" {
-			if err := ValidateDnsClientSuffix(*s.ConnectionSpecificSuffix); err != nil {
-				return DnsClientSettings{}, err
+			if err := ValidateDNSClientSuffix(*s.ConnectionSpecificSuffix); err != nil {
+				return DNSClientSettings{}, err
 			}
 		}
 	}
@@ -521,11 +521,11 @@ type dnsClientJSON struct {
 	UseSuffixWhenRegistering      bool     `json:"use_suffix_when_registering"`
 }
 
-// runDnsClientEnvelope executes script (prefixed with psDnsClientHeader by
+// runDNSClientEnvelope executes script (prefixed with psDNSClientHeader by
 // the builders) and parses the JSON envelope through the shared runEnvelope
 // helper. Transport/timeout failures map to unreachable; remote Emit-Err
-// kinds map via mapDnsClientKind.
-func (n *DnsClientClientImpl) runDnsClientEnvelope(ctx context.Context, op, script string, baseCtx map[string]string) (*Envelope, error) {
+// kinds map via mapDNSClientKind.
+func (n *DNSClientClientImpl) runDNSClientEnvelope(ctx context.Context, op, script string, baseCtx map[string]string) (*Envelope, error) {
 	baseContext := map[string]string{
 		"host":      n.c.cfg.Host,
 		"port":      strconv.Itoa(n.c.cfg.Port),
@@ -536,43 +536,43 @@ func (n *DnsClientClientImpl) runDnsClientEnvelope(ctx context.Context, op, scri
 	}
 	resp, eerr := runEnvelope(ctx,
 		func(ctx context.Context, full, stdin string) (string, string, error) {
-			return runDnsClientPowerShell(ctx, n.c, full)
+			return runDNSClientPowerShell(ctx, n.c, full)
 		},
 		op, script, "", baseContext)
 	if eerr == nil {
 		return resp, nil
 	}
 	if eerr.Stage == EnvelopeStageTimeout || eerr.Stage == EnvelopeStageTransport {
-		return nil, NewDnsClientError(DnsClientErrorUnreachable, eerr.Message, eerr.Cause, eerr.Context)
+		return nil, NewDNSClientError(DNSClientErrorUnreachable, eerr.Message, eerr.Cause, eerr.Context)
 	}
 	if eerr.Stage != EnvelopeStageRemote {
-		return nil, NewDnsClientError(DnsClientErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
+		return nil, NewDNSClientError(DNSClientErrorUnknown, eerr.Message, eerr.Cause, eerr.Context)
 	}
-	return resp, NewDnsClientError(mapDnsClientKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
+	return resp, NewDNSClientError(mapDNSClientKind(eerr.RemoteKind), eerr.Message, nil, eerr.Context)
 }
 
-// mapDnsClientKind translates a PS-side "kind" string to a typed
-// DnsClientErrorKind. Unknown values fall through to Unknown.
-func mapDnsClientKind(k string) DnsClientErrorKind {
-	switch DnsClientErrorKind(k) {
-	case DnsClientErrorInterfaceNotFound,
-		DnsClientErrorInvalidAddress,
-		DnsClientErrorInvalidSuffix,
-		DnsClientErrorPermission:
-		return DnsClientErrorKind(k)
+// mapDNSClientKind translates a PS-side "kind" string to a typed
+// DNSClientErrorKind. Unknown values fall through to Unknown.
+func mapDNSClientKind(k string) DNSClientErrorKind {
+	switch DNSClientErrorKind(k) {
+	case DNSClientErrorInterfaceNotFound,
+		DNSClientErrorInvalidAddress,
+		DNSClientErrorInvalidSuffix,
+		DNSClientErrorPermission:
+		return DNSClientErrorKind(k)
 	default:
-		return DnsClientErrorUnknown
+		return DNSClientErrorUnknown
 	}
 }
 
-// parseDnsClientState projects a dnsClientJSON payload onto a DnsClientState,
+// parseDNSClientState projects a dnsClientJSON payload onto a DNSClientState,
 // canonicalising every address (order preserved). A host value that cannot
 // parse or lands in the wrong family fails the operation with a typed
 // unknown error instead of being silently dropped.
-func parseDnsClientState(raw json.RawMessage, host string) (*DnsClientState, error) {
+func parseDNSClientState(raw json.RawMessage, host string) (*DNSClientState, error) {
 	var j dnsClientJSON
 	if err := json.Unmarshal(raw, &j); err != nil {
-		return nil, NewDnsClientError(DnsClientErrorUnknown,
+		return nil, NewDNSClientError(DNSClientErrorUnknown,
 			"failed to parse DNS client state JSON", err,
 			map[string]string{"host": host, "raw": truncate(string(raw), 512)})
 	}
@@ -592,7 +592,7 @@ func parseDnsClientState(raw json.RawMessage, host string) (*DnsClientState, err
 	if err != nil {
 		return nil, err
 	}
-	return &DnsClientState{
+	return &DNSClientState{
 		InterfaceAlias:                j.InterfaceAlias,
 		InterfaceIndex:                j.InterfaceIndex,
 		InterfaceGUID:                 j.InterfaceGUID,
@@ -615,18 +615,18 @@ func canonicaliseAll(in []string, wantV6 bool, host string) ([]string, error) {
 	for _, raw := range in {
 		addr, err := netip.ParseAddr(strings.TrimSpace(raw))
 		if err != nil {
-			return nil, NewDnsClientError(DnsClientErrorUnknown,
+			return nil, NewDNSClientError(DNSClientErrorUnknown,
 				fmt.Sprintf("host returned an unparsable DNS server address %q", raw), nil,
 				map[string]string{"host": host})
 		}
 		addr = addr.Unmap()
 		if wantV6 && !addr.Is6() {
-			return nil, NewDnsClientError(DnsClientErrorUnknown,
+			return nil, NewDNSClientError(DNSClientErrorUnknown,
 				fmt.Sprintf("host returned non-IPv6 address %q in the IPv6 server list", raw), nil,
 				map[string]string{"host": host})
 		}
 		if !wantV6 && !addr.Is4() {
-			return nil, NewDnsClientError(DnsClientErrorUnknown,
+			return nil, NewDNSClientError(DNSClientErrorUnknown,
 				fmt.Sprintf("host returned non-IPv4 address %q in the IPv4 server list", raw), nil,
 				map[string]string{"host": host})
 		}
@@ -641,23 +641,23 @@ func canonicaliseAll(in []string, wantV6 bool, host string) ([]string, error) {
 
 // Read returns the observed DNS client state of the named interface, or
 // (nil, nil) when the interface is gone (renamed or removed).
-func (n *DnsClientClientImpl) Read(ctx context.Context, interfaceAlias string) (*DnsClientState, error) {
-	if err := ValidateDnsClientAlias(interfaceAlias); err != nil {
+func (n *DNSClientClientImpl) Read(ctx context.Context, interfaceAlias string) (*DNSClientState, error) {
+	if err := ValidateDNSClientAlias(interfaceAlias); err != nil {
 		return nil, err
 	}
 	// Host operations use the trimmed alias; the resource ID keeps the
 	// configured spelling.
 	alias := strings.TrimSpace(interfaceAlias)
-	resp, err := n.runDnsClientEnvelope(ctx, "read",
-		buildDnsClientReadScript(alias),
+	resp, err := n.runDNSClientEnvelope(ctx, "read",
+		buildDNSClientReadScript(alias),
 		map[string]string{"interface_alias": alias})
 	if err != nil {
-		if IsDnsClientError(err, DnsClientErrorInterfaceNotFound) {
+		if IsDNSClientError(err, DNSClientErrorInterfaceNotFound) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return parseDnsClientState(resp.Data, n.c.cfg.Host)
+	return parseDNSClientState(resp.Data, n.c.cfg.Host)
 }
 
 // ---------------------------------------------------------------------------
@@ -668,22 +668,22 @@ func (n *DnsClientClientImpl) Read(ctx context.Context, interfaceAlias string) (
 // Unmanaged attributes are left untouched via the cross-family
 // read-modify-write in the script. Setting values identical to the observed
 // state is a successful round trip.
-func (n *DnsClientClientImpl) Apply(ctx context.Context, interfaceAlias string, settings DnsClientSettings) (*DnsClientState, error) {
-	if err := ValidateDnsClientAlias(interfaceAlias); err != nil {
+func (n *DNSClientClientImpl) Apply(ctx context.Context, interfaceAlias string, settings DNSClientSettings) (*DNSClientState, error) {
+	if err := ValidateDNSClientAlias(interfaceAlias); err != nil {
 		return nil, err
 	}
-	canonical, err := validateDnsClientSettings(settings)
+	canonical, err := validateDNSClientSettings(settings)
 	if err != nil {
 		return nil, err
 	}
 	alias := strings.TrimSpace(interfaceAlias)
-	resp, err := n.runDnsClientEnvelope(ctx, "apply",
-		buildDnsClientApplyScript(alias, canonical),
+	resp, err := n.runDNSClientEnvelope(ctx, "apply",
+		buildDNSClientApplyScript(alias, canonical),
 		map[string]string{"interface_alias": alias})
 	if err != nil {
 		return nil, err
 	}
-	return parseDnsClientState(resp.Data, n.c.cfg.Host)
+	return parseDNSClientState(resp.Data, n.c.cfg.Host)
 }
 
 // ---------------------------------------------------------------------------
@@ -693,14 +693,14 @@ func (n *DnsClientClientImpl) Apply(ctx context.Context, interfaceAlias string, 
 // Reset returns the given families to automatic (DHCP) and, when
 // clearSuffix is true, clears the connection-specific suffix. Flags are left
 // untouched. A missing interface is a successful no-op (nil).
-func (n *DnsClientClientImpl) Reset(ctx context.Context, interfaceAlias string, resetIPv4, resetIPv6, clearSuffix bool) (*DnsClientState, error) {
-	if err := ValidateDnsClientAlias(interfaceAlias); err != nil {
+func (n *DNSClientClientImpl) Reset(ctx context.Context, interfaceAlias string, resetIPv4, resetIPv6, clearSuffix bool) (*DNSClientState, error) {
+	if err := ValidateDNSClientAlias(interfaceAlias); err != nil {
 		return nil, err
 	}
 	if !resetIPv4 && !resetIPv6 && !clearSuffix {
 		return n.Read(ctx, interfaceAlias)
 	}
-	settings := DnsClientSettings{}
+	settings := DNSClientSettings{}
 	if resetIPv4 {
 		settings.IPv4Set = true
 		settings.IPv4Addresses = []string{}
@@ -715,14 +715,14 @@ func (n *DnsClientClientImpl) Reset(ctx context.Context, interfaceAlias string, 
 		settings.ConnectionSpecificSuffix = &empty
 	}
 	alias := strings.TrimSpace(interfaceAlias)
-	resp, err := n.runDnsClientEnvelope(ctx, "reset",
-		buildDnsClientApplyScript(alias, settings),
+	resp, err := n.runDNSClientEnvelope(ctx, "reset",
+		buildDNSClientApplyScript(alias, settings),
 		map[string]string{"interface_alias": alias})
 	if err != nil {
-		if IsDnsClientError(err, DnsClientErrorInterfaceNotFound) {
+		if IsDNSClientError(err, DNSClientErrorInterfaceNotFound) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return parseDnsClientState(resp.Data, n.c.cfg.Host)
+	return parseDNSClientState(resp.Data, n.c.cfg.Host)
 }

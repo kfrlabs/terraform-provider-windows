@@ -145,7 +145,7 @@ func TestNetworkAdapterError_ErrorWithCause(t *testing.T) {
 	if !strings.Contains(msg, "boom") {
 		t.Errorf("missing cause: %s", msg)
 	}
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap should return the cause")
 	}
 }

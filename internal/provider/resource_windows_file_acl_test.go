@@ -177,11 +177,11 @@ func TestFileACLPathValidator(t *testing.T) {
 
 func TestFileACLIdentityMatches(t *testing.T) {
 	tests := []struct {
-		name     string
-		declared string
-		name_    string
-		sid      string
-		want     bool
+		name         string
+		declared     string
+		observedName string
+		sid          string
+		want         bool
 	}{
 		{"exact sid", "S-1-5-32-544", "BUILTIN\\Administrators", "S-1-5-32-544", true},
 		{"exact name", "BUILTIN\\Administrators", "BUILTIN\\Administrators", "S-1-5-32-544", true},
@@ -199,9 +199,9 @@ func TestFileACLIdentityMatches(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := fileACLIdentityMatches(tc.declared, tc.name_, tc.sid); got != tc.want {
+			if got := fileACLIdentityMatches(tc.declared, tc.observedName, tc.sid); got != tc.want {
 				t.Errorf("fileACLIdentityMatches(%q, %q, %q) = %v, want %v",
-					tc.declared, tc.name_, tc.sid, got, tc.want)
+					tc.declared, tc.observedName, tc.sid, got, tc.want)
 			}
 		})
 	}

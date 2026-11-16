@@ -405,18 +405,11 @@ func (r *windowsFirewallRuleResource) ConfigValidators(_ context.Context) []reso
 // Configure stores the provider-level SSH client and creates a
 // FirewallRuleClient for this resource instance.
 func (r *windowsFirewallRuleResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
-	client, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T.", req.ProviderData),
-		)
-		return
-	}
-	r.fw = winclient.NewFirewallRuleClient(client)
+	r.fw = winclient.NewFirewallRuleClient(c)
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ package winclient
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -92,7 +93,8 @@ func TestLocalUserCreate_ScriptHasNoPwlen(t *testing.T) {
 	if strings.Contains(gotScript, "pwlen") {
 		t.Errorf("create script must not contain pwlen (password length leaks into context)")
 	}
-	if le, ok := err.(*LocalUserError); ok {
+	var le *LocalUserError
+	if errors.As(err, &le) {
 		for k, v := range le.Context {
 			if k == "pwlen" || strings.Contains(v, "pwlen") {
 				t.Errorf("error context must not contain pwlen: %q=%q", k, v)

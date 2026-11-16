@@ -98,7 +98,7 @@ func okVolumeFormatOpts() VolumeFormatOptions {
 func TestVolumeError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("underlying")
 	e := NewVolumeError(VolumeErrorUnknown, "timed out", cause, map[string]string{"host": "win01"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap mismatch")
 	}
 	msg := e.Error()

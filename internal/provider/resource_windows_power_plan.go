@@ -328,18 +328,11 @@ func (v windowsPowerPlanConfigValidator) ValidateResource(ctx context.Context, r
 // Configure stores the provider-level SSH client and creates a
 // PowerPlanClient for this resource instance.
 func (r *windowsPowerPlanResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
-	client, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T.", req.ProviderData),
-		)
-		return
-	}
-	r.pp = winclient.NewPowerPlanClient(client)
+	r.pp = winclient.NewPowerPlanClient(c)
 }
 
 // ---------------------------------------------------------------------------

@@ -324,7 +324,7 @@ func (c *Client) run(ctx context.Context, script, secret string) (string, string
 
 	sess, dialErr := newPersistentSession(ctx, c)
 	if dialErr != nil {
-		return stdout, stderr, fmt.Errorf("winclient: session dropped and could not be re-established: %w (original error: %v)", dialErr, err)
+		return stdout, stderr, fmt.Errorf("winclient: session dropped and could not be re-established: %w (original error: %w)", dialErr, err)
 	}
 	stdout2, stderr2, err2 := sess.run(ctx, substituteSessionPort(script, sessionSourcePort(sess.localAddr)), secret)
 	if isSessionBroken(err2) {
@@ -646,7 +646,7 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, net.Addr, error) {
 			// Surface the context error so callers can match on
 			// context.Canceled/DeadlineExceeded; the handshake failure is
 			// attached for diagnosis.
-			return nil, nil, fmt.Errorf("winclient: ssh handshake aborted (%v): %w", err, ctxErr)
+			return nil, nil, fmt.Errorf("winclient: ssh handshake aborted (%w): %w", err, ctxErr)
 		}
 		return nil, nil, fmt.Errorf("winclient: ssh handshake: %w", err)
 	}

@@ -139,15 +139,8 @@ func (d *windowsNetRouteDataSource) Schema(ctx context.Context, _ datasource.Sch
 
 // Configure extracts the shared *winclient.Client from provider data.
 func (d *windowsNetRouteDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T", req.ProviderData),
-		)
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
 	d.routes = winclient.NewNetRouteClient(c)

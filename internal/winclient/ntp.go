@@ -64,7 +64,7 @@ type ntpStatePayload struct {
 	CurrentSource         string `json:"current_source"`
 	PolicyOverride        bool   `json:"policy_override"`
 	DomainJoined          bool   `json:"domain_joined"`
-	VmICEnabled           bool   `json:"vmic_enabled"`
+	VMICEnabled           bool   `json:"vmic_enabled"`
 	ResyncWarning         string `json:"resync_warning"`
 }
 
@@ -408,7 +408,7 @@ func ntpPayloadToState(p ntpStatePayload) (*NTPState, error) {
 		CurrentSource:                p.CurrentSource,
 		PolicyOverride:               p.PolicyOverride,
 		DomainJoined:                 p.DomainJoined,
-		VmICEnabled:                  p.VmICEnabled,
+		VMICEnabled:                  p.VMICEnabled,
 		ResyncWarning:                p.ResyncWarning,
 	}, nil
 }

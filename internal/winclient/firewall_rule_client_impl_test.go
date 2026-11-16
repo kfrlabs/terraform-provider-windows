@@ -141,7 +141,7 @@ func TestFirewallRuleError_ErrorNoCause(t *testing.T) {
 func TestFirewallRuleError_Unwrap(t *testing.T) {
 	cause := errors.New("transport")
 	e := NewFirewallRuleError(FirewallRuleErrorUnknown, "msg", cause, nil)
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap should return the cause")
 	}
 	e2 := NewFirewallRuleError(FirewallRuleErrorUnknown, "msg", nil, nil)

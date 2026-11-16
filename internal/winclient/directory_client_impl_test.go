@@ -91,7 +91,7 @@ func fakeDirData(existsChildren bool, itemCount int64, attrs []string) map[strin
 func TestDirectoryError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("underlying")
 	e := NewDirectoryError(DirectoryErrorPermission, "denied", cause, map[string]string{"path": `C:\x`})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap mismatch")
 	}
 	msg := e.Error()

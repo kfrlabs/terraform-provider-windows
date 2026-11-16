@@ -10,6 +10,7 @@ linters:
     - copyloopvar
     - durationcheck
     - errcheck
+    - errorlint
     - forcetypeassert
     - gosec
     - govet
@@ -18,6 +19,7 @@ linters:
     - misspell
     - nilerr
     - predeclared
+    - revive
     - staticcheck
     - unconvert
     - unparam
@@ -27,6 +29,9 @@ linters:
     gosec:
       excludes:
         - G101 # false positives on env var names
+    revive:
+      rules:
+        - name: var-naming
   exclusions:
     rules:
       - path: _test\.go

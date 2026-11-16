@@ -221,7 +221,7 @@ func TestEnvVarError_ErrorWithCause(t *testing.T) {
 	cause := errors.New("transport-fail")
 	e := NewEnvVarError(EnvVarErrorPermission, "access denied", cause,
 		map[string]string{"host": "winev01", "operation": "set"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap() must return underlying cause")
 	}
 	msg := e.Error()

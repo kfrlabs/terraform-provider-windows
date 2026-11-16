@@ -99,7 +99,7 @@ func TestDomainMembershipError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("underlying")
 	e := NewDomainMembershipError(DomainMembershipErrorTimeout, "join timed out", cause,
 		map[string]string{"domain": "corp.example.com"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap mismatch")
 	}
 	msg := e.Error()

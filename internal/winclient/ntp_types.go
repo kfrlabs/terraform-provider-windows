@@ -473,7 +473,7 @@ func ValidateNTPInput(in NTPInput) error {
 // MachineGuid — stable per machine, anchors the Terraform resource ID.
 // ResyncWarning carries a non-fatal w32tm /resync failure from Set (empty
 // otherwise); it is transient and never persisted to Terraform state.
-// VmICEnabled reports the Hyper-V time-sync provider state for the
+// VMICEnabled reports the Hyper-V time-sync provider state for the
 // provider-layer warning only and is not exposed as a Terraform attribute.
 type NTPState struct {
 	MachineID string
@@ -489,7 +489,7 @@ type NTPState struct {
 	CurrentSource                string
 	PolicyOverride               bool
 	DomainJoined                 bool
-	VmICEnabled                  bool
+	VMICEnabled                  bool
 	ResyncWarning                string
 }
 

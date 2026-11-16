@@ -395,18 +395,11 @@ func (m iisSiteStateSuppressUnboundModifier) PlanModifyString(ctx context.Contex
 // Configure stores the provider-level SSH client and creates an
 // IISSiteClient for this resource instance.
 func (r *windowsIISSiteResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
-	client, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T.", req.ProviderData),
-		)
-		return
-	}
-	r.site = winclient.NewIISSiteClient(client)
+	r.site = winclient.NewIISSiteClient(c)
 }
 
 // ---------------------------------------------------------------------------

@@ -133,7 +133,7 @@ func TestRegistryValueError_ErrorWithCause(t *testing.T) {
 	cause := errors.New("transport-fail")
 	e := NewRegistryValueError(RegistryValueErrorPermission, "access denied", cause,
 		map[string]string{"host": "winrv01", "operation": "set"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap() must return underlying cause")
 	}
 	msg := e.Error()

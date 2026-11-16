@@ -52,13 +52,8 @@ type windowsScheduledTaskResource struct {
 
 // Configure wires the winclient.Client and creates the ScheduledTaskClient.
 func (r *windowsScheduledTaskResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data",
-			fmt.Sprintf("Expected *winclient.Client, got %T", req.ProviderData))
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
 	r.stClient = winclient.NewScheduledTaskClient(c)

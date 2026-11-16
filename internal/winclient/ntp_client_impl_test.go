@@ -459,7 +459,7 @@ func TestNTPRead_MapsPayload(t *testing.T) {
 	if st.CurrentSource == "" {
 		t.Error("CurrentSource must be populated")
 	}
-	if st.PolicyOverride || st.DomainJoined || st.VmICEnabled {
+	if st.PolicyOverride || st.DomainJoined || st.VMICEnabled {
 		t.Error("policy/domain/vmic flags must be false in the base payload")
 	}
 	if st.MachineID == "" {

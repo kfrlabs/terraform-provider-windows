@@ -132,10 +132,10 @@ func TestAdversarialNameValidatorsRejectControls(t *testing.T) {
 		"IISAppPoolName":    ValidateIISAppPoolName,
 		"BindingHostHeader": ValidateIISBindingHostHeader,
 		"NTPPeerAddress":    ValidateNTPPeerAddress,
-		"DnsClientAlias":    ValidateDnsClientAlias,
+		"DnsClientAlias":    ValidateDNSClientAlias,
 		"BindingProtocol":   ValidateIISBindingProtocol,
 		"NTPType":           ValidateNTPType,
-		"DnsSuffix":         ValidateDnsClientSuffix,
+		"DnsSuffix":         ValidateDNSClientSuffix,
 	}
 	for name, fn := range strValidators {
 		for _, in := range adversarialControlInputs() {
@@ -212,7 +212,7 @@ func TestAdversarialNumericBoundaries(t *testing.T) {
 	long := strings.Repeat("a", 4096)
 	for name, fn := range map[string]func(string) error{
 		"IISSiteName": ValidateIISSiteName, "SmbShareName": ValidateSmbShareName,
-		"DnsSuffix": ValidateDnsClientSuffix,
+		"DnsSuffix": ValidateDNSClientSuffix,
 	} {
 		if err := fn(long); err == nil {
 			t.Errorf("%s must reject 4096-char input", name)

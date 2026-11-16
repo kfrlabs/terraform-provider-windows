@@ -220,11 +220,11 @@ func parseManagementSSHConnection(sshConnection string) (clientIP, serverIP neti
 	}
 	clientIP, err = netip.ParseAddr(tokens[0])
 	if err != nil {
-		return netip.Addr{}, netip.Addr{}, 0, 0, fmt.Errorf("SSH_CONNECTION carries an unparsable client IP %q: %v", tokens[0], err)
+		return netip.Addr{}, netip.Addr{}, 0, 0, fmt.Errorf("SSH_CONNECTION carries an unparsable client IP %q: %w", tokens[0], err)
 	}
 	serverIP, err = netip.ParseAddr(tokens[2])
 	if err != nil {
-		return netip.Addr{}, netip.Addr{}, 0, 0, fmt.Errorf("SSH_CONNECTION carries an unparsable server IP %q: %v", tokens[2], err)
+		return netip.Addr{}, netip.Addr{}, 0, 0, fmt.Errorf("SSH_CONNECTION carries an unparsable server IP %q: %w", tokens[2], err)
 	}
 	clientPort, err = parseSSHPort(tokens[1], "client")
 	if err != nil {

@@ -162,13 +162,8 @@ func (d *windowsScheduledTaskDataSource) Schema(ctx context.Context, _ datasourc
 
 // Configure wires the provider client.
 func (d *windowsScheduledTaskDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data",
-			fmt.Sprintf("Expected *winclient.Client, got %T", req.ProviderData))
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
 	d.stClient = winclient.NewScheduledTaskClient(c)
