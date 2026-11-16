@@ -14,6 +14,7 @@ Index:
 - [ADR-0011](ADR-0011-host-key-verification.md) — host key verification (fail-closed, known-hosts).
 - [ADR-0012](ADR-0012-partial-failure-contract.md) — provider-wide partial-failure contract (persist partial state, taint by default).
 - [ADR-0013](ADR-0013-winclient-shared-prelude.md) — shared winclient envelope prelude, generic error and input conventions (issue #348, batch 1: hostname pilot).
+- [ADR-0014](ADR-0014-resource-identity-ephemeral-client-lifetime.md) — resource identity (pilot-only), ephemeral (rejected), SSH client lifetime (never closed) evaluation (issue #403).
 
 These records live outside `docs/` on purpose: `docs/` is generated from
 schemas + examples by `make docs` and guarded by the blocking drift gate,

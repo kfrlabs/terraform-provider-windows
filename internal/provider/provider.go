@@ -376,6 +376,10 @@ func (p *windowsProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
+	// The client is intentionally never closed: the framework has no
+	// shutdown hook, and closing it would break the shared pooled client
+	// every resource and data source uses. Process exit reclaims TCP.
+	// See ADR-0014.
 	client, err := winclient.New(cfg)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to create SSH client", err.Error())
