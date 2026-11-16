@@ -567,4 +567,5 @@ func (v directoryNoTraversalValidator) ValidateString(_ context.Context, req val
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 			fmt.Sprintf("path %q must not contain wildcards", p))
 	}
+	validateFinalPathSegment(p, req.Path, &resp.Diagnostics)
 }

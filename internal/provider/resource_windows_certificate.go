@@ -56,6 +56,7 @@ var (
 	_ resource.ResourceWithConfigure        = (*windowsCertificateResource)(nil)
 	_ resource.ResourceWithImportState      = (*windowsCertificateResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsCertificateResource)(nil)
+	_ resource.ResourceWithModifyPlan       = (*windowsCertificateResource)(nil)
 )
 
 // NewWindowsCertificateResource is the constructor registered in provider.go.
@@ -182,7 +183,7 @@ func windowsCertificateSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:   true,
 				CustomType: certificatePEMType{},
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					certificatePEMRequiresReplaceModifier{},
 				},
 				Validators: []validator.String{
 					certificatePEMValidator{},
@@ -407,6 +408,13 @@ func (v certificateBase64Validator) ValidateString(_ context.Context, req valida
 // "provider produced invalid plan" error on create and a false diff on later
 // refresh (windows_scheduled_task durationValue precedent).
 //
+// Equal itself is DER-aware, not just StringSemanticEquals: the framework's
+// RequiresReplace plan modifier compares with Equal (never with
+// StringSemanticEquals) at plan time, so an exact-but-textual Equal would
+// force a replacement after every import that rewraps the PEM (aggressive
+// CLI campaign, 2026-11-16: DER-identical import planned 1 to add,
+// 1 to destroy).
+//
 // The state value is never rewritten: the normalised spelling the provider
 // stores is kept as-is. Equality is only relaxed at comparison time.
 type certificatePEMValue struct {
@@ -426,7 +434,13 @@ func (v certificatePEMValue) Equal(o attr.Value) bool {
 	if !ok {
 		return false
 	}
-	return v.StringValue.Equal(other.StringValue)
+	if v.StringValue.Equal(other.StringValue) {
+		return true
+	}
+	// Textually different spellings of the same certificate compare equal
+	// (DER comparison): RequiresReplace uses Equal at plan time, so without
+	// this an import that rewraps the PEM would force a replacement.
+	return certificatePEMsEquivalent(v.ValueString(), other.ValueString())
 }
 
 func (v certificatePEMValue) Type(_ context.Context) attr.Type {
@@ -486,6 +500,45 @@ func (t certificatePEMType) ValueFromTerraform(ctx context.Context, in tftypes.V
 
 func (t certificatePEMType) ValueType(context.Context) attr.Value {
 	return certificatePEMValue{}
+}
+
+// certificatePEMRequiresReplaceModifier is a DER-aware replacement for
+// stringplanmodifier.RequiresReplace on certificate_pem.
+//
+// The framework erases custom value types before invoking plan modifiers
+// (AttributePlanModifyString calls ToStringValue, handing modifiers a plain
+// basetypes.StringValue), so neither certificatePEMValue.Equal nor
+// StringSemanticEquals is consulted on the plan path: an import that merely
+// rewraps the PEM would force a replacement of a DER-identical certificate
+// (aggressive CLI campaign, 2026-11-16). This modifier compares DER bytes
+// instead: identical DER reuses the state value (no diff at all), and only
+// a genuinely different certificate requires replacement.
+type certificatePEMRequiresReplaceModifier struct{}
+
+func (m certificatePEMRequiresReplaceModifier) Description(_ context.Context) string {
+	return "If the value of this attribute changes, Terraform will destroy and recreate the resource."
+}
+
+func (m certificatePEMRequiresReplaceModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (m certificatePEMRequiresReplaceModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	// Do not replace on resource creation or destroy.
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	// Nulls and unknowns are left to the other modifiers and core.
+	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() ||
+		req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+		return
+	}
+	if certificatePEMsEquivalent(req.PlanValue.ValueString(), req.StateValue.ValueString()) {
+		// DER-identical: keep the state spelling so the plan is empty.
+		resp.PlanValue = req.StateValue
+		return
+	}
+	resp.RequiresReplace = true
 }
 
 // certificatePEMsEquivalent reports whether two PEM spellings denote the same
@@ -577,6 +630,64 @@ func (r *windowsCertificateResource) ConfigValidators(_ context.Context) []resou
 		),
 		certificateConfigValidator{},
 	}
+}
+
+// ---------------------------------------------------------------------------
+// ModifyPlan — suppress cosmetic PEM respellings
+// ---------------------------------------------------------------------------
+
+// ModifyPlan restores the observed computed attributes from state when the
+// planned certificate is DER-identical to the state certificate. Terraform
+// core proposes unknown computed values whenever the config spelling differs
+// textually from state (it compares raw strings), which would otherwise leave
+// a perpetual in-place update after every import that rewraps the PEM, even
+// though certificatePEMRequiresReplaceModifier already established that the
+// certificate itself is unchanged (aggressive CLI campaign, 2026-11-16).
+//
+// Suppression only happens when nothing else changed: a genuinely different
+// store, friendly name, exportability, key-deletion policy or PFX rotation
+// still flows through the normal replace/update path untouched. (Attribute
+// plan modifiers run before resource ModifyPlan but their RequiresReplace
+// paths are accumulated separately, so this method re-checks the
+// user-configurable attributes directly.)
+func (r *windowsCertificateResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return // create / destroy
+	}
+	var plan, state windowsCertificateModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.CertificatePEM.IsNull() || plan.CertificatePEM.IsUnknown() ||
+		state.CertificatePEM.IsNull() || state.CertificatePEM.IsUnknown() {
+		return // PFX path or incomplete values: nothing to compare
+	}
+	if !certificatePEMsEquivalent(plan.CertificatePEM.ValueString(), state.CertificatePEM.ValueString()) {
+		return // genuinely different certificate
+	}
+	if !plan.StoreLocation.Equal(state.StoreLocation) ||
+		!plan.StoreName.Equal(state.StoreName) ||
+		!plan.FriendlyName.Equal(state.FriendlyName) ||
+		!plan.Exportable.Equal(state.Exportable) ||
+		!plan.DeletePrivateKey.Equal(state.DeletePrivateKey) ||
+		!plan.PFXWOVersion.Equal(state.PFXWOVersion) {
+		return // some other attribute really changed
+	}
+	// DER-identical: the remote object is unchanged, so the observed values
+	// carry over untouched and the plan is empty.
+	plan.Subject = state.Subject
+	plan.Issuer = state.Issuer
+	plan.SerialNumber = state.SerialNumber
+	plan.NotBefore = state.NotBefore
+	plan.NotAfter = state.NotAfter
+	plan.DNSNames = state.DNSNames
+	plan.Thumbprint = state.Thumbprint
+	plan.ThumbprintSHA256 = state.ThumbprintSHA256
+	plan.HasPrivateKey = state.HasPrivateKey
+	plan.CertificatePEM = state.CertificatePEM
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 // ---------------------------------------------------------------------------

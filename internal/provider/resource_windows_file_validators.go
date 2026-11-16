@@ -95,6 +95,7 @@ func (v fileNoTraversalValidator) ValidateString(_ context.Context, req validato
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 			fmt.Sprintf("path %q must point at a file, not a directory", p))
 	}
+	validateFinalPathSegment(p, req.Path, &resp.Diagnostics)
 }
 
 // fileCrossFieldValidator implements CV-4 (target download needs a pinned

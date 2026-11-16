@@ -12,7 +12,8 @@
 //	EC-4  Name casing drift (EqualFold)      -> prior name kept in state
 //	EC-5  Rename in place                    -> Update called, SID stable
 //	EC-6  Invalid name (schema validators)   -> whitespace / leading-space rules
-//	EC-7  Description > 256 chars (schema)   -> LengthBetween validator
+//	EC-7  Description > 48 chars (schema)    -> LengthBetween validator
+//	      (New-LocalGroup caps -Description at 48; aggressive CLI campaign)
 //	EC-8  Permission denied                  -> permission_denied diag
 //	EC-10 Import by name vs by SID           -> ImportState auto-detection
 package provider
@@ -343,6 +344,43 @@ func TestLocalGroupNameValidator_Description(t *testing.T) {
 	}
 	if v.MarkdownDescription(context.Background()) == "" {
 		t.Error("MarkdownDescription() must return a non-empty string")
+	}
+}
+
+// EC-7 (aggressive CLI campaign): New-LocalGroup -Description hard-limits to
+// 48 characters, so the schema must refuse longer values at plan time instead
+// of surfacing a raw "Cannot validate argument" apply error.
+func TestLocalGroupSchema_DescriptionMax48_EC7(t *testing.T) {
+	s := windowsLocalGroupSchemaDefinition(context.Background())
+	descAttr, ok := s.Attributes["description"].(rschema.StringAttribute)
+	if !ok {
+		t.Fatalf("description attribute type %T is not StringAttribute", s.Attributes["description"])
+	}
+	if len(descAttr.Validators) == 0 {
+		t.Fatal("description must carry length validators")
+	}
+	run := func(val string) bool {
+		req := validator.StringRequest{
+			Path:        path.Root("description"),
+			ConfigValue: types.StringValue(val),
+		}
+		resp := &validator.StringResponse{}
+		for _, v := range descAttr.Validators {
+			v.ValidateString(context.Background(), req, resp)
+		}
+		return resp.Diagnostics.HasError()
+	}
+	if !run(strings.Repeat("d", 49)) {
+		t.Error("EC-7: 49-char description should fail validation (Windows limit is 48)")
+	}
+	if !run(strings.Repeat("d", 55)) {
+		t.Error("EC-7: 55-char description should fail validation (campaign repro)")
+	}
+	if run(strings.Repeat("d", 48)) {
+		t.Error("EC-7: 48-char description must be accepted")
+	}
+	if run("") {
+		t.Error("EC-7: empty description must be accepted")
 	}
 }
 

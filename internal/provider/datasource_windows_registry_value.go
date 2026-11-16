@@ -236,12 +236,17 @@ func applyRVStateDS(m *windowsRegistryValueDataSourceModel, rv *winclient.Regist
 			m.ValueStrings = list
 		}
 
-	case winclient.RegistryValueKindBinary, winclient.RegistryValueKindNone:
+	case winclient.RegistryValueKindBinary:
 		hex := ""
 		if rv.ValueBinary != nil {
 			hex = *rv.ValueBinary
 		}
 		m.ValueBinary = types.StringValue(hex)
+
+	case winclient.RegistryValueKindNone:
+		// Mirrors the resource Read mapping (null, not "") so data sources
+		// stay coherent with managed resources.
+		m.ValueBinary = types.StringNull()
 
 	default:
 		if rv.ValueString != nil {
