@@ -33,7 +33,7 @@ func NewWindowsDNSClientDataSource() datasource.DataSource {
 
 // windowsDNSClientDataSource is the TPF data source type for windows_dns_client.
 type windowsDNSClientDataSource struct {
-	dns winclient.DnsClientClient
+	dns winclient.DNSClientClient
 }
 
 // dnsClientDSDefaultTimeout bounds the data source Read when the
@@ -136,22 +136,15 @@ func (d *windowsDNSClientDataSource) Schema(ctx context.Context, _ datasource.Sc
 
 // Configure extracts the shared *winclient.Client from provider data.
 func (d *windowsDNSClientDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
-	c, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T", req.ProviderData),
-		)
-		return
-	}
-	d.dns = winclient.NewDnsClientClient(c)
+	d.dns = winclient.NewDNSClientClient(c)
 }
 
 // Read fetches the observed DNS client state of the configured interface by
-// reusing the sibling resource's DnsClientClient.Read. A missing interface
+// reusing the sibling resource's DNSClientClient.Read. A missing interface
 // surfaces a `not found` diagnostic (data sources never silently clear
 // state).
 func (d *windowsDNSClientDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -172,7 +165,7 @@ func (d *windowsDNSClientDataSource) Read(ctx context.Context, req datasource.Re
 	target := canonicalDNSClientAlias(config.InterfaceAlias.ValueString())
 	tflog.Debug(ctx, "windows_dns_client data source Read start", map[string]interface{}{"interface_alias": target})
 
-	if err := winclient.ValidateDnsClientAlias(target); err != nil {
+	if err := winclient.ValidateDNSClientAlias(target); err != nil {
 		addDNSClientDiag(&resp.Diagnostics, fmt.Sprintf("Read windows_dns_client %q failed", target), err)
 		return
 	}

@@ -163,7 +163,7 @@ func TestPSSharedPreludeHeaders_ComposePrelude(t *testing.T) {
 		"lpHeader":                  lpHeader,
 		"psSTHeader":                psSTHeader,
 		"psCertificateHeader":       psCertificateHeader,
-		"psDnsClientHeader":         psDnsClientHeader,
+		"psDNSClientHeader":         psDNSClientHeader,
 		"elPsHeader":                elPsHeader,
 		"fpPsHeader":                fpPsHeader,
 		"frPsHeader":                frPsHeader,

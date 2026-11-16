@@ -102,7 +102,7 @@ func TestFeatureError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("underlying")
 	e := NewFeatureError(FeatureErrorTimeout, "install timed out", cause,
 		map[string]string{"name": "Web-Server"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap mismatch")
 	}
 	msg := e.Error()

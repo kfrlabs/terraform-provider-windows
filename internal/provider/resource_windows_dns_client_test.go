@@ -24,17 +24,17 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// Fake DnsClientClient
+// Fake DNSClientClient
 // -----------------------------------------------------------------------------
 
 type fakeDNSClient struct {
-	readOut   *winclient.DnsClientState
+	readOut   *winclient.DNSClientState
 	readErr   error
-	applyOut  *winclient.DnsClientState
+	applyOut  *winclient.DNSClientState
 	applyErr  error
-	applyGot  *winclient.DnsClientSettings
+	applyGot  *winclient.DNSClientSettings
 	applyName string
-	resetOut  *winclient.DnsClientState
+	resetOut  *winclient.DNSClientState
 	resetErr  error
 	resetV4   bool
 	resetV6   bool
@@ -44,27 +44,27 @@ type fakeDNSClient struct {
 	readSeen  bool
 }
 
-func (f *fakeDNSClient) Read(_ context.Context, alias string) (*winclient.DnsClientState, error) {
+func (f *fakeDNSClient) Read(_ context.Context, alias string) (*winclient.DNSClientState, error) {
 	f.readSeen = true
 	return f.readOut, f.readErr
 }
 
-func (f *fakeDNSClient) Apply(_ context.Context, alias string, s winclient.DnsClientSettings) (*winclient.DnsClientState, error) {
+func (f *fakeDNSClient) Apply(_ context.Context, alias string, s winclient.DNSClientSettings) (*winclient.DNSClientState, error) {
 	cp := s
 	f.applyGot = &cp
 	f.applyName = alias
 	return f.applyOut, f.applyErr
 }
 
-func (f *fakeDNSClient) Reset(_ context.Context, alias string, v4, v6, sfx bool) (*winclient.DnsClientState, error) {
+func (f *fakeDNSClient) Reset(_ context.Context, alias string, v4, v6, sfx bool) (*winclient.DNSClientState, error) {
 	f.resetSeen = true
 	f.resetName, f.resetV4, f.resetV6, f.resetSfx = alias, v4, v6, sfx
 	return f.resetOut, f.resetErr
 }
 
-// fakeDNSState builds a realistic DnsClientState for tests.
-func fakeDNSState() *winclient.DnsClientState {
-	return &winclient.DnsClientState{
+// fakeDNSState builds a realistic DNSClientState for tests.
+func fakeDNSState() *winclient.DNSClientState {
+	return &winclient.DNSClientState{
 		InterfaceAlias:                "Ethernet 2",
 		InterfaceIndex:                14,
 		InterfaceGUID:                 "{11111111-2222-3333-4444-555555555555}",
@@ -401,11 +401,11 @@ func TestModelToDNSClientSettings_NullMeansUnmanaged(t *testing.T) {
 	plan.ConnectionSpecificSuffix = types.StringNull()
 	plan.RegisterThisConnectionAddress = types.BoolNull()
 	plan.UseSuffixWhenRegistering = types.BoolNull()
-	s, diags := modelToDnsClientSettings(context.Background(), plan)
+	s, diags := modelToDNSClientSettings(context.Background(), plan)
 	if diags.HasError() {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
-	if s.DnsClientConfigured() {
+	if s.DNSClientConfigured() {
 		t.Errorf("all-null plan must be unconfigured, got %+v", s)
 	}
 }
@@ -426,7 +426,7 @@ func TestModelToDNSClientSettings_Managed(t *testing.T) {
 		t.Fatalf("ListValueFrom: %v", d)
 	}
 	plan.IPv4ServerAddresses = v4
-	s, diags := modelToDnsClientSettings(ctx, plan)
+	s, diags := modelToDNSClientSettings(ctx, plan)
 	if diags.HasError() {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
@@ -466,7 +466,7 @@ func TestDNSClientSettingsForUpdate_DropsUnchanged(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
-	if s.DnsClientConfigured() {
+	if s.DNSClientConfigured() {
 		t.Errorf("identical plan/prior must yield no changes, got %+v", s)
 	}
 	plan.IPv4ServerAddresses = mkList([]string{"198.51.100.53"})
@@ -577,7 +577,7 @@ func TestDNSClientCreate_NothingManagedReads(t *testing.T) {
 
 func TestDNSClientCreate_PermissionDenied(t *testing.T) {
 	fake := &fakeDNSClient{
-		applyErr: winclient.NewDnsClientError(winclient.DnsClientErrorPermission, "Access is denied", nil, nil),
+		applyErr: winclient.NewDNSClientError(winclient.DNSClientErrorPermission, "Access is denied", nil, nil),
 	}
 	r := &windowsDNSClientResource{dns: fake}
 	schemaDef := windowsDNSClientSchemaDefinition(context.Background())
@@ -795,8 +795,8 @@ func TestDNSClientImportState_BlankID(t *testing.T) {
 
 func TestAddDNSClientDiag(t *testing.T) {
 	var diags diag.Diagnostics
-	he := winclient.NewDnsClientError(
-		winclient.DnsClientErrorInterfaceNotFound,
+	he := winclient.NewDNSClientError(
+		winclient.DNSClientErrorInterfaceNotFound,
 		"No interface matches alias",
 		errors.New("cause"),
 		map[string]string{"interface_alias": "Ethernet 9"},

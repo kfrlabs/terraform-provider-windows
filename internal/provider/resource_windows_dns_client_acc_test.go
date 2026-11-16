@@ -64,7 +64,7 @@ func testAccDNSClientTarget(t *testing.T) string {
 	if strings.EqualFold(alias, mp.InterfaceAlias) {
 		t.Skipf("test interface %q is the management interface; refusing to run DNS client tests", alias)
 	}
-	dns := winclient.NewDnsClientClient(c)
+	dns := winclient.NewDNSClientClient(c)
 	state, err := dns.Read(ctx, alias)
 	if err != nil {
 		t.Skipf("cannot read DNS client state on %q, host may not support it: %v", alias, err)

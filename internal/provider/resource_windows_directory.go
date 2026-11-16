@@ -229,13 +229,8 @@ func upgradeWindowsDirectoryStateV0ToV1(ctx context.Context, req resource.Upgrad
 // ---------------------------------------------------------------------------
 
 func (r *windowsDirectoryResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data type",
-			"Expected *winclient.Client for windows_directory resource configuration.")
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
 	r.client = winclient.NewDirectoryClient(c)

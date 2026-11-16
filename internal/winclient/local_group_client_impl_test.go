@@ -128,7 +128,7 @@ func TestLocalGroupError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("underlying-ssh-error")
 	e := NewLocalGroupError(LocalGroupErrorPermission, "access denied", cause,
 		map[string]string{"host": "winlg01", "operation": "create"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap() did not return the underlying cause")
 	}
 	msg := e.Error()

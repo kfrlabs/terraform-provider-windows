@@ -72,15 +72,8 @@ var windowsFilePathRegex = regexp.MustCompile(`^([A-Za-z]:\\|\\\\[^\\/:*?"<>|\x0
 // ---------------------------------------------------------------------------
 
 func (r *windowsFileResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("expected *winclient.Client, got %T", req.ProviderData),
-		)
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
 	r.client = winclient.NewFileClient(c)

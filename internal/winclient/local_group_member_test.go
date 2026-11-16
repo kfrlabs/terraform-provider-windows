@@ -90,7 +90,7 @@ func TestLocalGroupMemberError_ErrorAndUnwrap(t *testing.T) {
 		cause,
 		map[string]string{"host": "win01", "operation": "add"},
 	)
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap() did not return underlying cause")
 	}
 	msg := e.Error()

@@ -132,7 +132,7 @@ func TestLPError_ErrorNoCause(t *testing.T) {
 func TestLPError_Unwrap(t *testing.T) {
 	cause := errors.New("boom")
 	e := &LegacyPackageError{Resource: "windows_legacy_package", Kind: "unknown", Message: "x", Cause: cause}
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap should return cause")
 	}
 	e2 := &LegacyPackageError{Resource: "windows_legacy_package", Kind: "unknown", Message: "x"}

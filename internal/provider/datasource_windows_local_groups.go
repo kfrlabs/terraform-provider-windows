@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 
 	dstimeouts "github.com/hashicorp/terraform-plugin-framework-timeouts/datasource/timeouts"
@@ -142,15 +141,8 @@ func (d *windowsLocalGroupsDataSource) Schema(ctx context.Context, _ datasource.
 // constructs the LocalGroup inventory client. The field is the narrow
 // LocalGroupLister interface so unit tests inject a fake without SSH.
 func (d *windowsLocalGroupsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T", req.ProviderData),
-		)
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
 	d.lister = winclient.NewLocalGroupClient(c)

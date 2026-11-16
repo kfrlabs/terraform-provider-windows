@@ -119,7 +119,7 @@ func TestLocalUserError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("transport-fail")
 	e := NewLocalUserError(LocalUserErrorPermission, "access denied", cause,
 		map[string]string{"host": "winlu01", "operation": "create"})
-	if e.Unwrap() != cause {
+	if !errors.Is(e, cause) {
 		t.Error("Unwrap() must return underlying cause")
 	}
 	msg := e.Error()

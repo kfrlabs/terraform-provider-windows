@@ -61,7 +61,7 @@ func NewWindowsDNSClientResource() resource.Resource {
 
 // windowsDNSClientResource is the TPF resource type for windows_dns_client.
 type windowsDNSClientResource struct {
-	dns winclient.DnsClientClient
+	dns winclient.DNSClientClient
 }
 
 // dnsClientDefaultTimeout is the fallback per-operation timeout when the
@@ -324,8 +324,8 @@ func (v dnsClientServerAddressesValidator) ValidateList(ctx context.Context, req
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if _, err := winclient.ValidateDnsClientServerAddresses(raw, v.wantV6); err != nil {
-		var de *winclient.DnsClientError
+	if _, err := winclient.ValidateDNSClientServerAddresses(raw, v.wantV6); err != nil {
+		var de *winclient.DNSClientError
 		if errors.As(err, &de) {
 			resp.Diagnostics.AddAttributeError(req.Path, "Invalid DNS server address", de.Message)
 			return
@@ -361,7 +361,7 @@ func (m dnsClientServerAddressesNormalizeModifier) PlanModifyList(ctx context.Co
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	canonical, err := winclient.ValidateDnsClientServerAddresses(raw, m.wantV6)
+	canonical, err := winclient.ValidateDNSClientServerAddresses(raw, m.wantV6)
 	if err != nil {
 		return // the attribute validator reports invalid input
 	}
@@ -389,8 +389,8 @@ func (v dnsClientSuffixValidator) ValidateString(_ context.Context, req validato
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
-	if err := winclient.ValidateDnsClientSuffix(req.ConfigValue.ValueString()); err != nil {
-		var de *winclient.DnsClientError
+	if err := winclient.ValidateDNSClientSuffix(req.ConfigValue.ValueString()); err != nil {
+		var de *winclient.DNSClientError
 		if errors.As(err, &de) {
 			resp.Diagnostics.AddAttributeError(req.Path, "Invalid connection-specific suffix", de.Message)
 			return
@@ -404,20 +404,13 @@ func (v dnsClientSuffixValidator) ValidateString(_ context.Context, req validato
 // ---------------------------------------------------------------------------
 
 // Configure stores the provider-level SSH client and creates a
-// DnsClientClient for this resource instance.
+// DNSClientClient for this resource instance.
 func (r *windowsDNSClientResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
-	client, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T.", req.ProviderData),
-		)
-		return
-	}
-	r.dns = winclient.NewDnsClientClient(client)
+	r.dns = winclient.NewDNSClientClient(c)
 }
 
 // ---------------------------------------------------------------------------
@@ -472,11 +465,11 @@ func dnsClientMustList(in []string) types.List {
 	return v
 }
 
-// modelToDnsClientSettings projects the plan's managed attributes onto
+// modelToDNSClientSettings projects the plan's managed attributes onto
 // winclient settings. Null attributes stay unmanaged.
-func modelToDnsClientSettings(ctx context.Context, plan windowsDNSClientModel) (winclient.DnsClientSettings, diag.Diagnostics) {
+func modelToDNSClientSettings(ctx context.Context, plan windowsDNSClientModel) (winclient.DNSClientSettings, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	var s winclient.DnsClientSettings
+	var s winclient.DNSClientSettings
 	if v4, ok, d := dnsClientListToStrings(ctx, plan.IPv4ServerAddresses); d.HasError() {
 		diags.Append(d...)
 	} else if ok {
@@ -490,7 +483,7 @@ func modelToDnsClientSettings(ctx context.Context, plan windowsDNSClientModel) (
 		s.IPv6Addresses = v6
 	}
 	if diags.HasError() {
-		return winclient.DnsClientSettings{}, diags
+		return winclient.DNSClientSettings{}, diags
 	}
 	if !plan.ConnectionSpecificSuffix.IsNull() && !plan.ConnectionSpecificSuffix.IsUnknown() {
 		s.SuffixSet = true
@@ -511,10 +504,10 @@ func modelToDnsClientSettings(ctx context.Context, plan windowsDNSClientModel) (
 // dnsClientSettingsForUpdate projects the plan onto settings but drops every
 // attribute that is already at its prior-state value, so Update emits only
 // configured changes. Unmanaged (null) plan attributes stay unmanaged.
-func dnsClientSettingsForUpdate(ctx context.Context, plan, prior windowsDNSClientModel) (winclient.DnsClientSettings, diag.Diagnostics) {
-	s, diags := modelToDnsClientSettings(ctx, plan)
+func dnsClientSettingsForUpdate(ctx context.Context, plan, prior windowsDNSClientModel) (winclient.DNSClientSettings, diag.Diagnostics) {
+	s, diags := modelToDNSClientSettings(ctx, plan)
 	if diags.HasError() {
-		return winclient.DnsClientSettings{}, diags
+		return winclient.DNSClientSettings{}, diags
 	}
 	if s.IPv4Set && plan.IPv4ServerAddresses.Equal(prior.IPv4ServerAddresses) {
 		s.IPv4Set = false
@@ -537,12 +530,12 @@ func dnsClientSettingsForUpdate(ctx context.Context, plan, prior windowsDNSClien
 	return s, diags
 }
 
-// dnsClientStateToModel projects an observed DnsClientState into a Terraform
+// dnsClientStateToModel projects an observed DNSClientState into a Terraform
 // model. Managed attributes (non-null in plan) take the observed static
 // values; unmanaged attributes stay null. Effective lists, index and GUID
 // always reflect the host. The configured alias spelling, timeouts and
 // reset_on_destroy are preserved from the plan.
-func dnsClientStateToModel(ctx context.Context, plan windowsDNSClientModel, observed *winclient.DnsClientState) (windowsDNSClientModel, diag.Diagnostics) {
+func dnsClientStateToModel(ctx context.Context, plan windowsDNSClientModel, observed *winclient.DNSClientState) (windowsDNSClientModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	m := windowsDNSClientModel{
 		ID:                            types.StringValue(canonicalDNSClientAlias(plan.InterfaceAlias.ValueString())),
@@ -632,7 +625,7 @@ func (r *windowsDNSClientResource) Create(ctx context.Context, req resource.Crea
 	ctx, cancel := context.WithTimeout(ctx, createTimeout)
 	defer cancel()
 
-	settings, diags := modelToDnsClientSettings(ctx, plan)
+	settings, diags := modelToDNSClientSettings(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -644,9 +637,9 @@ func (r *windowsDNSClientResource) Create(ctx context.Context, req resource.Crea
 		"interface_alias": alias,
 	})
 
-	var observed *winclient.DnsClientState
+	var observed *winclient.DNSClientState
 	var err error
-	if settings.DnsClientConfigured() {
+	if settings.DNSClientConfigured() {
 		observed, err = r.dns.Apply(ctx, alias, settings)
 	} else {
 		observed, err = r.dns.Read(ctx, alias)
@@ -770,9 +763,9 @@ func (r *windowsDNSClientResource) Update(ctx context.Context, req resource.Upda
 		"interface_alias": alias,
 	})
 
-	var observed *winclient.DnsClientState
+	var observed *winclient.DNSClientState
 	var err error
-	if settings.DnsClientConfigured() {
+	if settings.DNSClientConfigured() {
 		observed, err = r.dns.Apply(ctx, alias, settings)
 	} else {
 		observed, err = r.dns.Read(ctx, alias)
@@ -934,7 +927,7 @@ func (r *windowsDNSClientResource) ConfigValidators(_ context.Context) []resourc
 // addDNSClientDiag appends a diagnostic from a dns-client error. Typed
 // errors are enriched with context fields when available.
 func addDNSClientDiag(d *diag.Diagnostics, summary string, err error) {
-	var de *winclient.DnsClientError
+	var de *winclient.DNSClientError
 	if errors.As(err, &de) {
 		detail := de.Message
 		if len(de.Context) > 0 {

@@ -334,18 +334,11 @@ func (v eventLogSizeValidator) ValidateInt64(_ context.Context, req validator.In
 // Configure stores the provider-level SSH client and creates an
 // EventLogClient for this resource instance.
 func (r *windowsEventLogResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
-	client, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T.", req.ProviderData),
-		)
-		return
-	}
-	r.el = winclient.NewEventLogClient(client)
+	r.el = winclient.NewEventLogClient(c)
 }
 
 // ---------------------------------------------------------------------------

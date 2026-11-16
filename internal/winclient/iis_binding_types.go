@@ -318,15 +318,15 @@ func ParseIISBindingInformation(bindingInformation string) (ip string, port int6
 		return "", 0, "", fmt.Errorf("invalid IIS binding information %q: bad port %q", bindingInformation, tail[0])
 	}
 	if err := ValidateIISBindingPort(p); err != nil {
-		return "", 0, "", fmt.Errorf("invalid IIS binding information %q: %s", bindingInformation, err)
+		return "", 0, "", fmt.Errorf("invalid IIS binding information %q: %w", bindingInformation, err)
 	}
 	normIP, nerr := NormalizeIISBindingIPAddress(ip)
 	if nerr != nil {
-		return "", 0, "", fmt.Errorf("invalid IIS binding information %q: %s", bindingInformation, nerr)
+		return "", 0, "", fmt.Errorf("invalid IIS binding information %q: %w", bindingInformation, nerr)
 	}
 	normHost := NormalizeIISBindingHostHeader(tail[1])
 	if verr := ValidateIISBindingHostHeader(tail[1]); verr != nil {
-		return "", 0, "", fmt.Errorf("invalid IIS binding information %q: %s", bindingInformation, verr)
+		return "", 0, "", fmt.Errorf("invalid IIS binding information %q: %w", bindingInformation, verr)
 	}
 	return normIP, p, normHost, nil
 }
@@ -366,15 +366,15 @@ func ParseIISBindingID(id string) (site, protocol, bindingInformation string, er
 	}
 	site = strings.TrimSpace(parts[0])
 	if verr := ValidateIISSiteName(site); verr != nil {
-		return "", "", "", fmt.Errorf("invalid IIS binding ID %q: %s", id, verr)
+		return "", "", "", fmt.Errorf("invalid IIS binding ID %q: %w", id, verr)
 	}
 	protocol, perr := CanonicalizeIISBindingProtocol(parts[1])
 	if perr != nil {
-		return "", "", "", fmt.Errorf("invalid IIS binding ID %q: %s", id, perr)
+		return "", "", "", fmt.Errorf("invalid IIS binding ID %q: %w", id, perr)
 	}
 	ip, port, host, berr := ParseIISBindingInformation(strings.TrimSpace(parts[2]))
 	if berr != nil {
-		return "", "", "", fmt.Errorf("invalid IIS binding ID %q: %s", id, berr)
+		return "", "", "", fmt.Errorf("invalid IIS binding ID %q: %w", id, berr)
 	}
 	return site, protocol, BuildIISBindingInformation(ip, port, host), nil
 }

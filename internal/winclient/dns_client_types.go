@@ -1,4 +1,4 @@
-// Package winclient defines the DnsClientClient interface and associated
+// Package winclient defines the DNSClientClient interface and associated
 // types for managing per-interface DNS client settings on a remote Windows
 // host over SSH.
 //
@@ -17,82 +17,82 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// DnsClientErrorKind — typed error categories
+// DNSClientErrorKind — typed error categories
 // ---------------------------------------------------------------------------
 
-// DnsClientErrorKind categorises errors returned by DnsClientClient
-// operations. Use errors.Is(err, ErrDnsClient*) or IsDnsClientError for
+// DNSClientErrorKind categorises errors returned by DNSClientClient
+// operations. Use errors.Is(err, ErrDNSClient*) or IsDNSClientError for
 // programmatic error handling.
-type DnsClientErrorKind string
+type DNSClientErrorKind string
 
 const (
-	// DnsClientErrorInterfaceNotFound is returned when no interface
+	// DNSClientErrorInterfaceNotFound is returned when no interface
 	// matches the requested alias (exact, case-insensitive comparison —
 	// never -InterfaceAlias wildcard semantics). The message lists the
 	// valid aliases.
-	DnsClientErrorInterfaceNotFound = "interface_not_found"
+	DNSClientErrorInterfaceNotFound = "interface_not_found"
 
-	// DnsClientErrorInvalidAddress is returned when a server address fails
+	// DNSClientErrorInvalidAddress is returned when a server address fails
 	// client-side validation (unparsable, wrong family, duplicate,
 	// unspecified, multicast, broadcast, zone ID) or when the host rejects
 	// it.
-	DnsClientErrorInvalidAddress = "invalid_address"
+	DNSClientErrorInvalidAddress = "invalid_address"
 
-	// DnsClientErrorInvalidSuffix is returned when the connection-specific
+	// DNSClientErrorInvalidSuffix is returned when the connection-specific
 	// suffix fails client-side DNS name validation or when the host
 	// rejects it.
-	DnsClientErrorInvalidSuffix = "invalid_suffix"
+	DNSClientErrorInvalidSuffix = "invalid_suffix"
 
-	// DnsClientErrorPermission is returned when the SSH user lacks the
+	// DNSClientErrorPermission is returned when the SSH user lacks the
 	// privilege to read or write DNS client settings (typically a
 	// non-administrator connection).
-	DnsClientErrorPermission = "permission_denied"
+	DNSClientErrorPermission = "permission_denied"
 
-	// DnsClientErrorUnreachable is returned when SSH cannot be contacted
+	// DNSClientErrorUnreachable is returned when SSH cannot be contacted
 	// (connection refused, auth failure, timeout). Context SHOULD include
 	// host, port and transport.
-	DnsClientErrorUnreachable = "unreachable"
+	DNSClientErrorUnreachable = "unreachable"
 
-	// DnsClientErrorUnknown is the catch-all for unmapped PowerShell or SSH
+	// DNSClientErrorUnknown is the catch-all for unmapped PowerShell or SSH
 	// failures.
-	DnsClientErrorUnknown = "unknown"
+	DNSClientErrorUnknown = "unknown"
 )
 
 // ---------------------------------------------------------------------------
-// DnsClientError — structured error
+// DNSClientError — structured error
 // ---------------------------------------------------------------------------
 
-// DnsClientError is the structured error type returned by all
-// DnsClientClient methods. Use errors.Is(err, ErrDnsClient*) for kind
+// DNSClientError is the structured error type returned by all
+// DNSClientClient methods. Use errors.Is(err, ErrDNSClient*) for kind
 // matching, or errors.As(err, &de) to inspect Context.
-type DnsClientError = ResourceError
+type DNSClientError = ResourceError
 
-// NewDnsClientError constructs a *DnsClientError. Pass a nil cause when no
+// NewDNSClientError constructs a *DNSClientError. Pass a nil cause when no
 // underlying error exists. The ctx map may be nil.
-func NewDnsClientError(kind DnsClientErrorKind, message string, cause error, ctx map[string]string) *DnsClientError {
+func NewDNSClientError(kind DNSClientErrorKind, message string, cause error, ctx map[string]string) *DNSClientError {
 	return NewResourceError("windows_dns_client", string(kind), message, cause, ctx)
 }
 
-// IsDnsClientError reports whether err is a *DnsClientError of the given kind.
-func IsDnsClientError(err error, kind DnsClientErrorKind) bool {
+// IsDNSClientError reports whether err is a *DNSClientError of the given kind.
+func IsDNSClientError(err error, kind DNSClientErrorKind) bool {
 	return IsResourceError(err, "windows_dns_client", string(kind))
 }
 
 // Sentinel errors — use with errors.Is.
 var (
-	ErrDnsClientInterfaceNotFound = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorInterfaceNotFound}
-	ErrDnsClientInvalidAddress    = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorInvalidAddress}
-	ErrDnsClientInvalidSuffix     = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorInvalidSuffix}
-	ErrDnsClientPermission        = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorPermission}
-	ErrDnsClientUnreachable       = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorUnreachable}
-	ErrDnsClientUnknown           = &DnsClientError{Resource: "windows_dns_client", Kind: DnsClientErrorUnknown}
+	ErrDNSClientInterfaceNotFound = &DNSClientError{Resource: "windows_dns_client", Kind: DNSClientErrorInterfaceNotFound}
+	ErrDNSClientInvalidAddress    = &DNSClientError{Resource: "windows_dns_client", Kind: DNSClientErrorInvalidAddress}
+	ErrDNSClientInvalidSuffix     = &DNSClientError{Resource: "windows_dns_client", Kind: DNSClientErrorInvalidSuffix}
+	ErrDNSClientPermission        = &DNSClientError{Resource: "windows_dns_client", Kind: DNSClientErrorPermission}
+	ErrDNSClientUnreachable       = &DNSClientError{Resource: "windows_dns_client", Kind: DNSClientErrorUnreachable}
+	ErrDNSClientUnknown           = &DNSClientError{Resource: "windows_dns_client", Kind: DNSClientErrorUnknown}
 )
 
 // ---------------------------------------------------------------------------
-// DnsClientSettings — desired configuration delta
+// DNSClientSettings — desired configuration delta
 // ---------------------------------------------------------------------------
 
-// DnsClientSettings carries the desired DNS client configuration delta for
+// DNSClientSettings carries the desired DNS client configuration delta for
 // one interface. Consumed by Apply (Create and Update share the operation
 // because the interface always exists).
 //
@@ -103,7 +103,7 @@ var (
 // resets the family to automatic (DHCP). The *Set flags disambiguate an
 // explicitly configured empty value from an unmanaged attribute for the
 // slice fields where nil already carries meaning at the provider boundary.
-type DnsClientSettings struct {
+type DNSClientSettings struct {
 	// IPv4Addresses holds the desired static IPv4 servers in order, or nil
 	// when the IPv4 family is unmanaged. An empty non-nil slice resets
 	// the family to automatic.
@@ -133,21 +133,21 @@ type DnsClientSettings struct {
 	UseSuffixWhenRegistering *bool
 }
 
-// DnsClientConfigured reports whether at least one attribute is managed
+// DNSClientConfigured reports whether at least one attribute is managed
 // (used to skip a no-op Set round trip).
-func (s DnsClientSettings) DnsClientConfigured() bool {
+func (s DNSClientSettings) DNSClientConfigured() bool {
 	return s.IPv4Set || s.IPv6Set || s.SuffixSet ||
 		s.RegisterThisConnectionAddress != nil ||
 		s.UseSuffixWhenRegistering != nil
 }
 
 // ---------------------------------------------------------------------------
-// DnsClientState — observed state
+// DNSClientState — observed state
 // ---------------------------------------------------------------------------
 
-// DnsClientState holds the observed DNS client state of one interface as
+// DNSClientState holds the observed DNS client state of one interface as
 // returned by the Read pipeline.
-type DnsClientState struct {
+type DNSClientState struct {
 	// InterfaceAlias is the adapter's friendly name (host spelling).
 	InterfaceAlias string
 
@@ -185,14 +185,14 @@ type DnsClientState struct {
 }
 
 // ---------------------------------------------------------------------------
-// DnsClientClient — CRUD interface
+// DNSClientClient — CRUD interface
 // ---------------------------------------------------------------------------
 
-// DnsClientClient defines the contract for managing per-interface DNS
+// DNSClientClient defines the contract for managing per-interface DNS
 // client settings on a remote Windows host over SSH.
 //
 // All methods accept a context.Context for cancellation/timeout
-// propagation. All methods return *DnsClientError (wrapped in error).
+// propagation. All methods return *DNSClientError (wrapped in error).
 //
 // Read returns (nil, nil) when the interface is gone (renamed or removed);
 // the resource handler then drops the resource from state.
@@ -208,19 +208,19 @@ type DnsClientState struct {
 // as a separate method so destroy can express "reset every family this
 // resource managed, clear the suffix only when asked" without the provider
 // layer re-deriving the merge.
-type DnsClientClient interface {
+type DNSClientClient interface {
 	// Read returns the observed DNS client state of the named interface,
 	// or (nil, nil) when no interface matches the alias.
-	Read(ctx context.Context, interfaceAlias string) (*DnsClientState, error)
+	Read(ctx context.Context, interfaceAlias string) (*DNSClientState, error)
 
 	// Apply writes the managed attributes (server addresses for the
 	// managed families, suffix and registration flags when set) and reads
 	// the resulting state back. Unmanaged attributes are left untouched.
-	Apply(ctx context.Context, interfaceAlias string, settings DnsClientSettings) (*DnsClientState, error)
+	Apply(ctx context.Context, interfaceAlias string, settings DNSClientSettings) (*DNSClientState, error)
 
 	// Reset returns the managed families to automatic (DHCP) and,
 	// when clearSuffix is true, clears the connection-specific suffix.
 	// Flags are left untouched. A missing interface is a successful
 	// no-op (nil).
-	Reset(ctx context.Context, interfaceAlias string, resetIPv4, resetIPv6, clearSuffix bool) (*DnsClientState, error)
+	Reset(ctx context.Context, interfaceAlias string, resetIPv4, resetIPv6, clearSuffix bool) (*DNSClientState, error)
 }

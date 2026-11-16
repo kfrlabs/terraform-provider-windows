@@ -425,18 +425,11 @@ func (v windowsNTPConfigValidator) ValidateResource(ctx context.Context, req res
 // Configure stores the provider-level SSH client and creates an NTPClient
 // for this resource instance.
 func (r *windowsNTPResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
+	c := configuredClient(req.ProviderData, &resp.Diagnostics)
+	if c == nil {
 		return
 	}
-	client, ok := req.ProviderData.(*winclient.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data type",
-			fmt.Sprintf("Expected *winclient.Client, got %T.", req.ProviderData),
-		)
-		return
-	}
-	r.ntp = winclient.NewNTPClient(client)
+	r.ntp = winclient.NewNTPClient(c)
 }
 
 // ---------------------------------------------------------------------------
@@ -1013,10 +1006,10 @@ func addNTPStateWarnings(diags *diag.Diagnostics, m windowsNTPModel) {
 }
 
 // addNTPVmICWarning surfaces the Hyper-V time-sync provider advisory. It
-// takes the winclient state directly because VmICEnabled is a
+// takes the winclient state directly because VMICEnabled is a
 // warning-only signal with no Terraform attribute.
 func addNTPVmICWarning(diags *diag.Diagnostics, state *winclient.NTPState) {
-	if state == nil || !state.VmICEnabled {
+	if state == nil || !state.VMICEnabled {
 		return
 	}
 	diags.AddWarning(

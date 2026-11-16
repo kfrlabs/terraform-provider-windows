@@ -89,7 +89,7 @@ func okNTPState() *winclient.NTPState {
 		CurrentSource:                "0.fr.pool.ntp.org,0x9",
 		PolicyOverride:               false,
 		DomainJoined:                 false,
-		VmICEnabled:                  false,
+		VMICEnabled:                  false,
 	}
 }
 
@@ -580,7 +580,7 @@ func TestWindowsNTPResource_CreateWarningsTable(t *testing.T) {
 		{"domain joined non-NT5DS", func(s *winclient.NTPState) { s.DomainJoined = true }, "Domain-joined"},
 		{"policy override", func(s *winclient.NTPState) { s.PolicyOverride = true }, "Group Policy"},
 		{"ntp server enabled", func(s *winclient.NTPState) { s.NtpServerEnabled = true }, "UDP/123"},
-		{"hyper-v time sync", func(s *winclient.NTPState) { s.VmICEnabled = true }, "Hyper-V"},
+		{"hyper-v time sync", func(s *winclient.NTPState) { s.VMICEnabled = true }, "Hyper-V"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			live := okNTPState()
