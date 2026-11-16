@@ -114,6 +114,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `windows_legacy_package`: new `display_name_match` attribute
+  (`legacy`/`wildcard`/`regex`/`exact`, default `legacy`) selecting how
+  `display_name_pattern` is evaluated against `DisplayName` (#405).
+  Previously the pattern was tried as a wildcard (`-like`) and then as a
+  regex (`-match`) under a silent catch; `legacy` preserves that union
+  bit-for-bit while `wildcard` (`-like` only), `regex` (`-match` only,
+  unanchored — anchor with `^...$` for a full match) and `exact` (`-ceq`)
+  are explicit. Invalid patterns in `wildcard`/`regex` mode now fail with
+  `invalid_parameter` (pattern plus the .NET error) instead of matching
+  nothing. The mode is discovery-only (changing it applies in place) and is
+  ignored when `installer_type` is `msi`. State upgrade: v0 state is
+  upgraded automatically (v0 -> v1 sets `display_name_match = "legacy"`),
+  so existing configurations converge with no diff.
+
 - Release supply chain (#352): `release.yml` now publishes only from a tag
   on `main` whose build, vet, unit tests and golangci-lint pass (the latest
   `testacc-windows` result is reported as a warning). Each release ships an

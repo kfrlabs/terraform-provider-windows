@@ -69,6 +69,12 @@ type LegacyPackageInput struct {
 	// hives by DisplayName. Required for EXE when UninstallCommand is empty.
 	DisplayNamePattern string `json:"display_name_pattern,omitempty"`
 
+	// DisplayNameMatch selects how DisplayNamePattern is evaluated:
+	// "legacy" (default, -like then -match union), "wildcard" (-like
+	// only), "regex" (-match only, unanchored) or "exact" (-ceq).
+	// Ignored for MSI installs.
+	DisplayNameMatch string `json:"display_name_match,omitempty"`
+
 	// InstallArgs are extra arguments passed to the installer.
 	InstallArgs []string `json:"install_args,omitempty"`
 
@@ -359,7 +365,8 @@ function Get-LpUninstallEntry {
   param(
     [string]$Id,
     [string]$Type,
-    [string]$Pattern
+    [string]$Pattern,
+    [string]$MatchMode
   )
   $hives = @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
@@ -380,10 +387,26 @@ function Get-LpUninstallEntry {
         if ($Id -and ($dn -ceq $Id)) {
           [void]$found.Add($p)
         } elseif ($Pattern) {
+          $mode = [string]$MatchMode
+          if ([string]::IsNullOrEmpty($mode)) { $mode = 'legacy' }
+          $mode = $mode.ToLowerInvariant()
           $matched = $false
-          try { if ($dn -like $Pattern) { $matched = $true } } catch {}
-          if (-not $matched) {
-            try { if ($dn -match $Pattern) { $matched = $true } } catch {}
+          switch ($mode) {
+            'wildcard' {
+              try { if ($dn -like $Pattern) { $matched = $true } } catch { throw }
+            }
+            'regex' {
+              try { if ($dn -match $Pattern) { $matched = $true } } catch { throw }
+            }
+            'exact' {
+              if ($dn -ceq $Pattern) { $matched = $true }
+            }
+            default {
+              try { if ($dn -like $Pattern) { $matched = $true } } catch {}
+              if (-not $matched) {
+                try { if ($dn -match $Pattern) { $matched = $true } } catch {}
+              }
+            }
           }
           if ($matched) { [void]$found.Add($p) }
         }
@@ -654,7 +677,12 @@ if ($valid -notcontains $exitCode) {
 $searchId = ''
 $searchPattern = ''
 if ($installerType -eq 'msi') { $searchId = $productId } else { $searchPattern = [string]$cfg.display_name_pattern }
-$entries = @(Get-LpUninstallEntry -Id $searchId -Type $installerType -Pattern $searchPattern)
+$searchMode = [string]$cfg.display_name_match
+try { $entries = @(Get-LpUninstallEntry -Id $searchId -Type $installerType -Pattern $searchPattern -MatchMode $searchMode) }
+catch {
+  Emit-Err 'invalid_parameter' ("invalid display_name_pattern '" + $searchPattern + "' for display_name_match '" + $searchMode + "': " + $_.Exception.Message) @{ pattern = $searchPattern; display_name_match = $searchMode }
+  return
+}
 
 if ($entries.Count -eq 0) {
   # Installer reported success but the entry is not detectable. Surface a

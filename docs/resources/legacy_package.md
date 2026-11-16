@@ -64,6 +64,29 @@ resource "windows_legacy_package" "vlc" {
   install_args         = ["/S"]
   uninstall_args       = ["/S"]
   display_name_pattern = "VLC media player*"
+  display_name_match   = "wildcard"
+}
+
+# EXE installer located by an anchored regex over DisplayName.
+resource "windows_legacy_package" "vlc_regex" {
+  name                 = "vlc-regex"
+  installer_type       = "exe"
+  source_url           = "https://artifacts.internal.example/vlc/vlc-3.0.20-win64.exe"
+  checksum             = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  install_args         = ["/S"]
+  display_name_pattern = "^VLC media player.*$"
+  display_name_match   = "regex"
+}
+
+# EXE installer located by an exact DisplayName.
+resource "windows_legacy_package" "vlc_exact" {
+  name                 = "vlc-exact"
+  installer_type       = "exe"
+  source_url           = "https://artifacts.internal.example/vlc/vlc-3.0.20-win64.exe"
+  checksum             = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  install_args         = ["/S"]
+  display_name_pattern = "VLC media player"
+  display_name_match   = "exact"
 }
 
 # MSI that needs secrets on the command line (service account password,
@@ -137,7 +160,8 @@ variable "agent_license_key" {
 - `checksum` (String) Expected installer checksum, format `<algo>:<hex>` where `<algo>` is one of `sha256`, `sha512`, `sha1`, `md5`. Verified before exec. Immutable (ForceNew).
 
 Required with an `http://` `source_url`, strongly recommended otherwise (see `source_url` threat model). Prefer `sha256` or `sha512`: `md5` and `sha1` are cryptographically broken for integrity purposes and trigger a deprecation warning. When `WINDOWS_REQUIRE_CHECKSUM` is set to `1`/`true`/`yes`, `md5` and `sha1` are rejected as errors.
-- `display_name_pattern` (String) Wildcard/regex matched against `DisplayName` under `HKLM:\SOFTWARE\...\Uninstall\*` (and `Wow6432Node`) to locate EXE installs. Required for `installer_type=exe` when `uninstall_command` is empty. Immutable (ForceNew).
+- `display_name_match` (String) How `display_name_pattern` is evaluated: `legacy` (default, `-like` then `-match` union for backwards compatibility), `wildcard` (`-like` only), `regex` (`-match` only, unanchored — anchor with `^...$` for a full match, e.g. `^VLC media player$`) or `exact` (`-ceq`). Discovery-only: changing the mode is applied in place without reinstalling. Ignored when `installer_type` is `msi`.
+- `display_name_pattern` (String) Pattern matched against `DisplayName` under `HKLM:\SOFTWARE\...\Uninstall\*` (and `Wow6432Node`) to locate EXE installs. Interpretation is controlled by `display_name_match`. Required for `installer_type=exe` when `uninstall_command` is empty. Immutable (ForceNew).
 - `environment` (Map of String, Sensitive) Extra environment variables injected into the installer process. **Updatable in place**; marked **sensitive** (may carry license keys / proxy credentials).
 - `insecure_skip_verify` (Boolean) Disable TLS certificate validation when fetching `source_url`. **Not recommended** — use only for internal CAs. Immutable (ForceNew).
 - `install_args` (List of String) Extra arguments to the installer. MSI defaults injected by provider (`/i`, `/qn`, `/norestart`, `/l*v <log>`); EXE has no defaults. Immutable (ForceNew).

@@ -40,6 +40,29 @@ resource "windows_legacy_package" "vlc" {
   install_args         = ["/S"]
   uninstall_args       = ["/S"]
   display_name_pattern = "VLC media player*"
+  display_name_match   = "wildcard"
+}
+
+# EXE installer located by an anchored regex over DisplayName.
+resource "windows_legacy_package" "vlc_regex" {
+  name                 = "vlc-regex"
+  installer_type       = "exe"
+  source_url           = "https://artifacts.internal.example/vlc/vlc-3.0.20-win64.exe"
+  checksum             = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  install_args         = ["/S"]
+  display_name_pattern = "^VLC media player.*$"
+  display_name_match   = "regex"
+}
+
+# EXE installer located by an exact DisplayName.
+resource "windows_legacy_package" "vlc_exact" {
+  name                 = "vlc-exact"
+  installer_type       = "exe"
+  source_url           = "https://artifacts.internal.example/vlc/vlc-3.0.20-win64.exe"
+  checksum             = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  install_args         = ["/S"]
+  display_name_pattern = "VLC media player"
+  display_name_match   = "exact"
 }
 
 # MSI that needs secrets on the command line (service account password,

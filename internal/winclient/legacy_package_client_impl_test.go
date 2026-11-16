@@ -474,3 +474,105 @@ func safeHead(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// ---------------------------------------------------------------------------
+// display_name_match (issue #405)
+// ---------------------------------------------------------------------------
+
+func TestLPUninstallEntry_MatchModes(t *testing.T) {
+	for _, want := range []string{
+		"[string]$MatchMode",
+		"'wildcard'",
+		"'regex'",
+		"'exact'",
+		"'legacy'",
+		"if ($dn -ceq $Pattern)",
+		"$mode.ToLowerInvariant()",
+	} {
+		if !strings.Contains(lpRemainder, want) {
+			t.Errorf("Get-LpUninstallEntry is missing match-mode fragment %q", want)
+		}
+	}
+	// Legacy must reproduce the v0 union bit-for-bit: -like, then -match,
+	// each under a silent catch.
+	legacyIdx := strings.Index(lpRemainder, "default {")
+	if legacyIdx < 0 {
+		t.Fatal("Get-LpUninstallEntry is missing the legacy default branch")
+	}
+	legacyBranch := lpRemainder[legacyIdx:]
+	for _, want := range []string{
+		"if ($dn -like $Pattern) { $matched = $true } } catch {}",
+		"if ($dn -match $Pattern) { $matched = $true } } catch {}",
+	} {
+		if !strings.Contains(legacyBranch, want) {
+			t.Errorf("legacy branch changed, missing %q", want)
+		}
+	}
+	// Explicit modes must surface invalid patterns instead of swallowing
+	// them: both -like and -match failures rethrow outside legacy.
+	if !strings.Contains(lpRemainder, "} catch { throw }") {
+		t.Error("wildcard/regex branches must rethrow match errors (invalid_parameter)")
+	}
+}
+
+func TestLPCreate_ThreadsDisplayNameMatch(t *testing.T) {
+	for _, want := range []string{
+		"$searchMode = [string]$cfg.display_name_match",
+		"-MatchMode $searchMode",
+		"Emit-Err 'invalid_parameter' (\"invalid display_name_pattern '\"",
+		"display_name_match = $searchMode",
+	} {
+		if !strings.Contains(lpCreateBody, want) {
+			t.Errorf("lpCreateBody is missing display_name_match fragment %q", want)
+		}
+	}
+	// Read/Delete lookups are exact-Id (-ceq) only and stay untouched: no
+	// MatchMode threading there.
+	for _, body := range []string{lpReadBody, lpDeleteBody} {
+		if strings.Contains(body, "MatchMode") {
+			t.Error("read/delete bodies must keep the exact-Id lookup untouched (no MatchMode)")
+		}
+	}
+}
+
+func TestLPCreate_PayloadCarriesDisplayNameMatch(t *testing.T) {
+	lp := lpNewClient(t)
+	defer stubLPInput(func(_ context.Context, _ *Client, _, stdin string) (string, string, error) {
+		if !strings.Contains(stdin, `"display_name_match":"regex"`) {
+			t.Errorf("stdin missing display_name_match: %q", stdin)
+		}
+		if !strings.Contains(stdin, `"display_name_pattern":"^VLC.*$"`) {
+			t.Errorf("stdin missing display_name_pattern: %q", stdin)
+		}
+		return lpOK(t, lpStateMap("VLC media player", "3.0.20")), "", nil
+	})()
+
+	st, err := lp.Create(context.Background(), LegacyPackageInput{
+		Name: "vlc", InstallerType: "exe", SourcePath: `C:\vlc.exe`,
+		DisplayNamePattern: "^VLC.*$", DisplayNameMatch: "regex",
+	})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if st == nil || st.ID != "VLC media player" {
+		t.Errorf("state = %+v", st)
+	}
+}
+
+func TestLPInput_DisplayNameMatchJSONTag(t *testing.T) {
+	raw, err := json.Marshal(LegacyPackageInput{DisplayNameMatch: "exact"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"display_name_match":"exact"`) {
+		t.Errorf("JSON tag wrong: %s", raw)
+	}
+	// Omitted when empty so MSI payloads (which ignore the mode) stay clean.
+	raw, err = json.Marshal(LegacyPackageInput{Name: "x"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "display_name_match") {
+		t.Errorf("empty DisplayNameMatch must be omitted: %s", raw)
+	}
+}
