@@ -515,6 +515,33 @@ func TestLPUninstallEntry_MatchModes(t *testing.T) {
 	}
 }
 
+// TestLPUninstallEntry_EmptyResultIsBare is the regression test for the
+// salvo-6 live finding: returning comma-wrapped ToArray() on an empty
+// ArrayList yields a 1-element array containing an empty array, so every
+// caller testing entries Count -eq 0 saw a phantom match (empty id,
+// installed=true) instead of the not-found path. That phantom froze EXE
+// drift detection, broke EXE delete idempotence (no_uninstall_string on a
+// missing package) and corrupted fresh state on Create read-back. An empty
+// result must be returned bare; the comma form stays for non-empty results
+// so a single match is still an array.
+func TestLPUninstallEntry_EmptyResultIsBare(t *testing.T) {
+	guard := "if ($found.Count -eq 0) { return }"
+	comma := "return ,$found.ToArray()"
+	guardIdx := strings.Index(lpRemainder, guard)
+	if guardIdx < 0 {
+		t.Fatalf("Get-LpUninstallEntry is missing the empty-result guard %q", guard)
+	}
+	// Only the code return counts: the doc comment above the guard names
+	// the comma form, so scope the search to the function tail.
+	tail := lpRemainder[guardIdx+len(guard):]
+	if !strings.Contains(tail, comma) {
+		t.Fatalf("Get-LpUninstallEntry is missing %q after the guard", comma)
+	}
+	if n := strings.Count(tail, comma); n != 1 {
+		t.Errorf("expected exactly one comma-wrapped return after the guard, found %d", n)
+	}
+}
+
 func TestLPCreate_ThreadsDisplayNameMatch(t *testing.T) {
 	for _, want := range []string{
 		"$searchMode = [string]$cfg.display_name_match",

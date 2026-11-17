@@ -413,6 +413,13 @@ function Get-LpUninstallEntry {
       }
     }
   }
+  # NOTE: an empty result must be returned BARE (not wrapped with the unary
+  # comma): return ,$found.ToArray() on an empty list yields a 1-element
+  # array containing an empty array, so every caller testing
+  # $entries.Count -eq 0 would see a phantom match (id='', installed=true).
+  # The comma form is still required for non-empty results so a single match
+  # stays an array.
+  if ($found.Count -eq 0) { return }
   return ,$found.ToArray()
 }
 
