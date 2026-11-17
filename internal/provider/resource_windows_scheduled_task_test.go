@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,6 +146,41 @@ func TestSTResource_Schema_PrincipalPasswordSensitive(t *testing.T) {
 	// Principal is a SingleNestedAttribute; check it exists
 	if _, ok := resp.Schema.Attributes["principal"]; !ok {
 		t.Fatal("schema missing principal attribute")
+	}
+}
+
+// TestSTResource_Schema_MultipleInstancesRejectsStopExisting: the
+// ScheduledTasks cmdlets used on apply (New-ScheduledTaskSettingsSet
+// -MultipleInstances) only accept Parallel, Queue and IgnoreNew —
+// StopExisting fails at apply with invalid_input (proven live on LAB 203).
+// The schema must reject it at plan time instead of promising a value
+// Windows cannot set. Read still maps CIM value 3 to StopExisting for
+// externally created tasks, which then diff and converge on next apply.
+func TestSTResource_Schema_MultipleInstancesRejectsStopExisting(t *testing.T) {
+	r := &windowsScheduledTaskResource{}
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	settingsAttr, ok := resp.Schema.Attributes["settings"].(schema.SingleNestedAttribute)
+	if !ok {
+		t.Fatalf("settings: expected schema.SingleNestedAttribute, got %T", resp.Schema.Attributes["settings"])
+	}
+	miAttr, ok := settingsAttr.Attributes["multiple_instances"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("multiple_instances: expected schema.StringAttribute, got %T", settingsAttr.Attributes["multiple_instances"])
+	}
+	var descs []string
+	for _, v := range miAttr.Validators {
+		descs = append(descs, v.Description(context.Background()))
+	}
+	joined := strings.Join(descs, " | ")
+	for _, want := range []string{"Parallel", "Queue", "IgnoreNew"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("multiple_instances validators must allow %q, got: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "StopExisting") {
+		t.Errorf("multiple_instances validators must reject StopExisting (cmdlets cannot set it), got: %s", joined)
 	}
 }
 

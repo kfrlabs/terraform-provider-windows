@@ -1624,6 +1624,42 @@ func TestOneShotCancelMidStream(t *testing.T) {
 	t.Logf("cancelled one-shot call returned after %v", elapsed)
 }
 
+// A server that never closes the exec channel (observed live: an orphaned
+// powershell.exe holding it open after a wedged Invoke-DscResource) must
+// not wedge the documented per-resource timeout: session.Close cannot
+// unblock session.Run there, so runOneShot reports the context deadline
+// after oneShotCancelGrace instead of waiting forever. The output buffers
+// are deliberately not returned on that path (concurrent-write hazard,
+// issue #172), and every caller discards output on timeout anyway.
+func TestOneShotCancelServerNeverCloses(t *testing.T) {
+	noAgent(t)
+	keyPEM, pub, _ := newClientKeypair(t)
+	srv := startTestServer(t, testServerOptions{
+		authorizedKey: pub, oneShot: true, oneShotHang: true,
+	})
+
+	c := newTransportTestClient(t, Config{
+		Host: "127.0.0.1", Port: srv.Port, Username: "tester",
+		PrivateKey: string(keyPEM), HostKey: srv.AuthorizedKeyLine(), Timeout: testTimeout,
+	})
+	c.oneShot = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, _, err := c.RunPowerShell(ctx, "Get-Thing")
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a context.DeadlineExceeded error, got: %v", err)
+	}
+	// The server never answers: the call must return at about
+	// ctx deadline + oneShotCancelGrace, never at the 30s server sleep.
+	if elapsed > oneShotCancelGrace+5*time.Second {
+		t.Errorf("wedged one-shot call took %v, want < %v", elapsed, oneShotCancelGrace+5*time.Second)
+	}
+	t.Logf("wedged one-shot call returned after %v", elapsed)
+}
+
 // A multi-key server (ECDSA+ed25519+RSA, as Windows OpenSSH presents) must
 // still verify against the pinned or listed type instead of failing on the
 // negotiated one (issue #393). Without HostKeyAlgorithms the handshake

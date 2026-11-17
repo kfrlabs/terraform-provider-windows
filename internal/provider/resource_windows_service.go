@@ -399,6 +399,15 @@ func (r *windowsServiceResource) Create(ctx context.Context, req resource.Create
 		// stays error-only.
 		if state != nil {
 			final := modelFromState(state, plan)
+			// A non-nil state alongside err means the status reconcile
+			// failed after the service was created (winclient only
+			// returns (state, err) from reconcileStatus): recording the
+			// plan's status would pretend the failed Start/Stop/Pause
+			// succeeded and the next plan would report No changes,
+			// silently dropping the retry. Null it so the next plan
+			// diffs against config and retries the status change
+			// (mirrors the Update error path below).
+			final.Status = types.StringNull()
 			resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 		}
 		addServiceDiag(&resp.Diagnostics, "Create windows_service failed", err)
@@ -547,6 +556,15 @@ func (r *windowsServiceResource) Update(ctx context.Context, req resource.Update
 			final := modelFromState(state, plan)
 			final.ServicePassword = prior.ServicePassword
 			final.ServicePasswordWOVersion = prior.ServicePasswordWOVersion
+			// Same rule for the desired status: a non-nil state
+			// alongside err means the status reconcile failed after the
+			// other attributes were applied (winclient only returns
+			// (state, err) from reconcileStatus). Persisting the plan's
+			// status would pretend the failed Start/Stop/Pause
+			// succeeded and the next plan would report No changes,
+			// silently dropping the retry. Keep the prior desired
+			// status so the next plan still diffs and retries.
+			final.Status = prior.Status
 			resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 		}
 		addServiceDiag(&resp.Diagnostics, "Update windows_service failed", err)

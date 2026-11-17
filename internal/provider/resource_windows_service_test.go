@@ -666,6 +666,47 @@ func TestCreate_Handler_ClientError(t *testing.T) {
 	}
 }
 
+// TestCreate_PartialStatusFailure_NullsStatus: winclient returns (state,
+// err) only when the post-create status reconcile fails (issue #341). The
+// unapplied desired status must not be recorded: a recorded Running with a
+// really-Stopped service would make the next plan report No changes and
+// silently drop the retry. Nulling it preserves the config-vs-state diff.
+func TestCreate_PartialStatusFailure_NullsStatus(t *testing.T) {
+	fake := &fakeSvcClient{
+		createOut: stateOK(),
+		createErr: winclient.NewServiceError(
+			winclient.ServiceErrorUnknown, "Start-Service failed", nil, nil),
+	}
+	r := &windowsServiceResource{svc: fake}
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":        tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path": tftypes.NewValue(tftypes.String, `C:\x.exe`),
+			"status":      tftypes.NewValue(tftypes.String, "Running"),
+		}),
+	}
+	resp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: svcObj(nil)},
+	}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from failed reconcile")
+	}
+	var m windowsServiceModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if !m.Status.IsNull() {
+		t.Errorf("partial-failure state must null status (retry diff), got %q", m.Status.ValueString())
+	}
+	if m.CurrentStatus.ValueString() != "Stopped" {
+		t.Errorf("partial-failure state must keep observed current_status, got %q", m.CurrentStatus.ValueString())
+	}
+}
+
 // TestCreate_ForwardsWOPassword (issue #194): Create with
 // service_password_wo + service_password_wo_version forwards the configured
 // secret to Windows and preserves the version in state (the secret itself
@@ -895,6 +936,63 @@ func TestUpdate_Handler_HappyPath(t *testing.T) {
 	}
 	if fake.updateIn.DisplayName != "New Display" || fake.updateIn.StartType != "Manual" {
 		t.Errorf("update input mismatch: %+v", fake.updateIn)
+	}
+}
+
+// TestUpdate_PartialStatusFailure_PreservesPriorStatus: winclient returns
+// (state, err) only when the status reconcile fails after the other
+// attributes were applied (issue #341). Recording the plan's status would
+// pretend the failed Start/Stop/Pause succeeded: the next plan would
+// report No changes against a really-unchanged service and silently drop
+// the retry. The prior desired status is kept so the retry still diffs
+// (mirrors the credential-marker rule in the same error path).
+func TestUpdate_PartialStatusFailure_PreservesPriorStatus(t *testing.T) {
+	fake := &fakeSvcClient{
+		updateOut: stateOK(),
+		updateErr: winclient.NewServiceError(
+			winclient.ServiceErrorUnknown, "Start-Service failed", nil, nil),
+	}
+	r := &windowsServiceResource{svc: fake}
+
+	schemaDef := windowsServiceSchemaDefinition(context.Background())
+	plan := tfsdk.Plan{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":  tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"display_name": tftypes.NewValue(tftypes.String, "New Display"),
+			"status":       tftypes.NewValue(tftypes.String, "Running"),
+		}),
+	}
+	priorState := tfsdk.State{
+		Schema: schemaDef,
+		Raw: svcObj(map[string]tftypes.Value{
+			"id":           tftypes.NewValue(tftypes.String, "svc"),
+			"name":         tftypes.NewValue(tftypes.String, "svc"),
+			"binary_path":  tftypes.NewValue(tftypes.String, `C:\svc.exe`),
+			"display_name": tftypes.NewValue(tftypes.String, "Svc"),
+			"status":       tftypes.NewValue(tftypes.String, "Stopped"),
+		}),
+	}
+	resp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: priorState.Raw.Copy()},
+	}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: plan, State: priorState},
+		resp,
+	)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diag from failed reconcile")
+	}
+	var m windowsServiceModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if m.Status.ValueString() != "Stopped" {
+		t.Errorf("partial-failure state must keep prior status (retry diff), got %q", m.Status.ValueString())
+	}
+	if m.DisplayName.ValueString() != "Svc" {
+		t.Errorf("partial-failure state must carry the observed display_name, got %q", m.DisplayName.ValueString())
 	}
 }
 

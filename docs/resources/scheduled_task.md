@@ -204,7 +204,7 @@ Optional:
 - `allow_hard_terminate` (Boolean) Allow forcible termination.
 - `disallow_start_if_on_batteries` (Boolean) Do not start on battery.
 - `execution_time_limit` (String) Max runtime (ISO 8601). `PT0S` runs indefinitely. Converted to a `TimeSpan` on apply because the cmdlet requires one; compared by value, so an equivalent re-read spelling does not drift.
-- `multiple_instances` (String) Concurrent instance policy.
+- `multiple_instances` (String) Concurrent instance policy. `StopExisting` is reported on read for tasks created outside Terraform, but the ScheduledTasks cmdlets (`New-ScheduledTaskSettingsSet -MultipleInstances`) only accept `Parallel`, `Queue` and `IgnoreNew`, so it cannot be set.
 - `run_only_if_idle` (Boolean) Only run when idle.
 - `run_only_if_network_available` (Boolean) Only start with network.
 - `start_when_available` (Boolean) Start on next opportunity if missed.

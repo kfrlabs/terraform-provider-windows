@@ -508,6 +508,18 @@ func composeOneShotStdin(script, input string) io.Reader {
 	return strings.NewReader(encodePowerShell(script) + "\n" + input)
 }
 
+// oneShotCancelGrace bounds how long runOneShot waits for the remote
+// session to wind down after the context fires before reporting the
+// timeout anyway. session.Close asks the server to terminate the channel,
+// but a server that keeps the channel open (observed live: an orphaned
+// remote process holding it after a wedged Invoke-DscResource) would make
+// session.Run never return, and the documented per-resource timeout would
+// never surface. After the grace period the timeout is reported without
+// the buffers: reading them while the session's copy goroutines may still
+// be writing is a data race (issue #172), and every caller discards output
+// on timeout anyway (the envelope maps it to a timeout stage).
+const oneShotCancelGrace = 5 * time.Second
+
 // runOneShot dials a fresh SSH connection, opens a session running the
 // fixed one-shot bootstrap command with the script piped on stdin, and
 // returns its stdout/stderr. Used when no pwsh.exe is available for the
@@ -540,16 +552,30 @@ func (c *Client) runOneShot(ctx context.Context, script, secret string) (string,
 	select {
 	case <-ctx.Done():
 		_ = session.Close()
-		// Wait for session.Run to return before reading the buffers:
-		// Run's internal copy goroutines may still be writing to them,
-		// and reading concurrently is a data race (also risks truncated
-		// output). Close unblocks Run, so this waits only for the local
-		// copies to drain, not for the remote command. done is buffered,
-		// so this is immediate if Run already finished. Run's own error
-		// is irrelevant here: after Close it only reports the teardown,
-		// while the caller needs the context error.
-		<-done //nolint:errcheck // receive synchronises with the copy goroutines; the value is intentionally discarded
-		return stdout.String(), stderr.String(), ctx.Err()
+		// Wait briefly for session.Run to return before reading the
+		// buffers: Run's internal copy goroutines may still be writing
+		// to them, and reading concurrently is a data race (also risks
+		// truncated output). Close normally unblocks Run, so this
+		// waits only for the local copies to drain, not for the remote
+		// command. done is buffered, so this is immediate if Run
+		// already finished. Run's own error is irrelevant here: after
+		// Close it only reports the teardown, while the caller needs
+		// the context error.
+		//
+		// The wait is bounded by oneShotCancelGrace: a server that
+		// never closes the channel (orphaned remote process) must not
+		// wedge the documented per-resource timeout. On grace expiry
+		// the buffers are deliberately not read (concurrent write
+		// hazard); the timeout error carries no output, which every
+		// caller already expects on this path.
+		timer := time.NewTimer(oneShotCancelGrace)
+		defer timer.Stop()
+		select {
+		case <-done: //nolint:errcheck // receive synchronises with the copy goroutines; the value is intentionally discarded
+			return stdout.String(), stderr.String(), ctx.Err()
+		case <-timer.C:
+			return "", "", ctx.Err()
+		}
 	case runErr := <-done:
 		if runErr != nil {
 			var exitErr *ssh.ExitError

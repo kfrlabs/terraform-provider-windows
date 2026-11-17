@@ -16,6 +16,10 @@ provider "windows" {
 # Minimal example: a machine-scope environment variable through the built-in
 # Environment DSC resource. The gateway converges with Test/Set/Test and
 # removes the variable on destroy via destroy_properties (Ensure = "Absent").
+# Note: the inbox Environment resource takes no Target property (it always
+# manages machine scope here), and its Test can report false indefinitely
+# for variables the DSC engine host process predates — see the resource
+# documentation. Prefer windows_environment_variable for plain variables.
 resource "windows_dsc_resource" "example" {
   module_name   = "PSDesiredStateConfiguration"
   resource_name = "Environment"
@@ -24,7 +28,6 @@ resource "windows_dsc_resource" "example" {
     Ensure = "Present"
     Name   = "FOO"
     Value  = "bar"
-    Target = ["Machine"]
   }
 
   destroy_properties = {
@@ -35,6 +38,8 @@ resource "windows_dsc_resource" "example" {
 
 # Pinned module version: the exact version is used, otherwise the highest
 # installed version is used and reported in resolved_module_version.
+# (Same caveat as above: the inbox Environment resource takes no Target
+# property.)
 resource "windows_dsc_resource" "pinned" {
   module_name    = "PSDesiredStateConfiguration"
   module_version = "1.1"
@@ -44,7 +49,6 @@ resource "windows_dsc_resource" "pinned" {
     Ensure = "Present"
     Name   = "FOO_PINNED"
     Value  = "bar"
-    Target = ["Machine"]
   }
 
   destroy_properties = {
