@@ -885,11 +885,13 @@ func (r *windowsPartitionResource) ImportState(ctx context.Context, req resource
 	}
 	// An import cannot know whether the partition was created with an
 	// explicit size or the maximum extent: the observed values anchor the
-	// state, and a size_bytes config that matches (or a use_maximum_size
-	// config on a full-extent partition) converges with no diff. Drive
-	// letter, flags, size, and the style-matching type are recorded from
-	// the observed state; only use_maximum_size and the non-matching style
-	// stay null. The partition
+	// state. Write size_bytes with the observed exact size to converge
+	// with no diff (a use_maximum_size config never converges: the flag is
+	// create-only metadata whose origin the import cannot recover, so
+	// null -> true forces a replacement by design — do NOT apply that
+	// plan on a data partition). Drive letter, flags, size, and the
+	// style-matching type are recorded from the observed state; only
+	// use_maximum_size and the non-matching style stay null. The partition
 	// type matching the disk style (GUID on GPT, offset-keyed MBR) is
 	// populated from the observed state in canonical form so the
 	// RequiresReplace pair does not force a destructive cycle; the other

@@ -459,12 +459,14 @@ func TestIISSiteStateSuppressUnboundModifier(t *testing.T) {
 	}{
 		{"started unbound suppresses", "Started", siteBindingsList(t), "Stopped"},
 		{"started bound stays", "Started", siteBindingsList(t, map[string]string{"protocol": "http", "binding_information": "*:80:web"}), "Started"},
+
 		{"stopped unbound stays", "Stopped", siteBindingsList(t), "Stopped"},
 		{"stopped bound stays", "Stopped", siteBindingsList(t, map[string]string{"protocol": "http", "binding_information": "*:80:web"}), "Stopped"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := run(tc.state, tc.bindings); got.ValueString() != tc.want {
+			got := run(tc.state, tc.bindings)
+			if got.ValueString() != tc.want {
 				t.Errorf("modifier result = %q, want %q", got.ValueString(), tc.want)
 			}
 		})
@@ -478,8 +480,8 @@ func TestIISSiteStateSuppressUnboundModifier(t *testing.T) {
 	}{
 		{"null state", siteNullStr(), siteBindingsList(t)},
 		{"unknown state", tftypes.NewValue(tftypes.String, tftypes.UnknownValue), siteBindingsList(t)},
-		{"unknown bindings", tftypes.NewValue(tftypes.String, "Started"), tftypes.NewValue(siteBindingsListType(), tftypes.UnknownValue)},
-		{"null bindings", tftypes.NewValue(tftypes.String, "Started"), siteNullBindings()},
+		{"unknown bindings passthrough (create fails fast at apply)", tftypes.NewValue(tftypes.String, "Started"), tftypes.NewValue(siteBindingsListType(), tftypes.UnknownValue)},
+		{"null bindings passthrough", tftypes.NewValue(tftypes.String, "Started"), siteNullBindings()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plan := tfsdk.Plan{Raw: siteObj(map[string]tftypes.Value{

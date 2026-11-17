@@ -17,8 +17,9 @@
 //
 // A configured state = "Started" on a site with no bindings leaves the
 // site Stopped with a warning (IIS cannot run an unbound site) instead of
-// failing; a plan modifier suppresses the resulting perpetual diff while
-// the site stays unbound.
+// failing — except at create, where it is refused outright with
+// start_refused (a brand-new site never has bindings). A plan modifier
+// suppresses the resulting perpetual diff while the site stays unbound.
 //
 // Spec alignment: windows_iis_site spec v1 (issue #284).
 // Framework:      terraform-plugin-framework v1.19.0.
@@ -154,7 +155,8 @@ func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 			"left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime " +
 			"`state` (`Started` / `Stopped`) is enforced only when configured — except that a `Started` " +
 			"site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site) " +
-			"instead of failing.\n\n" +
+			"instead of failing (on create, `Started` is refused outright with `start_refused`: " +
+			"create `Stopped`, add bindings, then flip to `Started`).\n\n" +
 			"Requires IIS on the target host: install it with the `windows_feature` resource (`Web-Server`; " +
 			"add `Web-Mgmt-Console` / `Web-Scripting-Tools` for the `WebAdministration` module on Server Core).\n\n" +
 			"**Partial failures:** if creation fails after the site was already registered in IIS, " +
@@ -193,6 +195,7 @@ func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 				Computed:    true,
 				Description: "Numeric site ID (1-4294967295). Immutable after creation (ForceNew). When left unconfigured, IIS allocates the lowest free ID itself.",
 				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
 					int64planmodifier.RequiresReplace(),
 				},
 				Validators: []validator.Int64{
@@ -294,7 +297,7 @@ func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 			"state": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Runtime state of the site. One of `Started`, `Stopped`. Enforced only when configured (`Start-Website` / `Stop-Website`). A `Started` site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site); the diff is suppressed while the site stays unbound.",
+				Description: "Runtime state of the site. One of `Started`, `Stopped`. Enforced only when configured (`Start-Website` / `Stop-Website`). A `Started` site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site); the diff is suppressed while the site stays unbound. Creating with `Started` is refused (`start_refused`): create `Stopped` (or omit state), add `windows_iis_binding` resources, then set `Started`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("Started", "Stopped"),
 				},
@@ -352,12 +355,15 @@ func (v iisSiteNameValidator) ValidateString(_ context.Context, req validator.St
 	}
 }
 
-// iisSiteStateSuppressUnboundModifier suppresses the perpetual
-// Started-vs-Stopped diff while the site has no bindings: IIS cannot run
-// an unbound site, so the CRUD scripts deliberately leave it Stopped and
-// warn. Planning Stopped matches the host reality; once bindings appear
-// (managed by windows_iis_binding) the modifier goes quiet and the
-// next plan proposes Started again.
+// iisSiteStateSuppressUnboundModifier plans Stopped instead of Started
+// while the site has no bindings (IIS cannot run an unbound site).
+// Unknown bindings (always the case at create: computed, separate
+// resource) pass through untouched: the framework forbids planning a
+// value that disagrees with a non-null config without prior state, so
+// Create fails fast with start_refused instead (see winclient Create).
+// Once bindings exist (managed by windows_iis_binding) the modifier goes
+// quiet and the next plan proposes Started again (aggressive CLI
+// campaign, 2026-11-17).
 type iisSiteStateSuppressUnboundModifier struct{}
 
 func (m iisSiteStateSuppressUnboundModifier) Description(_ context.Context) string {
@@ -381,6 +387,13 @@ func (m iisSiteStateSuppressUnboundModifier) PlanModifyString(ctx context.Contex
 		return
 	}
 	if planModel.Bindings.IsNull() || planModel.Bindings.IsUnknown() {
+		// Create (or unreadable bindings): leave Started alone. A new
+		// site genuinely has no bindings yet and IIS cannot run it, but
+		// the framework forbids planning a value that disagrees with a
+		// non-null config without prior state — so neither Stopped nor
+		// Unknown converges here. Create fails fast with start_refused
+		// instead (see winclient Create); add bindings first, then flip
+		// to Started.
 		return
 	}
 	if len(planModel.Bindings.Elements()) == 0 {
@@ -415,6 +428,19 @@ func (r *windowsIISSiteResource) Create(ctx context.Context, req resource.Create
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	// The warning keys off user intent (config): the plan modifier may
+	// already have coerced state to Stopped for an unbound site. The
+	// schema guard keeps unit tests (which build requests without a
+	// config) working; the framework always populates Config live.
+	configState := plan.State
+	if req.Config.Schema != nil {
+		var config windowsIISSiteModel
+		resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		configState = config.State
 	}
 
 	createTimeout, diags := plan.Timeouts.Create(ctx, iisSiteDefaultTimeout)
@@ -462,7 +488,7 @@ func (r *windowsIISSiteResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	warnIISSiteLeftStopped(&resp.Diagnostics, plan.State, state)
+	warnIISSiteLeftStopped(&resp.Diagnostics, configState, state)
 
 	m, diags := iisSiteStateToModel(state)
 	resp.Diagnostics.Append(diags...)
@@ -542,6 +568,19 @@ func (r *windowsIISSiteResource) Update(ctx context.Context, req resource.Update
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// The warning keys off user intent (config): the plan modifier may
+	// already have coerced state to Stopped for an unbound site. The
+	// schema guard keeps unit tests (which build requests without a
+	// config) working; the framework always populates Config live.
+	configState := plan.State
+	if req.Config.Schema != nil {
+		var config windowsIISSiteModel
+		resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		configState = config.State
+	}
 
 	updateTimeout, diags := plan.Timeouts.Update(ctx, iisSiteDefaultTimeout)
 	resp.Diagnostics.Append(diags...)
@@ -615,7 +654,7 @@ func (r *windowsIISSiteResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	warnIISSiteLeftStopped(&resp.Diagnostics, plan.State, observed)
+	warnIISSiteLeftStopped(&resp.Diagnostics, configState, observed)
 
 	m, diags := iisSiteStateToModel(observed)
 	resp.Diagnostics.Append(diags...)

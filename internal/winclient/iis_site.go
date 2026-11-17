@@ -68,10 +68,11 @@ func NewIISSiteClient(c *Client) *IISSiteClient { return &IISSiteClient{c: c} }
 // the configuration system so the read works even for sites whose
 // provider view is partial. limits.connectionTimeout is converted to
 // whole seconds server-side to avoid locale formatting. Bindings are
-// projected from the live Site object ($site.Bindings: protocol plus
+// projected from live server config (Get-WebBinding: protocol plus
 // binding_information) — a literal enumeration, never a wildcard -Name
 // lookup — and stay empty for the zero-binding sites this resource
-// creates.
+// creates. ($site.Bindings must not be used: the IIS: drive caches the
+// Site object and replays removed bindings.)
 const iisSiteReadFragment = `
 function Get-SiteData([string]$Name) {
   $site = Get-ChildItem 'IIS:\Sites' -ErrorAction Stop | Where-Object { $_.Name -eq $Name }
@@ -85,8 +86,14 @@ function Get-SiteData([string]$Name) {
   $sitePath = ('IIS:\Sites\' + $Name)
   $p = Get-ItemProperty $sitePath -ErrorAction Stop
   $bindings = @()
-  if ($null -ne $site.Bindings) {
-    foreach ($b in @($site.Bindings)) {
+  # NOTE: read bindings via Get-WebBinding (live server config), never via
+  # $site.Bindings: the IIS: drive caches the Site object, so $site.Bindings
+  # still lists bindings removed earlier in the same session (aggressive CLI
+  # campaign, 2026-11-17 — a removed *:80: boot binding reappeared here and
+  # broke site creation downstream).
+  $wb = Get-WebBinding -Name $Name -ErrorAction Stop
+  if ($null -ne $wb) {
+    foreach ($b in @($wb)) {
       if ($null -eq $b) { continue }
       $bindings += [ordered]@{ protocol = [string]$b.Protocol; binding_information = [string]$b.BindingInformation }
     }
@@ -163,22 +170,34 @@ func buildIISSiteSetStatements(s IISSiteSettings) string {
 
 // buildIISSiteStateStatement renders the runtime-state enforcement lines.
 // A nil state emits nothing: the site keeps whatever state the host
-// reports. A Started enforcement skips the Start-Website call when the
-// site has no bindings: IIS cannot run an unbound site, so the script
-// leaves it Stopped instead of failing (the provider layer warns). The
-// binding count is re-read from the host rather than trusted from an
-// earlier variable so the guard observes the post-write reality.
+// reports. Enforcement is skipped entirely when the site has no bindings:
+// IIS cannot run an unbound site, so Start-Website fails with 0x800710D8 —
+// and so does Stop-Website on a never-started site. The binding count is
+// read live via Get-WebBinding (the IIS: drive caches removed bindings on
+// the Site object) so the guard observes the post-write reality. A Started
+// site left Stopped for lack of bindings is reported by the provider layer,
+// which warns instead of failing.
 func buildIISSiteStateStatement(state *string, escapedName string) string {
 	if state == nil {
 		return ""
 	}
 	if *state == "Started" {
-		return "  $stateCheck = Get-ChildItem 'IIS:\\Sites' -ErrorAction Stop | Where-Object { $_.Name -eq $Name }\n" +
+		// Count live bindings via Get-WebBinding, not the cached
+		// $site.Bindings property (see Get-SiteData note): a stale count
+		// attempts Start-Website on an unbound site, which fails with
+		// 0x800710D8 (aggressive CLI campaign, 2026-11-17).
+		return "  $wbCheck = Get-WebBinding -Name " + escapedName + " -ErrorAction Stop\n" +
 			"  $bindCount = 0\n" +
-			"  if ($null -ne $stateCheck.Bindings) { $bindCount = @($stateCheck.Bindings).Count }\n" +
+			"  if ($null -ne $wbCheck) { $bindCount = @($wbCheck).Count }\n" +
 			"  if ($bindCount -gt 0) { Start-Website -Name " + escapedName + " -ErrorAction Stop }\n"
 	}
-	return "  Stop-Website -Name " + escapedName + " -ErrorAction Stop\n"
+	// Stopped is enforced only when bindings exist: Stop-Website on a
+	// never-started (always unbound) site fails with the same 0x800710D8,
+	// and stopping an unbound site is meaningless anyway.
+	return "  $wbCheck = Get-WebBinding -Name " + escapedName + " -ErrorAction Stop\n" +
+		"  $bindCount = 0\n" +
+		"  if ($null -ne $wbCheck) { $bindCount = @($wbCheck).Count }\n" +
+		"  if ($bindCount -gt 0) { Stop-Website -Name " + escapedName + " -ErrorAction Stop }\n"
 }
 
 // iisSitePreamble sets the script variables shared by every mutating
@@ -227,6 +246,7 @@ func mapIISSiteKind(kind, _ string) IISSiteErrorKind {
 		IISSiteErrorAppPoolNotFound,
 		IISSiteErrorPathNotFound,
 		IISSiteErrorIISNotInstalled,
+		IISSiteErrorStartRefused,
 		IISSiteErrorAccessDenied:
 		return IISSiteErrorKind(kind)
 	default:
@@ -403,6 +423,18 @@ func validateIISSiteInput(in IISSiteInput, allowSiteID bool) error {
 func (a *IISSiteClient) Create(ctx context.Context, in IISSiteInput) (*IISSiteState, error) {
 	if err := validateIISSiteInput(in, true); err != nil {
 		return nil, err
+	}
+	// A brand-new site has no bindings and IIS cannot run an unbound
+	// site (Start-Website fails with 0x800710D8). Refuse Started up
+	// front: recording Stopped instead would trip "inconsistent result
+	// after apply", and the framework forbids planning a value that
+	// disagrees with a non-null config without prior state — so the
+	// plan cannot be coerced either. Create Stopped (or omit state),
+	// add windows_iis_binding resources, then set state Started.
+	if in.Settings.State != nil && *in.Settings.State == "Started" {
+		return nil, NewIISSiteError(IISSiteErrorStartRefused,
+			fmt.Sprintf("IIS site %q cannot be created Started: a new site has no bindings and IIS cannot run an unbound site. Create with state = \"Stopped\" (or omit state), add windows_iis_binding resources, then set state = \"Started\".", in.Name),
+			nil, map[string]string{"name": in.Name})
 	}
 	script := fmt.Sprintf(`
 $Name = %s

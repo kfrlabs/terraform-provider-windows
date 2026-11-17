@@ -462,7 +462,8 @@ func wpMapKind(k string) WingetPackageErrorKind {
 		WingetPackageErrorPermission,
 		WingetPackageErrorSourceUnreachable,
 		WingetPackageErrorCatalogError,
-		WingetPackageErrorResourceInUse:
+		WingetPackageErrorResourceInUse,
+		WingetPackageErrorUpgradeNotConverged:
 		return WingetPackageErrorKind(k)
 	default:
 		return WingetPackageErrorUnknown
@@ -615,6 +616,76 @@ func (w *WingetPackageClientImpl) Read(ctx context.Context, packageID, source st
 	return parseWPState(resp)
 }
 
+// WingetVersionsEqual reports whether a pinned winget version and an
+// installed version denote the same release. Comparison is numeric per
+// dot-separated component (missing components count as 0, so "7.7"
+// matches "7.7.0"), and any non-numeric remainder must match exactly.
+// A conservative false (unknown shapes) lets the caller attempt the
+// upgrade and fail loudly rather than record a state lie.
+func WingetVersionsEqual(pin, installed string) bool {
+	if pin == installed {
+		return true
+	}
+	pNums, pRest := splitVersionHead(pin)
+	iNums, iRest := splitVersionHead(installed)
+	if pRest != iRest {
+		return false
+	}
+	n := len(pNums)
+	if len(iNums) > n {
+		n = len(iNums)
+	}
+	for i := 0; i < n; i++ {
+		var p, iv int
+		if i < len(pNums) {
+			p = pNums[i]
+		}
+		if i < len(iNums) {
+			iv = iNums[i]
+		}
+		if p != iv {
+			return false
+		}
+	}
+	return true
+}
+
+// splitVersionHead splits s into leading numeric dot-separated components
+// and the remainder (including any separator that stopped the parse).
+func splitVersionHead(s string) ([]int, string) {
+	var nums []int
+	rest := s
+	for rest != "" {
+		i := 0
+		for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+			i++
+		}
+		if i == 0 {
+			break
+		}
+		var v int
+		for _, c := range rest[:i] {
+			v = v*10 + int(c-'0')
+		}
+		nums = append(nums, v)
+		rest = rest[i:]
+		if rest == "" {
+			break
+		}
+		if rest[0] != '.' {
+			break
+		}
+		rest = rest[1:]
+		if rest == "" {
+			// Trailing dot: keep it in the remainder so "1.2." differs
+			// from "1.2" rather than silently equating.
+			rest = "."
+			break
+		}
+	}
+	return nums, rest
+}
+
 // Update applies a version change via "winget upgrade". When input.Version
 // is "" (cleared to null in config), the command is run without --version to
 // advance to the latest release.
@@ -628,7 +699,7 @@ func (w *WingetPackageClientImpl) Update(ctx context.Context, input WingetPackag
 		if err != nil {
 			return nil, err
 		}
-		if current != nil && current.InstalledVersion == input.Version {
+		if current != nil && WingetVersionsEqual(input.Version, current.InstalledVersion) {
 			return current, nil
 		}
 	}
@@ -638,7 +709,23 @@ func (w *WingetPackageClientImpl) Update(ctx context.Context, input WingetPackag
 	if err != nil {
 		return nil, err
 	}
-	return parseWPState(resp)
+	state, err := parseWPState(resp)
+	if err != nil {
+		return nil, err
+	}
+	// Post-condition: winget reports benign no-op codes when it cannot
+	// move (e.g. installer-technology change requiring uninstall +
+	// reinstall). Recording the pin as satisfied would leave a state lie
+	// followed by perpetual No changes plans (aggressive CLI campaign,
+	// 2026-11-17), so a pin that is still unmet is a loud error instead.
+	if input.Version != "" && state != nil && state.InstalledVersion != "" &&
+		!WingetVersionsEqual(input.Version, state.InstalledVersion) {
+		return nil, NewWingetPackageError(WingetPackageErrorUpgradeNotConverged,
+			fmt.Sprintf("winget upgrade of %q did not converge: version %q requested but %q is installed (winget cannot upgrade across installer technologies — uninstall the package and install the requested version)", input.PackageID, input.Version, state.InstalledVersion),
+			nil,
+			map[string]string{"package_id": input.PackageID, "installed_version": state.InstalledVersion, "desired_version": input.Version})
+	}
+	return state, nil
 }
 
 // Uninstall removes the package via "winget uninstall". The NO_APPLICATIONS_FOUND

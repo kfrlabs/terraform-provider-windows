@@ -61,6 +61,15 @@ const (
 	// privilege to manage IIS configuration.
 	IISSiteErrorAccessDenied = "access_denied"
 
+	// IISSiteErrorStartRefused is returned by Create when state Started
+	// is requested for a brand-new site. A fresh site has no bindings and
+	// IIS cannot run an unbound site, so honouring Started is impossible;
+	// and the framework forbids planning a value that disagrees with a
+	// non-null config without prior state, so neither coercing the plan
+	// nor recording Stopped converges. Create with state Stopped (or
+	// omit it), add windows_iis_binding resources, then set Started.
+	IISSiteErrorStartRefused = "start_refused"
+
 	// IISSiteErrorUnknown is the catch-all for unrecognised PowerShell
 	// errors or SSH transport failures.
 	IISSiteErrorUnknown = "unknown"
@@ -93,6 +102,7 @@ var (
 	ErrIISSitePathNotFound    = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorPathNotFound}
 	ErrIISSiteIISNotInstalled = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorIISNotInstalled}
 	ErrIISSiteAccessDenied    = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorAccessDenied}
+	ErrIISSiteStartRefused    = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorStartRefused}
 	ErrIISSiteUnknown         = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorUnknown}
 )
 

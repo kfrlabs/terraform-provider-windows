@@ -992,6 +992,31 @@ func TestPartitionImportState_Handler(t *testing.T) {
 	}
 }
 
+// Import cannot recover the create-only use_maximum_size flag: it stays
+// null, and a true config forces a replacement by design (aggressive CLI
+// campaign, 2026-11-16 — verified live against disk 1). The converging
+// config spells size_bytes with the observed exact size instead.
+func TestPartitionImportState_UseMaximumSizeStaysNull(t *testing.T) {
+	fake := &fakePartitionClient{readOut: okPartitionInfo()}
+	r := &windowsPartitionResource{partitions: fake}
+	schemaDef := windowsPartitionSchemaDefinition(context.Background())
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaDef, Raw: partitionObj(nil)},
+	}
+	r.ImportState(context.Background(),
+		resource.ImportStateRequest{ID: okPartitionID()}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diags: %v", resp.Diagnostics)
+	}
+	var m windowsPartitionModel
+	if d := resp.State.Get(context.Background(), &m); d.HasError() {
+		t.Fatalf("State.Get: %v", d)
+	}
+	if !m.UseMaximumSize.IsNull() {
+		t.Errorf("import use_maximum_size must stay null (create-only origin unknowable), got %v", m.UseMaximumSize)
+	}
+}
+
 // Import must populate the style-matching partition type in canonical form
 // so the RequiresReplace pair does not force a destructive cycle; the other
 // style stays null.
