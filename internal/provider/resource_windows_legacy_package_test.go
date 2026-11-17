@@ -28,6 +28,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	fwvalidator "github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -594,6 +595,59 @@ func TestLegacyPackageSourceValidator(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// valid_exit_codes element range (CLI salvo regression test)
+// ---------------------------------------------------------------------------
+
+// TestLegacyPackageValidExitCodes_Range covers the validation gap found by
+// the Terraform CLI salvo: exit codes outside the int32 range passed
+// validate and died opaquely at apply time (the PowerShell install/uninstall
+// pipelines cast every entry with [int], which throws mid-script without an
+// Emit-Err envelope). They must be rejected at plan time instead. Negative
+// int32 values stay allowed: Windows reports crash codes (e.g. 0xC0000005)
+// as negative int32 via .NET Process.ExitCode.
+func TestLegacyPackageValidExitCodes_Range(t *testing.T) {
+	ctx := context.Background()
+	r := &windowsLegacyPackageResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	attr, ok := schemaResp.Schema.Attributes["valid_exit_codes"].(schema.ListAttribute)
+	if !ok {
+		t.Fatal("valid_exit_codes must be a schema.ListAttribute")
+	}
+	if len(attr.Validators) == 0 {
+		t.Fatal("valid_exit_codes must carry element-range validators (out-of-int32 values fail opaquely at apply)")
+	}
+	run := func(values []int64) diag.Diagnostics {
+		t.Helper()
+		list, diags := types.ListValueFrom(ctx, types.Int64Type, values)
+		if diags.HasError() {
+			t.Fatalf("ListValueFrom(%v): %v", values, diags)
+		}
+		var out diag.Diagnostics
+		for _, v := range attr.Validators {
+			resp := &fwvalidator.ListResponse{}
+			v.ValidateList(ctx, fwvalidator.ListRequest{ConfigValue: list}, resp)
+			out.Append(resp.Diagnostics...)
+		}
+		return out
+	}
+	for _, values := range [][]int64{{0, 3010}, {-1073741819}, {-2147483648}, {2147483647}} {
+		t.Run("accept", func(t *testing.T) {
+			if diags := run(values); diags.HasError() {
+				t.Errorf("values %v must be accepted, got: %v", values, diags)
+			}
+		})
+	}
+	for _, values := range [][]int64{{2147483648}, {-2147483649}, {99999999999}, {0, -99999999999}} {
+		t.Run("reject", func(t *testing.T) {
+			if diags := run(values); !diags.HasError() {
+				t.Errorf("values %v must be rejected (outside int32 range)", values)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // ImportState
 // ---------------------------------------------------------------------------
 
@@ -800,6 +854,37 @@ func TestLegacyPackageResource_ImportState_Valid(t *testing.T) {
 	}
 	if got.ValueString() != "{01234567-89AB-CDEF-0123-456789ABCDEF}" {
 		t.Errorf("id = %q (whitespace must be trimmed)", got.ValueString())
+	}
+}
+
+// TestLegacyPackageResource_ImportState_SeedsDefaults is the regression test
+// for the post-import perpetual diff found by the Terraform CLI salvo: the
+// schema defaults that are not observable on the host (display_name_match and
+// keep_log) must be seeded at import time. Read cannot populate them, so
+// leaving them null renders plan null -> "legacy"/false on every run even
+// when the config omits both attributes and the host state is reconciled.
+func TestLegacyPackageResource_ImportState_SeedsDefaults(t *testing.T) {
+	r := &windowsLegacyPackageResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: lpNullRawState()}}
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "{01234567-89AB-CDEF-0123-456789ABCDEF}"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diags: %v", resp.Diagnostics)
+	}
+	var match types.String
+	if d := resp.State.GetAttribute(context.Background(), path.Root("display_name_match"), &match); d.HasError() {
+		t.Fatalf("get display_name_match: %v", d)
+	}
+	if match.IsNull() || match.ValueString() != "legacy" {
+		t.Errorf("display_name_match = %q (must be seeded to the schema default \"legacy\")", match.ValueString())
+	}
+	var keep types.Bool
+	if d := resp.State.GetAttribute(context.Background(), path.Root("keep_log"), &keep); d.HasError() {
+		t.Fatalf("get keep_log: %v", d)
+	}
+	if keep.IsNull() || keep.ValueBool() {
+		t.Errorf("keep_log = %v (must be seeded to the schema default false)", keep)
 	}
 }
 

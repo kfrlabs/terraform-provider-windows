@@ -414,6 +414,16 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Optional:            true,
 				Description:         "Exit codes treated as success. Default [0,3010]. Updatable in place (only affects future runs).",
 				MarkdownDescription: "Exit codes treated as success. Default `[0, 3010]`. **Updatable in place** (only affects future runs).",
+				Validators: []validator.List{
+					// The PowerShell install/uninstall pipelines cast every
+					// entry with [int]: values outside the int32 range throw
+					// mid-script without an Emit-Err envelope and surface as
+					// an opaque unknown error at apply time. Reject them at
+					// plan time instead. Negative int32 values stay allowed:
+					// Windows reports crash codes (e.g. 0xC0000005) as
+					// negative int32 via .NET Process.ExitCode.
+					listvalidator.ValueInt64sAre(int64validator.Between(-2147483648, 2147483647)),
+				},
 			},
 
 			"working_directory": schema.StringAttribute{
@@ -1050,6 +1060,11 @@ func (r *windowsLegacyPackageResource) Delete(ctx context.Context, req resource.
 // attributes. User-set configuration attributes (source_*, install_args, ...)
 // are unknown at import time and must be re-supplied via the Terraform config
 // to avoid plan drift.
+//
+// The schema defaults that are not observable on the host
+// (display_name_match="legacy", keep_log=false) are seeded here as well:
+// Read cannot populate them, and leaving them null would render a perpetual
+// post-import diff (plan null -> default on every run).
 func (r *windowsLegacyPackageResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
@@ -1060,6 +1075,8 @@ func (r *windowsLegacyPackageResource) ImportState(ctx context.Context, req reso
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("display_name_match"), "legacy")...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("keep_log"), false)...)
 }
 
 // ---------------------------------------------------------------------------
