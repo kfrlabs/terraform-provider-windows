@@ -640,6 +640,29 @@ func TestIISBindingInPlaceChanged(t *testing.T) {
 	if iisBindingInPlaceChanged(changed, prior) {
 		t.Error("case-only thumbprint drift must not report a change")
 	}
+	// Spacing/case drift against a preserved non-canonical prior spelling
+	// is the same certificate (state keeps the configured spelling since
+	// the canonical-modifier removal): both sides must be normalised
+	// before comparison, or every unrelated update would needlessly
+	// remove and re-add the certificate.
+	spaced := "ab cd " + strings.Repeat("0", 36)
+	changed = base
+	changed.CertificateThumbprint = types.StringValue(spaced)
+	prior = base
+	prior.CertificateThumbprint = types.StringValue(spaced)
+	if iisBindingInPlaceChanged(changed, prior) {
+		t.Error("identical spaced thumbprints must not report a change")
+	}
+	changed = base
+	changed.CertificateThumbprint = types.StringValue(strings.ToUpper(strings.ReplaceAll(spaced, " ", "")))
+	if iisBindingInPlaceChanged(changed, prior) {
+		t.Error("canonical-vs-spaced spelling of the same certificate must not report a change")
+	}
+	changed = base
+	changed.CertificateThumbprint = types.StringValue(strings.Repeat("D", 40))
+	if !iisBindingInPlaceChanged(changed, prior) {
+		t.Error("a genuinely different thumbprint must report a change")
+	}
 }
 
 // ---------------------------------------------------------------------------

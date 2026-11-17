@@ -491,6 +491,24 @@ func modelToIISBindingCreateInput(m windowsIISBindingModel, protocol, ip, host s
 	return in
 }
 
+// iisBindingEffectiveThumbprint resolves a thumbprint model value to its
+// comparison form: the normalised canonical spelling (upper-case hex
+// without spaces) when parseable, else the trimmed raw spelling, else "".
+// Both sides of every comparison must go through this helper: since state
+// preserves the configured spelling (which may be spaced or lower-case),
+// comparing a normalised plan against a merely trimmed prior would report
+// a spurious change for the same certificate (second-wave hardening,
+// 2026-11-17).
+func iisBindingEffectiveThumbprint(v types.String) string {
+	if v.IsNull() || v.IsUnknown() {
+		return ""
+	}
+	if norm, err := winclient.NormalizeIISBindingThumbprint(v.ValueString()); err == nil {
+		return norm
+	}
+	return strings.TrimSpace(v.ValueString())
+}
+
 // iisBindingInPlaceChanged reports whether any in-place attribute
 // (require_sni, certificate_thumbprint, certificate_store_name) differs
 // between plan and prior state.
@@ -498,18 +516,8 @@ func iisBindingInPlaceChanged(plan, prior windowsIISBindingModel) bool {
 	if !plan.RequireSNI.Equal(prior.RequireSNI) {
 		return true
 	}
-	planThumb := ""
-	if !plan.CertificateThumbprint.IsNull() && !plan.CertificateThumbprint.IsUnknown() {
-		if norm, err := winclient.NormalizeIISBindingThumbprint(plan.CertificateThumbprint.ValueString()); err == nil {
-			planThumb = norm
-		} else {
-			planThumb = strings.TrimSpace(plan.CertificateThumbprint.ValueString())
-		}
-	}
-	priorThumb := ""
-	if !prior.CertificateThumbprint.IsNull() {
-		priorThumb = strings.TrimSpace(prior.CertificateThumbprint.ValueString())
-	}
+	planThumb := iisBindingEffectiveThumbprint(plan.CertificateThumbprint)
+	priorThumb := iisBindingEffectiveThumbprint(prior.CertificateThumbprint)
 	if planThumb != priorThumb {
 		return true
 	}
@@ -549,7 +557,9 @@ func modelToIISBindingUpdateInput(plan, prior windowsIISBindingModel, protocol, 
 	switch {
 	case plan.CertificateThumbprint.IsUnknown():
 		if !prior.CertificateThumbprint.IsNull() {
-			v := strings.TrimSpace(prior.CertificateThumbprint.ValueString())
+			// Round-trip the canonical spelling: the host only ever
+			// holds the normalised form.
+			v := iisBindingEffectiveThumbprint(prior.CertificateThumbprint)
 			in.CertificateThumbprint = &v
 		}
 	case plan.CertificateThumbprint.IsNull():
