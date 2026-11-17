@@ -79,7 +79,12 @@ func TestLPCreateScript_SecretMergeAndLogLifecycle(t *testing.T) {
 	body := lpCreateScript()
 	for _, want := range []string{
 		// WriteOnly args merged from the stdin payload, never logged.
-		`if ($cfg.install_args_wo) { $extraInstall += @([string[]]$cfg.install_args_wo) }`,
+		// Elements are quoted via ConvertTo-LpArg so values with spaces
+		// survive Start-Process -ArgumentList intact (2026-11-17: an
+		// unquoted SALVOPROP=hello world corrupted the msiexec command
+		// line and hung the installer until timeout).
+		`if ($cfg.install_args) { $extraInstall = @([string[]]$cfg.install_args | ForEach-Object { ConvertTo-LpArg $_ }) }`,
+		`if ($cfg.install_args_wo) { $extraInstall += @([string[]]$cfg.install_args_wo | ForEach-Object { ConvertTo-LpArg $_ }) }`,
 		// Default-secure: the installer log is deleted after success ...
 		`if (-not $cfg.keep_log) {`,
 		`Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue`,
@@ -148,5 +153,25 @@ func TestLPDelete_ForwardsUninstallSettings(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
+	}
+}
+
+func TestLPArgQuoting_SpacesSurviveStartProcess(t *testing.T) {
+	// Aggressive CLI campaign (2026-11-17): install_args ["SALVOPROP=hello
+	// world"] reached msiexec unquoted (PS 5.1 Start-Process -ArgumentList
+	// joins array elements with spaces and performs no quoting), corrupting
+	// the command line and hanging the installer until timeout.
+	// ConvertTo-LpArg must exist and wrap every user-supplied installer arg.
+	if !strings.Contains(lpRemainder, "function ConvertTo-LpArg") {
+		t.Fatal("lpRemainder is missing ConvertTo-LpArg")
+	}
+	for _, want := range []string{
+		`[string[]]$cfg.install_args | ForEach-Object { ConvertTo-LpArg $_ }`,
+		`[string[]]$cfg.install_args_wo | ForEach-Object { ConvertTo-LpArg $_ }`,
+		`[string[]]$cfg.uninstall_args | ForEach-Object { ConvertTo-LpArg $_ }`,
+	} {
+		if !strings.Contains(lpCreateScript(), want) && !strings.Contains(lpDeleteBody, want) {
+			t.Errorf("no script quotes user args via %q", want)
+		}
 	}
 }

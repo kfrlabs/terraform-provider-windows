@@ -424,6 +424,39 @@ function To-LpIsoDate([string]$s) {
   return $s
 }
 
+# Quotes one installer argument following the Windows command-line rules
+# (CommandLineToArgvW), so values with spaces or embedded quotes survive
+# as a single argument. Required because Invoke-LpProcess forwards the
+# argument array through Start-Process -ArgumentList, which on Windows
+# PowerShell 5.1 joins elements with spaces and performs NO quoting: an
+# unquoted element like SALVOPROP=hello world would otherwise corrupt the
+# msiexec command line (aggressive CLI campaign, 2026-11-17). Elements
+# without whitespace or quotes are returned untouched. An element that is
+# already wrapped in double quotes is passed through as-is to preserve the
+# pre-quoting workaround callers may already rely on.
+function ConvertTo-LpArg([string]$Arg) {
+  if ($Arg -eq '') { return '""' }
+  if ($Arg.Length -ge 2 -and $Arg.StartsWith('"') -and $Arg.EndsWith('"')) { return $Arg }
+  if ($Arg -notmatch '[\s"]') { return $Arg }
+  $sb = New-Object System.Text.StringBuilder
+  [void]$sb.Append('"')
+  $bs = 0
+  foreach ($ch in $Arg.ToCharArray()) {
+    if ($ch -eq [char]92) { $bs++; continue }
+    if ($ch -eq [char]34) {
+      [void]$sb.Append([char]92, ($bs * 2 + 1))
+      [void]$sb.Append([char]34)
+      $bs = 0
+      continue
+    }
+    if ($bs -gt 0) { [void]$sb.Append([char]92, $bs); $bs = 0 }
+    [void]$sb.Append($ch)
+  }
+  if ($bs -gt 0) { [void]$sb.Append([char]92, ($bs * 2)) }
+  [void]$sb.Append('"')
+  return $sb.ToString()
+}
+
 function Invoke-LpProcess {
   param(
     [string]$FilePath,
@@ -585,9 +618,11 @@ if ([string]::IsNullOrEmpty($logPath)) {
 
 # 5) Build argument list (install_args_wo travels in the stdin payload
 # alongside install_args so secrets never appear in the script body or logs)
+# User-supplied elements are quoted via ConvertTo-LpArg so values with
+# spaces survive Start-Process -ArgumentList intact (see its comment).
 $extraInstall = @()
-if ($cfg.install_args) { $extraInstall = @([string[]]$cfg.install_args) }
-if ($cfg.install_args_wo) { $extraInstall += @([string[]]$cfg.install_args_wo) }
+if ($cfg.install_args) { $extraInstall = @([string[]]$cfg.install_args | ForEach-Object { ConvertTo-LpArg $_ }) }
+if ($cfg.install_args_wo) { $extraInstall += @([string[]]$cfg.install_args_wo | ForEach-Object { ConvertTo-LpArg $_ }) }
 
 $argList = @()
 if ($installerType -eq 'msi') {
@@ -811,7 +846,9 @@ if ($cfg.valid_exit_codes -and (@($cfg.valid_exit_codes)).Count -gt 0) {
   $valid = @($cfg.valid_exit_codes | ForEach-Object { [int]$_ })
 }
 $extraUninstall = @()
-if ($cfg.uninstall_args) { $extraUninstall = @([string[]]$cfg.uninstall_args) }
+# User-supplied elements are quoted via ConvertTo-LpArg so values with
+# spaces survive Start-Process -ArgumentList intact (see its comment).
+if ($cfg.uninstall_args) { $extraUninstall = @([string[]]$cfg.uninstall_args | ForEach-Object { ConvertTo-LpArg $_ }) }
 
 if ($isMsi) {
   $entries = @(Get-LpUninstallEntry -Id $id -Type 'msi' -Pattern '')

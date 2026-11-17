@@ -508,22 +508,28 @@ func (r *windowsWingetPackageResource) Delete(ctx context.Context, req resource.
 // computed attributes. A full-model Set with a zero timeouts.Value would
 // produce an untyped empty object and fail with a Value Conversion Error.
 func (r *windowsWingetPackageResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	id := req.ID
+	// Trim outer whitespace (copy-paste padding) before parsing, mirroring
+	// windows_legacy_package ImportState. Each part is trimmed as well so a
+	// padded ID seeds the canonical "<source>:<package_id>" identity instead
+	// of an ID with stray spaces that would fail the subsequent Read
+	// (aggressive CLI campaign, 2026-11-17).
+	id := strings.TrimSpace(req.ID)
 	parts := strings.SplitN(id, ":", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 		resp.Diagnostics.AddError(
 			"Invalid import ID format",
 			fmt.Sprintf(
 				"Expected \"<source>:<package_id>\" "+
 					"(e.g. \"winget:Microsoft.VisualStudioCode\"), got: %q.\n\n"+
 					"Split is on the first colon; both source and package_id must be non-empty.",
-				id,
+				req.ID,
 			),
 		)
 		return
 	}
-	source := parts[0]
-	packageID := parts[1]
+	source := strings.TrimSpace(parts[0])
+	packageID := strings.TrimSpace(parts[1])
+	id = source + ":" + packageID
 
 	// Seed the state with just enough for Read to run.
 	// version and override are unknown at import time → null (correct semantic).
