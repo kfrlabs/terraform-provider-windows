@@ -457,6 +457,15 @@ function ConvertTo-LpArg([string]$Arg) {
   return $sb.ToString()
 }
 
+# Removes a downloaded installer left behind by a pre-execution failure
+# (download, checksum, or ProductCode validation). Post-execution failures
+# keep every artifact for troubleshooting by design.
+function Remove-LpDownload([string]$Path) {
+  if (-not [string]::IsNullOrEmpty($Path) -and (Test-Path -LiteralPath $Path)) {
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Invoke-LpProcess {
   param(
     [string]$FilePath,
@@ -501,6 +510,7 @@ func lpCreateScript() string {
 	download := "  try {\n" + indented + "\n" +
 		"  } catch {\n" +
 		`    Emit-Err 'download_failed' ("download error: " + $_.Exception.Message) @{ url = [string]$cfg.source_url }` + "\n" +
+		"    if ($downloaded) { Remove-LpDownload $installerPath }\n" +
 		"    return\n" +
 		"  }"
 	return strings.NewReplacer("@@LP_DOWNLOAD@@", download).Replace(lpCreateBody)
@@ -539,8 +549,11 @@ if ($cfg.source_path) {
   $tmpDir = Join-Path $env:TEMP 'windows_legacy_package'
   New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
   try { $fname = [System.IO.Path]::GetFileName(([Uri]([string]$cfg.source_url)).AbsolutePath) } catch { $fname = '' }
-  if ([string]::IsNullOrEmpty($fname)) { $fname = 'installer_' + [guid]::NewGuid().ToString() + '.bin' }
-  $installerPath = Join-Path $tmpDir $fname
+  if ([string]::IsNullOrEmpty($fname)) { $fname = 'installer.bin' }
+  # Per-run nonce: parallel creates fetching the same URL must not share one
+  # TEMP file (aggressive CLI campaign, 2026-11-17: concurrent downloads of
+  # the same filename collided with "file is being used by another process").
+  $installerPath = Join-Path $tmpDir ([guid]::NewGuid().ToString('N') + '_' + $fname)
   $downloaded = $true
 @@LP_DOWNLOAD@@
 } else {
@@ -561,10 +574,12 @@ if ($cfg.checksum) {
     $got = (Get-FileHash -LiteralPath $installerPath -Algorithm $algo -ErrorAction Stop).Hash.ToLowerInvariant()
   } catch {
     Emit-Err 'checksum_failed' ("hash compute error: " + $_.Exception.Message) @{ algo = $algo }
+    if ($downloaded) { Remove-LpDownload $installerPath }
     return
   }
   if ($got -ne $expected) {
     Emit-Err 'checksum_mismatch' ("checksum mismatch (algo=" + $algo + " expected=" + $expected + " got=" + $got + ")") @{ algo = $algo; expected = $expected; got = $got; path = $installerPath }
+    if ($downloaded) { Remove-LpDownload $installerPath }
     return
   }
 }
@@ -587,6 +602,7 @@ if ($installerType -eq 'msi') {
     }
   } catch {
     Emit-Err 'msi_inspect_failed' ("failed to read MSI ProductCode: " + $_.Exception.Message) @{ path = $installerPath }
+    if ($downloaded) { Remove-LpDownload $installerPath }
     return
   } finally {
     foreach ($comObject in @($view, $db, $msiInst)) {
@@ -597,10 +613,12 @@ if ($installerType -eq 'msi') {
   }
   if ([string]::IsNullOrEmpty($extracted)) {
     Emit-Err 'msi_no_product_code' "MSI does not expose a ProductCode property" @{ path = $installerPath }
+    if ($downloaded) { Remove-LpDownload $installerPath }
     return
   }
   if ($productId -and ($productId -ne $extracted)) {
     Emit-Err 'product_id_mismatch' ("configured product_id (" + $productId + ") does not match MSI ProductCode (" + $extracted + ")") @{ configured = $productId; actual = $extracted }
+    if ($downloaded) { Remove-LpDownload $installerPath }
     return
   }
   $productId = $extracted

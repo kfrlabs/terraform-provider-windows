@@ -175,3 +175,22 @@ func TestLPArgQuoting_SpacesSurviveStartProcess(t *testing.T) {
 		}
 	}
 }
+
+func TestLPDownload_UniquePerRunAndCleanedOnEarlyFailure(t *testing.T) {
+	// Aggressive CLI campaign (2026-11-17): parallel creates fetching the
+	// same source_url collided on one deterministic TEMP filename ("file is
+	// being used by another process"). Downloads must carry a per-run nonce,
+	// and pre-execution failures must not litter TEMP with orphaned copies.
+	body := lpCreateScript()
+	for _, want := range []string{
+		`[guid]::NewGuid().ToString('N') + '_' + $fname`,
+		`if ($downloaded) { Remove-LpDownload $installerPath }`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("create script is missing %q", want)
+		}
+	}
+	if !strings.Contains(lpRemainder, "function Remove-LpDownload") {
+		t.Error("lpRemainder is missing function Remove-LpDownload")
+	}
+}

@@ -208,7 +208,8 @@ func (d *windowsWingetPackageDataSource) Read(ctx context.Context, req datasourc
 		resp.Diagnostics.AddError(
 			fmt.Sprintf("windows_winget_package not_found: %s:%s", source, packageID),
 			fmt.Sprintf(
-				"Winget package %q is not installed and not available from source %q on the target host.",
+				"Winget package %q is not installed on the target host "+
+					"(no matching entry reported by `winget list` from source %q).",
 				packageID, source,
 			),
 		)
