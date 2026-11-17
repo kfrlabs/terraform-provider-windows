@@ -473,6 +473,26 @@ function Remove-LpDownload([string]$Path) {
   }
 }
 
+# Polls the Uninstall hives until the id disappears (or ~60s elapse).
+# Returns true when the entry is gone. Self-relocating EXE uninstallers
+# (NSIS copies itself to TEMP and the parent exits immediately) finish
+# asynchronously after their parent exits: without this check a child that
+# dies right after the parent looks exactly like a success, and Terraform
+# drops a still-installed package from state. A lingering entry is always
+# reported as still_installed instead.
+function Confirm-LpGone {
+  param(
+    [string]$Id,
+    [string]$Type
+  )
+  for ($i = 0; $i -lt 30; $i++) {
+    $left = @(Get-LpUninstallEntry -Id $Id -Type $Type -Pattern '')
+    if ($left.Count -eq 0) { return $true }
+    Start-Sleep -Seconds 2
+  }
+  return $false
+}
+
 function Invoke-LpProcess {
   param(
     [string]$FilePath,
@@ -964,6 +984,14 @@ if ($r.TimedOut) {
 $exitCode = [int]$r.ExitCode
 if ($valid -notcontains $exitCode) {
   Emit-Err 'exit_code_invalid' ("uninstaller exited with code " + $exitCode + " (valid: " + ($valid -join ',') + ")") @{ exit_code = [string]$exitCode }
+  return
+}
+# The exit code only proves the parent process ended: self-relocating
+# uninstallers (NSIS) do their work in a TEMP child after the parent exits.
+# Confirm the entry is really gone instead of reporting a success that
+# leaves residue behind (salvo-6: VLC entry survived a code-0 destroy).
+if (-not (Confirm-LpGone -Id $id -Type 'exe')) {
+  Emit-Err 'still_installed' ("uninstaller exited with code " + $exitCode + " but the package is still detected in the Uninstall registry hives after 60s; the entry was left in state so a retry or manual uninstall can converge it") @{ exit_code = [string]$exitCode }
   return
 }
 Emit-OK $null

@@ -542,6 +542,42 @@ func TestLPUninstallEntry_EmptyResultIsBare(t *testing.T) {
 	}
 }
 
+// TestLPDeleteScript_VerifiesExeRemoval is the regression test for the
+// salvo-6 live finding: an EXE uninstaller whose parent exits 0 without
+// doing the work (NSIS TEMP child dying under the persistent REPL session)
+// was reported as success and Terraform dropped a still-installed package
+// from state. Delete must confirm the Uninstall entry is really gone
+// (bounded poll for self-relocating uninstallers) and fail loud with
+// still_installed instead of a silent success.
+func TestLPDeleteScript_VerifiesExeRemoval(t *testing.T) {
+	if !strings.Contains(lpRemainder, "function Confirm-LpGone") {
+		t.Fatal("lpRemainder is missing the Confirm-LpGone helper")
+	}
+	for _, want := range []string{
+		"Confirm-LpGone -Id $id -Type 'exe'",
+		"Emit-Err 'still_installed'",
+	} {
+		if !strings.Contains(lpDeleteBody, want) {
+			t.Errorf("delete script is missing %q", want)
+		}
+	}
+	stillIdx := strings.Index(lpDeleteBody, "Emit-Err 'still_installed'")
+	okIdx := strings.LastIndex(lpDeleteBody, "Emit-OK $null")
+	if stillIdx < 0 || okIdx < 0 || stillIdx > okIdx {
+		t.Error("still_installed must precede the final success envelope")
+	}
+	// MSI uninstall is synchronous (msiexec /x waits): the MSI path keeps
+	// the exit-code verdict and must stay untouched by the EXE poll.
+	msiIdx := strings.Index(lpDeleteBody, "if ($isMsi)")
+	exeIdx := strings.Index(lpDeleteBody, "# EXE branch")
+	if msiIdx < 0 || exeIdx < 0 || msiIdx > exeIdx {
+		t.Fatal("delete script layout changed (if ($isMsi) / # EXE branch)")
+	}
+	if strings.Contains(lpDeleteBody[msiIdx:exeIdx], "Confirm-LpGone") {
+		t.Error("MSI delete path must not call Confirm-LpGone")
+	}
+}
+
 func TestLPCreate_ThreadsDisplayNameMatch(t *testing.T) {
 	for _, want := range []string{
 		"$searchMode = [string]$cfg.display_name_match",
