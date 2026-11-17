@@ -71,7 +71,11 @@ var (
 	// checksum: <algo>:<hex>. sha256/sha512 are recommended; md5/sha1 are
 	// still accepted for pre-existing configurations but trigger a
 	// deprecation warning (see legacyPackageSourceValidator).
-	lpChecksumRe = regexp.MustCompile(`^(sha256|sha512|sha1|md5):[0-9a-fA-F]+$`)
+	// The algo name is case-insensitive (e.g. SHA256:abc is accepted):
+	// both the Go-side validator and the PowerShell host script
+	// normalise the algo before comparison (ToLowerInvariant /
+	// ToUpperInvariant respectively).
+	lpChecksumRe = regexp.MustCompile(`^(?i)(sha256|sha512|sha1|md5):[0-9a-fA-F]+$`)
 
 	// product_id: GUID enclosed in braces.
 	lpProductIDRe = regexp.MustCompile(`^\{[0-9A-Fa-f-]{36}\}$`)
@@ -303,7 +307,7 @@ func (r *windowsLegacyPackageResource) Schema(ctx context.Context, _ resource.Sc
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
 						lpChecksumRe,
-						"must match ^(sha256|sha512|sha1|md5):[0-9a-fA-F]+$",
+						"must match ^(sha256|sha512|sha1|md5):[0-9a-fA-F]+$ (algo name is case-insensitive)",
 					),
 				},
 			},
