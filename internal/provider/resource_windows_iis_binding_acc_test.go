@@ -207,6 +207,47 @@ resource "windows_iis_binding" "https" {
 	})
 }
 
+// TestAccWindowsIISBinding_NonCanonicalSpelling — a mixed-case host header
+// is accepted at create (no "Provider produced invalid plan": a known
+// configured value can never be rewritten at plan time without prior
+// state) and stays drift-free: the configured spelling is preserved in
+// state while the canonical form lives in binding_information and id
+// (aggressive CLI campaign, 2026-11-17).
+func TestAccWindowsIISBinding_NonCanonicalSpelling(t *testing.T) {
+	testAccIISBindingPreCheck(t)
+	accEnsureIIS(t)
+
+	const site = "tf-acc-bind-spelling"
+	const host = "TF-Acc-Mixed-Case.Example.COM"
+	config := testAccIISBindingSiteBlock(site) + fmt.Sprintf(`
+resource "windows_iis_binding" "http" {
+  site_name   = windows_iis_site.host.name
+  protocol    = "http"
+  ip_address  = "*"
+  port        = 18084
+  host_header = %q
+}
+`, host)
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckIISBindingDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("windows_iis_binding.http", "host_header", host),
+					resource.TestCheckResourceAttr("windows_iis_binding.http", "binding_information", "*:18084:tf-acc-mixed-case.example.com"),
+					resource.TestCheckResourceAttr("windows_iis_binding.http", "id", site+"|http|*:18084:tf-acc-mixed-case.example.com"),
+				),
+			},
+			{
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
 // TestAccWindowsIISBinding_Conflict — the same listener on two sites is a
 // conflict error naming the other site.
 func TestAccWindowsIISBinding_Conflict(t *testing.T) {

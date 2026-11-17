@@ -261,6 +261,18 @@ func TestIISBindingUpdate_ScriptContent(t *testing.T) {
 	if strings.Contains(gotScript, "would_lock_out") {
 		t.Error("update script must not carry the SSH-port guard (port is ForceNew)")
 	}
+	// Ensure-IIS must precede the binding scan: the one-shot PowerShell 5.1
+	// process starts without the WebAdministration drive, so scanning first
+	// fails with "Cannot find drive" (aggressive CLI campaign, 2026-11-17).
+	ensureIdx := strings.Index(gotScript, "if (-not (Ensure-IIS))")
+	scanIdx := strings.Index(gotScript, "$siteNames = @(")
+	if ensureIdx < 0 {
+		t.Error("update script must call Ensure-IIS")
+	} else if scanIdx < 0 {
+		t.Error("update script must carry the binding scan")
+	} else if ensureIdx > scanIdx {
+		t.Error("update script must call Ensure-IIS before the binding scan")
+	}
 }
 
 func TestIISBindingDelete_ScriptContent(t *testing.T) {
@@ -281,6 +293,12 @@ func TestIISBindingDelete_ScriptContent(t *testing.T) {
 		"already_absent",
 		"Escape-BindingWildcard $Name",
 		"Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo }",
+		// Concurrent-destroy tolerance (aggressive CLI campaign,
+		// 2026-11-17): a failed removal re-checks the target and
+		// converges to already_absent when it is verifiably gone.
+		"$removeErr",
+		"$siteGone",
+		"$bindingGone",
 	} {
 		if !strings.Contains(gotScript, want) {
 			t.Errorf("delete script missing %q", want)

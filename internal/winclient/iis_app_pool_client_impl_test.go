@@ -239,6 +239,23 @@ func TestBuildIISAppPoolSetStatements_ScheduleAndCPU(t *testing.T) {
 	if !strings.Contains(script, "New-TimeSpan -Minutes 20") {
 		t.Errorf("idle timeout must write a TimeSpan, got:\n%s", script)
 	}
+	// Assign-then-use: an inline "-Value (New-TimeSpan ...)" throws
+	// InvalidCastException on some hosts (aggressive CLI campaign,
+	// 2026-11-17); the TimeSpan must flow through a variable.
+	if strings.Contains(script, "-Value (New-TimeSpan") {
+		t.Errorf("TimeSpan must not be passed inline as -Value, got:\n%s", script)
+	}
+	if !strings.Contains(script, "-Value $idleTimeoutValue") {
+		t.Errorf("idle timeout must flow through $idleTimeoutValue, got:\n%s", script)
+	}
+	restart := int64(30)
+	script = buildIISAppPoolSetStatements(IISAppPoolSettings{RecyclingPeriodicRestartMinutes: &restart}, false)
+	if strings.Contains(script, "-Value (New-TimeSpan") {
+		t.Errorf("restart time must not be passed inline as -Value, got:\n%s", script)
+	}
+	if !strings.Contains(script, "-Value $restartTimeValue") {
+		t.Errorf("restart time must flow through $restartTimeValue, got:\n%s", script)
+	}
 }
 
 func TestBuildIISAppPoolSetStatements_UserValueQuoting(t *testing.T) {
@@ -305,6 +322,7 @@ func TestIISAppPoolCreate_ScriptContent(t *testing.T) {
 	}
 	for _, want := range []string{
 		"New-WebAppPool", "already_exists", "terraform import",
+		"$nowFound", "$createErr", // concurrent-create re-check: existing pool is already_exists, never unknown
 		"Remove-WebAppPool", // best-effort cleanup on partial failure
 		"[Console]::In.ReadLine()",
 		psQuote(user),

@@ -15,7 +15,10 @@
 //	                           host pipes/colons/whitespace fail;
 //	                           thumbprint 40-hex normalisation
 //	Config matrix            — thumbprint/SNI need https; SNI needs a host
-//	Canonicalisation         — protocol/IP/host/port shapes
+//	Canonicalisation         — protocol/IP/host/port shapes; non-canonical
+//	                           config spellings are preserved in state
+//	                           (no value-rewriting plan modifier: it breaks
+//	                           create with "Provider produced invalid plan")
 //	Create input             — only configured in-place attrs sent
 //	In-place delta           — require_sni/thumbprint/store change
 //	                           detection; untouched cert round-trips prior
@@ -31,6 +34,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -38,7 +42,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -346,55 +349,134 @@ func TestIISBindingThumbprintValidator(t *testing.T) {
 // Config matrix
 // ---------------------------------------------------------------------------
 
-func TestIISBindingCanonicalPlanModifiers(t *testing.T) {
-	ctx := context.Background()
-	run := func(m planmodifier.String, v types.String) (types.String, diag.Diagnostics) {
-		resp := &planmodifier.StringResponse{PlanValue: v}
-		m.PlanModifyString(ctx, planmodifier.StringRequest{PlanValue: v}, resp)
-		return resp.PlanValue, resp.Diagnostics
-	}
+// ---------------------------------------------------------------------------
+// State projection: spelling preservation + genuine drift
+// ---------------------------------------------------------------------------
 
-	ipMod := iisBindingIPAddressCanonicalModifier{}
-	if got, d := run(ipMod, types.StringValue("2001:DB8::1")); d.HasError() || got.ValueString() != "2001:db8::1" {
-		t.Errorf("IP modifier = %q (%v), want 2001:db8::1", got.ValueString(), bindingDiagSummaries(d))
+// TestIISBindingNoCanonicalPlanModifier locks the regression fix for the
+// live "Provider produced invalid plan" failure (aggressive CLI campaign):
+// a known configured value can never be rewritten at plan time when there
+// is no prior state, so the schema must carry no value-rewriting modifier
+// on ip_address, host_header or certificate_thumbprint. The configured
+// spelling is preserved in state instead (see
+// TestIISBindingStateToModel_PreservesSpelling); the canonical form lives
+// in binding_information and id.
+func TestIISBindingNoCanonicalPlanModifier(t *testing.T) {
+	s := windowsIISBindingSchemaDefinition(context.Background())
+	for _, name := range []string{"ip_address", "host_header", "certificate_thumbprint"} {
+		a, ok := s.Attributes[name].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("attribute %q is %T, want StringAttribute", name, s.Attributes[name])
+		}
+		for _, m := range a.PlanModifiers {
+			if strings.HasPrefix(fmt.Sprintf("%T", m), "stringplanmodifier.") {
+				continue
+			}
+			t.Errorf("attribute %q must carry no value-rewriting plan modifier, got %T", name, m)
+		}
 	}
-	if got, d := run(ipMod, types.StringValue("::ffff:192.168.1.1")); d.HasError() || got.ValueString() != "192.168.1.1" {
-		t.Errorf("IP modifier = %q (%v), want 192.168.1.1", got.ValueString(), bindingDiagSummaries(d))
-	}
-	if got, _ := run(ipMod, types.StringNull()); !got.IsNull() {
-		t.Error("IP modifier must leave null alone")
-	}
-	if got, _ := run(ipMod, types.StringUnknown()); !got.IsUnknown() {
-		t.Error("IP modifier must leave unknown alone")
-	}
-	if got, d := run(ipMod, types.StringValue("nope")); d.HasError() || got.ValueString() != "nope" {
-		t.Errorf("IP modifier must leave invalid input for the validator, got %q (%v)", got.ValueString(), bindingDiagSummaries(d))
-	}
+}
 
-	hostMod := iisBindingHostHeaderCanonicalModifier{}
-	if got, d := run(hostMod, types.StringValue("Example.COM")); d.HasError() || got.ValueString() != "example.com" {
-		t.Errorf("host modifier = %q (%v), want example.com", got.ValueString(), bindingDiagSummaries(d))
+func TestIISBindingStateToModel_PreservesSpelling(t *testing.T) {
+	thumb := strings.Repeat("A", 40)
+	thumbSpacedLower := "ab cd " + strings.Repeat("0", 36)
+	obsThumb := "ABCD" + strings.Repeat("0", 36)
+	newPlan := func(ip, host string, thumbprint types.String) windowsIISBindingModel {
+		return windowsIISBindingModel{
+			SiteName:              types.StringValue("web"),
+			Protocol:              types.StringValue("https"),
+			IPAddress:             types.StringValue(ip),
+			Port:                  types.Int64Value(443),
+			HostHeader:            types.StringValue(host),
+			RequireSNI:            types.BoolValue(true),
+			CertificateThumbprint: thumbprint,
+			CertificateStoreName:  types.StringValue("My"),
+			Timeouts:              iisBindingNullTimeouts(),
+			BindingInformation:    types.StringNull(),
+			ID:                    types.StringNull(),
+		}
 	}
-	if got, _ := run(hostMod, types.StringNull()); !got.IsNull() {
-		t.Error("host modifier must leave null alone")
+	newObserved := func(ip, host, thumbprint string) *winclient.IISBindingState {
+		return &winclient.IISBindingState{
+			SiteName: "web", Protocol: "https", IPAddress: ip,
+			Port: 443, HostHeader: host, RequireSNI: true,
+			CertificateThumbprint: thumbprint,
+			CertificateStoreName:  "My",
+			BindingInformation:    winclient.BuildIISBindingInformation(ip, 443, host),
+		}
 	}
-
-	thumbMod := iisBindingThumbprintCanonicalModifier{}
-	if got, d := run(thumbMod, types.StringValue(strings.ToLower(strings.Repeat("D", 40)))); d.HasError() || got.ValueString() != strings.Repeat("D", 40) {
-		t.Errorf("thumbprint modifier = %q (%v), want upper-case", got.ValueString(), bindingDiagSummaries(d))
-	}
-	if got, d := run(thumbMod, types.StringValue("ab cd "+strings.Repeat("0", 36))); d.HasError() || got.ValueString() != "ABCD"+strings.Repeat("0", 36) {
-		t.Errorf("thumbprint modifier = %q (%v), want spaces stripped", got.ValueString(), bindingDiagSummaries(d))
-	}
-	if got, _ := run(thumbMod, types.StringValue("")); got.ValueString() != "" {
-		t.Error("thumbprint modifier must leave empty alone (null and empty both mean no certificate)")
-	}
-	if got, _ := run(thumbMod, types.StringNull()); !got.IsNull() {
-		t.Error("thumbprint modifier must leave null alone")
-	}
-	if got, d := run(thumbMod, types.StringValue("zzz")); d.HasError() || got.ValueString() != "zzz" {
-		t.Errorf("thumbprint modifier must leave invalid input for the validator, got %q (%v)", got.ValueString(), bindingDiagSummaries(d))
-	}
+	t.Run("mixed-case host and IPv6 spellings preserved", func(t *testing.T) {
+		m := iisBindingStateToModel(
+			newPlan("::FFFF:192.0.2.1", "Example.COM", types.StringValue(thumb)),
+			newObserved("192.0.2.1", "example.com", thumb),
+		)
+		if m.IPAddress.ValueString() != "::FFFF:192.0.2.1" {
+			t.Errorf("ip_address = %q, want configured spelling preserved", m.IPAddress.ValueString())
+		}
+		if m.HostHeader.ValueString() != "Example.COM" {
+			t.Errorf("host_header = %q, want configured spelling preserved", m.HostHeader.ValueString())
+		}
+		if m.BindingInformation.ValueString() != "192.0.2.1:443:example.com" {
+			t.Errorf("binding_information = %q, want canonical", m.BindingInformation.ValueString())
+		}
+		if m.ID.ValueString() != "web|https|192.0.2.1:443:example.com" {
+			t.Errorf("id = %q, want canonical", m.ID.ValueString())
+		}
+	})
+	t.Run("spaced lower-case thumbprint preserved while matching", func(t *testing.T) {
+		m := iisBindingStateToModel(
+			newPlan("*", "example.com", types.StringValue(thumbSpacedLower)),
+			newObserved("*", "example.com", obsThumb),
+		)
+		if m.CertificateThumbprint.ValueString() != thumbSpacedLower {
+			t.Errorf("thumbprint = %q, want configured spelling preserved", m.CertificateThumbprint.ValueString())
+		}
+	})
+	t.Run("genuine certificate drift surfaces canonical observed", func(t *testing.T) {
+		m := iisBindingStateToModel(
+			newPlan("*", "example.com", types.StringValue(thumb)),
+			newObserved("*", "example.com", obsThumb),
+		)
+		if m.CertificateThumbprint.ValueString() != obsThumb {
+			t.Errorf("thumbprint = %q, want observed canonical %q", m.CertificateThumbprint.ValueString(), obsThumb)
+		}
+	})
+	t.Run("out-of-band certificate with null plan surfaces observed", func(t *testing.T) {
+		m := iisBindingStateToModel(
+			newPlan("*", "example.com", types.StringNull()),
+			newObserved("*", "example.com", obsThumb),
+		)
+		if m.CertificateThumbprint.ValueString() != obsThumb {
+			t.Errorf("thumbprint = %q, want observed %q", m.CertificateThumbprint.ValueString(), obsThumb)
+		}
+	})
+	t.Run("empty host side stays null", func(t *testing.T) {
+		m := iisBindingStateToModel(
+			newPlan("*", "example.com", types.StringNull()),
+			newObserved("*", "example.com", ""),
+		)
+		if !m.CertificateThumbprint.IsNull() {
+			t.Errorf("thumbprint must stay null, got %q", m.CertificateThumbprint.ValueString())
+		}
+	})
+	t.Run("host-side removal with configured cert surfaces null", func(t *testing.T) {
+		m := iisBindingStateToModel(
+			newPlan("*", "example.com", types.StringValue(thumb)),
+			newObserved("*", "example.com", ""),
+		)
+		if !m.CertificateThumbprint.IsNull() {
+			t.Errorf("thumbprint must surface null, got %q", m.CertificateThumbprint.ValueString())
+		}
+	})
+	t.Run("non-matching identity spelling surfaces observed", func(t *testing.T) {
+		m := iisBindingStateToModel(
+			newPlan("*", "other.example.com", types.StringValue(thumb)),
+			newObserved("*", "example.com", thumb),
+		)
+		if m.HostHeader.ValueString() != "example.com" {
+			t.Errorf("host_header = %q, want observed", m.HostHeader.ValueString())
+		}
+	})
 }
 
 func TestIISBindingConfigValidator(t *testing.T) {
@@ -557,6 +639,29 @@ func TestIISBindingInPlaceChanged(t *testing.T) {
 	prior.CertificateThumbprint = types.StringValue(strings.Repeat("C", 40))
 	if iisBindingInPlaceChanged(changed, prior) {
 		t.Error("case-only thumbprint drift must not report a change")
+	}
+	// Spacing/case drift against a preserved non-canonical prior spelling
+	// is the same certificate (state keeps the configured spelling since
+	// the canonical-modifier removal): both sides must be normalised
+	// before comparison, or every unrelated update would needlessly
+	// remove and re-add the certificate.
+	spaced := "ab cd " + strings.Repeat("0", 36)
+	changed = base
+	changed.CertificateThumbprint = types.StringValue(spaced)
+	prior = base
+	prior.CertificateThumbprint = types.StringValue(spaced)
+	if iisBindingInPlaceChanged(changed, prior) {
+		t.Error("identical spaced thumbprints must not report a change")
+	}
+	changed = base
+	changed.CertificateThumbprint = types.StringValue(strings.ToUpper(strings.ReplaceAll(spaced, " ", "")))
+	if iisBindingInPlaceChanged(changed, prior) {
+		t.Error("canonical-vs-spaced spelling of the same certificate must not report a change")
+	}
+	changed = base
+	changed.CertificateThumbprint = types.StringValue(strings.Repeat("D", 40))
+	if !iisBindingInPlaceChanged(changed, prior) {
+		t.Error("a genuinely different thumbprint must report a change")
 	}
 }
 
