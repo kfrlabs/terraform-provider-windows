@@ -692,3 +692,76 @@ func TestWingetPackageResource_ImportState_ColonInPackageID(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ModifyPlan — pinned/installed divergence forces an update
+// ---------------------------------------------------------------------------
+
+// Aggressive CLI campaign (2026-11-17, LAB 203): a winget upgrade that
+// silently no-ops (benign exit code, pin unmet) recorded the pin as
+// satisfied, and every later plan said No changes against a lying state.
+// ModifyPlan marks installed_version unknown when the pin is set and the
+// observed install differs, so Update runs and its post-condition fails
+// loudly instead.
+func TestWingetModifyPlan_PinMismatchForcesUpdate(t *testing.T) {
+	r := &windowsWingetPackageResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	ctx := context.Background()
+
+	str := func(s string) tftypes.Value { return tftypes.NewValue(tftypes.String, s) }
+	nul := tftypes.NewValue(tftypes.String, nil)
+	mkRaw := func(pin, installed string) tftypes.Value {
+		v := map[string]tftypes.Value{
+			"id": str("winget:Microsoft.PowerShell"), "package_id": str("Microsoft.PowerShell"),
+			"source": str("winget"), "override": nul, "name": str("PowerShell 7-x64"),
+			"timeouts": wpNullTimeoutsValue(),
+		}
+		if pin == "" {
+			v["version"] = nul
+		} else {
+			v["version"] = str(pin)
+		}
+		if installed == "" {
+			v["installed_version"] = nul
+		} else {
+			v["installed_version"] = str(installed)
+		}
+		return tftypes.NewValue(wpSchemaObjectType(), v)
+	}
+	run := func(planPin, planInstalled, statePin, stateInstalled string) (types.String, bool) {
+		planRaw := mkRaw(planPin, planInstalled)
+		stateRaw := mkRaw(statePin, stateInstalled)
+		plan := tfsdk.Plan{Schema: schemaResp.Schema, Raw: planRaw}
+		resp := &resource.ModifyPlanResponse{Plan: plan}
+		r.ModifyPlan(ctx, resource.ModifyPlanRequest{
+			Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: planRaw.Copy()},
+			State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateRaw.Copy()},
+		}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("ModifyPlan diagnostics: %v", resp.Diagnostics)
+		}
+		var m windowsWingetPackageModel
+		if d := resp.Plan.Get(ctx, &m); d.HasError() {
+			t.Fatalf("plan Get: %v", d)
+		}
+		return m.InstalledVersion, m.InstalledVersion.IsUnknown()
+	}
+
+	// Pin 7.7.0 vs installed 7.4.6.0: force unknown -> planned update.
+	if got, unknown := run("7.7.0", "7.4.6.0", "7.7.0", "7.4.6.0"); !unknown {
+		t.Errorf("pin/installed mismatch must mark installed_version unknown, got %v", got)
+	}
+	// Pin satisfied: untouched.
+	if got, unknown := run("7.7.0", "7.7.0", "7.7.0", "7.7.0"); unknown || got.ValueString() != "7.7.0" {
+		t.Errorf("satisfied pin must stay known, got %v unknown=%v", got, unknown)
+	}
+	// Numerically equal pin ("7.7" vs "7.7.0"): untouched.
+	if got, unknown := run("7.7", "7.7.0", "7.7", "7.7.0"); unknown || got.ValueString() != "7.7.0" {
+		t.Errorf("numerically equal pin must stay known, got %v unknown=%v", got, unknown)
+	}
+	// Unpinned (track-latest): drift-blind by design, untouched.
+	if got, unknown := run("", "7.4.6.0", "", "7.4.6.0"); unknown || got.ValueString() != "7.4.6.0" {
+		t.Errorf("unpinned config must stay drift-blind, got %v unknown=%v", got, unknown)
+	}
+}

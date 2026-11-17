@@ -47,6 +47,7 @@ var (
 	_ resource.ResourceWithConfigure        = (*windowsWingetPackageResource)(nil)
 	_ resource.ResourceWithImportState      = (*windowsWingetPackageResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsWingetPackageResource)(nil)
+	_ resource.ResourceWithModifyPlan       = (*windowsWingetPackageResource)(nil)
 )
 
 // NewWindowsWingetPackageResource is the constructor registered in provider.go.
@@ -238,6 +239,37 @@ func (r *windowsWingetPackageResource) Configure(_ context.Context, req resource
 		return
 	}
 	r.wp = winclient.NewWingetPackageClient(c)
+}
+
+// ModifyPlan surfaces a pinned-version/installed-version divergence as a
+// planned update. Without it, a silently unconverged upgrade (winget
+// reporting a benign no-op code while the pin is unmet) records the pin as
+// satisfied and every later plan says No changes against a lying state
+// (aggressive CLI campaign, 2026-11-17). Marking installed_version unknown
+// forces Update, whose post-condition fails loudly if the upgrade still
+// does not converge. Unpinned configs (track-latest) intentionally never
+// trigger this: drift-blindness on newer upstream versions is by design.
+func (r *windowsWingetPackageResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return // create / destroy
+	}
+	var plan, state windowsWingetPackageModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.Version.IsNull() || plan.Version.IsUnknown() {
+		return // unpinned: track-latest stays drift-blind by design
+	}
+	if state.InstalledVersion.IsNull() || state.InstalledVersion.IsUnknown() {
+		return // nothing observed to compare against
+	}
+	if winclient.WingetVersionsEqual(plan.Version.ValueString(), state.InstalledVersion.ValueString()) {
+		return // pin satisfied
+	}
+	plan.InstalledVersion = types.StringUnknown()
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 // ConfigValidators returns resource-level cross-field validators.

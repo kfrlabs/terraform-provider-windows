@@ -171,19 +171,29 @@ resource "windows_iis_site" "acc" {
 	})
 }
 
-// TestAccWindowsIISSite_ZeroBindingsStarted — a Started site with no
-// bindings stays Stopped with a warning instead of failing; the
-// suppression modifier keeps the follow-up plan empty.
+// TestAccWindowsIISSite_ZeroBindingsStarted — a brand-new site has no
+// bindings and IIS cannot run it, so Create with state Started fails fast
+// with start_refused (recording Stopped instead would trip "inconsistent
+// result after apply", and the framework forbids planning a value that
+// disagrees with a non-null config without prior state). Creating Stopped
+// succeeds and the follow-up plan is empty.
 func TestAccWindowsIISSite_ZeroBindingsStarted(t *testing.T) {
 	testAccIISSitePreCheck(t)
 	accEnsureIIS(t)
 
 	const site = "tf-acc-site-unbound"
-	config := fmt.Sprintf(`
+	started := fmt.Sprintf(`
 resource "windows_iis_site" "unbound" {
   name          = %[1]q
   physical_path = "C:\\inetpub\\wwwroot"
   state         = "Started"
+}
+`, site)
+	stopped := fmt.Sprintf(`
+resource "windows_iis_site" "unbound" {
+  name          = %[1]q
+  physical_path = "C:\\inetpub\\wwwroot"
+  state         = "Stopped"
 }
 `, site)
 	resource.Test(t, resource.TestCase{
@@ -191,16 +201,18 @@ resource "windows_iis_site" "unbound" {
 		CheckDestroy:             testAccCheckIISSiteDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				Config:      started,
+				ExpectError: regexp.MustCompile(`start_refused.*no bindings`),
+			},
+			{
+				Config: stopped,
 				Check: resource.ComposeTestCheckFunc(
-					// IIS cannot run an unbound site: the create warns
-					// and the host stays Stopped.
 					resource.TestCheckResourceAttr("windows_iis_site.unbound", "state", "Stopped"),
 					resource.TestCheckResourceAttr("windows_iis_site.unbound", "bindings.#", "0"),
 				),
 			},
 			{
-				Config:   config,
+				Config:   stopped,
 				PlanOnly: true,
 			},
 		},

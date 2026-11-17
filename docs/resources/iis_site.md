@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   Manages an IIS site on a remote Windows host via SSH and PowerShell (WebAdministration module: New-Item IIS:\Sites\<name> -Bindings @(), Get/Set-WebConfigurationProperty, Set-ItemProperty IIS:\Sites\<name>, Remove-Website, Start-Website / Stop-Website).
   The site is always created with zero bindings: bindings are not managed here (see windows_iis_binding). The read-only bindings attribute (protocol plus binding_information) reflects the observed view so plans stay stable.
-  Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime state (Started / Stopped) is enforced only when configured — except that a Started site with no bindings stays Stopped with a warning (IIS cannot run an unbound site) instead of failing.
+  Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime state (Started / Stopped) is enforced only when configured — except that a Started site with no bindings stays Stopped with a warning (IIS cannot run an unbound site) instead of failing (on create, Started is refused outright with start_refused: create Stopped, add bindings, then flip to Started).
   Requires IIS on the target host: install it with the windows_feature resource (Web-Server; add Web-Mgmt-Console / Web-Scripting-Tools for the WebAdministration module on Server Core).
   Partial failures: if creation fails after the site was already registered in IIS, the provider persists the observed state before reporting the error, so the resource is marked tainted. If update fails after IIS applied part of the change, the provider saves the observed partial state before reporting the error. Fix the cause and run terraform apply again to reconcile.
   A nil state on error does not guarantee nothing was created: a failure that returns no state leaves an orphaned site that must be removed with Remove-Website or re-adopted with terraform import.
@@ -18,7 +18,7 @@ Manages an IIS site on a remote Windows host via SSH and PowerShell (`WebAdminis
 
 The site is always created with zero bindings: bindings are not managed here (see `windows_iis_binding`). The read-only `bindings` attribute (`protocol` plus `binding_information`) reflects the observed view so plans stay stable.
 
-Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime `state` (`Started` / `Stopped`) is enforced only when configured — except that a `Started` site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site) instead of failing.
+Only the attributes configured in Terraform are written; every other setting on the host is left untouched and undiffed (unconfigured attributes reflect the observed value). The runtime `state` (`Started` / `Stopped`) is enforced only when configured — except that a `Started` site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site) instead of failing (on create, `Started` is refused outright with `start_refused`: create `Stopped`, add bindings, then flip to `Started`).
 
 Requires IIS on the target host: install it with the `windows_feature` resource (`Web-Server`; add `Web-Mgmt-Console` / `Web-Scripting-Tools` for the `WebAdministration` module on Server Core).
 
@@ -106,7 +106,7 @@ resource "windows_iis_site" "web" {
 - `max_connections` (Number) Maximum concurrent connections (`limits.maxConnections`; 0 means unlimited).
 - `preload_enabled` (Boolean) Whether the site root application is preloaded (`application[@path='/'] preloadEnabled`).
 - `site_id` (Number) Numeric site ID (1-4294967295). Immutable after creation (ForceNew). When left unconfigured, IIS allocates the lowest free ID itself.
-- `state` (String) Runtime state of the site. One of `Started`, `Stopped`. Enforced only when configured (`Start-Website` / `Stop-Website`). A `Started` site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site); the diff is suppressed while the site stays unbound.
+- `state` (String) Runtime state of the site. One of `Started`, `Stopped`. Enforced only when configured (`Start-Website` / `Stop-Website`). A `Started` site with no bindings stays `Stopped` with a warning (IIS cannot run an unbound site); the diff is suppressed while the site stays unbound. Creating with `Started` is refused (`start_refused`): create `Stopped` (or omit state), add `windows_iis_binding` resources, then set `Started`.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only

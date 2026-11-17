@@ -1263,3 +1263,76 @@ func TestWPError_AllKindStrings(t *testing.T) {
 		}
 	}
 }
+
+// Aggressive CLI campaign (2026-11-17, LAB 203): winget upgrade reported a
+// benign no-op code for Microsoft.PowerShell 7.4.6 -> 7.7.0 (installer
+// technology mismatch) and the provider recorded the pin as satisfied,
+// yielding perpetual No changes plans against a lying state.
+
+func TestWingetVersionsEqual(t *testing.T) {
+	for _, tc := range []struct {
+		pin, installed string
+		want           bool
+	}{
+		{"7.7.0", "7.7.0", true},
+		{"7.7", "7.7.0", true},
+		{"7.7.0", "7.7", true},
+		{"24.08.00.0", "24.08.00.0", true},
+		{"1.85.2", "1.85.2", true},
+		{"7.7.0", "7.4.6.0", false},
+		{"7.7.0", "7.7.1", false},
+		{"8.9.8", "8.9.8.1", false},
+		{"1.2", "1.2-beta", false},
+		{"1.2-beta", "1.2-beta", true},
+		{"1.2", "1.20", false},
+		{"", "", true},
+	} {
+		if got := WingetVersionsEqual(tc.pin, tc.installed); got != tc.want {
+			t.Errorf("WingetVersionsEqual(%q, %q) = %v, want %v", tc.pin, tc.installed, got, tc.want)
+		}
+	}
+}
+
+func TestWPUpdate_NotConvergedIsLoudError(t *testing.T) {
+	wp := wpNewClient(t)
+	old := wpStateData("Microsoft.PowerShell", "winget", "7.4.6.0", "PowerShell 7-x64")
+	defer wpStubSequence([]wpResponse{
+		{stdout: wpOK(t, old)}, // pre-check Read: 7.4.6.0 installed
+		{stdout: wpOK(t, old)}, // upgrade script: benign no-op, still 7.4.6.0
+	})()
+
+	_, err := wp.Update(context.Background(), WingetPackageInput{
+		PackageID: "Microsoft.PowerShell",
+		Source:    "winget",
+		Version:   "7.7.0",
+	})
+	if err == nil {
+		t.Fatal("expected upgrade_not_converged error when the pin stays unmet")
+	}
+	if !IsWingetPackageError(err, WingetPackageErrorUpgradeNotConverged) {
+		t.Errorf("expected upgrade_not_converged, got %v", err)
+	}
+}
+
+func TestWPUpdate_NumericPrecheckSkipsRedundantUpgrade(t *testing.T) {
+	wp := wpNewClient(t)
+	// Pin "7.7" with installed "7.7.0": numerically equal, no upgrade call.
+	// Single stub response: any second call replays it, but Update must
+	// return after the pre-check Read without running the upgrade script.
+	installed := wpStateData("Microsoft.PowerShell", "winget", "7.7.0", "PowerShell 7-x64")
+	defer wpStubSequence([]wpResponse{
+		{stdout: wpOK(t, installed)},
+	})()
+
+	st, err := wp.Update(context.Background(), WingetPackageInput{
+		PackageID: "Microsoft.PowerShell",
+		Source:    "winget",
+		Version:   "7.7",
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if st == nil || st.InstalledVersion != "7.7.0" {
+		t.Errorf("expected installed 7.7.0 passthrough, got %+v", st)
+	}
+}

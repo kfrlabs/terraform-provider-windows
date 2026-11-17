@@ -132,6 +132,38 @@ func TestIISSiteError_Is(t *testing.T) {
 	}
 }
 
+// Aggressive CLI campaign (2026-11-17, LAB 203): creating a site with
+// state Started always fails on the host (fresh sites have no bindings and
+// IIS cannot run them — Start-Website errors 0x800710D8), and recording
+// Stopped instead would trip "inconsistent result after apply" (the
+// framework forbids planning a value that disagrees with a non-null config
+// without prior state). Create refuses Started up front with start_refused
+// instead of half-creating.
+func TestIISSiteCreate_StartedRefused(t *testing.T) {
+	called := false
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+		called = true
+		return "", "", nil
+	})
+	defer restore()
+
+	c := iisSiteNewClient(t)
+	started := "Started"
+	_, err := c.Create(context.Background(), IISSiteInput{
+		Name:     "web",
+		Settings: IISSiteSettings{State: &started},
+	})
+	if err == nil {
+		t.Fatal("create with state Started must fail fast (brand-new sites are unbound)")
+	}
+	if !IsIISSiteError(err, IISSiteErrorStartRefused) {
+		t.Errorf("expected start_refused, got %v", err)
+	}
+	if called {
+		t.Error("refused create must not reach the host")
+	}
+}
+
 func TestMapIISSiteKind(t *testing.T) {
 	cases := map[string]IISSiteErrorKind{
 		"not_found":          IISSiteErrorNotFound,
@@ -271,20 +303,33 @@ func TestBuildIISSiteStateStatement(t *testing.T) {
 	started := "Started"
 	got := buildIISSiteStateStatement(&started, "'web'")
 	for _, want := range []string{
-		"Start-Website", "Where-Object { $_.Name -eq $Name }",
-		"Bindings", // zero-binding guard: skip the start when unbound
+		"Start-Website",
+		"Get-WebBinding -Name 'web'", // live binding count: $site.Bindings is stale after unbind
+		"$bindCount",                 // zero-binding guard: skip the start when unbound
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("started statement missing %q, got:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "$stateCheck.Bindings") {
+		t.Errorf("started statement must not count the cached $site.Bindings (stale after unbind), got:\n%s", got)
 	}
 	if strings.Contains(got, "Stop-Website") {
 		t.Errorf("started statement must not stop, got:\n%s", got)
 	}
 	stopped := "Stopped"
 	got = buildIISSiteStateStatement(&stopped, "'web'")
-	if !strings.Contains(got, "Stop-Website") || strings.Contains(got, "Start-Website") {
-		t.Errorf("stopped statement must only stop, got:\n%s", got)
+	for _, want := range []string{
+		"Stop-Website",               // ...but only when bindings exist: stopping a
+		"$bindCount",                 // never-started (always unbound) site fails with 0x800710D8
+		"Get-WebBinding -Name 'web'", // live count, not cached $site.Bindings
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stopped statement missing %q, got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Start-Website") {
+		t.Errorf("stopped statement must not start, got:\n%s", got)
 	}
 }
 
@@ -362,6 +407,12 @@ func TestIISSiteScripts_ShipPreludeAndGate(t *testing.T) {
 	if strings.Contains(gotScript, "Get-Website -Name") {
 		t.Error("lookups must never use Get-Website -Name (wildcard expansion)")
 	}
+	if !strings.Contains(gotScript, "Get-WebBinding -Name $Name") {
+		t.Error("site reads must enumerate bindings via live Get-WebBinding ($site.Bindings is stale after unbind)")
+	}
+	if strings.Contains(gotScript, "@($site.Bindings)") || strings.Contains(gotScript, "@($stateCheck.Bindings)") {
+		t.Error("site reads must not enumerate the cached $site.Bindings property")
+	}
 }
 
 func TestIISSiteCreate_ScriptContent(t *testing.T) {
@@ -376,11 +427,13 @@ func TestIISSiteCreate_ScriptContent(t *testing.T) {
 	siteID := int64(7)
 	pool := "DefaultAppPool"
 	path := `C:\inetpub\wwwroot`
-	started := "Started"
+	stopped := "Stopped"
+	// NOTE: Started-at-create is refused (start_refused); the script-content
+	// assertions below exercise the Stopped create path.
 	if _, err := c.Create(context.Background(), IISSiteInput{
 		Name: "web",
 		Settings: IISSiteSettings{
-			SiteID: &siteID, PhysicalPath: &path, ApplicationPool: &pool, State: &started,
+			SiteID: &siteID, PhysicalPath: &path, ApplicationPool: &pool, State: &stopped,
 		},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -398,8 +451,7 @@ func TestIISSiteCreate_ScriptContent(t *testing.T) {
 		"Remove-Website", // best-effort cleanup on partial failure
 		"$PhysicalPath = 'C:\\inetpub\\wwwroot'",
 		"$AppPool = 'DefaultAppPool'",
-		"Start-Website", // configured Started...
-		"$bindCount",    // ...guarded by the live binding count
+		"Stop-Website", // Stopped create leaves the site stopped (Started is refused: start_refused)
 	} {
 		if !strings.Contains(gotScript, want) {
 			t.Errorf("create script missing %q", want)
@@ -448,9 +500,10 @@ func TestIISSiteUpdate_ScriptContent(t *testing.T) {
 	c := iisSiteNewClient(t)
 	pool := "pool2"
 	path := `C:\srv\web`
+	started := "Started"
 	if _, err := c.Update(context.Background(), IISSiteInput{
 		Name:     "web",
-		Settings: IISSiteSettings{PhysicalPath: &path, ApplicationPool: &pool},
+		Settings: IISSiteSettings{PhysicalPath: &path, ApplicationPool: &pool, State: &started},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -460,6 +513,8 @@ func TestIISSiteUpdate_ScriptContent(t *testing.T) {
 		"path_not_found",
 		"Test-Path -LiteralPath",
 		"Where-Object { $_.Name -eq $Name }",
+		"Start-Website", // requested Started...
+		"$bindCount",    // ...guarded by the live binding count (Get-WebBinding, not cached $site.Bindings)
 	} {
 		if !strings.Contains(gotScript, want) {
 			t.Errorf("update script missing %q", want)

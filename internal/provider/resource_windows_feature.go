@@ -390,7 +390,7 @@ func modelFromFeature(info *winclient.FeatureInfo, prior windowsFeatureModel) (w
 	default:
 		diags.AddError(
 			"Unexpected Windows feature install state",
-			fmt.Sprintf("The host reported install state %q for feature %q; expected one of Installed, Available, Removed.", info.InstallState, info.Name),
+			fmt.Sprintf("The host reported install state %q for feature %q; expected one of Installed, Available, Removed. Transitional states (e.g. InstallPending) appear while a previous install or uninstall is still settling — typically a pending reboot. Wait for the host to settle (reboot if one is pending) and retry.", info.InstallState, info.Name),
 		)
 	}
 	out := windowsFeatureModel{

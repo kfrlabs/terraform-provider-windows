@@ -206,7 +206,12 @@ $disableDhcp = %s
 func buildNetIPAddressCreateScript(alias, ip string, prefix int, skipAsSource, isV6 bool) string {
 	newCmd := fmt.Sprintf("New-NetIPAddress -InterfaceIndex $ifIndex -IPAddress $wantIP -PrefixLength %d -ErrorAction Stop", prefix)
 	if skipAsSource {
-		newCmd = fmt.Sprintf("New-NetIPAddress -InterfaceIndex $ifIndex -IPAddress $wantIP -PrefixLength %d -SkipAsSource -ErrorAction Stop", prefix)
+		// SkipAsSource is a Boolean parameter, not a switch: the bare
+		// "-SkipAsSource" form fails with "Missing an argument for
+		// parameter" (aggressive CLI campaign, 2026-11-17). The update
+		// path already passes an explicit value (see
+		// buildNetIPAddressSetScript).
+		newCmd = fmt.Sprintf("New-NetIPAddress -InterfaceIndex $ifIndex -IPAddress $wantIP -PrefixLength %d -SkipAsSource $true -ErrorAction Stop", prefix)
 	}
 	return psNetIPAddressHeader + fmt.Sprintf(`
 $family = %s

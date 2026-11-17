@@ -311,9 +311,13 @@ func TestNetIPAddressScripts_QuotingAndSemantics(t *testing.T) {
 			t.Errorf("Classify-NetIpAddress must handle %q", want)
 		}
 	}
-	// SkipAsSource switch present only when requested.
-	if !strings.Contains(buildNetIPAddressCreateScript("a", "192.0.2.10", 24, true, false), "-SkipAsSource") {
-		t.Error("create with skip_as_source must pass -SkipAsSource")
+	// SkipAsSource is passed as an explicit Boolean value only when
+	// requested (the bare switch form is rejected by New-NetIPAddress).
+	if !strings.Contains(buildNetIPAddressCreateScript("a", "192.0.2.10", 24, true, false), "-SkipAsSource $true") {
+		t.Error("create with skip_as_source must pass -SkipAsSource $true")
+	}
+	if strings.Contains(buildNetIPAddressCreateScript("a", "192.0.2.10", 24, true, false), "-SkipAsSource -ErrorAction") {
+		t.Error("create must not use the bare -SkipAsSource switch form")
 	}
 	if strings.Contains(buildNetIPAddressCreateScript("a", "192.0.2.10", 24, false, false), "-SkipAsSource") {
 		t.Error("create without skip_as_source must not pass -SkipAsSource")

@@ -55,6 +55,14 @@ const (
 	// mutex is held after 3 back-off retries (EC-10).
 	WingetPackageErrorResourceInUse = "resource_in_use"
 
+	// WingetPackageErrorUpgradeNotConverged is returned when a versioned
+	// Update completes without error but the installed version still does
+	// not match the pinned version (winget reported a benign no-op code
+	// while the pin is unmet — e.g. an installer-technology change that
+	// requires uninstall + reinstall). Recording the pin as satisfied
+	// would leave a state lie followed by perpetual No changes plans.
+	WingetPackageErrorUpgradeNotConverged = "upgrade_not_converged"
+
 	// WingetPackageErrorUnknown is returned for unexpected PowerShell errors
 	// or SSH transport failures not matching any of the above categories.
 	WingetPackageErrorUnknown = "unknown"
@@ -100,6 +108,7 @@ var (
 	ErrWingetPackageSourceUnreachable   = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorSourceUnreachable}
 	ErrWingetPackageCatalogError        = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorCatalogError}
 	ErrWingetPackageResourceInUse       = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorResourceInUse}
+	ErrWingetPackageUpgradeNotConverged = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorUpgradeNotConverged}
 	ErrWingetPackageUnknown             = &WingetPackageError{Resource: "windows_winget_package", Kind: WingetPackageErrorUnknown}
 )
 
