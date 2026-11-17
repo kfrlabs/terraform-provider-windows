@@ -160,7 +160,13 @@ func buildIISSiteSetStatements(s IISSiteSettings) string {
 		fmt.Fprintf(&sb, "  Set-ItemProperty $sitePath -Name logFile.logFormat -Value %s -ErrorAction Stop\n", psQuote(*s.LogFormat))
 	}
 	if s.ConnectionTimeoutSeconds != nil {
-		fmt.Fprintf(&sb, "  Set-ItemProperty $sitePath -Name limits.connectionTimeout -Value (New-TimeSpan -Seconds %d) -ErrorAction Stop\n", *s.ConnectionTimeoutSeconds)
+		// Assign-then-use: an inline (New-TimeSpan ...) -Value throws
+		// InvalidCastException on some hosts (see the app-pool
+		// processModel.idleTimeout note, aggressive CLI campaign
+		// 2026-11-17) while the same TimeSpan through a variable applies
+		// cleanly.
+		fmt.Fprintf(&sb, "  $connectionTimeoutValue = New-TimeSpan -Seconds %d\n", *s.ConnectionTimeoutSeconds)
+		sb.WriteString("  Set-ItemProperty $sitePath -Name limits.connectionTimeout -Value $connectionTimeoutValue -ErrorAction Stop\n")
 	}
 	if s.MaxConnections != nil {
 		fmt.Fprintf(&sb, "  Set-ItemProperty $sitePath -Name limits.maxConnections -Value %d -ErrorAction Stop\n", *s.MaxConnections)
@@ -476,7 +482,23 @@ try {
     throw
   }
 } catch {
-  Emit-Err (Classify-Site $_.Exception.Message) ([string]$_.Exception.Message) @{ name = $Name; step = 'create' }
+  $createErr = [string]$_.Exception.Message
+  # A concurrent create (duplicate resource, parallel apply) can pass the
+  # $found pre-flight above and then fail inside New-Item with an opaque
+  # error (e.g. NullReferenceException from the racing provider) even
+  # though the site now exists. Re-check before classifying: an existing
+  # site is already_exists with the import hint, never unknown (aggressive
+  # CLI campaign, 2026-11-17: parallel duplicate apply surfaced NRE).
+  # A failed cleanup of our own partial site surfaces the same way, which
+  # is accurate: something exists and the hint tells how to adopt it.
+  try {
+    $nowFound = Get-ChildItem 'IIS:\Sites' -ErrorAction Stop | Where-Object { $_.Name -eq $Name }
+    if ($nowFound) {
+      Emit-Err 'already_exists' ('IIS site ''' + $nowFound.Name + ''' already exists on this host (use ''terraform import'' to bring it under management instead of creating a duplicate).') @{ name = $nowFound.Name }
+      return
+    }
+  } catch {}
+  Emit-Err (Classify-Site $createErr) $createErr @{ name = $Name; step = 'create' }
 }
 `,
 		psQuote(in.Name),

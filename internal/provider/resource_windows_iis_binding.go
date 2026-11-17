@@ -176,9 +176,8 @@ func windowsIISBindingSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("*"),
-				Description: "IP address to listen on, stored canonically (`netip`: lower-case, compressed IPv6). `\"*\"` listens on all unassigned addresses. Zone IDs are rejected. Immutable after creation (ForceNew). Defaults to `\"*\"`.",
+				Description: "IP address to listen on (`\"*\"` listens on all unassigned addresses; zone IDs are rejected). The configured spelling is preserved in state; the canonical form (`netip`: lower-case, compressed IPv6) appears in `binding_information` and `id`. Immutable after creation (ForceNew). Defaults to `\"*\"`.",
 				PlanModifiers: []planmodifier.String{
-					iisBindingIPAddressCanonicalModifier{},
 					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
@@ -201,9 +200,8 @@ func windowsIISBindingSchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString(""),
-				Description: "Host header (server name), stored lower-case. Empty means the catch-all binding. Must not contain `|`, `:` or whitespace. Required when `require_sni` is true. Immutable after creation (ForceNew). Defaults to `\"\"`.",
+				Description: "Host header (server name). Empty means the catch-all binding. Must not contain `|`, `:` or whitespace. Required when `require_sni` is true. The configured spelling is preserved in state; the lower-case canonical form appears in `binding_information` and `id`. Immutable after creation (ForceNew). Defaults to `\"\"`.",
 				PlanModifiers: []planmodifier.String{
-					iisBindingHostHeaderCanonicalModifier{},
 					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
@@ -220,10 +218,7 @@ func windowsIISBindingSchemaDefinition(ctx context.Context) schema.Schema {
 
 			"certificate_thumbprint": schema.StringAttribute{
 				Optional:    true,
-				Description: "Thumbprint of the certificate to bind (`Cert:\\LocalMachine\\<store>`). 40 hex characters (spaces allowed, case-insensitive; stored upper-case without spaces). Needs `protocol = \"https\"`. The certificate must already exist (manage it with `windows_certificate`) and carry a private key. Omit (null) for no certificate. Updated in place.",
-				PlanModifiers: []planmodifier.String{
-					iisBindingThumbprintCanonicalModifier{},
-				},
+				Description: "Thumbprint of the certificate to bind (`Cert:\\LocalMachine\\<store>`). 40 hex characters (spaces allowed, case-insensitive). Needs `protocol = \"https\"`. The certificate must already exist (manage it with `windows_certificate`) and carry a private key. Omit (null) for no certificate. Updated in place. The configured spelling is preserved in state while it matches the bound certificate; an out-of-band change surfaces the observed canonical thumbprint (upper-case without spaces).",
 				Validators: []validator.String{
 					iisBindingThumbprintValidator{},
 				},
@@ -319,80 +314,6 @@ func (v iisBindingHostHeaderValidator) ValidateString(_ context.Context, req val
 	if err := winclient.ValidateIISBindingHostHeader(val); err != nil {
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid host header", err.Error())
 	}
-}
-
-// iisBindingIPAddressCanonicalModifier converges a configured ip_address
-// spelling to its canonical form at plan time (netip: lower-case,
-// compressed IPv6, "*" for all unassigned), so a non-canonical config
-// never diffs against the canonical state recorded on Create and Import.
-type iisBindingIPAddressCanonicalModifier struct{}
-
-func (m iisBindingIPAddressCanonicalModifier) Description(_ context.Context) string {
-	return "Normalises the IP address to its canonical form."
-}
-
-func (m iisBindingIPAddressCanonicalModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-func (m iisBindingIPAddressCanonicalModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
-		return
-	}
-	normalised, err := winclient.NormalizeIISBindingIPAddress(req.PlanValue.ValueString())
-	if err != nil {
-		return // the attribute validator reports malformed input
-	}
-	resp.PlanValue = types.StringValue(normalised)
-}
-
-// iisBindingHostHeaderCanonicalModifier converges a configured host_header
-// spelling to its canonical lower-case form at plan time, so a mixed-case
-// config never diffs against the canonical state recorded on Create and
-// Import.
-type iisBindingHostHeaderCanonicalModifier struct{}
-
-func (m iisBindingHostHeaderCanonicalModifier) Description(_ context.Context) string {
-	return "Normalises the host header to lower-case."
-}
-
-func (m iisBindingHostHeaderCanonicalModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-func (m iisBindingHostHeaderCanonicalModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
-		return
-	}
-	resp.PlanValue = types.StringValue(winclient.NormalizeIISBindingHostHeader(req.PlanValue.ValueString()))
-}
-
-// iisBindingThumbprintCanonicalModifier converges a configured
-// certificate_thumbprint spelling to its canonical form at plan time
-// (upper-case hex without spaces), so a lower-case or spaced config never
-// diffs against the canonical state recorded on Create and Import.
-type iisBindingThumbprintCanonicalModifier struct{}
-
-func (m iisBindingThumbprintCanonicalModifier) Description(_ context.Context) string {
-	return "Normalises the certificate thumbprint to upper-case hex without spaces."
-}
-
-func (m iisBindingThumbprintCanonicalModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-func (m iisBindingThumbprintCanonicalModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
-		return
-	}
-	if strings.TrimSpace(req.PlanValue.ValueString()) == "" {
-		return // null and empty both mean "no certificate"
-	}
-	normalised, err := winclient.NormalizeIISBindingThumbprint(req.PlanValue.ValueString())
-	if err != nil {
-		return // the attribute validator reports malformed input
-	}
-	resp.PlanValue = types.StringValue(normalised)
 }
 
 // iisBindingThumbprintValidator accepts a 40-hex thumbprint (spaces
@@ -687,28 +608,99 @@ func iisBindingNullTimeouts() timeouts.Value {
 	return timeouts.Value{Object: types.ObjectNull(attrTypes)}
 }
 
+// iisBindingPreserveIPSpelling keeps the configured ip_address spelling in
+// state while it denotes the observed listener (netip normalisation), and
+// surfaces the observed canonical address otherwise. Identity attributes
+// cannot drift in place: a host-side change is a different binding, the
+// Read-by-ID lookup misses, and the resource is dropped from state.
+func iisBindingPreserveIPSpelling(plan types.String, observed string) types.String {
+	if plan.IsNull() || plan.IsUnknown() {
+		return types.StringValue(observed)
+	}
+	if norm, err := winclient.NormalizeIISBindingIPAddress(plan.ValueString()); err == nil && norm == observed {
+		return plan
+	}
+	return types.StringValue(observed)
+}
+
+// iisBindingPreserveHostSpelling keeps the configured host_header spelling
+// in state while it lower-cases to the observed header, and surfaces the
+// observed header otherwise (same identity reasoning as
+// iisBindingPreserveIPSpelling).
+func iisBindingPreserveHostSpelling(plan types.String, observed string) types.String {
+	if plan.IsNull() || plan.IsUnknown() {
+		return types.StringValue(observed)
+	}
+	if winclient.NormalizeIISBindingHostHeader(plan.ValueString()) == observed {
+		return plan
+	}
+	return types.StringValue(observed)
+}
+
+// iisBindingProjectThumbprint resolves the in-place certificate_thumbprint
+// for state: the configured spelling is kept while it matches the bound
+// certificate (hex-normalised comparison, so case/spacing differences are
+// not drift); a genuine out-of-band change surfaces the observed canonical
+// thumbprint (upper-case without spaces) so the next plan reconciles it,
+// and an empty host side projects to null ("no certificate"). A null or
+// empty plan with a bound certificate is itself drift (someone bound a
+// certificate out-of-band) and surfaces the observed value.
+func iisBindingProjectThumbprint(plan types.String, observed string) types.String {
+	obsNorm, obsErr := winclient.NormalizeIISBindingThumbprint(observed)
+	if plan.IsUnknown() {
+		if obsErr != nil {
+			return types.StringNull()
+		}
+		return types.StringValue(obsNorm)
+	}
+	if plan.IsNull() || strings.TrimSpace(plan.ValueString()) == "" {
+		if obsErr != nil {
+			return types.StringNull()
+		}
+		return types.StringValue(obsNorm)
+	}
+	planNorm, planErr := winclient.NormalizeIISBindingThumbprint(plan.ValueString())
+	if planErr != nil || obsErr != nil || planNorm != obsNorm {
+		if obsErr != nil {
+			return types.StringNull()
+		}
+		return types.StringValue(obsNorm)
+	}
+	return plan
+}
+
 // iisBindingStateToModel projects an observed IISBindingState into a
-// Terraform model. The identity attributes keep the planned spelling
-// (ForceNew: plan always equals state there); the in-place attributes
-// reflect the host (an empty observed thumbprint is null; an empty
-// observed store falls back to "My" so the default stays diff-free).
+// Terraform model. The ForceNew identity attributes keep the planned
+// spelling (a known configured value can never be rewritten at plan time:
+// the framework rejects a plan that disagrees with a non-null config when
+// there is no prior state, so the canonical value-rewriting plan modifiers
+// used to break every non-canonical create with "Provider produced invalid
+// plan"). The host always stores the canonical form; it surfaces in the
+// canonical `binding_information` and `id` either way, and every host call
+// is built from the canonicalised input, so the spelling in state carries
+// no host meaning. Identity attributes cannot drift in place (any
+// host-side change is a different binding: the Read-by-ID lookup misses
+// and the resource is dropped from state).
+//
+// The in-place certificate pair follows the windows_power_plan precedent
+// (PreservePlanSpelling + genuine drift surfaces observed): while the
+// configured spelling matches the bound certificate it is kept verbatim,
+// and an out-of-band change surfaces the observed canonical thumbprint so
+// the next plan reconciles it. An empty observed thumbprint is null; an
+// empty observed store falls back to "My" so the default stays diff-free.
 func iisBindingStateToModel(plan windowsIISBindingModel, s *winclient.IISBindingState) windowsIISBindingModel {
 	m := windowsIISBindingModel{
 		ID:                 types.StringValue(winclient.IISBindingID(s.SiteName, s.Protocol, s.BindingInformation)),
 		SiteName:           plan.SiteName,
 		Protocol:           types.StringValue(s.Protocol),
-		IPAddress:          types.StringValue(s.IPAddress),
+		IPAddress:          iisBindingPreserveIPSpelling(plan.IPAddress, s.IPAddress),
 		Port:               types.Int64Value(s.Port),
-		HostHeader:         types.StringValue(s.HostHeader),
+		HostHeader:         iisBindingPreserveHostSpelling(plan.HostHeader, s.HostHeader),
 		RequireSNI:         types.BoolValue(s.RequireSNI),
 		BindingInformation: types.StringValue(s.BindingInformation),
 		Timeouts:           plan.Timeouts,
 	}
-	if strings.TrimSpace(s.CertificateThumbprint) == "" {
-		m.CertificateThumbprint = types.StringNull()
-	} else {
-		m.CertificateThumbprint = types.StringValue(strings.TrimSpace(s.CertificateThumbprint))
-	}
+	m.CertificateThumbprint = iisBindingProjectThumbprint(plan.CertificateThumbprint, s.CertificateThumbprint)
 	if strings.TrimSpace(s.CertificateStoreName) == "" {
 		m.CertificateStoreName = types.StringValue(winclient.IISBindingStoreMy)
 	} else {

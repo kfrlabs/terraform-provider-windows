@@ -272,11 +272,18 @@ func TestBuildIISSiteSetStatements_AllAttrs(t *testing.T) {
 		"serverAutoStart",
 		"logFile.enabled", "logFile.directory", "logFile.logFormat", "'W3C'",
 		"limits.connectionTimeout", "New-TimeSpan -Seconds 120",
+		"-Value $connectionTimeoutValue",
 		"limits.maxConnections", "100",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q, got:\n%s", want, script)
 		}
+	}
+	// Assign-then-use: an inline "-Value (New-TimeSpan ...)" throws
+	// InvalidCastException on some hosts (aggressive CLI campaign,
+	// 2026-11-17); the TimeSpan must flow through a variable.
+	if strings.Contains(script, "-Value (New-TimeSpan") {
+		t.Errorf("connection timeout must not be passed inline as -Value, got:\n%s", script)
 	}
 	// User values travel psQuote'd; the pool/path lines reference the
 	// script variables (quoted once at assignment), never raw text.
@@ -442,6 +449,7 @@ func TestIISSiteCreate_ScriptContent(t *testing.T) {
 		"New-Item", `bindings = @{protocol="http";bindingInformation="*:80:"}`, // boot binding...
 		"Remove-WebBinding", // ...removed immediately: zero-binding create, no transient *:80:http
 		"already_exists", "terraform import",
+		"$nowFound", "$createErr", // concurrent-create re-check: existing site is already_exists, never unknown
 		"id_conflict",                // site-ID precheck
 		"app_pool_not_found",         // pool precheck
 		"path_not_found",             // path precheck

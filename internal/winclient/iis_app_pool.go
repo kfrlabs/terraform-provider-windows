@@ -162,7 +162,16 @@ func buildIISAppPoolSetStatements(s IISAppPoolSettings, withPassword bool) strin
 		boolean("processModel.loadUserProfile", s.LoadUserProfile)
 	}
 	if s.IdleTimeoutMinutes != nil {
-		fmt.Fprintf(&sb, "  Set-ItemProperty $poolPath -Name processModel.idleTimeout -Value (New-TimeSpan -Minutes %d) -ErrorAction Stop\n", *s.IdleTimeoutMinutes)
+		// Assign-then-use: passing (New-TimeSpan ...) inline as -Value
+		// throws InvalidCastException ("Specified cast is not valid") on
+		// some hosts (Server 2025 build 26100, aggressive CLI campaign
+		// 2026-11-17) — the WebAdministration provider direct-casts the
+		// value and chokes on the PSObject wrapper of an inline
+		// expression, while a variable unrolls cleanly. The same rule
+		// covers recycling.periodicRestart.time below and the site
+		// limits.connectionTimeout.
+		fmt.Fprintf(&sb, "  $idleTimeoutValue = New-TimeSpan -Minutes %d\n", *s.IdleTimeoutMinutes)
+		sb.WriteString("  Set-ItemProperty $poolPath -Name processModel.idleTimeout -Value $idleTimeoutValue -ErrorAction Stop\n")
 	}
 	if s.IdleTimeoutAction != nil {
 		str("processModel.idleTimeoutAction", s.IdleTimeoutAction)
@@ -171,7 +180,11 @@ func buildIISAppPoolSetStatements(s IISAppPoolSettings, withPassword bool) strin
 		num("processModel.maxProcesses", s.MaxProcesses)
 	}
 	if s.RecyclingPeriodicRestartMinutes != nil {
-		fmt.Fprintf(&sb, "  Set-ItemProperty $poolPath -Name recycling.periodicRestart.time -Value (New-TimeSpan -Minutes %d) -ErrorAction Stop\n", *s.RecyclingPeriodicRestartMinutes)
+		// Assign-then-use (see processModel.idleTimeout above): an inline
+		// (New-TimeSpan ...) -Value throws InvalidCastException on some
+		// hosts while the same TimeSpan through a variable applies cleanly.
+		fmt.Fprintf(&sb, "  $restartTimeValue = New-TimeSpan -Minutes %d\n", *s.RecyclingPeriodicRestartMinutes)
+		sb.WriteString("  Set-ItemProperty $poolPath -Name recycling.periodicRestart.time -Value $restartTimeValue -ErrorAction Stop\n")
 	}
 	// A configured schedule (even empty) replaces the whole collection:
 	// clear it, then add each entry. The XPath filter quotes the pool name
@@ -495,7 +508,22 @@ try {
     throw
   }
 } catch {
-  Emit-Err (Classify-AppPool $_.Exception.Message) ([string]$_.Exception.Message) @{ name = $Name; step = 'create' }
+  $createErr = [string]$_.Exception.Message
+  # A concurrent create (duplicate resource, parallel apply) can pass the
+  # $found pre-flight above and then fail inside New-WebAppPool with an
+  # opaque error even though the pool now exists. Re-check before
+  # classifying: an existing pool is already_exists with the import hint,
+  # never unknown (same class as the site create race, aggressive CLI
+  # campaign, 2026-11-17). A failed cleanup of our own partial pool
+  # surfaces the same way, which is accurate.
+  try {
+    $nowFound = Get-ChildItem 'IIS:\AppPools' -ErrorAction Stop | Where-Object { $_.Name -eq $Name }
+    if ($nowFound) {
+      Emit-Err 'already_exists' ('IIS application pool ''' + $nowFound.Name + ''' already exists on this host (use ''terraform import'' to bring it under management instead of creating a duplicate).') @{ name = $nowFound.Name }
+      return
+    }
+  } catch {}
+  Emit-Err (Classify-AppPool $createErr) $createErr @{ name = $Name; step = 'create' }
 }
 `,
 		psQuote(in.Name),

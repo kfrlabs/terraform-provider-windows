@@ -631,7 +631,15 @@ func (b *IISBindingClient) Update(ctx context.Context, in IISBindingInput) (*IIS
 	ip, _ := NormalizeIISBindingIPAddress(in.IPAddress)
 	host := NormalizeIISBindingHostHeader(in.HostHeader)
 	canonBI := BuildIISBindingInformation(ip, in.Port, host)
-	script := bindingScriptVars(in, true) + "\n" + iisBindingScanFragment + `
+	// NOTE: Ensure-IIS must run before the scan fragment (the scan needs
+	// the WebAdministration drive). The one-shot PowerShell 5.1 process
+	// starts without the module imported, so scanning first fails with
+	// "Cannot find drive. A drive with the name 'IIS' does not exist"
+	// (aggressive CLI campaign, 2026-11-17: every binding update issued
+	// as the first IIS call of a provider process failed this way).
+	script := bindingScriptVars(in, true) + `
+if (-not (Ensure-IIS)) { return }
+` + iisBindingScanFragment + `
 if (-not ($siteNames -contains $Name)) {
   Emit-Err 'site_not_found' ('IIS site ''' + $Name + ''' was not found on this host.') @{ site_name = $Name }
   return
@@ -738,7 +746,27 @@ try {
   Remove-WebBinding -Name %s -Protocol $Protocol -IPAddress %s -Port %d -HostHeader %s -ErrorAction Stop
   Emit-OK ([ordered]@{ deleted = $true })
 } catch {
-  Emit-Err (Classify-Binding ([string]$_.Exception.Message)) ([string]$_.Exception.Message) @{ site_name = $Name; protocol = $Protocol; binding_information = $BindingInfo; step = 'delete' }
+  $removeErr = [string]$_.Exception.Message
+  # A concurrent destroy (Remove-Website tearing the site down while this
+  # binding is removed — e.g. no dependency edge when names are literals,
+  # as in import-adopted configurations) can fail the removal even though
+  # the target is already gone. Re-check before failing: only a verifiably
+  # absent target converges to success here (aggressive CLI campaign,
+  # 2026-11-17: concurrent terraform destroy of an adopted site plus
+  # binding surfaced a NullReferenceException from the dying site).
+  try {
+    $siteGone = -not (Get-ChildItem 'IIS:\Sites' -ErrorAction Stop | Where-Object { $_.Name -eq $Name })
+    $bindingGone = $true
+    if (-not $siteGone) {
+      $still = @(Get-WebBinding -Name $escSite -ErrorAction Stop) | Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo } | Select-Object -First 1
+      if ($still) { $bindingGone = $false }
+    }
+    if ($siteGone -or $bindingGone) {
+      Emit-OK ([ordered]@{ deleted = $true; note = 'already_absent' })
+      return
+    }
+  } catch {}
+  Emit-Err (Classify-Binding $removeErr) $removeErr @{ site_name = $Name; protocol = $Protocol; binding_information = $BindingInfo; step = 'delete' }
 }
 `, psQuote(site), psQuote(canonProto), psQuote(canonBI),
 		psQuote(psEscapeWildcard(site)), psQuote(ip), port, psQuote(host))

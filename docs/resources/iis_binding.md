@@ -110,9 +110,9 @@ resource "windows_iis_binding" "https" {
 ### Optional
 
 - `certificate_store_name` (String) LocalMachine store holding the certificate. One of `My`, `WebHosting`. Only meaningful alongside `certificate_thumbprint`. Updated in place. Defaults to `My`.
-- `certificate_thumbprint` (String) Thumbprint of the certificate to bind (`Cert:\LocalMachine\<store>`). 40 hex characters (spaces allowed, case-insensitive; stored upper-case without spaces). Needs `protocol = "https"`. The certificate must already exist (manage it with `windows_certificate`) and carry a private key. Omit (null) for no certificate. Updated in place.
-- `host_header` (String) Host header (server name), stored lower-case. Empty means the catch-all binding. Must not contain `|`, `:` or whitespace. Required when `require_sni` is true. Immutable after creation (ForceNew). Defaults to `""`.
-- `ip_address` (String) IP address to listen on, stored canonically (`netip`: lower-case, compressed IPv6). `"*"` listens on all unassigned addresses. Zone IDs are rejected. Immutable after creation (ForceNew). Defaults to `"*"`.
+- `certificate_thumbprint` (String) Thumbprint of the certificate to bind (`Cert:\LocalMachine\<store>`). 40 hex characters (spaces allowed, case-insensitive). Needs `protocol = "https"`. The certificate must already exist (manage it with `windows_certificate`) and carry a private key. Omit (null) for no certificate. Updated in place. The configured spelling is preserved in state while it matches the bound certificate; an out-of-band change surfaces the observed canonical thumbprint (upper-case without spaces).
+- `host_header` (String) Host header (server name). Empty means the catch-all binding. Must not contain `|`, `:` or whitespace. Required when `require_sni` is true. The configured spelling is preserved in state; the lower-case canonical form appears in `binding_information` and `id`. Immutable after creation (ForceNew). Defaults to `""`.
+- `ip_address` (String) IP address to listen on (`"*"` listens on all unassigned addresses; zone IDs are rejected). The configured spelling is preserved in state; the canonical form (`netip`: lower-case, compressed IPv6) appears in `binding_information` and `id`. Immutable after creation (ForceNew). Defaults to `"*"`.
 - `require_sni` (Boolean) Whether the binding requires Server Name Indication (`SslFlags` bit 0). Needs `protocol = "https"` and a non-empty `host_header`. Updated in place. Defaults to `false`.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
