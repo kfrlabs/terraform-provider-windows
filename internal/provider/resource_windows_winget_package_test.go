@@ -230,6 +230,7 @@ func TestAddWPDiag_WingetPackageError_AllKinds(t *testing.T) {
 		winclient.WingetPackageErrorSourceUnreachable,
 		winclient.WingetPackageErrorCatalogError,
 		winclient.WingetPackageErrorResourceInUse,
+		winclient.WingetPackageErrorUpgradeNotConverged,
 		winclient.WingetPackageErrorUnknown,
 	}
 	for _, kind := range kinds {
@@ -765,6 +766,53 @@ func TestWingetPackageResource_ImportState_WhitespaceOnlyID(t *testing.T) {
 	r.ImportState(context.Background(), req, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Error("expected error diagnostic for whitespace-only ID")
+	}
+}
+
+func TestWingetPackageResource_ImportState_UnsupportedSource(t *testing.T) {
+	// Aggressive CLI campaign (2026-11-17, LAB 203): "foo:7zip.7zip" passed
+	// ImportState and only failed later at Read over SSH (exit 0x8A150012).
+	// The schema restricts source to winget|msstore, so fail fast instead.
+	r := &windowsWingetPackageResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	newResp := func() *resource.ImportStateResponse {
+		rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
+			"id":                tftypes.NewValue(tftypes.String, nil),
+			"package_id":        tftypes.NewValue(tftypes.String, nil),
+			"version":           tftypes.NewValue(tftypes.String, nil),
+			"source":            tftypes.NewValue(tftypes.String, nil),
+			"override":          tftypes.NewValue(tftypes.String, nil),
+			"installed_version": tftypes.NewValue(tftypes.String, nil),
+			"name":              tftypes.NewValue(tftypes.String, nil),
+			"timeouts":          wpNullTimeoutsValue(),
+		})
+		return &resource.ImportStateResponse{
+			State: tfsdk.State{Raw: rawState, Schema: schemaResp.Schema},
+		}
+	}
+	bad := newResp()
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "foo:7zip.7zip"}, bad)
+	if !bad.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic for unsupported source")
+	}
+	found := false
+	for _, d := range bad.Diagnostics.Errors() {
+		if strings.Contains(d.Summary(), "Invalid import ID source") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'Invalid import ID source' in diagnostics: %v", bad.Diagnostics)
+	}
+
+	// Allowed sources (including padded) still import cleanly.
+	for _, id := range []string{"msstore:9N0DX20HK701", "  msstore:9N0DX20HK701  "} {
+		good := newResp()
+		r.ImportState(context.Background(), resource.ImportStateRequest{ID: id}, good)
+		if good.Diagnostics.HasError() {
+			t.Errorf("ID %q must import without error: %v", id, good.Diagnostics)
+		}
 	}
 }
 
