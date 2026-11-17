@@ -531,6 +531,25 @@ func (r *windowsWingetPackageResource) ImportState(ctx context.Context, req reso
 	packageID := strings.TrimSpace(parts[1])
 	id = source + ":" + packageID
 
+	// Fail fast on sources the schema forbids: `source` carries a
+	// OneOf("winget", "msstore") validator, so any other value could only
+	// fail later at Read over SSH (aggressive CLI campaign, 2026-11-17:
+	// "foo:7zip.7zip" cost an SSH round-trip before surfacing an `unknown`
+	// Read error). The package catalog namespace stays unchecked here on
+	// purpose (open-ended, colon-tolerant by design).
+	if source != "winget" && source != "msstore" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID source",
+			fmt.Sprintf(
+				"Unsupported source %q in import ID %q. "+
+					"Allowed sources: \"winget\", \"msstore\" "+
+					"(e.g. \"winget:Microsoft.VisualStudioCode\").",
+				source, req.ID,
+			),
+		)
+		return
+	}
+
 	// Seed the state with just enough for Read to run.
 	// version and override are unknown at import time → null (correct semantic).
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)

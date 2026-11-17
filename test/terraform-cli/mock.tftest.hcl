@@ -314,4 +314,9 @@ run "full_apply" {
     condition     = data.windows_legacy_package.sevenzip[0].installed == windows_legacy_package.sevenzip[0].installed
     error_message = "legacy package data source disagrees under mocks"
   }
+
+  assert {
+    condition     = data.windows_winget_package.salvo4_pinned[0].installed_version == windows_winget_package.salvo4_pinned[0].installed_version
+    error_message = "winget package data source disagrees under mocks"
+  }
 }
