@@ -693,6 +693,81 @@ func TestWingetPackageResource_ImportState_ColonInPackageID(t *testing.T) {
 	}
 }
 
+func TestWingetPackageResource_ImportState_PaddedID(t *testing.T) {
+	// Aggressive CLI campaign (2026-11-17, LAB 203): an import ID with
+	// copy-paste padding ("  winget:Foo  ") seeded source/package_id with
+	// stray spaces, and the subsequent Read failed with a confusing winget
+	// exit-code error. ImportState must trim and seed the canonical identity.
+	r := &windowsWingetPackageResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
+		"installed_version": tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
+	})
+	req := resource.ImportStateRequest{ID: "  winget:Microsoft.VisualStudioCode  "}
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{
+			Raw:    rawState,
+			Schema: schemaResp.Schema,
+		},
+	}
+	r.ImportState(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState padded ID must not error: %v", resp.Diagnostics)
+	}
+	ctx := context.Background()
+	var id, packageID, source types.String
+	resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("id"), &id)...)
+	resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("package_id"), &packageID)...)
+	resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("source"), &source)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("GetAttribute: %v", resp.Diagnostics)
+	}
+	if id.ValueString() != "winget:Microsoft.VisualStudioCode" {
+		t.Errorf("id = %q, want canonical trimmed identity", id.ValueString())
+	}
+	if packageID.ValueString() != "Microsoft.VisualStudioCode" {
+		t.Errorf("package_id = %q", packageID.ValueString())
+	}
+	if source.ValueString() != "winget" {
+		t.Errorf("source = %q", source.ValueString())
+	}
+}
+
+func TestWingetPackageResource_ImportState_WhitespaceOnlyID(t *testing.T) {
+	r := &windowsWingetPackageResource{}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, schemaResp)
+	rawState := tftypes.NewValue(wpSchemaObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"package_id":        tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"source":            tftypes.NewValue(tftypes.String, nil),
+		"override":          tftypes.NewValue(tftypes.String, nil),
+		"installed_version": tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          wpNullTimeoutsValue(),
+	})
+	req := resource.ImportStateRequest{ID: "   "}
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{
+			Raw:    rawState,
+			Schema: schemaResp.Schema,
+		},
+	}
+	r.ImportState(context.Background(), req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error diagnostic for whitespace-only ID")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ModifyPlan — pinned/installed divergence forces an update
 // ---------------------------------------------------------------------------
