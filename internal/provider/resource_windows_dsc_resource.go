@@ -119,6 +119,14 @@ func windowsDSCResourceSchemaDefinition(ctx context.Context) schema.Schema {
 			"(`not_converged` otherwise). `in_desired_state` reports the last `Test` outcome. " +
 			"Delete applies `destroy_properties` when configured (full replacement, e.g. `Ensure = \"Absent\"`), " +
 			"and is state-only otherwise.\n\n" +
+			"`Test` runs inside the DSC engine on the target, not in the provider's session: " +
+			"a resource whose `Test` depends on the engine host's own process environment can report " +
+			"false indefinitely even when the machine state is correct. The inbox `Environment` resource " +
+			"is one such case (its `Test` requires the variable in the engine host's process, which a " +
+			"long-running host predating the variable never has), so `windows_dsc_resource` managing plain " +
+			"environment variables shows a perpetual `in_desired_state = false -> true` diff with a no-op " +
+			"`Set` on every apply. Prefer `windows_environment_variable` for plain variables; it reads " +
+			"machine state directly and converges.\n\n" +
 			"Import is not supported: a generic gateway cannot reconstruct the original property " +
 			"authorship from live state. Write configuration matching the live state and let the first " +
 			"apply adopt it (no-op when already in the desired state).\n\n" +

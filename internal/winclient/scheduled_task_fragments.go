@@ -308,8 +308,13 @@ func buildSettingsFragment(s *ScheduledTaskSettingsInput, enabled bool) string {
 	if mi == "" {
 		mi = "Queue"
 	}
-	// mi is schema-allowlisted (Parallel|Queue|IgnoreNew|StopExisting) and
-	// additionally psQuote-hardened as defense in depth.
+	// mi is schema-allowlisted (Parallel|Queue|IgnoreNew) and
+	// additionally psQuote-hardened as defense in depth. StopExisting is
+	// deliberately not allowlisted: the ScheduledTasks cmdlets reject it
+	// (MultipleInstancesEnum has no StopExisting member), so accepting it
+	// at plan time would only fail at apply. Read still maps CIM value 3
+	// to StopExisting for externally created tasks, which then diff
+	// against the configured value and converge on the next apply.
 	//
 	// NOTE: the cmdlet parameter names differ from the CIM property names the
 	// Read path reports (and the schema mirrors). New-ScheduledTaskSettingsSet

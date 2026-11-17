@@ -387,8 +387,8 @@ func (r *windowsScheduledTaskResource) Schema(ctx context.Context, _ resource.Sc
 					},
 					"multiple_instances": schema.StringAttribute{
 						Optional: true, Computed: true, Default: stringdefault.StaticString("Queue"),
-						Validators:          []validator.String{stringvalidator.OneOf("Parallel", "Queue", "IgnoreNew", "StopExisting")},
-						MarkdownDescription: "Concurrent instance policy.",
+						Validators:          []validator.String{stringvalidator.OneOf("Parallel", "Queue", "IgnoreNew")},
+						MarkdownDescription: "Concurrent instance policy. `StopExisting` is reported on read for tasks created outside Terraform, but the ScheduledTasks cmdlets (`New-ScheduledTaskSettingsSet -MultipleInstances`) only accept `Parallel`, `Queue` and `IgnoreNew`, so it cannot be set.",
 					},
 					"disallow_start_if_on_batteries": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Do not start on battery."},
 					"stop_if_going_on_batteries":     schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Stop on battery switch."},

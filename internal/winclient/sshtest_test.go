@@ -82,6 +82,15 @@ type testServerOptions struct {
 	// runOneShot cancellation race test (#172).
 	oneShotStreamDelay time.Duration
 
+	// oneShotHang, when true in one-shot mode, records the request and
+	// then never responds on the exec channel, simulating a remote
+	// process the server never reaps (observed live: an orphaned
+	// powershell.exe holding the channel open after a wedged
+	// Invoke-DscResource). session.Close cannot unblock the client
+	// there; runOneShot must still report the context deadline via
+	// oneShotCancelGrace instead of wedging the per-resource timeout.
+	oneShotHang bool
+
 	// refusePwsh, when true, drops any exec channel whose command starts
 	// with pwsh.exe without responding, simulating a host with no
 	// PowerShell 7 (Windows PowerShell 5.1 only). The client's persistent
@@ -446,6 +455,16 @@ func (s *testServer) serveOneShot(ch ssh.Channel, opts testServerOptions) {
 	s.mu.Lock()
 	s.active--
 	s.mu.Unlock()
+
+	if opts.oneShotHang {
+		// Never answer: the client's session.Close cannot make this
+		// return, which is exactly the wedged-server case. Sleep past
+		// any test deadline so a missing grace period fails the test
+		// as a hang; then exit without responding (the channel is long
+		// dead and every write below would fail silently).
+		time.Sleep(30 * time.Second)
+		return
+	}
 
 	if opts.oneShotStreamDelay > 0 {
 		for _, line := range strings.Split(opts.stdout, "\n") {

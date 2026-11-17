@@ -6,6 +6,7 @@ description: |-
   Manages one instance of any Windows DSC resource on a remote host via Invoke-DscResource (Test/Set/Get) over SSH and PowerShell.
   Every operation first checks the Local Configuration Manager and fails closed with lcm_conflict when the node uses Pull refresh mode or reports a busy/pending LCM state. The provider never changes LCM settings.
   Convergence is Test-driven: Set runs only on drift and a follow-up Test verifies it (not_converged otherwise). in_desired_state reports the last Test outcome. Delete applies destroy_properties when configured (full replacement, e.g. Ensure = "Absent"), and is state-only otherwise.
+  Test runs inside the DSC engine on the target, not in the provider's session: a resource whose Test depends on the engine host's own process environment can report false indefinitely even when the machine state is correct. The inbox Environment resource is one such case (its Test requires the variable in the engine host's process, which a long-running host predating the variable never has), so windows_dsc_resource managing plain environment variables shows a perpetual in_desired_state = false -> true diff with a no-op Set on every apply. Prefer windows_environment_variable for plain variables; it reads machine state directly and converges.
   Import is not supported: a generic gateway cannot reconstruct the original property authorship from live state. Write configuration matching the live state and let the first apply adopt it (no-op when already in the desired state).
   Windows PowerShell 5.1 only (Invoke-DscResource, DSC 1.1): PowerShell 7 / DSCv3 is not supported.
 ---
@@ -17,6 +18,8 @@ Manages one instance of any Windows DSC resource on a remote host via `Invoke-Ds
 Every operation first checks the Local Configuration Manager and fails closed with `lcm_conflict` when the node uses Pull refresh mode or reports a busy/pending LCM state. The provider never changes LCM settings.
 
 Convergence is Test-driven: `Set` runs only on drift and a follow-up `Test` verifies it (`not_converged` otherwise). `in_desired_state` reports the last `Test` outcome. Delete applies `destroy_properties` when configured (full replacement, e.g. `Ensure = "Absent"`), and is state-only otherwise.
+
+`Test` runs inside the DSC engine on the target, not in the provider's session: a resource whose `Test` depends on the engine host's own process environment can report false indefinitely even when the machine state is correct. The inbox `Environment` resource is one such case (its `Test` requires the variable in the engine host's process, which a long-running host predating the variable never has), so `windows_dsc_resource` managing plain environment variables shows a perpetual `in_desired_state = false -> true` diff with a no-op `Set` on every apply. Prefer `windows_environment_variable` for plain variables; it reads machine state directly and converges.
 
 Import is not supported: a generic gateway cannot reconstruct the original property authorship from live state. Write configuration matching the live state and let the first apply adopt it (no-op when already in the desired state).
 
@@ -43,6 +46,10 @@ provider "windows" {
 # Minimal example: a machine-scope environment variable through the built-in
 # Environment DSC resource. The gateway converges with Test/Set/Test and
 # removes the variable on destroy via destroy_properties (Ensure = "Absent").
+# Note: the inbox Environment resource takes no Target property (it always
+# manages machine scope here), and its Test can report false indefinitely
+# for variables the DSC engine host process predates — see the resource
+# documentation. Prefer windows_environment_variable for plain variables.
 resource "windows_dsc_resource" "example" {
   module_name   = "PSDesiredStateConfiguration"
   resource_name = "Environment"
@@ -51,7 +58,6 @@ resource "windows_dsc_resource" "example" {
     Ensure = "Present"
     Name   = "FOO"
     Value  = "bar"
-    Target = ["Machine"]
   }
 
   destroy_properties = {
@@ -62,6 +68,8 @@ resource "windows_dsc_resource" "example" {
 
 # Pinned module version: the exact version is used, otherwise the highest
 # installed version is used and reported in resolved_module_version.
+# (Same caveat as above: the inbox Environment resource takes no Target
+# property.)
 resource "windows_dsc_resource" "pinned" {
   module_name    = "PSDesiredStateConfiguration"
   module_version = "1.1"
@@ -71,7 +79,6 @@ resource "windows_dsc_resource" "pinned" {
     Ensure = "Present"
     Name   = "FOO_PINNED"
     Value  = "bar"
-    Target = ["Machine"]
   }
 
   destroy_properties = {
