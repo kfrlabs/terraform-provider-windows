@@ -183,7 +183,11 @@ func TestLPRegex_SourceURL(t *testing.T) {
 }
 
 func TestLPRegex_Checksum(t *testing.T) {
-	for _, s := range []string{"sha256:deadbeef", "sha512:abcd", "sha1:00", "md5:abcd"} {
+	for _, s := range []string{"sha256:deadbeef", "sha512:abcd", "sha1:00", "md5:abcd",
+		// Algo name is case-insensitive: the Go-side validator lowercases
+		// before comparison and the PowerShell host uppercases for
+		// Get-FileHash (aggressive CLI campaign, 2026-11-17).
+		"SHA256:DEADBEEF", "Sha512:abcd", "SHA1:00", "MD5:abcd"} {
 		if !lpChecksumRe.MatchString(s) {
 			t.Errorf("expected %q to match", s)
 		}
