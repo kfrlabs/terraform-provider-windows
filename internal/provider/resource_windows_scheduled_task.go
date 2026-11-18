@@ -797,7 +797,8 @@ func stateToModel(ctx context.Context, s *winclient.ScheduledTaskState, priorMod
 
 // buildPrincipalModel builds the principal types.Object for state.
 // Write-only fields (password, password_wo_version) are preserved from priorModel.
-// logon_type is preserved from priorModel (Optional-only, not read from Windows).
+// logon_type is preserved from priorModel (Optional-only); on the import path
+// (priorModel == nil) it is populated from the Windows state instead.
 func buildPrincipalModel(ctx context.Context, s *winclient.ScheduledTaskPrincipalState, priorModel *windowsScheduledTaskModel, diags *diag.Diagnostics) types.Object {
 	// If priorModel had no principal, keep null (user doesn't manage principal)
 	priorHasPrincipal := priorModel != nil && !priorModel.Principal.IsNull() && !priorModel.Principal.IsUnknown()
@@ -854,13 +855,17 @@ func buildPrincipalModel(ctx context.Context, s *winclient.ScheduledTaskPrincipa
 		}
 	}
 
-	// logon_type: Optional-only — preserve from prior (avoid spurious drift)
+	// logon_type: Optional-only — preserve from prior (avoid spurious drift);
+	// on the import path (priorModel == nil) populate from the observed
+	// Windows value so the post-import state matches config (F01).
 	pm.LogonType = types.StringNull()
 	if priorHasPrincipal {
 		var prior windowsScheduledTaskPrincipalModel
 		if d := priorModel.Principal.As(ctx, &prior, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); !d.HasError() {
 			pm.LogonType = prior.LogonType
 		}
+	} else if priorModel == nil && s != nil && s.LogonType != "" {
+		pm.LogonType = types.StringValue(s.LogonType)
 	}
 
 	// run_level: Computed+Default("Limited") — from Windows

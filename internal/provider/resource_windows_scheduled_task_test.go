@@ -17,7 +17,8 @@
 //   - Read: happy path, nil (drift/remove), client error
 //   - Update: happy path, client error
 //   - Delete: happy path, not_found (idempotent), client error
-//   - ImportState: happy path, not_found error
+//   - ImportState: happy path, not_found error, observed logon_type through
+//     the real State.Set path + import/refresh chain (F01-REOPEN)
 package provider
 
 import (
@@ -1022,6 +1023,143 @@ func TestStateToModel_PrincipalPasswordPreserved(t *testing.T) {
 	}
 	if pm.UserID.ValueString() != `LAB-WINDOCKER-0\svc` {
 		t.Errorf("configured local account representation should be preserved, got: %q", pm.UserID.ValueString())
+	}
+}
+
+// TestStateToModel_ImportPrincipalLogonType is a regression test for acc
+// finding F01 (run 2611181339, scenario 05-import-external): on the import
+// path (priorModel == nil) principal.logon_type must be populated from the
+// observed Windows value, otherwise the post-import plan is non-empty.
+func TestStateToModel_ImportPrincipalLogonType(t *testing.T) {
+	ctx := context.Background()
+	s := minimalSTState("T", `\`)
+	m, diags := stateToModel(ctx, s, nil)
+	if diags.HasError() {
+		t.Fatalf("stateToModel diags: %v", diags)
+	}
+	if m.Principal.IsNull() {
+		t.Fatal("principal should not be null on import")
+	}
+	var pm windowsScheduledTaskPrincipalModel
+	if d := m.Principal.As(ctx, &pm, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); d.HasError() {
+		t.Fatalf("Principal.As: %v", d)
+	}
+	if pm.LogonType.IsNull() || pm.LogonType.ValueString() != "ServiceAccount" {
+		t.Errorf("logon_type = %v, want ServiceAccount (from Windows state)", pm.LogonType)
+	}
+	if pm.UserID.ValueString() != "SYSTEM" {
+		t.Errorf("user_id = %q, want SYSTEM", pm.UserID.ValueString())
+	}
+	if pm.RunLevel.ValueString() != "Limited" {
+		t.Errorf("run_level = %q, want Limited", pm.RunLevel.ValueString())
+	}
+}
+
+// stImportF01State returns a winclient state shaped like the acc
+// scenario 42 / regress-F01 external task (SYSTEM/ServiceAccount/Highest,
+// Daily trigger, description, default settings) so the import-path tests
+// below exercise the real E2E payload shape rather than minimalSTState.
+func stImportF01State() *winclient.ScheduledTaskState {
+	return &winclient.ScheduledTaskState{
+		Name: "tfacc-2611181401-f01", Path: `\`,
+		Description: "tfacc-2611181401 F01 recheck target",
+		Enabled:     true,
+		State:       "Ready",
+		Principal: &winclient.ScheduledTaskPrincipalState{
+			UserID: "SYSTEM", LogonType: "ServiceAccount", RunLevel: "Highest",
+		},
+		Actions: []winclient.ScheduledTaskActionState{
+			{Execute: `C:\Windows\System32\cmd.exe`, Arguments: "/c echo tfacc-2611181401-f01"},
+		},
+		Triggers: []winclient.ScheduledTaskTriggerState{
+			{Type: "Daily", Enabled: true, StartBoundary: "2030-06-01T06:00:00Z", DaysInterval: 1, DaysOfWeek: []string{}},
+		},
+		Settings: &winclient.ScheduledTaskSettingsState{
+			AllowDemandStart:           true,
+			AllowHardTerminate:         true,
+			ExecutionTimeLimit:         "PT72H",
+			MultipleInstances:          "IgnoreNew",
+			DisallowStartIfOnBatteries: true,
+			StopIfGoingOnBatteries:     true,
+		},
+	}
+}
+
+// stPrincipalFromState extracts the principal model from a tfsdk state value.
+func stPrincipalFromState(ctx context.Context, t *testing.T, tag string, st tfsdk.State) windowsScheduledTaskPrincipalModel {
+	t.Helper()
+	var m windowsScheduledTaskModel
+	if d := st.Get(ctx, &m); d.HasError() {
+		t.Fatalf("%s State.Get diags: %v", tag, d)
+	}
+	if m.Principal.IsNull() {
+		t.Fatalf("%s principal should not be null", tag)
+	}
+	var pm windowsScheduledTaskPrincipalModel
+	if d := m.Principal.As(ctx, &pm, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); d.HasError() {
+		t.Fatalf("%s Principal.As diags: %v", tag, d)
+	}
+	return pm
+}
+
+// TestSTResource_ImportState_ObservedPrincipalLogonType is the real-path
+// regression test for acc finding F01-REOPEN (cycle 3, scenario
+// 42-recheck-F01-import-logontype): unlike
+// TestStateToModel_ImportPrincipalLogonType, which calls stateToModel
+// directly on a hand-built struct, this test drives the actual ImportState
+// handler (fake ImportByID -> stateToModel(nil) -> resp.State.Set with the
+// real schema -> State.Get) with the scenario-42 payload shape. On pre-fix
+// source the imported state carries principal.logon_type=null and this test
+// fails; a green unit suite with a hand-built state alone cannot catch a
+// divergence on this path.
+func TestSTResource_ImportState_ObservedPrincipalLogonType(t *testing.T) {
+	ctx := context.Background()
+	r := &windowsScheduledTaskResource{stClient: &fakeSTClient{importOut: stImportF01State()}}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.ImportState(ctx, resource.ImportStateRequest{ID: `\tfacc-2611181401-f01`}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState diags: %v", resp.Diagnostics)
+	}
+	pm := stPrincipalFromState(ctx, t, "import", resp.State)
+	if pm.LogonType.IsNull() || pm.LogonType.ValueString() != "ServiceAccount" {
+		t.Errorf("import logon_type = %v, want ServiceAccount (from observed Windows state)", pm.LogonType)
+	}
+	if pm.UserID.ValueString() != "SYSTEM" {
+		t.Errorf("import user_id = %q, want SYSTEM", pm.UserID.ValueString())
+	}
+	if pm.RunLevel.ValueString() != "Highest" {
+		t.Errorf("import run_level = %q, want Highest", pm.RunLevel.ValueString())
+	}
+}
+
+// TestSTResource_ImportThenRefresh_PreservesObservedLogonType locks the
+// second half of `terraform import` (the mandatory "Refreshing state..."
+// Read): starting from the imported state, a refresh against the same
+// observed payload must keep principal.logon_type instead of nulling it.
+func TestSTResource_ImportThenRefresh_PreservesObservedLogonType(t *testing.T) {
+	ctx := context.Background()
+	payload := stImportF01State()
+	r := &windowsScheduledTaskResource{stClient: &fakeSTClient{importOut: payload, readOut: payload}}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+
+	iresp := &resource.ImportStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.ImportState(ctx, resource.ImportStateRequest{ID: `\tfacc-2611181401-f01`}, iresp)
+	if iresp.Diagnostics.HasError() {
+		t.Fatalf("ImportState diags: %v", iresp.Diagnostics)
+	}
+
+	rresp := &resource.ReadResponse{State: iresp.State}
+	r.Read(ctx, resource.ReadRequest{State: iresp.State}, rresp)
+	if rresp.Diagnostics.HasError() {
+		t.Fatalf("Read diags: %v", rresp.Diagnostics)
+	}
+	pm := stPrincipalFromState(ctx, t, "refresh", rresp.State)
+	if pm.LogonType.IsNull() || pm.LogonType.ValueString() != "ServiceAccount" {
+		t.Errorf("refresh logon_type = %v, want ServiceAccount (preserved from import state)", pm.LogonType)
 	}
 }
 
