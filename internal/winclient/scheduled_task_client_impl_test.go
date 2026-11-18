@@ -629,6 +629,41 @@ func TestStPayloadToState_Full(t *testing.T) {
 	if s.Principal == nil || s.Principal.UserID != "SYSTEM" {
 		t.Errorf("Principal mismatch: %+v", s.Principal)
 	}
+	if s.Principal.LogonType != "ServiceAccount" || s.Principal.RunLevel != "Limited" {
+		t.Errorf("Principal logon/runlevel mismatch: %+v", s.Principal)
+	}
+}
+
+// TestStPayloadToState_RawHostJSONPrincipal starts from the exact JSON
+// shape Read-TaskState emits on the host (SYSTEM/ServiceAccount/Highest,
+// Daily trigger) instead of a hand-built struct, so a key-name or
+// envelope-shape drift between the PowerShell output and the Go payload
+// structs cannot silently drop principal.logon_type (F01-REOPEN).
+func TestStPayloadToState_RawHostJSONPrincipal(t *testing.T) {
+	raw := `{"name":"tfacc-2611181401-f01","path":"\\","description":"tfacc-2611181401 F01 recheck target",` +
+		`"enabled":true,"state":"Ready","last_run_time":"","last_task_result":267011,"next_run_time":"",` +
+		`"principal":{"user_id":"SYSTEM","logon_type":"ServiceAccount","run_level":"Highest"},` +
+		`"actions":[{"execute":"C:\\Windows\\System32\\cmd.exe","arguments":"/c echo hi","working_directory":""}],` +
+		`"triggers":[{"type":"Daily","enabled":true,"start_boundary":"2030-06-01T06:00:00Z","end_boundary":"",` +
+		`"execution_time_limit":"","delay":"","days_interval":1,"days_of_week":[],"weeks_interval":0,` +
+		`"user_id":"","subscription":""}],` +
+		`"settings":{"allow_demand_start":true,"allow_hard_terminate":true,"start_when_available":false,` +
+		`"run_only_if_network_available":false,"execution_time_limit":"PT72H","multiple_instances":"IgnoreNew",` +
+		`"disallow_start_if_on_batteries":true,"stop_if_going_on_batteries":true,"wake_to_run":false,"run_only_if_idle":false}}`
+	var p stTaskPayload
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatalf("raw host JSON should unmarshal: %v", err)
+	}
+	s := stPayloadToState(&p)
+	if s == nil {
+		t.Fatal("expected non-nil state")
+	}
+	if s.Principal == nil {
+		t.Fatal("principal should not be nil for host JSON with a principal object")
+	}
+	if s.Principal.UserID != "SYSTEM" || s.Principal.LogonType != "ServiceAccount" || s.Principal.RunLevel != "Highest" {
+		t.Errorf("Principal mismatch from raw JSON: %+v", s.Principal)
+	}
 }
 
 func TestStPayloadToState_NilDaysOfWeekNormalized(t *testing.T) {
