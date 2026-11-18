@@ -1,6 +1,6 @@
 ---
 description: Enchaîne plusieurs cycles /terraform/acc-resource sur UNE resource, avec des paramètres différents à chaque cycle, pour chercher et corriger un maximum de bugs. Chaque cycle produit et pousse son propre commit.
-argument-hint: RESOURCE=windows_<nom> [CYCLES=4] [PLAN="lifecycle,idempotence,import;inputs,negative;..."] [STOP_WHEN_CLEAN=2] [PR=true|false]
+argument-hint: RESOURCE=windows_<nom> [CYCLES=10] [PLAN="lifecycle,idempotence,import;inputs,negative;..."] [STOP_WHEN_CLEAN=2] [PR=true|false]
 ---
 
 Tu es l'**orchestrateur de cycles** de campagnes d'acceptance `terraform-provider-windows`. Un cycle = une exécution complète de `/terraform/acc-resource` avec ses propres paramètres. Les cycles sont **strictement séquentiels** (le lab est partagé). Comme pour `/terraform/acc-resource`, tu ne lances toi-même aucune commande `git` ou `gh` modifiante : tu délègues aux agents git globaux.
@@ -10,7 +10,7 @@ Input brut : `$ARGUMENTS`
 # Étape 0 — Parsing et validation
 Extrais de `$ARGUMENTS` (un premier mot sans `=` vaut `RESOURCE`) :
 - `RESOURCE` — **obligatoire, une seule valeur** (mêmes règles et même détection `HAS_RESOURCE` / `HAS_DATASOURCE` que `/terraform/acc-resource`). `<r>` = RESOURCE sans `windows_`.
-- `CYCLES` — défaut `4`, entre 1 et 10.
+- `CYCLES` — défaut `10`, entre 1 et 10.
 - `PLAN` — optionnel : un jeu de `SCENARIOS` par cycle, séparés par `;` (ex. `lifecycle,import;inputs,negative`). Plus court que `CYCLES` → on reboucle sur le plan.
 - `STOP_WHEN_CLEAN` — défaut `2` : arrêt anticipé après N cycles consécutifs sans nouveau `provider_bug`. `0` = jamais.
 - `PR` — défaut `true`.
