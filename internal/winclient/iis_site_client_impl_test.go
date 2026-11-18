@@ -169,6 +169,7 @@ func TestMapIISSiteKind(t *testing.T) {
 		"not_found":          IISSiteErrorNotFound,
 		"already_exists":     IISSiteErrorAlreadyExists,
 		"id_conflict":        IISSiteErrorIDConflict,
+		"id_mismatch":        IISSiteErrorIDMismatch,
 		"app_pool_not_found": IISSiteErrorAppPoolNotFound,
 		"path_not_found":     IISSiteErrorPathNotFound,
 		"iis_not_installed":  IISSiteErrorIISNotInstalled,
@@ -188,7 +189,7 @@ func TestMapIISSiteKind(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestValidateIISSiteName(t *testing.T) {
-	for _, ok := range []string{"web", "Default Web Site", "a", "site-1_name.test", "x'y", strings.Repeat("a", 64)} {
+	for _, ok := range []string{"web", "Default Web Site", "a", "site-1_name.test", strings.Repeat("a", 64)} {
 		if err := ValidateIISSiteName(ok); err != nil {
 			t.Errorf("name %q should be valid, got %v", ok, err)
 		}
@@ -197,7 +198,7 @@ func TestValidateIISSiteName(t *testing.T) {
 		"", strings.Repeat("a", 65),
 		" leading", "trailing ", " ",
 		"a/b", `a\b`, "a[b", "a]b", "a:b", "a;b", "a,b", "a?b", "a*b",
-		`a"b`, "a<b", "a>b", "a|b",
+		`a"b`, "a'b", "a<b", "a>b", "a|b",
 	} {
 		if err := ValidateIISSiteName(bad); err == nil {
 			t.Errorf("name %q should be rejected", bad)
@@ -344,44 +345,44 @@ func TestBuildIISSiteStateStatement(t *testing.T) {
 // Script content: gate, literal lookups, zero-binding create, guards
 // ---------------------------------------------------------------------------
 
-// TestIISSiteScripts_XPathNameQuoting guards the XPath site-name filter
-// for names containing an apostrophe (allowed by ValidateIISSiteName
-// while " is forbidden): the filter must use a double-quoted XPath
-// literal, never single-quote doubling (invalid in XPath 1.0).
-func TestIISSiteScripts_XPathNameQuoting(t *testing.T) {
-	var gotScript string
-	restore := stubIISRun(func(_ context.Context, _ *Client, script, _ string) (string, string, error) {
-		gotScript = script
-		return iisSiteOK(t, testIISSiteState()), "", nil
+// ---------------------------------------------------------------------------
+// F02: apostrophe names are rejected before reaching the host
+// ---------------------------------------------------------------------------
+
+// TestIISSiteScripts_ApostropheRejected guards the F02 injection class: an
+// apostrophe in the site name breaks the MWA XPath site predicate (the
+// provider re-emits it single-quoted via compare-string-ordinal, where the
+// apostrophe terminates the literal), and single-quote doubling is invalid
+// in XPath 1.0 — so the name is rejected by ValidateIISSiteName (mirrored
+// at plan time) and no CRUD call reaches the host. The XPath filters keep
+// their double-quoted literals, which are safe for every name that passes
+// validation (" is forbidden too).
+func TestIISSiteScripts_ApostropheRejected(t *testing.T) {
+	called := false
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+		called = true
+		return "", "", nil
 	})
 	defer restore()
 
 	c := iisSiteNewClient(t)
-	if _, err := c.Read(context.Background(), "x'y"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := c.Read(context.Background(), "x'y"); err == nil {
+		t.Error("apostrophe name must be rejected on read")
 	}
-	for _, want := range []string{
-		`site[@name="`,
-		`'"]/application[@path=''/'']'`,
-	} {
-		if !strings.Contains(gotScript, want) {
-			t.Errorf("read script must build the XPath filter with a double-quoted literal, missing %q", want)
-		}
+	if _, err := c.Create(context.Background(), IISSiteInput{Name: "x'y"}); err == nil {
+		t.Error("apostrophe name must be rejected on create")
 	}
-	for _, absent := range []string{
-		`site[@name='`,
-		`$xName`,
-		`-replace "'", "''"`,
-	} {
-		if strings.Contains(gotScript, absent) {
-			t.Errorf("read script must not use single-quote doubling for the XPath filter, found %q", absent)
-		}
+	if _, err := c.Update(context.Background(), IISSiteInput{Name: "x'y"}); err == nil {
+		t.Error("apostrophe name must be rejected on update")
+	}
+	if err := c.Delete(context.Background(), "x'y"); err == nil {
+		t.Error("apostrophe name must be rejected on delete")
+	}
+	if called {
+		t.Error("apostrophe names must never reach the host")
 	}
 	if !strings.Contains(iisSitePreamble(), `site[@name="`) {
-		t.Error("iisSitePreamble must build the XPath filter with a double-quoted literal")
-	}
-	if strings.Contains(iisSitePreamble(), `$xName`) {
-		t.Error("iisSitePreamble must not use single-quote doubling for the XPath filter")
+		t.Error("iisSitePreamble must keep the double-quoted XPath literal (safe once both quote types are rejected)")
 	}
 }
 
@@ -450,7 +451,13 @@ func TestIISSiteCreate_ScriptContent(t *testing.T) {
 		"Remove-WebBinding", // ...removed immediately: zero-binding create, no transient *:80:http
 		"already_exists", "terraform import",
 		"$nowFound", "$createErr", // concurrent-create re-check: existing site is already_exists, never unknown
-		"id_conflict",                // site-ID precheck
+		"id_conflict", // site-ID precheck
+		"$idHolder",   // F03: catch re-checks the ID too, so a lost parallel race reports id_conflict
+		"Select-Object -First 1",
+		"id_mismatch",           // F01: fail fast when IIS does not honour the configured site_id
+		"$actualId -ne $SiteId", // ...read back the allocated ID right after New-Item
+		"actual_site_id",        // ...with wanted/actual IDs in context
+		"did not honour",
 		"app_pool_not_found",         // pool precheck
 		"path_not_found",             // path precheck
 		"Test-Path -LiteralPath",     // literal existence check, never mkdir
@@ -733,6 +740,7 @@ func TestIISSiteRemoteKinds(t *testing.T) {
 		{"not_found", IISSiteErrorNotFound},
 		{"already_exists", IISSiteErrorAlreadyExists},
 		{"id_conflict", IISSiteErrorIDConflict},
+		{"id_mismatch", IISSiteErrorIDMismatch},
 		{"app_pool_not_found", IISSiteErrorAppPoolNotFound},
 		{"path_not_found", IISSiteErrorPathNotFound},
 		{"iis_not_installed", IISSiteErrorIISNotInstalled},

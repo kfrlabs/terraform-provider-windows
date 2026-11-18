@@ -376,7 +376,7 @@ func TestIISSiteNameValidator(t *testing.T) {
 			t.Errorf("name %q should pass, got %v", p, resp.Diagnostics)
 		}
 	}
-	for _, p := range []string{" leading", "trailing ", "a/b", `a\b`, "a[b", "a:b", "a,b", "a?b", "a*b", `a"b`, "a<b", "a|b"} {
+	for _, p := range []string{" leading", "trailing ", "a/b", `a\b`, "a[b", "a:b", "a,b", "a?b", "a*b", `a"b`, "a'b", "a<b", "a|b"} {
 		resp := &validator.StringResponse{}
 		v.ValidateString(context.Background(), validator.StringRequest{
 			Path: path.Root("name"), ConfigValue: types.StringValue(p),
@@ -676,6 +676,7 @@ func TestWindowsIISSiteResource_Create_AlreadyExists(t *testing.T) {
 func TestWindowsIISSiteResource_Create_TypedErrors(t *testing.T) {
 	for kind, summary := range map[winclient.IISSiteErrorKind]string{
 		winclient.IISSiteErrorIDConflict:      "id_conflict",
+		winclient.IISSiteErrorIDMismatch:      "id_mismatch",
 		winclient.IISSiteErrorAppPoolNotFound: "app_pool_not_found",
 		winclient.IISSiteErrorPathNotFound:    "path_not_found",
 	} {
@@ -982,6 +983,7 @@ func TestWindowsIISSiteResource_Configure(t *testing.T) {
 func TestIISSiteErrorDiag_TypedKinds(t *testing.T) {
 	for kind, msg := range map[winclient.IISSiteErrorKind]string{
 		winclient.IISSiteErrorIDConflict:      "site1",
+		winclient.IISSiteErrorIDMismatch:      "configured site_id 4294967295 was not honoured (actual site_id 2)",
 		winclient.IISSiteErrorAppPoolNotFound: "pool1",
 		winclient.IISSiteErrorPathNotFound:    `C:\gone`,
 	} {

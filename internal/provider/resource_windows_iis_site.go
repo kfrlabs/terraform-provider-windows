@@ -322,11 +322,15 @@ func windowsIISSiteSchemaDefinition(ctx context.Context) schema.Schema {
 
 // iisSiteNameValidator enforces the site-name rules at plan time
 // (mirroring winclient.ValidateIISSiteName): no forbidden characters and
-// no leading/trailing spaces. Length is covered by LengthBetween.
+// no leading/trailing spaces. The apostrophe is rejected even though IIS
+// itself allows it: the MWA configuration query re-emits the XPath site
+// predicate single-quoted (compare-string-ordinal), where an apostrophe
+// terminates the literal and breaks every read and write (F02). Length is
+// covered by LengthBetween.
 type iisSiteNameValidator struct{}
 
 func (v iisSiteNameValidator) Description(_ context.Context) string {
-	return "Site name must not contain / \\ [ ] : ; , ? * \" < > | and must not have leading or trailing spaces."
+	return "Site name must not contain / \\ [ ] : ; , ? * \" ' < > | and must not have leading or trailing spaces."
 }
 
 func (v iisSiteNameValidator) MarkdownDescription(ctx context.Context) string {
@@ -346,11 +350,11 @@ func (v iisSiteNameValidator) ValidateString(_ context.Context, req validator.St
 		)
 		return
 	}
-	if strings.ContainsAny(val, `/\[]:;,?*"<>|`) {
+	if strings.ContainsAny(val, `/\[]:;,?*"<>|`) || strings.Contains(val, "'") {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid IIS site name",
-			fmt.Sprintf("IIS site name %q must not contain any of / \\ [ ] : ; , ? * \" < > |.", val),
+			fmt.Sprintf("IIS site name %q must not contain any of / \\ [ ] : ; , ? * \" ' < > |.", val),
 		)
 	}
 }
@@ -969,13 +973,15 @@ func warnIISSiteLeftStopped(d *diag.Diagnostics, plannedState types.String, obse
 }
 
 // addIISSiteDiag appends a diagnostic from a site client error.
-// Id-conflict, missing-pool and missing-path refusals keep their full
-// guidance; other kinds are enriched with context fields when available.
+// Id-conflict/id-mismatch, missing-pool and missing-path refusals keep
+// their full guidance; other kinds are enriched with context fields when
+// available.
 func addIISSiteDiag(d *diag.Diagnostics, summary string, err error) {
 	var ae *winclient.IISSiteError
 	if errors.As(err, &ae) {
 		switch ae.Kind {
 		case winclient.IISSiteErrorIDConflict,
+			winclient.IISSiteErrorIDMismatch,
 			winclient.IISSiteErrorAppPoolNotFound,
 			winclient.IISSiteErrorPathNotFound,
 			winclient.IISSiteErrorAlreadyExists,
