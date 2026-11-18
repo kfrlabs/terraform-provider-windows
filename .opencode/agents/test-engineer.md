@@ -1,6 +1,7 @@
 ---
 name: test-engineer
 description: Étape 4 de la chaîne terraform-provider-windows. Écrit les tests unit + acceptance (resource ou data source), exécute go test, produit un rapport YAML. Invoqué par l'orchestrateur /windows-resource.
+mode: subagent
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: inherit
 ---

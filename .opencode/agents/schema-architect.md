@@ -1,6 +1,7 @@
 ---
 name: schema-architect
 description: Étape 2 de la chaîne terraform-provider-windows. Transforme la spec YAML en squelette Go (resource ou data source) qui compile, plus l'interface client winclient et l'enregistrement dans provider.go. Invoqué par l'orchestrateur /windows-resource.
+mode: subagent
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: inherit
 ---

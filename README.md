@@ -177,7 +177,7 @@ Provider documentation is published on the [Terraform Registry](https://registry
 
 The source pages live in `docs/` and are generated via `tfplugindocs` — do not edit by hand (`make docs`).
 
-Agent and contributor workflow context lives in `CLAUDE.md`.
+Agent and contributor workflow context lives in `AGENTS.md`.
 
 ## License
 

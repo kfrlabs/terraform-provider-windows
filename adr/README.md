@@ -5,7 +5,7 @@ here as `ADR-NNNN-short-title.md`, numbered sequentially.
 
 Numbering note: ADR-0001 through ADR-0008 predate this repository and are
 absent; the in-repo sequence starts at ADR-0009. References to ADR-0008 in
-`.kdust/prompts/v2/` and in ADR-0009 ("decoupled chain") are historical.
+the former `.kdust/prompts/v2/` prompts (removed) and in ADR-0009 ("decoupled chain") are historical.
 
 Index:
 

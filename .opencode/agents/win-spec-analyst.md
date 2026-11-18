@@ -1,6 +1,7 @@
 ---
 name: win-spec-analyst
 description: Étape 1 de la chaîne terraform-provider-windows. Transforme une description fonctionnelle en spec technique YAML (resource CRUD ou data source read-only). Invoqué par l'orchestrateur /windows-resource.
+mode: subagent
 tools: Read, Write, Bash, Grep, Glob
 model: inherit
 ---
@@ -103,11 +104,11 @@ Règles datasource :
 - Pas de section `import`.
 - Si une resource jumelle (même `resource_name`) existe déjà dans le repo : `reuses_resource_client: true`.
 
-## 2) `.kdust/chains/<filename>.yaml` (manifeste de traçabilité, TRACKÉ)
+## 2) `.opencode/chains/<filename>.yaml` (manifeste de traçabilité, TRACKÉ)
 
 Nom de fichier dérivé du suffixe horodaté de `CHAIN_BRANCH` :
-- `kdust/chain/windows_share-2605030625` → `.kdust/chains/windows_share-2605030625.yaml`
-- `kdust/chain/windows_winget_package-ds-2605091020` → `.kdust/chains/windows_winget_package-ds-2605091020.yaml`
+- `kdust/chain/windows_share-2605030625` → `.opencode/chains/windows_share-2605030625.yaml`
+- `kdust/chain/windows_winget_package-ds-2605091020` → `.opencode/chains/windows_winget_package-ds-2605091020.yaml`
 
 ```yaml
 chain: terraform-provider-windows
@@ -137,7 +138,7 @@ Termine ta réponse par un bloc ```` ```status ```` :
 status: success
 kind: <resource|datasource>
 spec_path: <WORK_DIR>/spec.yaml
-chain_manifest_path: .kdust/chains/<filename>.yaml
+chain_manifest_path: .opencode/chains/<filename>.yaml
 resource_name: windows_<nom>
 reuses_resource_client: <bool>
 attributes_count: <N>

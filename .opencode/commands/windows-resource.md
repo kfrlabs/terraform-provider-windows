@@ -1,12 +1,24 @@
 ---
 description: Génère une resource ou data source Terraform Windows de bout en bout (spec → schema → impl → tests → audit/docs → PR) en orchestrant les subagents de la chaîne.
 argument-hint: RESOURCE=windows_<nom> DESCRIPTION="..." [KIND=resource|datasource]
-allowed-tools: Task, Bash, Read, Write, Edit, Grep, Glob
 ---
 
-Tu es l'**orchestrateur** de la chaîne `terraform-provider-windows`. Tu pilotes 5 subagents et tu possèdes seul l'état git (branche, commits, PR). Les subagents n'écrivent que des fichiers ; c'est TOI qui stages/commits après chaque phase et qui ouvres la PR à la fin.
+Tu es l'**orchestrateur** de la chaîne `terraform-provider-windows`. Tu pilotes 5 subagents et tu décides de l'état git (branche, commits, PR), mais tu ne l'exécutes **jamais** toi-même : tu délègues aux agents git globaux (voir « Délégation git »). Les subagents de la chaîne n'écrivent que des fichiers ; un commit est demandé à git-operator après chaque phase et la PR à pr-manager à la fin.
 
 Input brut : `$ARGUMENTS`
+
+# Délégation git
+Chaque opération git passe par un appel **task** à un agent global, avec le répertoire du repo (`$PWD`) et le texte d'autorisation ci-dessous. Lis toujours leur rapport (`Verification result`, `Skipped work, errors`) avant de continuer ; une opération non vérifiée = arrêt (Étape 4).
+
+Autorisation à transmettre (mot pour mot) : « L'utilisateur a lancé `/windows-resource` : il autorise sur `<CHAIN_BRANCH>` la création de la branche depuis `main`, les commits de phase listés, le push de cette branche vers `origin` et la création d'une PR ready vers `main` sur quality-gate PASS. Aucun force-push, aucune réécriture d'historique, aucune autre branche. »
+
+| Opération | Agent | Demande |
+|---|---|---|
+| `INSPECT` | **git-inspector** | Branche courante, arbre de travail (y compris non suivis), remote, identité `user.name`/`user.email`, ahead/behind de `main`. |
+| `BRANCH` | **git-operator** | `git switch main`, `git pull --ff-only`, `git switch -c <CHAIN_BRANCH>`. |
+| `COMMIT "<message>"` | **git-operator** | Stager tous les changements de la phase (`git add -A`), vérifier qu'aucun secret, state, binaire ni fichier de `work/` n'est stagé, commiter avec le message exact. Rien à commiter → le signaler (anormal mais non bloquant). |
+| `PUSH` | **git-operator** | `git push -u origin <CHAIN_BRANCH>` (jamais `--force`). |
+| `PR` | **pr-manager** | Créer la PR ready (pas draft) `<CHAIN_BRANCH>` → `main` avec le titre donné et `--body-file <WORK_DIR>/pr_body.md` ; renvoyer l'URL. |
 
 # Étape 0 — Parse & validation
 Extrais de `$ARGUMENTS` :
@@ -16,7 +28,7 @@ Extrais de `$ARGUMENTS` :
 
 Calcule :
 - `WORK_DIR` = `work/<r>` (resource) ou `work/<r>_data` (datasource).
-- Vérifie l'état git propre : `git status --porcelain`. Si sale → STOP et demande à l'utilisateur de committer/stash d'abord.
+- **git-inspector** `INSPECT` : arbre sale → STOP et demande à l'utilisateur de committer/stash d'abord ; identité incohérente avec le remote (`github.com` → `k9fr4n <franck.sallet@gmail.com>`) → STOP, ne modifie jamais l'identité globale.
 
 # Étape 1 — Branche
 ```bash
@@ -25,17 +37,10 @@ ts=$(date -u +%y%m%d%H%M)   # exactement 10 chiffres
 - `KIND=resource`   → `CHAIN_BRANCH=kdust/chain/<RESOURCE>-$ts`
 - `KIND=datasource` → `CHAIN_BRANCH=kdust/chain/<RESOURCE>-ds-$ts`
 
-Assure-toi d'être à jour puis crée la branche depuis `main` :
-```bash
-git checkout main && git pull --ff-only
-git checkout -b "<CHAIN_BRANCH>"
-mkdir -p "<WORK_DIR>"
-```
+**git-operator** `BRANCH`, puis `mkdir -p "<WORK_DIR>"`.
 
-# Étape 2 — Pipeline (Task séquentiel + commit par phase)
-Pour chaque étape : invoque le subagent via l'outil **Task** (`subagent_type` = nom de l'agent) en lui passant les clés listées, ATTENDS son bloc ```status```, puis commit le diff produit. Si un subagent renvoie `status: failed` ou émet `ESCALATE:`, applique la règle d'arrêt (Étape 4).
-
-**Convention de commit** : `git add -A && git commit -m "<message>"` (skip proprement si `git diff --cached --quiet`, c'est anormal mais non bloquant — signale-le).
+# Étape 2 — Pipeline (task séquentiel + commit par phase)
+Pour chaque étape : invoque le subagent via l'outil **task** (`subagent_type` = nom de l'agent) en lui passant les clés listées, ATTENDS son bloc ```status```, puis demande à **git-operator** `COMMIT "<message>"`. Si un subagent renvoie `status: failed` ou émet `ESCALATE:`, applique la règle d'arrêt (Étape 4).
 
 1. **win-spec-analyst** — input : `WORK_DIR, RESOURCE, KIND, DESCRIPTION, CHAIN_BRANCH`.
    Commit : `spec: <RESOURCE> <KIND> spec`
@@ -52,28 +57,22 @@ Pour chaque étape : invoque le subagent via l'outil **Task** (`subagent_type` =
 Tu tiens un compteur `attempt` partagé par les deux gates.
 
 - **test-engineer `status: fail`** et `attempt < 3` :
-  → Task **provider-coder** avec `MODE=fix, FEEDBACK_FILE=<WORK_DIR>/test_report.yaml, FEEDBACK_SOURCE=test, ATTEMPT=<attempt+1>`,
-  commit `fix: <RESOURCE> attempt <attempt+1> — <synthèse>`, puis **re-run test-engineer**.
+  → task **provider-coder** avec `MODE=fix, FEEDBACK_FILE=<WORK_DIR>/test_report.yaml, FEEDBACK_SOURCE=test, ATTEMPT=<attempt+1>`,
+  **git-operator** `COMMIT "fix: <RESOURCE> attempt <attempt+1> — <synthèse>"`, puis **re-run test-engineer**.
 - **quality-gate `audit_status: fail`** et `attempt < 3` :
-  → Task **provider-coder** avec `MODE=fix, FEEDBACK_FILE=<WORK_DIR>/audit_report.yaml, FEEDBACK_SOURCE=quality, ATTEMPT=<attempt+1>`,
-  commit `fix:`, puis **re-run test-engineer PUIS quality-gate** (un fix peut casser un test).
+  → task **provider-coder** avec `MODE=fix, FEEDBACK_FILE=<WORK_DIR>/audit_report.yaml, FEEDBACK_SOURCE=quality, ATTEMPT=<attempt+1>`,
+  **git-operator** `COMMIT "fix: ..."`, puis **re-run test-engineer PUIS quality-gate** (un fix peut casser un test).
 - `attempt >= 3` toujours en échec, ou un `ESCALATE:` de provider-coder → Étape 4 (arrêt).
 
 # Étape 4 — Arrêt sur échec (pas de PR)
-Si la chaîne échoue (gate épuisé, ESCALATE, ou `status: failed`) :
-- NE pousse PAS, N'ouvre PAS de PR.
+Si la chaîne échoue (gate épuisé, ESCALATE, `status: failed` ou opération git non vérifiée) :
+- NE demande NI push NI PR.
 - Laisse la branche `<CHAIN_BRANCH>` et `<WORK_DIR>` en l'état pour inspection.
 - Affiche un résumé : étape en échec, dernier rapport (`test_report.yaml`/`audit_report.yaml`), et la commande pour reprendre.
 
 # Étape 5 — PR (sur quality-gate PASS uniquement)
-```bash
-git push -u origin "<CHAIN_BRANCH>"
-```
-Puis ouvre une PR **ready** (pas draft) vers `main` :
-```bash
-gh pr create --base main --head "<CHAIN_BRANCH>" \
-  --title "feat(<r>): windows_<r> <KIND>" \
-  --body "$(cat <<'EOF'
+Écris `<WORK_DIR>/pr_body.md` (outil write) :
+```markdown
 ## Résumé
 Génère `windows_<r>` (<KIND>) via la chaîne /windows-resource.
 
@@ -88,14 +87,13 @@ Génère `windows_<r>` (<KIND>) via la chaîne /windows-resource.
 
 ## Notes
 - Acceptance tests guardés par `TF_ACC` (non exécutés sans cible Windows).
-EOF
-)"
 ```
-Affiche l'URL de la PR renvoyée par `gh`.
+Puis **git-operator** `PUSH`, puis **pr-manager** `PR` avec le titre `feat(<r>): windows_<r> <KIND>`. Affiche l'URL de la PR renvoyée par pr-manager.
 
 # Règles de l'orchestrateur
-- Tu ne génères PAS de code/spec/doc toi-même — tu délègues aux subagents. Tes seules actions directes : parsing, git, `gh`, et la logique de boucle.
+- Tu ne génères PAS de code/spec/doc toi-même — tu délègues aux subagents. Tes seules actions directes : parsing, lecture de fichiers, `mkdir`, écriture de `pr_body.md` et la logique de boucle.
+- Aucune commande `git` ou `gh` modifiante lancée par toi-même : uniquement via git-operator et pr-manager (git-inspector pour la lecture).
 - `KIND` est propagé à CHAQUE subagent (sans lui, ils régressent en mode resource).
-- N'enchaîne jamais deux subagents sans avoir lu le bloc ```status``` du précédent.
-- Le manifest `.kdust/chains/*.yaml` écrit par win-spec-analyst est de la traçabilité — il sera inclus dans le premier commit.
+- N'enchaîne jamais deux subagents sans avoir lu le bloc ```status``` (ou le rapport de l'agent git) du précédent.
+- Le manifest `.opencode/chains/*.yaml` écrit par win-spec-analyst est de la traçabilité — il sera inclus dans le premier commit.
 - Une seule resource/data source par invocation.
