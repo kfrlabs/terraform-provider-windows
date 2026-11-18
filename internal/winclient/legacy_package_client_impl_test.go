@@ -515,6 +515,69 @@ func TestLPUninstallEntry_MatchModes(t *testing.T) {
 	}
 }
 
+// TestLPUninstallEntry_EmptyResultIsBare is the regression test for the
+// salvo-6 live finding: returning comma-wrapped ToArray() on an empty
+// ArrayList yields a 1-element array containing an empty array, so every
+// caller testing entries Count -eq 0 saw a phantom match (empty id,
+// installed=true) instead of the not-found path. That phantom froze EXE
+// drift detection, broke EXE delete idempotence (no_uninstall_string on a
+// missing package) and corrupted fresh state on Create read-back. An empty
+// result must be returned bare; the comma form stays for non-empty results
+// so a single match is still an array.
+func TestLPUninstallEntry_EmptyResultIsBare(t *testing.T) {
+	guard := "if ($found.Count -eq 0) { return }"
+	comma := "return ,$found.ToArray()"
+	guardIdx := strings.Index(lpRemainder, guard)
+	if guardIdx < 0 {
+		t.Fatalf("Get-LpUninstallEntry is missing the empty-result guard %q", guard)
+	}
+	// Only the code return counts: the doc comment above the guard names
+	// the comma form, so scope the search to the function tail.
+	tail := lpRemainder[guardIdx+len(guard):]
+	if !strings.Contains(tail, comma) {
+		t.Fatalf("Get-LpUninstallEntry is missing %q after the guard", comma)
+	}
+	if n := strings.Count(tail, comma); n != 1 {
+		t.Errorf("expected exactly one comma-wrapped return after the guard, found %d", n)
+	}
+}
+
+// TestLPDeleteScript_VerifiesExeRemoval is the regression test for the
+// salvo-6 live finding: an EXE uninstaller whose parent exits 0 without
+// doing the work (NSIS TEMP child dying under the persistent REPL session)
+// was reported as success and Terraform dropped a still-installed package
+// from state. Delete must confirm the Uninstall entry is really gone
+// (bounded poll for self-relocating uninstallers) and fail loud with
+// still_installed instead of a silent success.
+func TestLPDeleteScript_VerifiesExeRemoval(t *testing.T) {
+	if !strings.Contains(lpRemainder, "function Confirm-LpGone") {
+		t.Fatal("lpRemainder is missing the Confirm-LpGone helper")
+	}
+	for _, want := range []string{
+		"Confirm-LpGone -Id $id -Type 'exe'",
+		"Emit-Err 'still_installed'",
+	} {
+		if !strings.Contains(lpDeleteBody, want) {
+			t.Errorf("delete script is missing %q", want)
+		}
+	}
+	stillIdx := strings.Index(lpDeleteBody, "Emit-Err 'still_installed'")
+	okIdx := strings.LastIndex(lpDeleteBody, "Emit-OK $null")
+	if stillIdx < 0 || okIdx < 0 || stillIdx > okIdx {
+		t.Error("still_installed must precede the final success envelope")
+	}
+	// MSI uninstall is synchronous (msiexec /x waits): the MSI path keeps
+	// the exit-code verdict and must stay untouched by the EXE poll.
+	msiIdx := strings.Index(lpDeleteBody, "if ($isMsi)")
+	exeIdx := strings.Index(lpDeleteBody, "# EXE branch")
+	if msiIdx < 0 || exeIdx < 0 || msiIdx > exeIdx {
+		t.Fatal("delete script layout changed (if ($isMsi) / # EXE branch)")
+	}
+	if strings.Contains(lpDeleteBody[msiIdx:exeIdx], "Confirm-LpGone") {
+		t.Error("MSI delete path must not call Confirm-LpGone")
+	}
+}
+
 func TestLPCreate_ThreadsDisplayNameMatch(t *testing.T) {
 	for _, want := range []string{
 		"$searchMode = [string]$cfg.display_name_match",
