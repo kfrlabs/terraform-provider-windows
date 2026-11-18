@@ -36,6 +36,14 @@ source when it exists. Lab facts (hosts, build, run layout, safety rules) live i
 Run artifacts stay in `work/acc/<r>/<run_id>/` (gitignored); regression scenarios are
 versioned under `test/acc/<r>/`.
 
+## `/terraform/acc-cycles` — repeated campaigns on one resource
+
+Orchestrator: `commands/terraform/acc-cycles.md`. It runs `/terraform/acc-resource`
+several times in a row on the same resource and branch (`test/acc-cycles-<r>-<ts>`), with
+different `SCENARIOS`/`FOCUS` per cycle (driven mode: `BRANCH=…`, `COMMIT=cycle`). Each
+cycle that validates fixes produces one commit, pushed right away; the PR is opened at the
+end with `work/acc/<r>/cycles-<ts>/SUMMARY.md` as body.
+
 Subagents never touch git. Orchestrators decide branches, commits and PRs but delegate
 them to the global agents: `git-inspector` (read-only checks), `git-operator` (branch,
 commit, push) and `pr-manager` (PR creation), passing the user's authorization explicitly.

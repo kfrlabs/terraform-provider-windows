@@ -32,6 +32,8 @@ Tu écris UNIQUEMENT dans `WORK_DIR`. Aucun fichier Go, aucune opération git, a
 - `HAS_RESOURCE: <bool>` / `HAS_DATASOURCE: <bool>`
 - `RUN_ID`, `WORK_DIR`
 - `SCENARIOS: <liste de catégories ou "all">`
+- `FOCUS: <texte libre>` (optionnel) : angle prioritaire de la campagne ; oriente le choix et la profondeur des scénarios.
+- `AVOID: [<chemins de scenarios.yaml>]` (optionnel) : scénarios de runs précédents. Ne les refais pas à l'identique ; varie les valeurs, combinaisons et séquences, sauf pour revérifier un finding corrigé (scénario explicitement marqué `recheck: F<NN>`).
 
 # Analyse (obligatoire avant d'écrire)
 Utilise le graphe `codebase-memory-mcp` (search_graph, get_code_snippet) puis la lecture directe pour :
