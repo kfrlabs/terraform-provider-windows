@@ -1025,6 +1025,35 @@ func TestStateToModel_PrincipalPasswordPreserved(t *testing.T) {
 	}
 }
 
+// TestStateToModel_ImportPrincipalLogonType is a regression test for acc
+// finding F01 (run 2611181339, scenario 05-import-external): on the import
+// path (priorModel == nil) principal.logon_type must be populated from the
+// observed Windows value, otherwise the post-import plan is non-empty.
+func TestStateToModel_ImportPrincipalLogonType(t *testing.T) {
+	ctx := context.Background()
+	s := minimalSTState("T", `\`)
+	m, diags := stateToModel(ctx, s, nil)
+	if diags.HasError() {
+		t.Fatalf("stateToModel diags: %v", diags)
+	}
+	if m.Principal.IsNull() {
+		t.Fatal("principal should not be null on import")
+	}
+	var pm windowsScheduledTaskPrincipalModel
+	if d := m.Principal.As(ctx, &pm, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true}); d.HasError() {
+		t.Fatalf("Principal.As: %v", d)
+	}
+	if pm.LogonType.IsNull() || pm.LogonType.ValueString() != "ServiceAccount" {
+		t.Errorf("logon_type = %v, want ServiceAccount (from Windows state)", pm.LogonType)
+	}
+	if pm.UserID.ValueString() != "SYSTEM" {
+		t.Errorf("user_id = %q, want SYSTEM", pm.UserID.ValueString())
+	}
+	if pm.RunLevel.ValueString() != "Limited" {
+		t.Errorf("run_level = %q, want Limited", pm.RunLevel.ValueString())
+	}
+}
+
 func TestStateToModel_SubFolderPath(t *testing.T) {
 	ctx := context.Background()
 	s := minimalSTState("Task", `\MyFolder\`)
