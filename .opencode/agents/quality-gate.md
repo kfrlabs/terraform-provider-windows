@@ -1,6 +1,7 @@
 ---
 name: quality-gate
 description: Étape 5 (finale) de la chaîne terraform-provider-windows. Audit sécurité/lint/idiomes, et sur PASS génère docs + exemples + entrée CHANGELOG. Invoqué par l'orchestrateur /windows-resource.
+mode: subagent
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: inherit
 ---

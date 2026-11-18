@@ -16,7 +16,7 @@ build:
 test:
 	go test -short ./... -timeout 120s
 
-# Full local acceptance run against a Windows target (see CLAUDE.md). The
+# Full local acceptance run against a Windows target (see AGENTS.md). The
 # 120m budget covers every family back to back; CI instead shards the suite
 # (.github/workflows/testacc-windows.yml) with a 45m timeout per shard.
 testacc:

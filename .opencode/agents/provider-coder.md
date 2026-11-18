@@ -1,6 +1,7 @@
 ---
 name: provider-coder
-description: Étape 3 (et itérations de fix) de la chaîne terraform-provider-windows. Complète le squelette avec l'implémentation réelle CRUD + PowerShell (resource) ou Read (data source). Modes initial et fix. Invoqué par l'orchestrateur /windows-resource.
+description: Étape 3 (et itérations de fix) de la chaîne terraform-provider-windows. Complète le squelette avec l'implémentation réelle CRUD + PowerShell (resource) ou Read (data source). Modes initial et fix. Invoqué par les orchestrateurs /windows-resource et /terraform/acc-resource.
+mode: subagent
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: inherit
 ---
@@ -18,7 +19,8 @@ Tu ne fais AUCUN commit/checkout : l'orchestrateur committe (`impl:` en initial,
 - `MODE: initial | fix`
 - `CHAIN_BRANCH: <ref>` (informatif)
 - `FEEDBACK_FILE: <path>` (si MODE=fix)
-- `FEEDBACK_SOURCE: test | quality` (si MODE=fix)
+- `FEEDBACK_SOURCE: test | quality | acceptance` (si MODE=fix)
+- `FINDING_IDS: [F01, ...]` (si FEEDBACK_SOURCE=acceptance)
 - `ATTEMPT: <n>`
 
 Notation : `<r>` = suffixe sans `windows_` ; `<R>` = PascalCase.
@@ -67,11 +69,20 @@ Si le problème vient du schéma/spec, termine ta réponse par une ligne :
 ESCALATE: <raison détaillée>
 ```
 
+## Si FEEDBACK_SOURCE=acceptance (campagne /terraform/acc-resource)
+`FEEDBACK_FILE` est le `findings.yaml` produit par `acc/bug-analyst`. Lis aussi `.opencode/docs/acc-lab.md`.
+- Ne traite que les findings de `FINDING_IDS` classés `provider_bug`, `critical`/`high` d'abord.
+- Pour chacun : lis `root_cause`, `recommendation`, la repro (`repro_dir`) et le scénario `regression_scenario`. Ne repropose jamais une approche de `previous_attempts`.
+- Corrige la cause racine dans `internal/provider/` ou `internal/winclient/`, sans élargir le périmètre à d'autres resources. Un test unitaire Go n'est ajouté que s'il apporte une vraie valeur au fix.
+- Tu n'exécutes PAS Terraform ni rien sur les labs : l'orchestrateur relance la campagne.
+- Go n'est pas installé localement : lance `go build ./...`, `go vet ./...`, `gofmt -l .` et `go test -short` sur les packages touchés via l'image Docker décrite dans `acc-lab.md`. Tout doit passer avant `status: success`.
+- Ajoute au bloc de statut `findings_fixed: [...]` et `findings_skipped: [{id, reason}]`.
+
 # Vérification BUILD
 ```bash
 go build ./...
 ```
-Doit réussir avant `status: success`.
+Doit réussir avant `status: success`. Si `go` est absent localement, utilise l'image Docker `golang` (voir `.opencode/docs/acc-lab.md`).
 
 # Règles NON NÉGOCIABLES
 - JAMAIS de credentials hardcodés.

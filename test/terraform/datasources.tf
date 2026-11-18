@@ -1,6 +1,6 @@
 # One data source per sibling resource above, cross-checked against the
 # resource's own state. Data sources share the resource's winclient Read
-# path (see CLAUDE.md), so divergence here usually points at a Read-vs-Create
+# path (see AGENTS.md), so divergence here usually points at a Read-vs-Create
 # state mismatch rather than a data-source-only bug.
 #
 # Attribute names differ from the resource in a couple of places on purpose

@@ -1,7 +1,7 @@
 // Package winclient: shared JSON envelope parsing for PowerShell scripts.
 //
 // Every resource script wraps its result in the same Emit-OK/Emit-Err
-// envelope (see CLAUDE.md), but before this helper each client reimplemented
+// envelope (see AGENTS.md), but before this helper each client reimplemented
 // the same pipeline: run the script, classify a context error, classify a
 // transport error, locate the last JSON line, unmarshal it and surface an
 // Emit-Err kind. Behaviour then drifted between resources (custom timeout
