@@ -41,6 +41,14 @@ const (
 	// site.
 	IISSiteErrorIDConflict = "id_conflict"
 
+	// IISSiteErrorIDMismatch is returned by Create when IIS does not
+	// honour the configured site_id: the site comes back carrying a
+	// different ID (observed: 4294967295 silently allocated the lowest
+	// free ID instead of failing). Create removes the half-created site
+	// best-effort and fails fast instead of returning a state that
+	// disagrees with the plan ("inconsistent result after apply", F01).
+	IISSiteErrorIDMismatch = "id_mismatch"
+
 	// IISSiteErrorAppPoolNotFound is returned by Create/Update when the
 	// configured application_pool does not exist on the host. The pool
 	// must be managed separately (windows_iis_app_pool); it is never
@@ -98,6 +106,7 @@ var (
 	ErrIISSiteNotFound        = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorNotFound}
 	ErrIISSiteAlreadyExists   = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorAlreadyExists}
 	ErrIISSiteIDConflict      = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorIDConflict}
+	ErrIISSiteIDMismatch      = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorIDMismatch}
 	ErrIISSiteAppPoolNotFound = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorAppPoolNotFound}
 	ErrIISSitePathNotFound    = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorPathNotFound}
 	ErrIISSiteIISNotInstalled = &IISSiteError{Resource: "windows_iis_site", Kind: IISSiteErrorIISNotInstalled}
@@ -121,6 +130,12 @@ const iisSiteIDMax = 4294967295
 // also keeps wildcard expansion impossible for the -Name parameters that
 // accept wildcards), no leading/trailing spaces, and no control characters
 // (which would truncate or corrupt the applicationHost.config XML entry).
+// The apostrophe is additionally forbidden even though IIS itself allows
+// it: the MWA configuration query re-emits the XPath site predicate
+// single-quoted (compare-string-ordinal), where an apostrophe terminates
+// the literal and breaks every read and write (F02). Doubling the quote
+// does not help (invalid in XPath 1.0), so the name is rejected here and
+// at plan time instead of failing obscurely on the host.
 func ValidateIISSiteName(name string) error {
 	if len(name) < 1 || len(name) > 64 {
 		return fmt.Errorf("invalid IIS site name %q: must be 1-64 characters", name)
@@ -128,8 +143,8 @@ func ValidateIISSiteName(name string) error {
 	if strings.TrimSpace(name) != name {
 		return fmt.Errorf("invalid IIS site name %q: must not have leading or trailing spaces", name)
 	}
-	if strings.ContainsAny(name, iisAppPoolForbiddenChars) {
-		return fmt.Errorf("invalid IIS site name %q: must not contain any of / \\ [ ] : ; , ? * \" < > |", name)
+	if strings.ContainsAny(name, iisAppPoolForbiddenChars) || strings.Contains(name, "'") {
+		return fmt.Errorf("invalid IIS site name %q: must not contain any of / \\ [ ] : ; , ? * \" ' < > |", name)
 	}
 	if strings.IndexFunc(name, isControlRune) >= 0 {
 		return fmt.Errorf("invalid IIS site name %q: must not contain control characters", name)

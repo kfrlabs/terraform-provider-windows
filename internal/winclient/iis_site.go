@@ -21,9 +21,14 @@
 //     that accept wildcards additionally receive the wildcard-escaped
 //     spelling (psEscapeWildcard) — site names cannot contain wildcard
 //     characters (ValidateIISSiteName), so this is defence in depth. The
-//     XPath [@name="..."] filters use double-quoted literals (safe
-//     because " is forbidden by ValidateIISSiteName while ' is allowed:
-//     single-quote doubling is invalid in XPath 1.0).
+//     XPath [@name="..."] filters use double-quoted literals; both " and
+//     ' are forbidden by ValidateIISSiteName (" would terminate the
+//     literal, and ' breaks the query even doubled: the MWA provider
+//     re-emits the predicate single-quoted via compare-string-ordinal,
+//     where an apostrophe terminates the literal and fails every read and
+//     write with "Expected an operator name" (F02). Single-quote doubling
+//     is invalid in XPath 1.0, so rejection (here and at plan time) is the
+//     fix — never string-concatenated escaping in the filter.
 //
 // Reused helpers from the same package:
 //   - psQuote                  — safe single-quote escaping (psquote.go)
@@ -249,6 +254,7 @@ func mapIISSiteKind(kind, _ string) IISSiteErrorKind {
 	case IISSiteErrorNotFound,
 		IISSiteErrorAlreadyExists,
 		IISSiteErrorIDConflict,
+		IISSiteErrorIDMismatch,
 		IISSiteErrorAppPoolNotFound,
 		IISSiteErrorPathNotFound,
 		IISSiteErrorIISNotInstalled,
@@ -422,10 +428,12 @@ func validateIISSiteInput(in IISSiteInput, allowSiteID bool) error {
 // settings in a single script, enforces the configured runtime state
 // (Started with zero bindings leaves the site Stopped without failing),
 // and returns the read-back state. An existing site yields already_exists
-// with an import hint; a colliding site_id yields id_conflict; a missing
-// pool or path yields app_pool_not_found / path_not_found. On partial
-// failure the half-created site is deleted best-effort (script-side) and
-// the original error is returned.
+// with an import hint; a colliding site_id yields id_conflict; a site_id
+// IIS silently refuses to honour yields id_mismatch (the half-created site
+// is removed best-effort, F01); a missing pool or path yields
+// app_pool_not_found / path_not_found. On partial failure the half-created
+// site is deleted best-effort (script-side) and the original error is
+// returned.
 func (a *IISSiteClient) Create(ctx context.Context, in IISSiteInput) (*IISSiteState, error) {
 	if err := validateIISSiteInput(in, true); err != nil {
 		return nil, err
@@ -472,6 +480,22 @@ try {
   $newParams = @{ physicalPath = $PhysicalPath; bindings = @{protocol="http";bindingInformation="*:80:"}; ErrorAction = 'Stop' }
   if ($null -ne $SiteId) { $newParams.id = $SiteId }
   New-Item $sitePath @newParams | Out-Null
+  if ($null -ne $SiteId) {
+    # IIS silently ignores some configured IDs it cannot honour
+    # (observed: 4294967295 allocated the lowest free ID instead of
+    # failing, F01): fail fast with a structured diagnostic rather than
+    # returning a state that disagrees with the plan ("inconsistent
+    # result after apply"). The half-created site is removed
+    # best-effort, like every other Create failure below.
+    $actualId = (Get-ChildItem 'IIS:\Sites' -ErrorAction Stop | Where-Object { $_.Name -eq $Name }).ID
+    if ($actualId -ne $SiteId) {
+      try { Remove-Website -Name %s -ErrorAction SilentlyContinue } catch {}
+      $wantedId = [string]$SiteId
+      $gotId = [string]$actualId
+      Emit-Err 'id_mismatch' ('IIS site ''' + $Name + ''' was created with site ID ' + $gotId + ' instead of the configured site_id ' + $wantedId + ' (IIS did not honour the configured ID).') @{ name = $Name; site_id = $wantedId; actual_site_id = $gotId }
+      return
+    }
+  }
   Remove-WebBinding -Name %s -BindingInformation '*:80:' -ErrorAction Stop
   try {
 %s
@@ -497,6 +521,21 @@ try {
       Emit-Err 'already_exists' ('IIS site ''' + $nowFound.Name + ''' already exists on this host (use ''terraform import'' to bring it under management instead of creating a duplicate).') @{ name = $nowFound.Name }
       return
     }
+    if ($null -ne $SiteId) {
+      # The $idClash pre-flight above is TOCTOU: parallel creates can both
+      # pass it and lose the ID race inside New-Item (raw provider error,
+      # e.g. NullReferenceException, F03). Re-check the ID so the loser
+      # reports id_conflict with the conflicting site instead of unknown.
+      # Our own name is excluded: an existing own site was already handled
+      # above, so falling through to Classify-Site preserves the old
+      # behaviour for that corner. Never pattern-match the raw message
+      # here: NullReference is too generic and would mask other failures.
+      $idHolder = Get-ChildItem 'IIS:\Sites' -ErrorAction Stop | Where-Object { $_.ID -eq $SiteId } | Where-Object { $_.Name -ne $Name } | Select-Object -First 1
+      if ($idHolder) {
+        Emit-Err 'id_conflict' ('IIS site ID ' + $SiteId + ' is already used by site ''' + $idHolder.Name + ''' on this host.') @{ name = $Name; conflicting_site = $idHolder.Name }
+        return
+      }
+    }
   } catch {}
   Emit-Err (Classify-Site $createErr) $createErr @{ name = $Name; step = 'create' }
 }
@@ -507,6 +546,7 @@ try {
 		psSiteOptionalLiteral(in.Settings.ApplicationPool),
 		iisSitePreamble(),
 		iisSiteGuardFragment,
+		psQuote(psEscapeWildcard(in.Name)),
 		psQuote(psEscapeWildcard(in.Name)),
 		buildIISSiteSetStatements(in.Settings),
 		buildIISSiteStateStatement(in.Settings.State, psQuote(psEscapeWildcard(in.Name))),
