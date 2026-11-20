@@ -244,7 +244,7 @@ func windowsFileACLSchemaDefinition(ctx context.Context) schema.Schema {
 							ElementType: types.StringType,
 							Validators: []validator.Set{
 								setvalidator.SizeAtLeast(1),
-								setvalidator.ValueStringsAre(stringvalidator.OneOf(winclient.FileACLValidRights()...)),
+								setvalidator.ValueStringsAre(fileACLRightValidator{}),
 							},
 							MarkdownDescription: "Rights granted or denied, from the `FileSystemRights` " +
 								"enumeration. Composite values overlap (`Modify` includes `Read`), and comparison " +
@@ -334,6 +334,34 @@ func (v fileACLPathValidator) ValidateString(_ context.Context, req validator.St
 	if hasTrailingSeparator(p) && len(strings.TrimRight(p, `\/`)) > 2 {
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 			fmt.Sprintf("path %q must not end with a separator", p))
+	}
+}
+
+// fileACLRightValidator accepts any casing of the FileSystemRights keywords.
+// The winclient contract is case-insensitive (CanonicalFileACLRight resolves
+// via strings.EqualFold, NormaliseFileACLRights dedupes by canonical spelling
+// and computes the access mask), and the Set script only consumes that mask,
+// so the schema must not reject "fullcontrol" or "READ". Unknown keywords are
+// still rejected with the canonical list, mirroring the winclient message.
+type fileACLRightValidator struct{}
+
+func (v fileACLRightValidator) Description(_ context.Context) string {
+	return "must be one of " + strings.Join(winclient.FileACLValidRights(), ", ") + " (case-insensitive)"
+}
+
+func (v fileACLRightValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v fileACLRightValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	if _, ok := winclient.CanonicalFileACLRight(val); !ok {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid right",
+			fmt.Sprintf("right %q must be one of %s (case-insensitive).",
+				val, strings.Join(winclient.FileACLValidRights(), ", ")))
 	}
 }
 

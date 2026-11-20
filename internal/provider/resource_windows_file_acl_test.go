@@ -179,6 +179,84 @@ func TestFileACLPathValidator(t *testing.T) {
 	}
 }
 
+// TestWindowsFileACLResource_RightsCaseInsensitive pins the F02 fix: the schema
+// accepts any casing of the FileSystemRights keywords (the winclient contract
+// is case-insensitive via CanonicalFileACLRight, and the Set script only
+// consumes the computed access mask), while unknown keywords are still
+// rejected. It exercises the wired schema validators, not just the winclient
+// helpers, because the bug was the schema-side OneOf.
+func TestWindowsFileACLResource_RightsCaseInsensitive(t *testing.T) {
+	s := fileACLSchema(t)
+	block, ok := s.Blocks["access_rule"].(schema.ListNestedBlock)
+	if !ok {
+		t.Fatal("access_rule is not a ListNestedBlock")
+	}
+	rightsAttr, ok := block.NestedObject.Attributes["rights"].(schema.SetAttribute)
+	if !ok {
+		t.Fatal("access_rule.rights is not a SetAttribute")
+	}
+	validate := func(t *testing.T, rights ...string) bool {
+		t.Helper()
+		resp := &validator.SetResponse{}
+		for _, v := range rightsAttr.Validators {
+			v.ValidateSet(context.Background(), validator.SetRequest{
+				Path:        path.Root("access_rule"),
+				ConfigValue: rightsSet(t, rights...),
+			}, resp)
+		}
+		return resp.Diagnostics.HasError()
+	}
+	for _, tc := range []struct {
+		name    string
+		rights  []string
+		wantErr bool
+	}{
+		{"canonical", []string{"FullControl"}, false},
+		{"lowercase", []string{"fullcontrol"}, false},
+		{"uppercase", []string{"READANDEXECUTE"}, false},
+		{"mixed set dedupes in winclient", []string{"read", "READ"}, false},
+		{"unknown keyword", []string{"Execute"}, true},
+		{"empty keyword", []string{""}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if gotErr := validate(t, tc.rights...); gotErr != tc.wantErr {
+				t.Errorf("rights %v: error = %v, want %v", tc.rights, gotErr, tc.wantErr)
+			}
+		})
+	}
+
+	t.Run("unknown keyword message lists canonical values", func(t *testing.T) {
+		resp := &validator.StringResponse{}
+		fileACLRightValidator{}.ValidateString(context.Background(), validator.StringRequest{
+			Path:        path.Root("rights"),
+			ConfigValue: types.StringValue("Execute"),
+		}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Fatal("expected an error diagnostic")
+		}
+		detail := resp.Diagnostics.Errors()[0].Detail()
+		if !strings.Contains(detail, "FullControl") {
+			t.Errorf("diagnostic detail %q does not list canonical values", detail)
+		}
+	})
+
+	t.Run("null and unknown are skipped", func(t *testing.T) {
+		for name, val := range map[string]types.String{
+			"null":    types.StringNull(),
+			"unknown": types.StringUnknown(),
+		} {
+			resp := &validator.StringResponse{}
+			fileACLRightValidator{}.ValidateString(context.Background(), validator.StringRequest{
+				Path:        path.Root("rights"),
+				ConfigValue: val,
+			}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Errorf("%s value must not error", name)
+			}
+		}
+	})
+}
+
 func TestFileACLIdentityMatches(t *testing.T) {
 	tests := []struct {
 		name         string
