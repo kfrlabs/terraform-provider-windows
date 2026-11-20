@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -130,7 +131,13 @@ func windowsDirectorySchemaDefinition(ctx context.Context) schema.Schema {
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
-				Description: "Directory attributes to enforce: hidden, readonly, system.",
+				Validators: []validator.List{
+					listvalidator.UniqueValues(),
+					directoryAttributesCanonicalOrderValidator{},
+				},
+				Description: "Directory attributes to enforce: hidden, readonly, system. " +
+					"Values must be unique and in canonical order: hidden, readonly, system " +
+					"(subsets allowed, e.g. [hidden, system]). Unknown keywords fail at apply time.",
 			},
 
 			"exists_children": schema.BoolAttribute{
@@ -537,6 +544,64 @@ func dirNullTimeouts() timeouts.Value {
 		"update": types.StringType,
 		"delete": types.StringType,
 	})}
+}
+
+// directoryAttributesCanonicalOrderValidator rejects non-canonical
+// attribute order at plan time (strategy B+). Rewriting a known List config
+// value at plan time is rejected by Terraform core ("Provider produced
+// invalid plan"), so duplicates and scrambled order must fail fast with an
+// explicit diagnostic instead of being normalised: duplicates are reported
+// by listvalidator.UniqueValues, and this validator requires the remaining
+// values to follow the canonical hidden < readonly < system order
+// (ordered subsets allowed, e.g. [hidden, system]). Null and unknown lists
+// pass through; unknown keywords are left untouched so they still surface
+// as a DirectoryErrorInvalidInput diagnostic at apply time.
+type directoryAttributesCanonicalOrderValidator struct{}
+
+func (directoryAttributesCanonicalOrderValidator) Description(_ context.Context) string {
+	return "attributes must be unique and in canonical order: hidden, readonly, system."
+}
+
+func (v directoryAttributesCanonicalOrderValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (directoryAttributesCanonicalOrderValidator) ValidateList(ctx context.Context, req validator.ListRequest, resp *validator.ListResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	// A known list may still carry null/unknown elements (e.g. a computed
+	// value flowing into the plan). Like listvalidator.UniqueValues, ignore
+	// those and leave convergence to apply time instead of failing on a
+	// framework ElementsAs conversion error.
+	for _, e := range req.ConfigValue.Elements() {
+		if e.IsNull() || e.IsUnknown() {
+			return
+		}
+	}
+	var raw []string
+	resp.Diagnostics.Append(req.ConfigValue.ElementsAs(ctx, &raw, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	rank := map[string]int{
+		winclient.DirectoryAttributeHidden:   0,
+		winclient.DirectoryAttributeReadOnly: 1,
+		winclient.DirectoryAttributeSystem:   2,
+	}
+	last := -1
+	for _, a := range raw {
+		r, ok := rank[a]
+		if !ok {
+			return // unknown keywords surface as DirectoryErrorInvalidInput at apply time
+		}
+		if r <= last {
+			resp.Diagnostics.AddAttributeError(req.Path, "Invalid attributes order",
+				fmt.Sprintf("attributes %q must be unique and in canonical order: hidden, readonly, system", raw))
+			return
+		}
+		last = r
+	}
 }
 
 // directoryNoTraversalValidator rejects ".." segments and wildcards in

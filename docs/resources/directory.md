@@ -61,7 +61,7 @@ resource "windows_directory" "strict_parent" {
 
 ### Optional
 
-- `attributes` (List of String) Directory attributes to enforce: hidden, readonly, system.
+- `attributes` (List of String) Directory attributes to enforce: hidden, readonly, system. Values must be unique and in canonical order: hidden, readonly, system (subsets allowed, e.g. [hidden, system]). Unknown keywords fail at apply time.
 - `create_parent_directories` (Boolean) Create missing parent directories. They are never removed on destroy.
 - `recursive_delete` (Boolean) When true, deleting the resource removes the directory's content as well (`Remove-Item -Recurse`). When false (default), deleting a non-empty directory fails explicitly rather than silently discarding files not managed by Terraform.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))

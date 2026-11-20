@@ -24,13 +24,19 @@ package provider
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
@@ -533,6 +539,196 @@ func TestWindowsDirectoryResource_Create_StalledTransportIsBounded(t *testing.T)
 	}
 	if elapsed > 30*time.Second {
 		t.Errorf("Create blocked for %v with a 200ms timeout", elapsed)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Plan-time attributes validation (F01, strategy B+): rewriting a known List
+// config value at plan time is rejected by Terraform core ("Provider produced
+// invalid plan"), so non-canonical spellings must fail fast with an explicit
+// diagnostic instead of being normalised. listvalidator.UniqueValues rejects
+// duplicates; directoryAttributesCanonicalOrderValidator requires the
+// canonical hidden < readonly < system order (ordered subsets allowed).
+// -----------------------------------------------------------------------------
+
+func TestDirectoryAttributesValidators(t *testing.T) {
+	ctx := context.Background()
+	orderValidator := directoryAttributesCanonicalOrderValidator{}
+	uniqueValidator := listvalidator.UniqueValues()
+
+	newReq := func(vals []string) validator.ListRequest {
+		if vals == nil {
+			return validator.ListRequest{Path: path.Root("attributes"), ConfigValue: types.ListNull(types.StringType)}
+		}
+		v, d := types.ListValueFrom(ctx, types.StringType, vals)
+		if d.HasError() {
+			t.Fatalf("ListValueFrom: %v", d)
+		}
+		return validator.ListRequest{Path: path.Root("attributes"), ConfigValue: v}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		vals    []string
+		wantErr bool
+	}{
+		{"canonical full order accepted", []string{"hidden", "readonly", "system"}, false},
+		{"ordered subset accepted", []string{"hidden", "system"}, false},
+		{"single accepted", []string{"hidden"}, false},
+		{"empty accepted", []string{}, false},
+		{"reversed rejected", []string{"system", "hidden"}, true},
+		{"scrambled rejected", []string{"system", "hidden", "readonly"}, true},
+		{"pair out of order rejected", []string{"readonly", "hidden"}, true},
+		{"duplicates rejected", []string{"hidden", "hidden"}, true},
+		{"duplicates scrambled rejected", []string{"system", "hidden", "system", "readonly", "hidden"}, true},
+	} {
+		t.Run("order/"+tc.name, func(t *testing.T) {
+			resp := &validator.ListResponse{}
+			orderValidator.ValidateList(ctx, newReq(tc.vals), resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Errorf("order validator HasError = %v, want %v (diags: %v)", resp.Diagnostics.HasError(), tc.wantErr, resp.Diagnostics)
+			}
+		})
+		t.Run("unique/"+tc.name, func(t *testing.T) {
+			// UniqueValues only gates duplicates; order violations pass it.
+			wantErr := false
+			seen := map[string]bool{}
+			for _, v := range tc.vals {
+				if seen[v] {
+					wantErr = true
+					break
+				}
+				seen[v] = true
+			}
+			resp := &validator.ListResponse{}
+			uniqueValidator.ValidateList(ctx, newReq(tc.vals), resp)
+			if resp.Diagnostics.HasError() != wantErr {
+				t.Errorf("UniqueValues HasError = %v, want %v (diags: %v)", resp.Diagnostics.HasError(), wantErr, resp.Diagnostics)
+			}
+		})
+	}
+
+	t.Run("diagnostic message names canonical order", func(t *testing.T) {
+		resp := &validator.ListResponse{}
+		orderValidator.ValidateList(ctx, newReq([]string{"system", "hidden"}), resp)
+		if !resp.Diagnostics.HasError() {
+			t.Fatal("expected error for reversed order")
+		}
+		found := false
+		for _, d := range resp.Diagnostics {
+			if strings.Contains(d.Summary()+" "+d.Detail(), "hidden, readonly, system") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("diagnostic must name the canonical order, got: %v", resp.Diagnostics)
+		}
+	})
+
+	// Null and unknown lists pass through untouched.
+	for name, v := range map[string]types.List{
+		"null":    types.ListNull(types.StringType),
+		"unknown": types.ListUnknown(types.StringType),
+	} {
+		for _, tc := range []struct {
+			vname string
+			run   func(context.Context, validator.ListRequest, *validator.ListResponse)
+		}{
+			{"order", orderValidator.ValidateList},
+			{"unique", uniqueValidator.ValidateList},
+		} {
+			resp := &validator.ListResponse{}
+			tc.run(ctx, validator.ListRequest{Path: path.Root("attributes"), ConfigValue: v}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Errorf("%s/%s must pass through without diags: %v", tc.vname, name, resp.Diagnostics)
+			}
+		}
+	}
+
+	// Unknown keywords are left for apply time (DirectoryErrorInvalidInput).
+	resp := &validator.ListResponse{}
+	orderValidator.ValidateList(ctx, newReq([]string{"bogus"}), resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("unknown keyword must not error in the order validator: %v", resp.Diagnostics)
+	}
+
+	// Unknown keywords mixed with valid ones also pass the order validator
+	// through to apply time.
+	for _, vals := range [][]string{
+		{"system", "bogus"},
+		{"bogus", "hidden"},
+		{"readonly", "bogus", "hidden"},
+	} {
+		resp := &validator.ListResponse{}
+		orderValidator.ValidateList(ctx, newReq(vals), resp)
+		if resp.Diagnostics.HasError() {
+			t.Errorf("mixed unknown %q must pass the order validator to apply time: %v", vals, resp.Diagnostics)
+		}
+	}
+
+	// A duplicated unknown keyword passes the order validator (unknown
+	// keywords surface at apply time) but is rejected by UniqueValues.
+	t.Run("duplicate unknown rejected by UniqueValues only", func(t *testing.T) {
+		respOrder := &validator.ListResponse{}
+		orderValidator.ValidateList(ctx, newReq([]string{"bogus", "bogus"}), respOrder)
+		if respOrder.Diagnostics.HasError() {
+			t.Errorf("duplicate unknown must pass the order validator: %v", respOrder.Diagnostics)
+		}
+		respUnique := &validator.ListResponse{}
+		uniqueValidator.ValidateList(ctx, newReq([]string{"bogus", "bogus"}), respUnique)
+		if !respUnique.Diagnostics.HasError() {
+			t.Error("duplicate unknown [bogus,bogus] must be rejected by UniqueValues")
+		}
+	})
+
+	// Case variants are not canonical keywords: passthrough to apply time.
+	t.Run("case variant passthrough", func(t *testing.T) {
+		resp := &validator.ListResponse{}
+		orderValidator.ValidateList(ctx, newReq([]string{"Hidden"}), resp)
+		if resp.Diagnostics.HasError() {
+			t.Errorf("[Hidden] must pass the order validator to apply time: %v", resp.Diagnostics)
+		}
+	})
+
+	// Known lists carrying a null/unknown element (computed value in
+	// transition) pass the order validator through instead of failing on a
+	// framework conversion error.
+	for name, elems := range map[string][]types.String{
+		"null element":    {types.StringValue("hidden"), types.StringNull()},
+		"unknown element": {types.StringValue("hidden"), types.StringUnknown()},
+		"only unknown":    {types.StringUnknown()},
+	} {
+		v, d := types.ListValueFrom(ctx, types.StringType, elems)
+		if d.HasError() {
+			t.Fatalf("%s: ListValueFrom: %v", name, d)
+		}
+		resp := &validator.ListResponse{}
+		orderValidator.ValidateList(ctx, validator.ListRequest{Path: path.Root("attributes"), ConfigValue: v}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Errorf("%s must pass the order validator without diags: %v", name, resp.Diagnostics)
+		}
+	}
+}
+
+func TestWindowsDirectorySchema_AttributesValidators(t *testing.T) {
+	s := windowsDirectorySchemaDefinition(context.Background())
+	attr, ok := s.Attributes["attributes"]
+	if !ok {
+		t.Fatal("schema missing attributes")
+	}
+	listAttr, ok := attr.(schema.ListAttribute)
+	if !ok {
+		t.Fatalf("attributes is %T, want schema.ListAttribute", attr)
+	}
+	if listAttr.IsRequired() {
+		t.Error("attributes must not be Required")
+	}
+	if len(listAttr.Validators) != 2 {
+		t.Fatalf("attributes must carry 2 validators (UniqueValues + canonical order), got %d", len(listAttr.Validators))
+	}
+	if len(listAttr.PlanModifiers) != 0 {
+		t.Errorf("attributes must not carry plan modifiers (core rejects plan-time rewrites), got %d", len(listAttr.PlanModifiers))
 	}
 }
 
