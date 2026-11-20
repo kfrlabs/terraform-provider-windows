@@ -244,7 +244,7 @@ func windowsFileACLSchemaDefinition(ctx context.Context) schema.Schema {
 							ElementType: types.StringType,
 							Validators: []validator.Set{
 								setvalidator.SizeAtLeast(1),
-								setvalidator.ValueStringsAre(stringvalidator.OneOf(winclient.FileACLValidRights()...)),
+								setvalidator.ValueStringsAre(fileACLRightValidator{}),
 							},
 							MarkdownDescription: "Rights granted or denied, from the `FileSystemRights` " +
 								"enumeration. Composite values overlap (`Modify` includes `Read`), and comparison " +
@@ -334,6 +334,34 @@ func (v fileACLPathValidator) ValidateString(_ context.Context, req validator.St
 	if hasTrailingSeparator(p) && len(strings.TrimRight(p, `\/`)) > 2 {
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid path",
 			fmt.Sprintf("path %q must not end with a separator", p))
+	}
+}
+
+// fileACLRightValidator accepts any casing of the FileSystemRights keywords.
+// The winclient contract is case-insensitive (CanonicalFileACLRight resolves
+// via strings.EqualFold, NormaliseFileACLRights dedupes by canonical spelling
+// and computes the access mask), and the Set script only consumes that mask,
+// so the schema must not reject "fullcontrol" or "READ". Unknown keywords are
+// still rejected with the canonical list, mirroring the winclient message.
+type fileACLRightValidator struct{}
+
+func (v fileACLRightValidator) Description(_ context.Context) string {
+	return "must be one of " + strings.Join(winclient.FileACLValidRights(), ", ") + " (case-insensitive)"
+}
+
+func (v fileACLRightValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v fileACLRightValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	if _, ok := winclient.CanonicalFileACLRight(val); !ok {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid right",
+			fmt.Sprintf("right %q must be one of %s (case-insensitive).",
+				val, strings.Join(winclient.FileACLValidRights(), ", ")))
 	}
 }
 
@@ -428,7 +456,36 @@ func (r *windowsFileACLResource) ModifyPlan(ctx context.Context, req resource.Mo
 		return
 	}
 
+	// preserve_inherited_on_protect is not observable on the host: once a
+	// target is protected, nothing records whether the inherited entries were
+	// converted or dropped. An imported state therefore seeds the schema
+	// default, which may not match the configuration even though both
+	// describe the same descriptor. Where the planned value cannot affect the
+	// descriptor, the state's spelling wins so the first plan after import is
+	// empty — the same semantic-equality pattern windows_certificate uses for
+	// cosmetic PEM respellings (mutate, then resp.Plan.Set even on the
+	// early-return path, otherwise the suppression is lost).
+	if !plan.PreserveInheritedOnProtect.Equal(state.PreserveInheritedOnProtect) &&
+		!state.PreserveInheritedOnProtect.IsNull() && !state.PreserveInheritedOnProtect.IsUnknown() &&
+		fileACLPreserveDifferenceImmaterial(&plan) {
+		plan.PreserveInheritedOnProtect = state.PreserveInheritedOnProtect
+	}
+
 	if fileACLManagedEqual(&plan, &state) {
+		// The desired descriptor is unchanged, so the observed values carry
+		// over untouched and the plan is empty (windows_certificate
+		// precedent). This must copy the computed values explicitly: when the
+		// preserve suppression above rewrote the plan, Terraform core had
+		// already proposed the computed attributes as unknown for the
+		// apparent change, and an early return without a copy would leave
+		// those unknowns in place — a perpetual diff + phantom update after
+		// every import (F01). Always Set, even without suppression, so a
+		// proposed unknown never survives the equal branch.
+		plan.TargetType = state.TargetType
+		plan.OwnerSID = state.OwnerSID
+		plan.SDDL = state.SDDL
+		plan.EffectiveAccessRules = state.EffectiveAccessRules
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 		return
 	}
 
@@ -460,6 +517,32 @@ func fileACLManagedEqual(a, b *windowsFileACLModel) bool {
 		}
 	}
 	return true
+}
+
+// fileACLPreserveDifferenceImmaterial reports whether a
+// preserve_inherited_on_protect difference cannot describe a real change to
+// the descriptor:
+//
+//   - the planned target stays unprotected (inheritance enabled): the flag is
+//     only honoured while disabling inheritance;
+//   - authoritative mode protects without preserving (see ValidateFileACLInput
+//     and the convergence invariant in winclient/file_acl.go), so the planned
+//     value has no effect on the descriptor.
+//
+// In both cases the flag is unobservable on the host, and an imported state
+// carries the seeded default rather than anything the host reported.
+func fileACLPreserveDifferenceImmaterial(plan *windowsFileACLModel) bool {
+	if plan.InheritanceEnabled.IsNull() || plan.InheritanceEnabled.IsUnknown() {
+		return false
+	}
+	if plan.InheritanceEnabled.ValueBool() {
+		return true
+	}
+	mode := plan.Mode.ValueString()
+	if plan.Mode.IsNull() || plan.Mode.IsUnknown() {
+		mode = winclient.FileACLModeAuthoritative
+	}
+	return mode == winclient.FileACLModeAuthoritative
 }
 
 // ---------------------------------------------------------------------------
@@ -829,10 +912,15 @@ func fileACLIdentityMatches(declared, observedName, observedSID string) bool {
 		return true
 	}
 	// A SID that does not match the observed SID is never the same trustee.
-	if strings.HasPrefix(strings.ToUpper(d), "S-1-") {
+	if isFileACLSID(d) {
 		return false
 	}
 	return strings.EqualFold(fileACLBareName(d), fileACLBareName(observedName))
+}
+
+// isFileACLSID reports whether s has the shape of a SID (S-1-...).
+func isFileACLSID(s string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(s)), "S-1-")
 }
 
 // fileACLBareName strips the domain or machine qualifier from an account name.
@@ -869,6 +957,12 @@ func fileACLBlockMask(ctx context.Context, block windowsFileACLRuleModel, diags 
 // The declared block is passed in so the operator's own spelling survives
 // wherever it is still accurate: rewriting a matching identity or an implicit
 // inheritance would show a diff that does not exist.
+//
+// Import note: with no declared spelling to preserve, the canonical SID is
+// stored. Only a SID-spelled configuration therefore matches the imported
+// state exactly and yields an empty plan immediately; a name-spelled
+// configuration still converges, but its first plan shows the (harmless)
+// identity normalisation.
 func fileACLBlockFromObserved(ctx context.Context, rule winclient.FileACLAccessRule, declared windowsFileACLRuleModel, targetType string, diags *diag.Diagnostics) windowsFileACLRuleModel {
 	elems := make([]attr.Value, len(rule.Rights))
 	for i, right := range rule.Rights {
@@ -881,6 +975,12 @@ func fileACLBlockFromObserved(ctx context.Context, rule winclient.FileACLAccessR
 	if !declared.Identity.IsNull() &&
 		fileACLIdentityMatches(declared.Identity.ValueString(), rule.Identity, rule.IdentitySID) {
 		identity = declared.Identity
+	} else if declared.Identity.IsNull() && isFileACLSID(rule.IdentitySID) {
+		// Import (and undeclared-drift) path: there is no operator spelling to
+		// preserve, so store the canonical SID. The display name depends on the
+		// host's locale and machine name, while the SID form matches a
+		// SID-based configuration exactly and stays stable across renames.
+		identity = types.StringValue(rule.IdentitySID)
 	}
 
 	// An inheritance left unset in the configuration stays unset when the host
