@@ -17,12 +17,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
 )
@@ -316,8 +320,10 @@ func TestReconcileFileACLRules(t *testing.T) {
 		if len(got) != 2 {
 			t.Fatalf("got %d rules, want 2 (declared + drift)", len(got))
 		}
-		if got[1].Identity.ValueString() != "HOSTX\\intruder" {
-			t.Errorf("second rule = %q, want the undeclared entry", got[1].Identity.ValueString())
+		// No operator spelling exists for an undeclared entry, so the
+		// canonical SID is stored rather than the host's display name.
+		if got[1].Identity.ValueString() != "S-1-5-21-1-2-3-1099" {
+			t.Errorf("second rule = %q, want the undeclared entry's SID", got[1].Identity.ValueString())
 		}
 	})
 
@@ -407,6 +413,202 @@ func TestAddFileACLDiag_ActionableMessages(t *testing.T) {
 		addFileACLDiag(&diags, "Read", context.DeadlineExceeded)
 		if !diags.HasError() {
 			t.Error("expected an error diagnostic")
+		}
+	})
+}
+
+// TestFileACLBlockFromObservedIdentitySpelling pins the import normalisation:
+// with no declared spelling to preserve, the canonical SID is stored so a
+// SID-based configuration matches the imported state exactly.
+func TestFileACLBlockFromObservedIdentitySpelling(t *testing.T) {
+	ctx := context.Background()
+	rule := winclient.FileACLAccessRule{
+		Identity: "BUILTIN\\Administrators", IdentitySID: "S-1-5-32-544",
+		AccessMask: 0x1F01FF, Rights: []string{"FullControl"},
+		Type:        winclient.FileACLTypeAllow,
+		Inheritance: winclient.FileACLInheritanceNone, Propagation: winclient.FileACLPropagationNone,
+	}
+
+	t.Run("empty declared stores the SID", func(t *testing.T) {
+		var diags diag.Diagnostics
+		got := fileACLBlockFromObserved(ctx, rule, windowsFileACLRuleModel{},
+			winclient.FileACLTargetFile, &diags)
+		if diags.HasError() {
+			t.Fatalf("diagnostics: %v", diags)
+		}
+		if got.Identity.ValueString() != "S-1-5-32-544" {
+			t.Errorf("identity = %q, want the canonical SID", got.Identity.ValueString())
+		}
+	})
+
+	t.Run("empty declared without SID keeps the display name", func(t *testing.T) {
+		var diags diag.Diagnostics
+		nameless := rule
+		nameless.IdentitySID = ""
+		got := fileACLBlockFromObserved(ctx, nameless, windowsFileACLRuleModel{},
+			winclient.FileACLTargetFile, &diags)
+		if diags.HasError() {
+			t.Fatalf("diagnostics: %v", diags)
+		}
+		if got.Identity.ValueString() != "BUILTIN\\Administrators" {
+			t.Errorf("identity = %q, want the display name fallback", got.Identity.ValueString())
+		}
+	})
+
+	t.Run("declared spelling survives when it matches", func(t *testing.T) {
+		var diags diag.Diagnostics
+		declared := windowsFileACLRuleModel{Identity: types.StringValue("S-1-5-32-544")}
+		got := fileACLBlockFromObserved(ctx, rule, declared,
+			winclient.FileACLTargetFile, &diags)
+		if diags.HasError() {
+			t.Fatalf("diagnostics: %v", diags)
+		}
+		if got.Identity.ValueString() != "S-1-5-32-544" {
+			t.Errorf("identity = %q, want the operator's spelling", got.Identity.ValueString())
+		}
+	})
+}
+
+// TestFileACLPreserveDifferenceImmaterial pins when a
+// preserve_inherited_on_protect difference cannot describe a real change, and
+// may therefore be suppressed so an imported state yields an empty plan.
+func TestFileACLPreserveDifferenceImmaterial(t *testing.T) {
+	mk := func(mode string, inheritance types.Bool) *windowsFileACLModel {
+		m := &windowsFileACLModel{
+			Mode:                       types.StringValue(mode),
+			InheritanceEnabled:         inheritance,
+			PreserveInheritedOnProtect: types.BoolValue(false),
+		}
+		if mode == "" {
+			m.Mode = types.StringNull()
+		}
+		return m
+	}
+	tests := []struct {
+		name  string
+		model *windowsFileACLModel
+		want  bool
+	}{
+		{"unprotected ignores preserve", mk(winclient.FileACLModeAdditive, types.BoolValue(true)), true},
+		{"authoritative protected ignores preserve", mk(winclient.FileACLModeAuthoritative, types.BoolValue(false)), true},
+		{"additive protected honours preserve", mk(winclient.FileACLModeAdditive, types.BoolValue(false)), false},
+		{"null mode defaults to authoritative", mk("", types.BoolValue(false)), true},
+		{"null inheritance is conservative", mk(winclient.FileACLModeAuthoritative, types.BoolNull()), false},
+		{"unknown inheritance is conservative", mk(winclient.FileACLModeAuthoritative, types.BoolUnknown()), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fileACLPreserveDifferenceImmaterial(tc.model); got != tc.want {
+				t.Errorf("fileACLPreserveDifferenceImmaterial() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// fileACLModifyPlanRaw encodes a model into Plan/State raw values through the
+// schema, so ModifyPlan tests exercise the real tfsdk decode path instead of
+// hand-written tftypes.
+func fileACLModifyPlanRaw(t *testing.T, def schema.Schema, m *windowsFileACLModel, forPlan bool) tftypes.Value {
+	t.Helper()
+	ctx := context.Background()
+	typ := def.Type().TerraformType(ctx)
+	objTyp, ok := typ.(tftypes.Object)
+	if !ok {
+		t.Fatalf("schema terraform type = %T, want tftypes.Object", typ)
+	}
+	nullRaw := tftypes.NewValue(objTyp, nil)
+	if forPlan {
+		store := tfsdk.Plan{Schema: def, Raw: nullRaw}
+		if d := store.Set(ctx, m); d.HasError() {
+			t.Fatalf("Plan.Set: %v", d)
+		}
+		return store.Raw
+	}
+	store := tfsdk.State{Schema: def, Raw: nullRaw}
+	if d := store.Set(ctx, m); d.HasError() {
+		t.Fatalf("State.Set: %v", d)
+	}
+	return store.Raw
+}
+
+// fileACLNullTimeouts returns a null timeouts value carrying the schema's
+// attribute types. The zero timeouts.Value wraps an object with no attribute
+// types, which the framework rejects on Plan/State.Set.
+func fileACLNullTimeouts() timeouts.Value {
+	return timeouts.Value{Object: types.ObjectNull(map[string]attr.Type{
+		"create": types.StringType,
+		"read":   types.StringType,
+		"update": types.StringType,
+		"delete": types.StringType,
+	})}
+}
+
+// TestFileACLModifyPlan_PreserveSuppressedWhenImmaterial is the end-to-end
+// proof for the F01 import fix: a protected authoritative target whose
+// imported state seeds preserve=true against a config spelling of false must
+// leave the plan at preserve=true (suppression persisted even though the
+// managed comparison is then equal). A protected additive target honours the
+// flag, so the same difference must be conserved and the normal
+// unknown-marking path must run.
+func TestFileACLModifyPlan_PreserveSuppressedWhenImmaterial(t *testing.T) {
+	ctx := context.Background()
+	def := fileACLSchema(t)
+	mkModel := func(mode string, preserve bool) *windowsFileACLModel {
+		return &windowsFileACLModel{
+			ID:                         types.StringValue(`C:\acc\file.txt`),
+			Path:                       types.StringValue(`C:\acc\file.txt`),
+			Mode:                       types.StringValue(mode),
+			Owner:                      types.StringNull(),
+			InheritanceEnabled:         types.BoolValue(false),
+			PreserveInheritedOnProtect: types.BoolValue(preserve),
+			AccessRules: []windowsFileACLRuleModel{{
+				Identity:    types.StringValue("S-1-5-32-544"),
+				Rights:      rightsSet(t, "FullControl"),
+				Type:        types.StringValue(winclient.FileACLTypeAllow),
+				Inheritance: types.StringValue(winclient.FileACLInheritanceNone),
+				Propagation: types.StringValue(winclient.FileACLPropagationNone),
+			}},
+			TargetType:           types.StringNull(),
+			OwnerSID:             types.StringNull(),
+			SDDL:                 types.StringNull(),
+			EffectiveAccessRules: types.ListNull(fileACLEffectiveRuleObjectType),
+			Timeouts:             fileACLNullTimeouts(),
+		}
+	}
+	runModifyPlan := func(t *testing.T, mode string, planPreserve, statePreserve bool) windowsFileACLModel {
+		t.Helper()
+		planRaw := fileACLModifyPlanRaw(t, def, mkModel(mode, planPreserve), true)
+		stateRaw := fileACLModifyPlanRaw(t, def, mkModel(mode, statePreserve), false)
+		r := &windowsFileACLResource{}
+		resp := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: def, Raw: planRaw}}
+		r.ModifyPlan(ctx, resource.ModifyPlanRequest{
+			Plan:  tfsdk.Plan{Schema: def, Raw: planRaw.Copy()},
+			State: tfsdk.State{Schema: def, Raw: stateRaw.Copy()},
+		}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("ModifyPlan diagnostics: %v", resp.Diagnostics)
+		}
+		var got windowsFileACLModel
+		if d := resp.Plan.Get(ctx, &got); d.HasError() {
+			t.Fatalf("plan Get: %v", d)
+		}
+		return got
+	}
+
+	t.Run("authoritative protected suppresses the seeded default", func(t *testing.T) {
+		got := runModifyPlan(t, winclient.FileACLModeAuthoritative, false, true)
+		if !got.PreserveInheritedOnProtect.Equal(types.BoolValue(true)) {
+			t.Errorf("preserve = %v, want true (state spelling must win)", got.PreserveInheritedOnProtect)
+		}
+	})
+
+	t.Run("additive protected conserves the difference", func(t *testing.T) {
+		got := runModifyPlan(t, winclient.FileACLModeAdditive, false, true)
+		if !got.PreserveInheritedOnProtect.Equal(types.BoolValue(false)) {
+			t.Errorf("preserve = %v, want false (material difference must survive)", got.PreserveInheritedOnProtect)
+		}
+		if !got.SDDL.IsUnknown() {
+			t.Error("SDDL must be unknown: a material difference takes the normal rewrite path")
 		}
 	})
 }
