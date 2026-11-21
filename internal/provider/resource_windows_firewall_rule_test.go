@@ -147,7 +147,10 @@ func TestFirewallRuleResource_ObservedAttrsUseStateForUnknown(t *testing.T) {
 	for _, n := range []string{
 		"local_port", "remote_port", "local_address", "remote_address",
 	} {
-		a := s.Attributes[n].(schema.ListAttribute)
+		a, ok := s.Attributes[n].(schema.ListAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.ListAttribute, got %T", n, s.Attributes[n])
+		}
 		if len(a.PlanModifiers) != 1 {
 			t.Errorf("%s must carry exactly UseStateForUnknown and no rewriting modifier, got %v", n, a.PlanModifiers)
 		}
@@ -155,10 +158,14 @@ func TestFirewallRuleResource_ObservedAttrsUseStateForUnknown(t *testing.T) {
 			t.Errorf("%s must carry a semantic-equality CustomType, got nil", n)
 		}
 	}
-	if got := s.Attributes["protocol"].(schema.StringAttribute); len(got.PlanModifiers) != 1 {
-		t.Errorf("protocol must carry exactly UseStateForUnknown and no rewriting modifier, got %v", got.PlanModifiers)
+	protoAttr, ok := s.Attributes["protocol"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("protocol: expected schema.StringAttribute, got %T", s.Attributes["protocol"])
 	}
-	if s.Attributes["protocol"].(schema.StringAttribute).CustomType == nil {
+	if len(protoAttr.PlanModifiers) != 1 {
+		t.Errorf("protocol must carry exactly UseStateForUnknown and no rewriting modifier, got %v", protoAttr.PlanModifiers)
+	}
+	if protoAttr.CustomType == nil {
 		t.Error("protocol must carry a semantic-equality CustomType, got nil")
 	}
 }

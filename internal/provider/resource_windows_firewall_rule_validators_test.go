@@ -254,14 +254,20 @@ func TestFirewallSchema_PlanStaysIdenticalToConfig(t *testing.T) {
 	// Only UseStateForUnknown (which never rewrites a known config value)
 	// is allowed.
 	s := windowsFirewallRuleSchemaDefinition(context.Background())
-	proto := s.Attributes["protocol"].(schema.StringAttribute)
+	proto, ok := s.Attributes["protocol"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("protocol: expected schema.StringAttribute, got %T", s.Attributes["protocol"])
+	}
 	for _, pm := range proto.PlanModifiers {
 		if !reflect.DeepEqual(pm, stringplanmodifier.UseStateForUnknown()) {
 			t.Errorf("protocol plan modifier %T rewrites the plan; only UseStateForUnknown is allowed", pm)
 		}
 	}
 	for _, n := range []string{"local_port", "remote_port", "local_address", "remote_address"} {
-		a := s.Attributes[n].(schema.ListAttribute)
+		a, ok := s.Attributes[n].(schema.ListAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.ListAttribute, got %T", n, s.Attributes[n])
+		}
 		for _, pm := range a.PlanModifiers {
 			if !reflect.DeepEqual(pm, listplanmodifier.UseStateForUnknown()) {
 				t.Errorf("%s plan modifier %T rewrites the plan; only UseStateForUnknown is allowed", n, pm)
@@ -339,8 +345,8 @@ func TestModelToFirewallInput_Canonicalises(t *testing.T) {
 func TestFirewallAddressAnyValidator_AnyAlone_OK(t *testing.T) {
 	v := firewallRuleAddressAnyValidator{}
 	listStr := tftypes.List{ElementType: tftypes.String}
-	any := tftypes.NewValue(listStr, []tftypes.Value{tftypes.NewValue(tftypes.String, "Any")})
-	cfg := buildFWConfig(t, map[string]tftypes.Value{"local_address": any, "remote_address": any})
+	anyVal := tftypes.NewValue(listStr, []tftypes.Value{tftypes.NewValue(tftypes.String, "Any")})
+	cfg := buildFWConfig(t, map[string]tftypes.Value{"local_address": anyVal, "remote_address": anyVal})
 	req := resource.ValidateConfigRequest{Config: cfg}
 	resp := &resource.ValidateConfigResponse{}
 	v.ValidateResource(context.Background(), req, resp)
@@ -420,10 +426,10 @@ func TestFirewallAddressAnyValidator_PaddedAnyMixed_Error(t *testing.T) {
 func TestFirewallAddressAnyValidator_PaddedAnyAlone_OK(t *testing.T) {
 	v := firewallRuleAddressAnyValidator{}
 	listStr := tftypes.List{ElementType: tftypes.String}
-	any := tftypes.NewValue(listStr, []tftypes.Value{
+	anyVal := tftypes.NewValue(listStr, []tftypes.Value{
 		tftypes.NewValue(tftypes.String, " Any "),
 	})
-	cfg := buildFWConfig(t, map[string]tftypes.Value{"local_address": any})
+	cfg := buildFWConfig(t, map[string]tftypes.Value{"local_address": anyVal})
 	req := resource.ValidateConfigRequest{Config: cfg}
 	resp := &resource.ValidateConfigResponse{}
 	v.ValidateResource(context.Background(), req, resp)
