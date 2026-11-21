@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -297,7 +298,14 @@ func buildFirewallParams(op, name, policyStore string, input FirewallRuleInput) 
 	fmt.Fprintf(&sb, "  Action      = %s\n", psQuote(input.Action))
 
 	// Optional root attributes
-	if input.Description != "" {
+	if op == "update" {
+		// F04: Description must always be sent on Update — even when empty.
+		// Omitting it leaves the previous value in place (Set-NetFirewallRule
+		// only touches what it is given), so clearing a description (plan
+		// null/empty) would silently keep the old text and the post-Update
+		// Read would report an inconsistent result. Emitting '' resets it.
+		fmt.Fprintf(&sb, "  Description = %s\n", psQuote(input.Description))
+	} else if input.Description != "" {
 		fmt.Fprintf(&sb, "  Description = %s\n", psQuote(input.Description))
 	}
 	if input.Enabled != nil {
@@ -320,21 +328,23 @@ func buildFirewallParams(op, name, policyStore string, input FirewallRuleInput) 
 		fmt.Fprintf(&sb, "  Group = %s\n", psQuote(input.Group))
 	}
 
-	// Filter attributes
-	if input.Protocol != "" {
-		fmt.Fprintf(&sb, "  Protocol = %s\n", psQuote(input.Protocol))
+	// Filter attributes (canonicalised: the provider plan modifiers already
+	// normalise these, but winclient callers bypassing the provider must not
+	// send Windows-collapsible spellings such as "55014-55014" or "tcp").
+	if protocol := CanonicalFirewallProtocol(input.Protocol); protocol != "" {
+		fmt.Fprintf(&sb, "  Protocol = %s\n", psQuote(protocol))
 	}
-	if len(input.LocalPort) > 0 {
-		fmt.Fprintf(&sb, "  LocalPort = %s\n", psQuoteList(input.LocalPort))
+	if ports := CanonicalFirewallPortList(input.LocalPort); len(ports) > 0 {
+		fmt.Fprintf(&sb, "  LocalPort = %s\n", psQuoteList(ports))
 	}
-	if len(input.RemotePort) > 0 {
-		fmt.Fprintf(&sb, "  RemotePort = %s\n", psQuoteList(input.RemotePort))
+	if ports := CanonicalFirewallPortList(input.RemotePort); len(ports) > 0 {
+		fmt.Fprintf(&sb, "  RemotePort = %s\n", psQuoteList(ports))
 	}
-	if len(input.LocalAddress) > 0 {
-		fmt.Fprintf(&sb, "  LocalAddress = %s\n", psQuoteList(input.LocalAddress))
+	if addrs := CanonicalFirewallAddressList(input.LocalAddress); len(addrs) > 0 {
+		fmt.Fprintf(&sb, "  LocalAddress = %s\n", psQuoteList(addrs))
 	}
-	if len(input.RemoteAddress) > 0 {
-		fmt.Fprintf(&sb, "  RemoteAddress = %s\n", psQuoteList(input.RemoteAddress))
+	if addrs := CanonicalFirewallAddressList(input.RemoteAddress); len(addrs) > 0 {
+		fmt.Fprintf(&sb, "  RemoteAddress = %s\n", psQuoteList(addrs))
 	}
 	if input.Program != "" {
 		fmt.Fprintf(&sb, "  Program = %s\n", psQuote(input.Program))
@@ -399,6 +409,135 @@ type frStateJSON struct {
 	Program             string   `json:"program"`
 	Service             string   `json:"service"`
 	InterfaceType       string   `json:"interface_type"`
+}
+
+// firewallProtocolNumericAlias maps well-known IANA protocol numbers to the
+// keyword Windows reports via Get-NetFirewallPortFilter (observed on 203:
+// a rule created with "1" reads back "ICMPv4", "tcp" reads back "TCP").
+// Protocol 2 has no accepted keyword: Windows rejects "IGMP"/"igmp" with
+// "The protocol is invalid" and stores "2" verbatim, so "2" must be sent
+// and kept as-is (F10). "IGMP"/"igmp" inputs fold to "2" in
+// CanonicalFirewallProtocol.
+var firewallProtocolNumericAlias = map[string]string{
+	"1":  "ICMPv4",
+	"6":  "TCP",
+	"17": "UDP",
+	"58": "ICMPv6",
+}
+
+// CanonicalFirewallProtocol folds a user-supplied protocol value to the
+// spelling Windows reports back, so plan and post-apply state agree (F02):
+// keywords are case-folded to their canonical form (tcp→TCP, ANY→Any),
+// "IGMP"/"igmp" fold to "2" (F10: Windows rejects the IGMP keyword and
+// stores protocol 2 verbatim as "2"), and well-known numeric aliases are
+// mapped to keywords (1→ICMPv4, 6→TCP, 17→UDP, 58→ICMPv6). Unknown values
+// (other numerics, garbage) pass through trimmed — validation stays in the
+// provider validators.
+func CanonicalFirewallProtocol(value string) string {
+	v := strings.TrimSpace(value)
+	// F10: fold before the keyword loop, otherwise "igmp" would fold to the
+	// rejected "IGMP" keyword instead of the accepted numeric "2".
+	if strings.EqualFold(v, "IGMP") {
+		return "2"
+	}
+	for _, kw := range []string{"TCP", "UDP", "ICMPv4", "ICMPv6", "Any"} {
+		if strings.EqualFold(v, kw) {
+			return kw
+		}
+	}
+	if kw, ok := firewallProtocolNumericAlias[v]; ok {
+		return kw
+	}
+	return v
+}
+
+// CanonicalFirewallPort folds one port token to the spelling Windows reports
+// back (F01): surrounding whitespace is trimmed, "any" is case-folded to
+// "Any", and a degenerate range X-X collapses to the singleton X (Windows
+// stores it as a single port). Ranges with distinct ends, single ports and
+// anything else pass through trimmed — validation stays in the provider.
+func CanonicalFirewallPort(value string) string {
+	v := strings.TrimSpace(value)
+	if strings.EqualFold(v, "Any") {
+		return "Any"
+	}
+	if strings.Contains(v, "-") {
+		parts := strings.SplitN(v, "-", 2)
+		lo := strings.TrimSpace(parts[0])
+		hi := strings.TrimSpace(parts[1])
+		if lo != "" && lo == hi {
+			return lo
+		}
+	}
+	return v
+}
+
+// CanonicalFirewallAddress folds one address token to canonical form (F03):
+// surrounding whitespace is trimmed and "any" is case-folded to "Any".
+// Host-route suffixes are stripped (F11): Windows drops them on read
+// ("192.0.2.1/32"→"192.0.2.1", "2001:db8:1::5/128"→"2001:db8:1::5"), so both
+// plan and state fold "a.b.c.d/32" (valid IPv4) and ".../128" (valid IPv6)
+// to the bare IP. Other CIDR suffixes (/16, /64, ...) are preserved.
+// Mask-to-CIDR conversion lives in normaliseFirewallAddress and is applied
+// separately in the Read pipeline.
+func CanonicalFirewallAddress(value string) string {
+	v := strings.TrimSpace(value)
+	if strings.EqualFold(v, "Any") {
+		return "Any"
+	}
+	// F11: fold host routes to the bare IP (both plan and state sides share
+	// this function, as do ListSemanticEquals and ModifyPlan folding).
+	if _, ipNet, err := net.ParseCIDR(v); err == nil {
+		if ones, bits := ipNet.Mask.Size(); (bits == 32 && ones == 32) || (bits == 128 && ones == 128) {
+			if host, _, ok := strings.Cut(v, "/"); ok {
+				if ip := net.ParseIP(strings.TrimSpace(host)); ip != nil {
+					if ip.To4() != nil && bits == 32 {
+						return ip.To4().String()
+					}
+					// IPv6 /128 (or IPv4-in-IPv6 edge): canonical IP spelling.
+					if bits == 128 {
+						return ip.String()
+					}
+				}
+			}
+		}
+	}
+	return v
+}
+
+// canonicalFirewallList applies per-element canonicalisation, drops exact
+// duplicates and sorts the result so plan and post-apply state compare equal
+// regardless of the order Windows returns (F03). A nil input stays nil (unset
+// vs empty distinction is preserved for the provider layer).
+func canonicalFirewallList(in []string, canonicalise func(string) string) []string {
+	if in == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		c := canonicalise(v)
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// CanonicalFirewallPortList canonicalises each port token (see
+// CanonicalFirewallPort), dedupes and sorts. Used plan-side (provider input
+// and list plan modifiers) and state-side (parseFirewallRuleState).
+func CanonicalFirewallPortList(in []string) []string {
+	return canonicalFirewallList(in, CanonicalFirewallPort)
+}
+
+// CanonicalFirewallAddressList canonicalises each address token (see
+// CanonicalFirewallAddress), dedupes and sorts.
+func CanonicalFirewallAddressList(in []string) []string {
+	return canonicalFirewallList(in, CanonicalFirewallAddress)
 }
 
 // normaliseStrArr ensures a nil/empty slice becomes ["Any"] (ADR-FR-6).
@@ -479,11 +618,11 @@ func parseFirewallRuleState(resp *psResponse, policyStore string) (*FirewallRule
 		EdgeTraversalPolicy: j.EdgeTraversalPolicy,
 		Group:               j.Group,
 		PolicyStore:         store,
-		Protocol:            j.Protocol,
-		LocalPort:           normaliseStrArr(j.LocalPort),
-		RemotePort:          normaliseStrArr(j.RemotePort),
-		LocalAddress:        normaliseFirewallAddressArr(j.LocalAddress),
-		RemoteAddress:       normaliseFirewallAddressArr(j.RemoteAddress),
+		Protocol:            CanonicalFirewallProtocol(j.Protocol),
+		LocalPort:           CanonicalFirewallPortList(normaliseStrArr(j.LocalPort)),
+		RemotePort:          CanonicalFirewallPortList(normaliseStrArr(j.RemotePort)),
+		LocalAddress:        CanonicalFirewallAddressList(normaliseFirewallAddressArr(j.LocalAddress)),
+		RemoteAddress:       CanonicalFirewallAddressList(normaliseFirewallAddressArr(j.RemoteAddress)),
 		Program:             j.Program,
 		Service:             j.Service,
 		InterfaceType:       j.InterfaceType,
