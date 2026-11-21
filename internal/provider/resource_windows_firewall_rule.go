@@ -49,6 +49,7 @@ var (
 	_ resource.Resource                     = (*windowsFirewallRuleResource)(nil)
 	_ resource.ResourceWithConfigure        = (*windowsFirewallRuleResource)(nil)
 	_ resource.ResourceWithImportState      = (*windowsFirewallRuleResource)(nil)
+	_ resource.ResourceWithModifyPlan       = (*windowsFirewallRuleResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*windowsFirewallRuleResource)(nil)
 )
 
@@ -277,7 +278,11 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 					// Create/Update time (modelToFirewallInput) and the state
 					// stores what Windows reports (parseFirewallRuleState);
 					// plan and state still compare equal thanks to
-					// firewallProtocolValue StringSemanticEquals.
+					// firewallProtocolValue StringSemanticEquals on the
+					// Create/Update/Read path. On the plan path (where the
+					// framework never runs SemanticEquals) ModifyPlan folds
+					// the plan back to the prior value when semantically
+					// equal (F08), which keeps the post-import plan empty.
 				},
 				Description: "IP protocol keyword (`TCP`, `UDP`, `ICMPv4`, `ICMPv6`, `IGMP`, `Any`) " +
 					"or numeric string 0-255. Populated from Get-NetFirewallPortFilter.",
@@ -301,7 +306,10 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 					// time (modelToFirewallInput) and the state stores what
 					// Windows reports (parseFirewallRuleState); plan and
 					// state still compare equal thanks to
-					// firewallCanonicalListValue ListSemanticEquals.
+					// firewallCanonicalListValue ListSemanticEquals on the
+					// Create/Update/Read path. On the plan path ModifyPlan
+					// folds the plan back to the prior value when
+					// semantically equal (F08).
 				},
 				Description: "Local TCP/UDP port(s). Accepts numeric ports, ranges, and keywords. " +
 					"Valid only when protocol is `TCP` or `UDP` (CV-2). Populated from Get-NetFirewallPortFilter.",
@@ -636,6 +644,107 @@ func (r *windowsFirewallRuleResource) Delete(ctx context.Context, req resource.D
 		}
 		addFirewallDiag(&resp.Diagnostics, "Error deleting Windows Firewall rule", err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// ModifyPlan — fold semantically-equal spellings toward prior state (F08)
+// ---------------------------------------------------------------------------
+
+// ModifyPlan folds the plan back to the prior state value for the protocol
+// and filter-list attributes when both spellings describe the same Windows
+// filter. The framework only runs StringSemanticEquals/ListSemanticEquals on
+// the Create/Update/Read responses — never inside PlanResourceChange — so
+// after an import (which stores the canonical Windows spelling) the next
+// plan compares the verbatim configuration against the canonical prior with
+// no semantic pass and reports a perpetual diff (protocol udp→UDP,
+// reordered ports, ...). Copying the prior value into the plan is always
+// legal for these Optional+Computed attributes (unlike inventing the
+// canonical spelling in a plan modifier, which core rejects with "Provider
+// produced invalid plan", F01/F02/F03 attempt 2): on the post-import path the
+// plan becomes prior-identical and empty, on the normal path prior and plan
+// already match verbatim so folding is a no-op, and genuine changes still
+// flow through untouched.
+func (r *windowsFirewallRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return // create / destroy
+	}
+	var plan, state windowsFirewallRuleModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Protocol: fold only when both sides are known and canonicalise equal
+	// (udp vs UDP, 6 vs TCP, ...). Unknown/null means nothing to compare.
+	if !plan.Protocol.IsNull() && !plan.Protocol.IsUnknown() &&
+		!state.Protocol.IsNull() && !state.Protocol.IsUnknown() &&
+		winclient.CanonicalFirewallProtocol(plan.Protocol.ValueString()) ==
+			winclient.CanonicalFirewallProtocol(state.Protocol.ValueString()) {
+		plan.Protocol = state.Protocol
+	}
+
+	// Filter lists: fold each list whose planned and prior values describe
+	// the same Windows filter (per-element folding, dedup, order-insensitive).
+	for _, l := range []struct {
+		kind  firewallListKind
+		plan  *firewallCanonicalListValue
+		prior firewallCanonicalListValue
+	}{
+		{firewallListKindPort, &plan.LocalPort, state.LocalPort},
+		{firewallListKindPort, &plan.RemotePort, state.RemotePort},
+		{firewallListKindAddress, &plan.LocalAddress, state.LocalAddress},
+		{firewallListKindAddress, &plan.RemoteAddress, state.RemoteAddress},
+	} {
+		folded, ok := foldFirewallListValue(ctx, l.kind, l.plan, &l.prior, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if ok {
+			*l.plan = folded
+		}
+	}
+
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+}
+
+// foldFirewallListValue returns the prior list value when the planned and
+// prior lists describe the same Windows filter, and false when they genuinely
+// differ (or when either side is unset/unknown and there is nothing safe to
+// compare). A Null/Unknown element on either side also refuses to fold, like
+// the toRaw guard in ListSemanticEquals.
+func foldFirewallListValue(ctx context.Context, kind firewallListKind, planned, prior *firewallCanonicalListValue, diags *diag.Diagnostics) (firewallCanonicalListValue, bool) {
+	if planned.IsNull() || planned.IsUnknown() || prior.IsNull() || prior.IsUnknown() {
+		return *planned, false
+	}
+	var plannedElems, priorElems []types.String
+	diags.Append(planned.ElementsAs(ctx, &plannedElems, false)...)
+	diags.Append(prior.ElementsAs(ctx, &priorElems, false)...)
+	if diags.HasError() {
+		return *planned, false
+	}
+	toRaw := func(elems []types.String) ([]string, bool) {
+		raw := make([]string, 0, len(elems))
+		for _, el := range elems {
+			if el.IsNull() || el.IsUnknown() {
+				return nil, false
+			}
+			raw = append(raw, el.ValueString())
+		}
+		return raw, true
+	}
+	plannedRaw, ok := toRaw(plannedElems)
+	if !ok {
+		return *planned, false
+	}
+	priorRaw, ok := toRaw(priorElems)
+	if !ok {
+		return *planned, false
+	}
+	if firewallCanonicalListStringsEqual(kind, plannedRaw, priorRaw) {
+		return *prior, true
+	}
+	return *planned, false
 }
 
 // ---------------------------------------------------------------------------
