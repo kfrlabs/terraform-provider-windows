@@ -111,7 +111,7 @@ func TestFirewallRuleResource_GroupUsesPriorStateBeforeRequiresReplace(t *testin
 func TestFirewallRuleResource_ObservedAttrsUseStateForUnknown(t *testing.T) {
 	s := windowsFirewallRuleSchemaDefinition(context.Background())
 	for _, n := range []string{
-		"edge_traversal_policy", "protocol", "program", "service", "interface_type",
+		"edge_traversal_policy", "program", "service", "interface_type",
 	} {
 		a, ok := s.Attributes[n].(schema.StringAttribute)
 		if !ok {
@@ -134,9 +134,32 @@ func TestFirewallRuleResource_ObservedAttrsUseStateForUnknown(t *testing.T) {
 		if !a.Optional || !a.Computed {
 			t.Errorf("%s must be Optional+Computed", n)
 		}
-		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], listplanmodifier.UseStateForUnknown()) {
-			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		if len(a.PlanModifiers) < 1 || !reflect.DeepEqual(a.PlanModifiers[0], listplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry UseStateForUnknown as its first plan modifier, got %v", n, a.PlanModifiers)
 		}
+	}
+	// Filter lists and protocol additionally carry a semantic-equality custom
+	// type (F01/F02/F03) so a raw configured value compares equal to the
+	// canonicalised post-apply state without any plan rewriting: the plan
+	// stays identical to the configuration (no "Provider produced invalid
+	// plan") and no "inconsistent result after apply" fires on the canonical
+	// state. Only UseStateForUnknown may appear as a plan modifier.
+	for _, n := range []string{
+		"local_port", "remote_port", "local_address", "remote_address",
+	} {
+		a := s.Attributes[n].(schema.ListAttribute)
+		if len(a.PlanModifiers) != 1 {
+			t.Errorf("%s must carry exactly UseStateForUnknown and no rewriting modifier, got %v", n, a.PlanModifiers)
+		}
+		if a.CustomType == nil {
+			t.Errorf("%s must carry a semantic-equality CustomType, got nil", n)
+		}
+	}
+	if got := s.Attributes["protocol"].(schema.StringAttribute); len(got.PlanModifiers) != 1 {
+		t.Errorf("protocol must carry exactly UseStateForUnknown and no rewriting modifier, got %v", got.PlanModifiers)
+	}
+	if s.Attributes["protocol"].(schema.StringAttribute).CustomType == nil {
+		t.Error("protocol must carry a semantic-equality CustomType, got nil")
 	}
 }
 
@@ -652,10 +675,10 @@ func TestFirewallStateToModel_EmptyListsNormalised(t *testing.T) {
 
 func TestModelToFirewallInput_Full(t *testing.T) {
 	profile := listFromStrings([]string{"Domain", "Private"})
-	localPort := listFromStrings([]string{"80", "443"})
-	remotePort := listFromStrings([]string{"Any"})
-	localAddr := listFromStrings([]string{"192.168.0.0/24"})
-	remoteAddr := listFromStrings([]string{"Any"})
+	localPort := firewallCanonicalListFromStrings(firewallListKindPort, []string{"80", "443"})
+	remotePort := firewallCanonicalListFromStrings(firewallListKindPort, []string{"Any"})
+	localAddr := firewallCanonicalListFromStrings(firewallListKindAddress, []string{"192.168.0.0/24"})
+	remoteAddr := firewallCanonicalListFromStrings(firewallListKindAddress, []string{"Any"})
 
 	m := windowsFirewallRuleModel{
 		ID:                  types.StringValue("RULE-01"),
@@ -669,7 +692,7 @@ func TestModelToFirewallInput_Full(t *testing.T) {
 		EdgeTraversalPolicy: types.StringValue("Block"),
 		Group:               types.StringValue("GrpA"),
 		PolicyStore:         types.StringValue("PersistentStore"),
-		Protocol:            types.StringValue("TCP"),
+		Protocol:            firewallProtocolValueOf("TCP"),
 		LocalPort:           localPort,
 		RemotePort:          remotePort,
 		LocalAddress:        localAddr,
@@ -740,10 +763,11 @@ func TestModelToFirewallInput_NullLists(t *testing.T) {
 		Enabled:       types.BoolValue(true),
 		PolicyStore:   types.StringValue("PersistentStore"),
 		Profile:       types.ListNull(types.StringType),
-		LocalPort:     types.ListNull(types.StringType),
-		RemotePort:    types.ListNull(types.StringType),
-		LocalAddress:  types.ListNull(types.StringType),
-		RemoteAddress: types.ListNull(types.StringType),
+		Protocol:      firewallProtocolValue{StringValue: types.StringNull()},
+		LocalPort:     firewallCanonicalListNull(firewallListKindPort),
+		RemotePort:    firewallCanonicalListNull(firewallListKindPort),
+		LocalAddress:  firewallCanonicalListNull(firewallListKindAddress),
+		RemoteAddress: firewallCanonicalListNull(firewallListKindAddress),
 	}
 	input, diags := modelToFirewallInput(context.Background(), m)
 	if diags.HasError() {
@@ -872,8 +896,8 @@ func TestFirewallRuleResource_Configure_HappyPath(t *testing.T) {
 func TestFirewallRuleResource_ConfigValidators(t *testing.T) {
 	r := &windowsFirewallRuleResource{}
 	validators := r.ConfigValidators(context.Background())
-	if len(validators) != 2 {
-		t.Errorf("expected 2 ConfigValidators (CV-1 + CV-2), got %d", len(validators))
+	if len(validators) != 3 {
+		t.Errorf("expected 3 ConfigValidators (CV-1 + CV-2 + CV-3), got %d", len(validators))
 	}
 }
 

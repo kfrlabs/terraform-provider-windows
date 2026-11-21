@@ -34,6 +34,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/kfrlabs/terraform-provider-windows/internal/winclient"
@@ -77,26 +79,26 @@ const firewallRuleDefaultTimeout = 10 * time.Minute
 // windows_firewall_rule. Every tfsdk tag matches an attribute key in
 // windowsFirewallRuleSchemaDefinition.
 type windowsFirewallRuleModel struct {
-	ID                  types.String   `tfsdk:"id"`
-	Name                types.String   `tfsdk:"name"`
-	DisplayName         types.String   `tfsdk:"display_name"`
-	Description         types.String   `tfsdk:"description"`
-	Enabled             types.Bool     `tfsdk:"enabled"`
-	Direction           types.String   `tfsdk:"direction"`
-	Action              types.String   `tfsdk:"action"`
-	Profile             types.List     `tfsdk:"profile"`
-	EdgeTraversalPolicy types.String   `tfsdk:"edge_traversal_policy"`
-	Group               types.String   `tfsdk:"group"`
-	PolicyStore         types.String   `tfsdk:"policy_store"`
-	Protocol            types.String   `tfsdk:"protocol"`
-	LocalPort           types.List     `tfsdk:"local_port"`
-	RemotePort          types.List     `tfsdk:"remote_port"`
-	LocalAddress        types.List     `tfsdk:"local_address"`
-	RemoteAddress       types.List     `tfsdk:"remote_address"`
-	Program             types.String   `tfsdk:"program"`
-	Service             types.String   `tfsdk:"service"`
-	InterfaceType       types.String   `tfsdk:"interface_type"`
-	Timeouts            timeouts.Value `tfsdk:"timeouts"`
+	ID                  types.String               `tfsdk:"id"`
+	Name                types.String               `tfsdk:"name"`
+	DisplayName         types.String               `tfsdk:"display_name"`
+	Description         types.String               `tfsdk:"description"`
+	Enabled             types.Bool                 `tfsdk:"enabled"`
+	Direction           types.String               `tfsdk:"direction"`
+	Action              types.String               `tfsdk:"action"`
+	Profile             types.List                 `tfsdk:"profile"`
+	EdgeTraversalPolicy types.String               `tfsdk:"edge_traversal_policy"`
+	Group               types.String               `tfsdk:"group"`
+	PolicyStore         types.String               `tfsdk:"policy_store"`
+	Protocol            firewallProtocolValue      `tfsdk:"protocol"`
+	LocalPort           firewallCanonicalListValue `tfsdk:"local_port"`
+	RemotePort          firewallCanonicalListValue `tfsdk:"remote_port"`
+	LocalAddress        firewallCanonicalListValue `tfsdk:"local_address"`
+	RemoteAddress       firewallCanonicalListValue `tfsdk:"remote_address"`
+	Program             types.String               `tfsdk:"program"`
+	Service             types.String               `tfsdk:"service"`
+	InterfaceType       types.String               `tfsdk:"interface_type"`
+	Timeouts            timeouts.Value             `tfsdk:"timeouts"`
 }
 
 // ---------------------------------------------------------------------------
@@ -262,10 +264,20 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 			},
 
 			"protocol": schema.StringAttribute{
-				Optional: true,
-				Computed: true,
+				Optional:   true,
+				Computed:   true,
+				CustomType: firewallProtocolType{},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+					// No canonicalising plan modifier here (F01/F02): the
+					// plan must stay identical to the configuration —
+					// rewriting it (tcp → TCP, 1 → ICMPv4, ...) makes
+					// Terraform core reject the plan with "Provider produced
+					// invalid plan". The canonical spelling is applied at
+					// Create/Update time (modelToFirewallInput) and the state
+					// stores what Windows reports (parseFirewallRuleState);
+					// plan and state still compare equal thanks to
+					// firewallProtocolValue StringSemanticEquals.
 				},
 				Description: "IP protocol keyword (`TCP`, `UDP`, `ICMPv4`, `ICMPv6`, `IGMP`, `Any`) " +
 					"or numeric string 0-255. Populated from Get-NetFirewallPortFilter.",
@@ -278,8 +290,18 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				CustomType:  firewallCanonicalListType{kind: firewallListKindPort},
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.UseStateForUnknown(),
+					// No canonicalising plan modifier here (F01/F03): the
+					// plan must stay identical to the configuration —
+					// rewriting it (X-X → X, sorting, ...) makes Terraform
+					// core reject the plan with "Provider produced invalid
+					// plan". The canonical form is applied at Create/Update
+					// time (modelToFirewallInput) and the state stores what
+					// Windows reports (parseFirewallRuleState); plan and
+					// state still compare equal thanks to
+					// firewallCanonicalListValue ListSemanticEquals.
 				},
 				Description: "Local TCP/UDP port(s). Accepts numeric ports, ranges, and keywords. " +
 					"Valid only when protocol is `TCP` or `UDP` (CV-2). Populated from Get-NetFirewallPortFilter.",
@@ -294,8 +316,10 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				CustomType:  firewallCanonicalListType{kind: firewallListKindPort},
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.UseStateForUnknown(),
+					// F01/F03: no canonicalising plan modifier, see local_port.
 				},
 				Description: "Remote TCP/UDP port(s). Same constraints as local_port. " +
 					"Populated from Get-NetFirewallPortFilter.",
@@ -310,8 +334,12 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				CustomType:  firewallCanonicalListType{kind: firewallListKindAddress},
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.UseStateForUnknown(),
+					// F03: no canonicalising plan modifier, see local_port.
+					// Combining `Any` with other addresses is rejected by
+					// CV-3 (Windows silently drops the combined `Any`).
 				},
 				Description: "Local IP addresses, CIDR ranges, or address keywords. " +
 					"Populated from Get-NetFirewallAddressFilter.",
@@ -326,8 +354,10 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,
+				CustomType:  firewallCanonicalListType{kind: firewallListKindAddress},
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.UseStateForUnknown(),
+					// F03: no canonicalising plan modifier, see local_port.
 				},
 				Description: "Remote addresses. Same constraints as local_address. " +
 					"Populated from Get-NetFirewallAddressFilter.",
@@ -391,10 +421,14 @@ func windowsFirewallRuleSchemaDefinition(ctx context.Context) schema.Schema {
 // ConfigValidators returns the resource-level cross-field validators:
 //   - CV-1 (firewallRuleProfileValidator): "Any" must appear alone in profile.
 //   - CV-2 (firewallRulePortProtocolValidator): ports only valid with TCP/UDP.
+//   - CV-3 (firewallRuleAddressAnyValidator): "Any" must appear alone in
+//     local_address / remote_address (F03: Windows silently drops a combined
+//     Any, which otherwise surfaces as an inconsistent result after apply).
 func (r *windowsFirewallRuleResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
 	return []resource.ConfigValidator{
 		firewallRuleProfileValidator{},
 		firewallRulePortProtocolValidator{},
+		firewallRuleAddressAnyValidator{},
 	}
 }
 
@@ -680,16 +714,16 @@ func modelToFirewallInput(ctx context.Context, m windowsFirewallRuleModel) (winc
 	profile, d := stringsFromList(ctx, m.Profile)
 	diags.Append(d...)
 
-	localPort, d := stringsFromList(ctx, m.LocalPort)
+	localPort, d := stringsFromList(ctx, m.LocalPort.ListValue)
 	diags.Append(d...)
 
-	remotePort, d := stringsFromList(ctx, m.RemotePort)
+	remotePort, d := stringsFromList(ctx, m.RemotePort.ListValue)
 	diags.Append(d...)
 
-	localAddress, d := stringsFromList(ctx, m.LocalAddress)
+	localAddress, d := stringsFromList(ctx, m.LocalAddress.ListValue)
 	diags.Append(d...)
 
-	remoteAddress, d := stringsFromList(ctx, m.RemoteAddress)
+	remoteAddress, d := stringsFromList(ctx, m.RemoteAddress.ListValue)
 	diags.Append(d...)
 
 	if diags.HasError() {
@@ -697,6 +731,15 @@ func modelToFirewallInput(ctx context.Context, m windowsFirewallRuleModel) (winc
 	}
 
 	enabled := m.Enabled.ValueBool()
+	// F01/F02/F03: canonicalise apply-side so the values sent to Windows use
+	// the spelling Windows reports back: degenerate port ranges collapse
+	// (55014-55014 → 55014), protocol spellings fold to canonical form
+	// (tcp → TCP, 1 → ICMPv4) and filter lists are deduped + sorted. The plan
+	// keeps the raw configuration (no rewriting plan modifier), and the
+	// state stores the canonical Windows spelling (parseFirewallRuleState);
+	// plan and post-apply state still compare equal thanks to the
+	// SemanticEquals on the custom types, so neither "invalid plan" nor
+	// "inconsistent result after apply" can fire here.
 	return winclient.FirewallRuleInput{
 		Name:                m.Name.ValueString(),
 		DisplayName:         m.DisplayName.ValueString(),
@@ -708,11 +751,11 @@ func modelToFirewallInput(ctx context.Context, m windowsFirewallRuleModel) (winc
 		EdgeTraversalPolicy: m.EdgeTraversalPolicy.ValueString(),
 		Group:               m.Group.ValueString(),
 		PolicyStore:         m.PolicyStore.ValueString(),
-		Protocol:            m.Protocol.ValueString(),
-		LocalPort:           localPort,
-		RemotePort:          remotePort,
-		LocalAddress:        localAddress,
-		RemoteAddress:       remoteAddress,
+		Protocol:            winclient.CanonicalFirewallProtocol(m.Protocol.ValueString()),
+		LocalPort:           winclient.CanonicalFirewallPortList(localPort),
+		RemotePort:          winclient.CanonicalFirewallPortList(remotePort),
+		LocalAddress:        winclient.CanonicalFirewallAddressList(localAddress),
+		RemoteAddress:       winclient.CanonicalFirewallAddressList(remoteAddress),
 		Program:             m.Program.ValueString(),
 		Service:             m.Service.ValueString(),
 		InterfaceType:       m.InterfaceType.ValueString(),
@@ -756,12 +799,15 @@ func fwNullTimeouts() timeouts.Value {
 }
 
 // firewallStateToModel converts a FirewallRuleState to a Terraform model.
+// The state keeps the canonical Windows spelling (already normalised by
+// parseFirewallRuleState); it is compared to the raw configuration by the
+// SemanticEquals on the custom types, so no plan rewriting is needed.
 func firewallStateToModel(s *winclient.FirewallRuleState) windowsFirewallRuleModel {
 	profile := listFromStrings(s.Profile)
-	localPort := listFromStrings(s.LocalPort)
-	remotePort := listFromStrings(s.RemotePort)
-	localAddress := listFromStrings(s.LocalAddress)
-	remoteAddress := listFromStrings(s.RemoteAddress)
+	localPort := firewallCanonicalListFromStrings(firewallListKindPort, s.LocalPort)
+	remotePort := firewallCanonicalListFromStrings(firewallListKindPort, s.RemotePort)
+	localAddress := firewallCanonicalListFromStrings(firewallListKindAddress, s.LocalAddress)
+	remoteAddress := firewallCanonicalListFromStrings(firewallListKindAddress, s.RemoteAddress)
 
 	m := windowsFirewallRuleModel{
 		ID:                  types.StringValue(s.Name),
@@ -775,7 +821,7 @@ func firewallStateToModel(s *winclient.FirewallRuleState) windowsFirewallRuleMod
 		EdgeTraversalPolicy: types.StringValue(s.EdgeTraversalPolicy),
 		Group:               types.StringValue(s.Group),
 		PolicyStore:         types.StringValue(s.PolicyStore),
-		Protocol:            types.StringValue(s.Protocol),
+		Protocol:            firewallProtocolValueOf(s.Protocol),
 		LocalPort:           localPort,
 		RemotePort:          remotePort,
 		LocalAddress:        localAddress,
@@ -1078,9 +1124,9 @@ func (v firewallRulePortProtocolValidator) MarkdownDescription(ctx context.Conte
 }
 
 func (v firewallRulePortProtocolValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var protocol types.String
-	var localPort types.List
-	var remotePort types.List
+	var protocol firewallProtocolValue
+	var localPort firewallCanonicalListValue
+	var remotePort firewallCanonicalListValue
 
 	diags := req.Config.GetAttribute(ctx, path.Root("protocol"), &protocol)
 	resp.Diagnostics.Append(diags...)
@@ -1096,8 +1142,8 @@ func (v firewallRulePortProtocolValidator) ValidateResource(ctx context.Context,
 		return
 	}
 
-	proto := protocol.ValueString()
-	isTCPOrUDP := strings.EqualFold(proto, "TCP") || strings.EqualFold(proto, "UDP")
+	proto := winclient.CanonicalFirewallProtocol(protocol.ValueString())
+	isTCPOrUDP := proto == "TCP" || proto == "UDP"
 	if isTCPOrUDP {
 		return
 	}
@@ -1123,4 +1169,369 @@ func (v firewallRulePortProtocolValidator) ValidateResource(ctx context.Context,
 			),
 		)
 	}
+}
+
+// firewallRuleAddressAnyValidator rejects a local_address or remote_address
+// list that mixes "Any" (case-insensitive) with other address values
+// (CV-3, mirror of CV-1 for profile). Windows silently drops an `Any`
+// combined with concrete addresses, so accepting it would surface as an
+// inconsistent result after apply (F03).
+type firewallRuleAddressAnyValidator struct{}
+
+func (v firewallRuleAddressAnyValidator) Description(_ context.Context) string {
+	return `CV-3: address list "Any" must not be combined with other address values.`
+}
+
+func (v firewallRuleAddressAnyValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v firewallRuleAddressAnyValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	for _, name := range []string{"local_address", "remote_address"} {
+		var list firewallCanonicalListValue
+		diags := req.Config.GetAttribute(ctx, path.Root(name), &list)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if list.IsNull() || list.IsUnknown() {
+			continue
+		}
+
+		var elements []types.String
+		diags = list.ElementsAs(ctx, &elements, false)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		hasAny := false
+		count := 0
+		for _, el := range elements {
+			if el.IsNull() || el.IsUnknown() {
+				continue
+			}
+			// Skip blank elements: firewallAddressValidator already rejects
+			// them as invalid values, so they must not count as "other
+			// address values" for the Any combination check.
+			if strings.TrimSpace(el.ValueString()) == "" {
+				continue
+			}
+			count++
+			if strings.EqualFold(strings.TrimSpace(el.ValueString()), "Any") {
+				hasAny = true
+			}
+		}
+
+		if hasAny && count > 1 {
+			resp.Diagnostics.AddAttributeError(
+				path.Root(name),
+				"Invalid address combination",
+				fmt.Sprintf(
+					"%s %q must not be combined with other address values "+
+						"(Windows silently drops the combined `Any`). "+
+						`Use ["Any"] alone, or list explicit addresses without "Any".`,
+					name, "Any",
+				),
+			)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Semantic equality: state-side canonicalisation (F01/F02/F03)
+// ---------------------------------------------------------------------------
+//
+// The plan must stay identical to the configuration: any plan modifier that
+// rewrites a planned value (tcp → TCP, 55014-55014 → 55014, sorting, ...)
+// makes Terraform core reject the whole plan with "Provider produced invalid
+// plan" (F01/F02/F03). Canonicalisation therefore happens apply-side only
+// (modelToFirewallInput / buildFirewallParams) and state-side
+// (parseFirewallRuleState stores the canonical Windows spelling).
+//
+// The custom types below only relax the *comparison*: a raw configured value
+// and the canonical state value compare equal when Windows treats them as
+// the same rule, so neither "invalid plan" (plan == config, untouched) nor
+// "inconsistent result after apply" (raw plan vs canonical state) can fire.
+// This mirrors the windows_scheduled_task durationValue /
+// subscriptionXMLValue precedent. The stored strings are never rewritten by
+// the equality check.
+
+// firewallProtocolValue is the framework value type for the "protocol"
+// attribute. It implements semantic equality so that equivalent spellings of
+// the same protocol (tcp/TCP/6, 1/ICMPv4, any/Any, ...) compare equal,
+// avoiding both a "provider produced inconsistent result after apply" error
+// (on create) and a false diff on later refresh.
+type firewallProtocolValue struct {
+	basetypes.StringValue
+}
+
+func firewallProtocolValueOf(s string) firewallProtocolValue {
+	return firewallProtocolValue{StringValue: types.StringValue(s)}
+}
+
+func (v firewallProtocolValue) Equal(o attr.Value) bool {
+	other, ok := o.(firewallProtocolValue)
+	if !ok {
+		return false
+	}
+	return v.StringValue.Equal(other.StringValue)
+}
+
+func (v firewallProtocolValue) Type(context.Context) attr.Type {
+	return firewallProtocolType{}
+}
+
+func (v firewallProtocolValue) StringSemanticEquals(_ context.Context, newValuable basetypes.StringValuable) (bool, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	other, ok := newValuable.(firewallProtocolValue)
+	if !ok {
+		diags.AddError("Semantic Equality Check Error",
+			fmt.Sprintf("expected firewallProtocolValue, got %T", newValuable))
+		return false, diags
+	}
+	if v.IsNull() || v.IsUnknown() || other.IsNull() || other.IsUnknown() {
+		return false, diags
+	}
+	return winclient.CanonicalFirewallProtocol(v.ValueString()) ==
+		winclient.CanonicalFirewallProtocol(other.ValueString()), diags
+}
+
+// firewallProtocolType is the attr.Type counterpart of firewallProtocolValue.
+type firewallProtocolType struct {
+	basetypes.StringType
+}
+
+func (t firewallProtocolType) Equal(o attr.Type) bool {
+	other, ok := o.(firewallProtocolType)
+	if !ok {
+		return false
+	}
+	return t.StringType.Equal(other.StringType)
+}
+
+func (t firewallProtocolType) String() string {
+	return "firewallProtocolType"
+}
+
+func (t firewallProtocolType) ValueFromString(_ context.Context, in basetypes.StringValue) (basetypes.StringValuable, diag.Diagnostics) {
+	return firewallProtocolValue{StringValue: in}, nil
+}
+
+func (t firewallProtocolType) ValueFromTerraform(ctx context.Context, in tftypes.Value) (attr.Value, error) {
+	attrValue, err := t.StringType.ValueFromTerraform(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	stringValue, ok := attrValue.(basetypes.StringValue)
+	if !ok {
+		return nil, fmt.Errorf("unexpected value type %T for firewallProtocolType", attrValue)
+	}
+	valuable, diags := t.ValueFromString(ctx, stringValue)
+	if diags.HasError() {
+		return nil, fmt.Errorf("error converting StringValue to firewallProtocolValue: %v", diags)
+	}
+	return valuable, nil
+}
+
+func (t firewallProtocolType) ValueType(context.Context) attr.Value {
+	return firewallProtocolValue{}
+}
+
+// firewallListKind selects the per-element canonicalisation used by
+// firewallCanonicalListValue.ListSemanticEquals.
+type firewallListKind string
+
+const (
+	// firewallListKindPort canonicalises port tokens (degenerate range
+	// collapse, `any` casing).
+	firewallListKindPort firewallListKind = "port"
+	// firewallListKindAddress canonicalises address tokens (`any` casing).
+	firewallListKindAddress firewallListKind = "address"
+)
+
+// firewallCanonicalListValue is the framework value type for the
+// filter-list attributes (local_port, remote_port, local_address,
+// remote_address). It implements semantic equality so that a raw configured
+// list and the canonical state list compare equal when they describe the
+// same Windows filter: per-element canonicalisation (degenerate ranges,
+// `any` casing), deduplication and order-insensitivity.
+type firewallCanonicalListValue struct {
+	basetypes.ListValue
+	kind firewallListKind
+}
+
+func firewallCanonicalListFromStrings(kind firewallListKind, strs []string) firewallCanonicalListValue {
+	if len(strs) == 0 {
+		return firewallCanonicalListValue{
+			ListValue: types.ListValueMust(types.StringType, []attr.Value{}),
+			kind:      kind,
+		}
+	}
+	vals := make([]attr.Value, len(strs))
+	for i, s := range strs {
+		vals[i] = types.StringValue(s)
+	}
+	return firewallCanonicalListValue{
+		ListValue: types.ListValueMust(types.StringType, vals),
+		kind:      kind,
+	}
+}
+
+func firewallCanonicalListNull(kind firewallListKind) firewallCanonicalListValue {
+	return firewallCanonicalListValue{
+		ListValue: types.ListNull(types.StringType),
+		kind:      kind,
+	}
+}
+
+func firewallCanonicalListUnknown(kind firewallListKind) firewallCanonicalListValue {
+	return firewallCanonicalListValue{
+		ListValue: types.ListUnknown(types.StringType),
+		kind:      kind,
+	}
+}
+
+func (v firewallCanonicalListValue) Equal(o attr.Value) bool {
+	other, ok := o.(firewallCanonicalListValue)
+	if !ok {
+		return false
+	}
+	return v.kind == other.kind && v.ListValue.Equal(other.ListValue)
+}
+
+func (v firewallCanonicalListValue) Type(context.Context) attr.Type {
+	return firewallCanonicalListType{kind: v.kind}
+}
+
+func (v firewallCanonicalListValue) ListSemanticEquals(ctx context.Context, newValuable basetypes.ListValuable) (bool, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	other, ok := newValuable.(firewallCanonicalListValue)
+	if !ok {
+		diags.AddError("Semantic Equality Check Error",
+			fmt.Sprintf("expected firewallCanonicalListValue, got %T", newValuable))
+		return false, diags
+	}
+	if v.IsNull() || v.IsUnknown() || other.IsNull() || other.IsUnknown() {
+		return false, diags
+	}
+	var planned, current []types.String
+	diags.Append(v.ElementsAs(ctx, &planned, false)...)
+	diags.Append(other.ElementsAs(ctx, &current, false)...)
+	if diags.HasError() {
+		return false, diags
+	}
+	toRaw := func(elems []types.String) ([]string, bool) {
+		raw := make([]string, 0, len(elems))
+		for _, el := range elems {
+			if el.IsNull() || el.IsUnknown() {
+				return nil, false
+			}
+			raw = append(raw, el.ValueString())
+		}
+		return raw, true
+	}
+	rawPlanned, ok := toRaw(planned)
+	if !ok {
+		return false, diags
+	}
+	rawCurrent, ok := toRaw(current)
+	if !ok {
+		return false, diags
+	}
+	return firewallCanonicalListStringsEqual(v.kind, rawPlanned, rawCurrent), diags
+}
+
+// firewallCanonicalListStringsEqual reports whether two raw filter lists
+// describe the same Windows filter: each side is canonicalised (per-element
+// folding, deduplication, sorting) and the results are compared exactly.
+func firewallCanonicalListStringsEqual(kind firewallListKind, a, b []string) bool {
+	var canonicalise func([]string) []string
+	if kind == firewallListKindAddress {
+		canonicalise = winclient.CanonicalFirewallAddressList
+	} else {
+		canonicalise = winclient.CanonicalFirewallPortList
+	}
+	ca, cb := canonicalise(a), canonicalise(b)
+	if len(ca) != len(cb) {
+		return false
+	}
+	for i := range ca {
+		if ca[i] != cb[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// firewallCanonicalListType is the attr.Type counterpart of
+// firewallCanonicalListValue.
+type firewallCanonicalListType struct {
+	basetypes.ListType
+	kind firewallListKind
+}
+
+func (t firewallCanonicalListType) Equal(o attr.Type) bool {
+	other, ok := o.(firewallCanonicalListType)
+	if !ok {
+		return false
+	}
+	return t.kind == other.kind
+}
+
+func (t firewallCanonicalListType) String() string {
+	return fmt.Sprintf("firewallCanonicalListType(%s)", string(t.kind))
+}
+
+// ElementType and TerraformType are fixed to string lists: the embedded
+// basetypes.ListType carries no ElemType (the kind selects the equality,
+// not the element type), so the defaults derived from it would describe
+// List[DynamicPseudoType] and reject real state values on Set.
+func (t firewallCanonicalListType) ElementType() attr.Type {
+	return types.StringType
+}
+
+func (t firewallCanonicalListType) TerraformType(context.Context) tftypes.Type {
+	return tftypes.List{ElementType: tftypes.String}
+}
+
+func (t firewallCanonicalListType) ValueFromList(_ context.Context, in basetypes.ListValue) (basetypes.ListValuable, diag.Diagnostics) {
+	return firewallCanonicalListValue{ListValue: in, kind: t.kind}, nil
+}
+
+func (t firewallCanonicalListType) ValueFromTerraform(ctx context.Context, in tftypes.Value) (attr.Value, error) {
+	if in.Type() == nil {
+		return firewallCanonicalListNull(t.kind), nil
+	}
+	want := tftypes.List{ElementType: tftypes.String}
+	if !in.Type().Equal(want) {
+		return nil, fmt.Errorf("can't use %s as value of firewallCanonicalListType(%s), can only use %s values",
+			in.String(), string(t.kind), want.String())
+	}
+	if !in.IsKnown() {
+		return firewallCanonicalListUnknown(t.kind), nil
+	}
+	if in.IsNull() {
+		return firewallCanonicalListNull(t.kind), nil
+	}
+	var tfElems []tftypes.Value
+	if err := in.As(&tfElems); err != nil {
+		return nil, err
+	}
+	elems := make([]attr.Value, 0, len(tfElems))
+	for _, tfElem := range tfElems {
+		av, err := types.StringType.ValueFromTerraform(ctx, tfElem)
+		if err != nil {
+			return nil, err
+		}
+		elems = append(elems, av)
+	}
+	return firewallCanonicalListValue{
+		ListValue: basetypes.NewListValueMust(types.StringType, elems),
+		kind:      t.kind,
+	}, nil
+}
+
+func (t firewallCanonicalListType) ValueType(context.Context) attr.Value {
+	return firewallCanonicalListNull(t.kind)
 }

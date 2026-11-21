@@ -383,7 +383,7 @@ func TestBuildFirewallParams_CreateWithOptionalFields(t *testing.T) {
 		"@('Domain','Private')",
 		"'MyGroup'",
 		"'TCP'",
-		"@('80','443')",
+		"@('443','80')",
 		"'MyService'",
 		"'Wired'",
 	} {
@@ -1065,5 +1065,218 @@ func TestBuildFirewallReplacer(t *testing.T) {
 	}
 	if !strings.Contains(got, "'PersistentStore'") {
 		t.Errorf("@@PSTORE@@ not replaced: %s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Canonicalisation (F01/F02/F03): plan spellings fold to what Windows reports
+// ---------------------------------------------------------------------------
+
+func TestCanonicalFirewallProtocol(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"TCP", "TCP"},
+		{"tcp", "TCP"},
+		{"Tcp", "TCP"},
+		{"UDP", "UDP"},
+		{"udp", "UDP"},
+		{"ICMPv4", "ICMPv4"},
+		{"icmpv4", "ICMPv4"},
+		{"ICMPv6", "ICMPv6"},
+		{"icmpv6", "ICMPv6"},
+		{"IGMP", "IGMP"},
+		{"igmp", "IGMP"},
+		{"Any", "Any"},
+		{"ANY", "Any"},
+		{"any", "Any"},
+		{"1", "ICMPv4"},
+		{"2", "IGMP"},
+		{"6", "TCP"},
+		{"17", "UDP"},
+		{"58", "ICMPv6"},
+		{"47", "47"},
+		{"0", "0"},
+		{"255", "255"},
+		{"", ""},
+		{"  TCP  ", "TCP"},
+	} {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := CanonicalFirewallProtocol(tt.in); got != tt.want {
+				t.Errorf("CanonicalFirewallProtocol(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalFirewallPort(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"80", "80"},
+		{"55014-55014", "55014"},
+		{"80-80", "80"},
+		{"8000-8100", "8000-8100"},
+		{"Any", "Any"},
+		{"any", "Any"},
+		{"ANY", "Any"},
+		{"  443  ", "443"},
+		{"", ""},
+	} {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := CanonicalFirewallPort(tt.in); got != tt.want {
+				t.Errorf("CanonicalFirewallPort(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalFirewallAddress(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"Any", "Any"},
+		{"any", "Any"},
+		{"ANY", "Any"},
+		{"192.168.1.1", "192.168.1.1"},
+		{"10.0.0.0/8", "10.0.0.0/8"},
+		{"  LocalSubnet  ", "LocalSubnet"},
+	} {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := CanonicalFirewallAddress(tt.in); got != tt.want {
+				t.Errorf("CanonicalFirewallAddress(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalFirewallPortList_SortsDedupesCollapses(t *testing.T) {
+	got := CanonicalFirewallPortList([]string{"80", "443", "80", "55014-55014", "any"})
+	want := []string{"443", "55014", "80", "Any"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCanonicalFirewallPortList_NilStaysNil(t *testing.T) {
+	if got := CanonicalFirewallPortList(nil); got != nil {
+		t.Errorf("nil → %v, want nil", got)
+	}
+	if got := CanonicalFirewallAddressList(nil); got != nil {
+		t.Errorf("nil → %v, want nil", got)
+	}
+}
+
+func TestCanonicalFirewallAddressList_SortsAndFoldsAny(t *testing.T) {
+	got := CanonicalFirewallAddressList([]string{"10.0.0.0/8", "any", "192.168.1.1"})
+	want := []string{"10.0.0.0/8", "192.168.1.1", "Any"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestParseFirewallRuleState_CanonicalisesWindowsSpellings(t *testing.T) {
+	data := testFRStateData
+	dataCopy := make(map[string]any, len(data))
+	for key, value := range data {
+		dataCopy[key] = value
+	}
+	// Spellings Windows may report that differ from user config (F01/F02/F03).
+	dataCopy["protocol"] = "tcp"
+	dataCopy["local_port"] = []string{"80", "55014-55014", "443"}
+	dataCopy["remote_address"] = []string{"10.0.0.0/8", "any"}
+	raw, err := json.Marshal(dataCopy)
+	if err != nil {
+		t.Fatalf("marshal firewall state: %v", err)
+	}
+	resp := &psResponse{OK: true, Data: json.RawMessage(raw)}
+	state, err := parseFirewallRuleState(resp, "PersistentStore")
+	if err != nil {
+		t.Fatalf("parseFirewallRuleState: %v", err)
+	}
+	if state.Protocol != "TCP" {
+		t.Errorf("Protocol = %q, want TCP", state.Protocol)
+	}
+	wantPorts := []string{"443", "55014", "80"}
+	if len(state.LocalPort) != len(wantPorts) {
+		t.Fatalf("LocalPort = %v, want %v", state.LocalPort, wantPorts)
+	}
+	for i := range wantPorts {
+		if state.LocalPort[i] != wantPorts[i] {
+			t.Fatalf("LocalPort = %v, want %v", state.LocalPort, wantPorts)
+		}
+	}
+	wantAddrs := []string{"10.0.0.0/8", "Any"}
+	if len(state.RemoteAddress) != len(wantAddrs) {
+		t.Fatalf("RemoteAddress = %v, want %v", state.RemoteAddress, wantAddrs)
+	}
+	for i := range wantAddrs {
+		if state.RemoteAddress[i] != wantAddrs[i] {
+			t.Fatalf("RemoteAddress = %v, want %v", state.RemoteAddress, wantAddrs)
+		}
+	}
+}
+
+func TestBuildFirewallParams_UpdateAlwaysEmitsDescription(t *testing.T) {
+	// F04: Update must reset Description even when the plan is empty, otherwise
+	// Windows keeps the previous value and the post-Update Read mismatches.
+	empty := FirewallRuleInput{
+		Name: "R", DisplayName: "R", Direction: "Inbound", Action: "Allow",
+	}
+	got := buildFirewallParams("update", "R", "PersistentStore", empty)
+	if !strings.Contains(got, "Description = ''") {
+		t.Errorf("update with empty description must emit Description = '':\n%s", got)
+	}
+
+	full := empty
+	full.Description = "Kept text"
+	got = buildFirewallParams("update", "R", "PersistentStore", full)
+	if !strings.Contains(got, "Description = 'Kept text'") {
+		t.Errorf("update must carry the description:\n%s", got)
+	}
+
+	// Create keeps the old behaviour: omit when empty (Windows default).
+	got = buildFirewallParams("create", "R", "PersistentStore", empty)
+	if strings.Contains(got, "Description") {
+		t.Errorf("create with empty description must omit Description:\n%s", got)
+	}
+}
+
+func TestBuildFirewallParams_CanonicalisesFilterSpellings(t *testing.T) {
+	input := FirewallRuleInput{
+		Name: "R", DisplayName: "R", Direction: "Inbound", Action: "Allow",
+		Protocol: "tcp", LocalPort: []string{"55014-55014"},
+	}
+	got := buildFirewallParams("create", "R", "PersistentStore", input)
+	if !strings.Contains(got, "Protocol = 'TCP'") {
+		t.Errorf("protocol must be canonicalised to TCP:\n%s", got)
+	}
+	if !strings.Contains(got, "LocalPort = @('55014')") {
+		t.Errorf("degenerate range must collapse to singleton:\n%s", got)
+	}
+	if strings.Contains(got, "55014-55014") {
+		t.Errorf("raw degenerate range must not be sent:\n%s", got)
+	}
+}
+
+func TestBuildFirewallParams_CanonicalisesAddresses(t *testing.T) {
+	// Review blocker 2: buildFirewallParams must emit canonicalised
+	// addresses (folded/sorted/deduped) so direct winclient callers never
+	// send Windows-collapsible spellings such as " Any ".
+	input := FirewallRuleInput{
+		Name: "R", DisplayName: "R", Direction: "Inbound", Action: "Allow",
+		LocalAddress:  []string{" 10.0.0.0/8 ", "any", "10.0.0.0/8"},
+		RemoteAddress: []string{"192.168.1.1", " any "},
+	}
+	got := buildFirewallParams("create", "R", "PersistentStore", input)
+	if !strings.Contains(got, "LocalAddress = @('10.0.0.0/8','Any')") {
+		t.Errorf("local addresses must be trimmed, folded, deduped and sorted:\n%s", got)
+	}
+	if !strings.Contains(got, "RemoteAddress = @('192.168.1.1','Any')") {
+		t.Errorf("remote addresses must be trimmed, folded and sorted:\n%s", got)
 	}
 }
