@@ -149,6 +149,7 @@ func TestFirewallProtocolSemanticEquals(t *testing.T) {
 	for _, tc := range []struct{ config, state string }{
 		{"tcp", "TCP"}, {"TCP", "TCP"}, {"ANY", "Any"}, {"any", "Any"},
 		{"1", "ICMPv4"}, {"6", "TCP"}, {"17", "UDP"}, {"58", "ICMPv6"},
+		{"2", "2"}, {"igmp", "2"}, {"IGMP", "2"},
 		{"47", "47"},
 	} {
 		equal, diags := firewallProtocolValueOf(tc.config).StringSemanticEquals(
@@ -230,6 +231,12 @@ func TestFirewallCanonicalListSemanticEquals_Address(t *testing.T) {
 	state = firewallCanonicalListFromStrings(firewallListKindAddress, []string{"Any"})
 	if equal, _ := planned.ListSemanticEquals(context.Background(), state); !equal {
 		t.Error(`address "any" must equal state "Any"`)
+	}
+	// F11: host-route suffix folds to the bare IP on both sides.
+	planned = firewallCanonicalListFromStrings(firewallListKindAddress, []string{"192.0.2.1/32"})
+	state = firewallCanonicalListFromStrings(firewallListKindAddress, []string{"192.0.2.1"})
+	if equal, _ := planned.ListSemanticEquals(context.Background(), state); !equal {
+		t.Error(`address "192.0.2.1/32" must equal state "192.0.2.1"`)
 	}
 	// Null/unknown never compare equal.
 	if equal, _ := firewallCanonicalListNull(firewallListKindAddress).ListSemanticEquals(context.Background(), state); equal {

@@ -414,9 +414,12 @@ type frStateJSON struct {
 // firewallProtocolNumericAlias maps well-known IANA protocol numbers to the
 // keyword Windows reports via Get-NetFirewallPortFilter (observed on 203:
 // a rule created with "1" reads back "ICMPv4", "tcp" reads back "TCP").
+// Protocol 2 has no accepted keyword: Windows rejects "IGMP"/"igmp" with
+// "The protocol is invalid" and stores "2" verbatim, so "2" must be sent
+// and kept as-is (F10). "IGMP"/"igmp" inputs fold to "2" in
+// CanonicalFirewallProtocol.
 var firewallProtocolNumericAlias = map[string]string{
 	"1":  "ICMPv4",
-	"2":  "IGMP",
 	"6":  "TCP",
 	"17": "UDP",
 	"58": "ICMPv6",
@@ -424,13 +427,20 @@ var firewallProtocolNumericAlias = map[string]string{
 
 // CanonicalFirewallProtocol folds a user-supplied protocol value to the
 // spelling Windows reports back, so plan and post-apply state agree (F02):
-// keywords are case-folded to their canonical form (tcp→TCP, ANY→Any) and
-// well-known numeric aliases are mapped to keywords (1→ICMPv4, 6→TCP,
-// 17→UDP, ...). Unknown values (other numerics, garbage) pass through
-// trimmed — validation stays in the provider validators.
+// keywords are case-folded to their canonical form (tcp→TCP, ANY→Any),
+// "IGMP"/"igmp" fold to "2" (F10: Windows rejects the IGMP keyword and
+// stores protocol 2 verbatim as "2"), and well-known numeric aliases are
+// mapped to keywords (1→ICMPv4, 6→TCP, 17→UDP, 58→ICMPv6). Unknown values
+// (other numerics, garbage) pass through trimmed — validation stays in the
+// provider validators.
 func CanonicalFirewallProtocol(value string) string {
 	v := strings.TrimSpace(value)
-	for _, kw := range []string{"TCP", "UDP", "ICMPv4", "ICMPv6", "IGMP", "Any"} {
+	// F10: fold before the keyword loop, otherwise "igmp" would fold to the
+	// rejected "IGMP" keyword instead of the accepted numeric "2".
+	if strings.EqualFold(v, "IGMP") {
+		return "2"
+	}
+	for _, kw := range []string{"TCP", "UDP", "ICMPv4", "ICMPv6", "Any"} {
 		if strings.EqualFold(v, kw) {
 			return kw
 		}
@@ -464,12 +474,33 @@ func CanonicalFirewallPort(value string) string {
 
 // CanonicalFirewallAddress folds one address token to canonical form (F03):
 // surrounding whitespace is trimmed and "any" is case-folded to "Any".
+// Host-route suffixes are stripped (F11): Windows drops them on read
+// ("192.0.2.1/32"→"192.0.2.1", "2001:db8:1::5/128"→"2001:db8:1::5"), so both
+// plan and state fold "a.b.c.d/32" (valid IPv4) and ".../128" (valid IPv6)
+// to the bare IP. Other CIDR suffixes (/16, /64, ...) are preserved.
 // Mask-to-CIDR conversion lives in normaliseFirewallAddress and is applied
 // separately in the Read pipeline.
 func CanonicalFirewallAddress(value string) string {
 	v := strings.TrimSpace(value)
 	if strings.EqualFold(v, "Any") {
 		return "Any"
+	}
+	// F11: fold host routes to the bare IP (both plan and state sides share
+	// this function, as do ListSemanticEquals and ModifyPlan folding).
+	if _, ipNet, err := net.ParseCIDR(v); err == nil {
+		if ones, bits := ipNet.Mask.Size(); (bits == 32 && ones == 32) || (bits == 128 && ones == 128) {
+			if host, _, ok := strings.Cut(v, "/"); ok {
+				if ip := net.ParseIP(strings.TrimSpace(host)); ip != nil {
+					if ip.To4() != nil && bits == 32 {
+						return ip.To4().String()
+					}
+					// IPv6 /128 (or IPv4-in-IPv6 edge): canonical IP spelling.
+					if bits == 128 {
+						return ip.String()
+					}
+				}
+			}
+		}
 	}
 	return v
 }
