@@ -111,7 +111,7 @@ func TestFirewallRuleResource_GroupUsesPriorStateBeforeRequiresReplace(t *testin
 func TestFirewallRuleResource_ObservedAttrsUseStateForUnknown(t *testing.T) {
 	s := windowsFirewallRuleSchemaDefinition(context.Background())
 	for _, n := range []string{
-		"edge_traversal_policy", "protocol", "program", "service", "interface_type",
+		"edge_traversal_policy", "program", "service", "interface_type",
 	} {
 		a, ok := s.Attributes[n].(schema.StringAttribute)
 		if !ok {
@@ -134,9 +134,39 @@ func TestFirewallRuleResource_ObservedAttrsUseStateForUnknown(t *testing.T) {
 		if !a.Optional || !a.Computed {
 			t.Errorf("%s must be Optional+Computed", n)
 		}
-		if len(a.PlanModifiers) != 1 || !reflect.DeepEqual(a.PlanModifiers[0], listplanmodifier.UseStateForUnknown()) {
-			t.Errorf("%s must carry exactly UseStateForUnknown, got %v", n, a.PlanModifiers)
+		if len(a.PlanModifiers) < 1 || !reflect.DeepEqual(a.PlanModifiers[0], listplanmodifier.UseStateForUnknown()) {
+			t.Errorf("%s must carry UseStateForUnknown as its first plan modifier, got %v", n, a.PlanModifiers)
 		}
+	}
+	// Filter lists and protocol additionally carry a semantic-equality custom
+	// type (F01/F02/F03) so a raw configured value compares equal to the
+	// canonicalised post-apply state without any plan rewriting: the plan
+	// stays identical to the configuration (no "Provider produced invalid
+	// plan") and no "inconsistent result after apply" fires on the canonical
+	// state. Only UseStateForUnknown may appear as a plan modifier.
+	for _, n := range []string{
+		"local_port", "remote_port", "local_address", "remote_address",
+	} {
+		a, ok := s.Attributes[n].(schema.ListAttribute)
+		if !ok {
+			t.Fatalf("%s: expected schema.ListAttribute, got %T", n, s.Attributes[n])
+		}
+		if len(a.PlanModifiers) != 1 {
+			t.Errorf("%s must carry exactly UseStateForUnknown and no rewriting modifier, got %v", n, a.PlanModifiers)
+		}
+		if a.CustomType == nil {
+			t.Errorf("%s must carry a semantic-equality CustomType, got nil", n)
+		}
+	}
+	protoAttr, ok := s.Attributes["protocol"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("protocol: expected schema.StringAttribute, got %T", s.Attributes["protocol"])
+	}
+	if len(protoAttr.PlanModifiers) != 1 {
+		t.Errorf("protocol must carry exactly UseStateForUnknown and no rewriting modifier, got %v", protoAttr.PlanModifiers)
+	}
+	if protoAttr.CustomType == nil {
+		t.Error("protocol must carry a semantic-equality CustomType, got nil")
 	}
 }
 
@@ -652,10 +682,10 @@ func TestFirewallStateToModel_EmptyListsNormalised(t *testing.T) {
 
 func TestModelToFirewallInput_Full(t *testing.T) {
 	profile := listFromStrings([]string{"Domain", "Private"})
-	localPort := listFromStrings([]string{"80", "443"})
-	remotePort := listFromStrings([]string{"Any"})
-	localAddr := listFromStrings([]string{"192.168.0.0/24"})
-	remoteAddr := listFromStrings([]string{"Any"})
+	localPort := firewallCanonicalListFromStrings(firewallListKindPort, []string{"80", "443"})
+	remotePort := firewallCanonicalListFromStrings(firewallListKindPort, []string{"Any"})
+	localAddr := firewallCanonicalListFromStrings(firewallListKindAddress, []string{"192.168.0.0/24"})
+	remoteAddr := firewallCanonicalListFromStrings(firewallListKindAddress, []string{"Any"})
 
 	m := windowsFirewallRuleModel{
 		ID:                  types.StringValue("RULE-01"),
@@ -669,7 +699,7 @@ func TestModelToFirewallInput_Full(t *testing.T) {
 		EdgeTraversalPolicy: types.StringValue("Block"),
 		Group:               types.StringValue("GrpA"),
 		PolicyStore:         types.StringValue("PersistentStore"),
-		Protocol:            types.StringValue("TCP"),
+		Protocol:            firewallProtocolValueOf("TCP"),
 		LocalPort:           localPort,
 		RemotePort:          remotePort,
 		LocalAddress:        localAddr,
@@ -740,10 +770,11 @@ func TestModelToFirewallInput_NullLists(t *testing.T) {
 		Enabled:       types.BoolValue(true),
 		PolicyStore:   types.StringValue("PersistentStore"),
 		Profile:       types.ListNull(types.StringType),
-		LocalPort:     types.ListNull(types.StringType),
-		RemotePort:    types.ListNull(types.StringType),
-		LocalAddress:  types.ListNull(types.StringType),
-		RemoteAddress: types.ListNull(types.StringType),
+		Protocol:      firewallProtocolValue{StringValue: types.StringNull()},
+		LocalPort:     firewallCanonicalListNull(firewallListKindPort),
+		RemotePort:    firewallCanonicalListNull(firewallListKindPort),
+		LocalAddress:  firewallCanonicalListNull(firewallListKindAddress),
+		RemoteAddress: firewallCanonicalListNull(firewallListKindAddress),
 	}
 	input, diags := modelToFirewallInput(context.Background(), m)
 	if diags.HasError() {
@@ -872,8 +903,8 @@ func TestFirewallRuleResource_Configure_HappyPath(t *testing.T) {
 func TestFirewallRuleResource_ConfigValidators(t *testing.T) {
 	r := &windowsFirewallRuleResource{}
 	validators := r.ConfigValidators(context.Background())
-	if len(validators) != 2 {
-		t.Errorf("expected 2 ConfigValidators (CV-1 + CV-2), got %d", len(validators))
+	if len(validators) != 3 {
+		t.Errorf("expected 3 ConfigValidators (CV-1 + CV-2 + CV-3), got %d", len(validators))
 	}
 }
 
@@ -1374,5 +1405,253 @@ func TestFirewallPortSyntaxValidator(t *testing.T) {
 				t.Errorf("%s %q should be rejected", key, bad)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ModifyPlan — fold semantically-equal spellings toward prior state (F08)
+// ---------------------------------------------------------------------------
+
+// fwStrList builds a tftypes string-list value for fwObj overrides.
+func fwStrList(vals ...string) tftypes.Value {
+	elems := make([]tftypes.Value, len(vals))
+	for i, v := range vals {
+		elems[i] = tftypes.NewValue(tftypes.String, v)
+	}
+	return tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, elems)
+}
+
+// fwModifyPlan runs ModifyPlan with the given plan/state raw values and
+// returns the resulting plan model.
+func fwModifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value) windowsFirewallRuleModel {
+	t.Helper()
+	r := &windowsFirewallRuleResource{}
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	ctx := context.Background()
+	resp := &resource.ModifyPlanResponse{
+		Plan: tfsdk.Plan{Schema: schemaDef, Raw: planRaw.Copy()},
+	}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{
+		Plan:  tfsdk.Plan{Schema: schemaDef, Raw: planRaw.Copy()},
+		State: tfsdk.State{Schema: schemaDef, Raw: stateRaw.Copy()},
+	}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ModifyPlan diagnostics: %v", resp.Diagnostics)
+	}
+	var got windowsFirewallRuleModel
+	if d := resp.Plan.Get(ctx, &got); d.HasError() {
+		t.Fatalf("plan Get: %v", d)
+	}
+	return got
+}
+
+// fwListStrings extracts raw strings from a firewallCanonicalListValue.
+func fwListStrings(t *testing.T, v firewallCanonicalListValue) []string {
+	t.Helper()
+	var elems []types.String
+	if d := v.ElementsAs(context.Background(), &elems, false); d.HasError() {
+		t.Fatalf("ElementsAs: %v", d)
+	}
+	out := make([]string, len(elems))
+	for i, el := range elems {
+		out[i] = el.ValueString()
+	}
+	return out
+}
+
+// Post-import shape (F08): verbatim config spellings in the plan vs the
+// canonical Windows spelling in the prior state must fold to the prior so
+// the next plan is empty.
+func TestFirewallRuleModifyPlan_SemanticallyEqualFoldsToPrior(t *testing.T) {
+	planRaw := fwObj(map[string]tftypes.Value{
+		"name":           tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name":   tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":      tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":         tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":       tftypes.NewValue(tftypes.String, "udp"),
+		"local_port":     fwStrList("55302", "55301"),
+		"remote_address": fwStrList("any"),
+	})
+	stateRaw := fwObj(map[string]tftypes.Value{
+		"name":           tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name":   tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":      tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":         tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":       tftypes.NewValue(tftypes.String, "UDP"),
+		"local_port":     fwStrList("55301", "55302"),
+		"remote_address": fwStrList("Any"),
+	})
+
+	got := fwModifyPlan(t, planRaw, stateRaw)
+
+	if got.Protocol.ValueString() != "UDP" {
+		t.Errorf("protocol not folded to prior: got %q want %q", got.Protocol.ValueString(), "UDP")
+	}
+	if gotLocal := fwListStrings(t, got.LocalPort); !reflect.DeepEqual(gotLocal, []string{"55301", "55302"}) {
+		t.Errorf("local_port not folded to prior order: got %v", gotLocal)
+	}
+	if gotRemote := fwListStrings(t, got.RemoteAddress); !reflect.DeepEqual(gotRemote, []string{"Any"}) {
+		t.Errorf("remote_address not folded to prior: got %v", gotRemote)
+	}
+}
+
+// Genuinely different values must flow through untouched — folding must never
+// hide a real change.
+func TestFirewallRuleModifyPlan_GenuineChangeUntouched(t *testing.T) {
+	planRaw := fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name": tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":     tftypes.NewValue(tftypes.String, "TCP"),
+		"local_port":   fwStrList("80"),
+	})
+	stateRaw := fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name": tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":     tftypes.NewValue(tftypes.String, "UDP"),
+		"local_port":   fwStrList("55301", "55302"),
+	})
+
+	got := fwModifyPlan(t, planRaw, stateRaw)
+
+	if got.Protocol.ValueString() != "TCP" {
+		t.Errorf("protocol change must not fold: got %q want %q", got.Protocol.ValueString(), "TCP")
+	}
+	if gotLocal := fwListStrings(t, got.LocalPort); !reflect.DeepEqual(gotLocal, []string{"80"}) {
+		t.Errorf("local_port change must not fold: got %v", gotLocal)
+	}
+}
+
+// Create (null prior) and destroy (null plan) must be no-ops without
+// diagnostics.
+func TestFirewallRuleModifyPlan_NullPlanOrStateSkipped(t *testing.T) {
+	r := &windowsFirewallRuleResource{}
+	schemaDef := windowsFirewallRuleSchemaDefinition(context.Background())
+	ctx := context.Background()
+
+	empty := fwObj(map[string]tftypes.Value{
+		"name": tftypes.NewValue(tftypes.String, "fw-f08"),
+	})
+	nullRaw := tftypes.NewValue(fwObjectType(), nil)
+
+	for _, tc := range []struct {
+		name  string
+		plan  tftypes.Value
+		state tftypes.Value
+	}{
+		{"create", empty.Copy(), nullRaw.Copy()},
+		{"destroy", nullRaw.Copy(), empty.Copy()},
+	} {
+		resp := &resource.ModifyPlanResponse{
+			Plan: tfsdk.Plan{Schema: schemaDef, Raw: tc.plan.Copy()},
+		}
+		r.ModifyPlan(ctx, resource.ModifyPlanRequest{
+			Plan:  tfsdk.Plan{Schema: schemaDef, Raw: tc.plan.Copy()},
+			State: tfsdk.State{Schema: schemaDef, Raw: tc.state.Copy()},
+		}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Errorf("%s: ModifyPlan diagnostics: %v", tc.name, resp.Diagnostics)
+		}
+	}
+}
+
+// A Null/Unknown element must never fold: foldFirewallListValue aligns with
+// ListSemanticEquals.toRaw and returns (planned,false) so the plan stays
+// untouched.
+func TestFirewallRuleModifyPlan_UnknownElementUnchanged(t *testing.T) {
+	unknownElem := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	planLocal := tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{
+		tftypes.NewValue(tftypes.String, "80"),
+		unknownElem,
+	})
+	planRaw := fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name": tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":     tftypes.NewValue(tftypes.String, "TCP"),
+		"local_port":   planLocal,
+	})
+	stateRaw := fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name": tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":     tftypes.NewValue(tftypes.String, "TCP"),
+		"local_port":   fwStrList("80"),
+	})
+
+	got := fwModifyPlan(t, planRaw, stateRaw)
+
+	elems := got.LocalPort.Elements()
+	if len(elems) != 2 {
+		t.Fatalf("local_port with unknown element must not fold: got %d elements, want 2", len(elems))
+	}
+	foundUnknown := false
+	for _, e := range elems {
+		s, ok := e.(types.String)
+		if !ok {
+			t.Fatalf("local_port element %T, want types.String", e)
+		}
+		if s.IsUnknown() {
+			foundUnknown = true
+		}
+	}
+	if !foundUnknown {
+		t.Error("local_port unknown element must survive ModifyPlan untouched")
+	}
+}
+
+// Numeric protocol spellings fold toward prior state ("6" vs "TCP").
+func TestFirewallRuleModifyPlan_ProtocolNumericFoldsToPrior(t *testing.T) {
+	planRaw := fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name": tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":     tftypes.NewValue(tftypes.String, "6"),
+	})
+	stateRaw := fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name": tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":     tftypes.NewValue(tftypes.String, "TCP"),
+	})
+
+	got := fwModifyPlan(t, planRaw, stateRaw)
+
+	if got.Protocol.ValueString() != "TCP" {
+		t.Errorf("protocol %q must fold to prior %q, got %q", "6", "TCP", got.Protocol.ValueString())
+	}
+}
+
+// Degenerate ranges collapse and duplicates vanish before comparison, so the
+// plan folds to the prior canonical order.
+func TestFirewallRuleModifyPlan_DegenerateRangeDedupFoldsToPrior(t *testing.T) {
+	planRaw := fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name": tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":     tftypes.NewValue(tftypes.String, "TCP"),
+		"local_port":   fwStrList("55014-55014", "80", "80"),
+	})
+	stateRaw := fwObj(map[string]tftypes.Value{
+		"name":         tftypes.NewValue(tftypes.String, "fw-f08"),
+		"display_name": tftypes.NewValue(tftypes.String, "FW F08"),
+		"direction":    tftypes.NewValue(tftypes.String, "Inbound"),
+		"action":       tftypes.NewValue(tftypes.String, "Allow"),
+		"protocol":     tftypes.NewValue(tftypes.String, "TCP"),
+		"local_port":   fwStrList("80", "55014"),
+	})
+
+	got := fwModifyPlan(t, planRaw, stateRaw)
+
+	if gotLocal := fwListStrings(t, got.LocalPort); !reflect.DeepEqual(gotLocal, []string{"80", "55014"}) {
+		t.Errorf("degenerate/dedup local_port must fold to prior order: got %v", gotLocal)
 	}
 }
