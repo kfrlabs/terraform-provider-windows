@@ -12,7 +12,7 @@
 //	                           Optional+Sensitive+WriteOnly, version AtLeast(1),
 //	                           timeouts block
 //	Name validator           — forbidden chars + padding rejected, null/unknown skip
-//	Schedule validator       — HH:MM:SS accepted, bad shapes rejected
+//	Schedule validator       — HH:MM:00 accepted (whole minutes), bad shapes and nonzero seconds rejected
 //	Identity validator       — SpecificUser requires username+password;
 //	                           LocalSystem warns; credential without
 //	                           SpecificUser warns
@@ -402,14 +402,14 @@ func TestIISAppPoolScheduleValidator(t *testing.T) {
 		}
 		return set
 	}
-	for _, set := range []types.Set{mkSet("03:00:00"), mkSet("00:00:00", "23:59:59"), types.SetNull(types.StringType), types.SetUnknown(types.StringType)} {
+	for _, set := range []types.Set{mkSet("03:00:00"), mkSet("00:00:00", "23:59:00"), types.SetNull(types.StringType), types.SetUnknown(types.StringType)} {
 		resp := &validator.SetResponse{}
 		v.ValidateSet(ctx, validator.SetRequest{Path: path.Root("recycling_schedule"), ConfigValue: set}, resp)
 		if resp.Diagnostics.HasError() {
 			t.Errorf("schedule %v should pass, got %v", set, resp.Diagnostics)
 		}
 	}
-	for _, set := range []types.Set{mkSet("3:00:00"), mkSet("24:00:00"), mkSet("03:00"), mkSet("nope"), mkSet("03:00:60")} {
+	for _, set := range []types.Set{mkSet("3:00:00"), mkSet("24:00:00"), mkSet("03:00"), mkSet("nope"), mkSet("03:00:60"), mkSet("05:15:30"), mkSet("03:00:30"), mkSet("23:59:59")} {
 		resp := &validator.SetResponse{}
 		v.ValidateSet(ctx, validator.SetRequest{Path: path.Root("recycling_schedule"), ConfigValue: set}, resp)
 		if !resp.Diagnostics.HasError() {
@@ -463,10 +463,11 @@ func TestIISAppPoolEnumValidators(t *testing.T) {
 		valid   []int64
 		invalid []int64
 	}{
-		"queue_length":         {[]int64{10, 1000, 65535}, []int64{9, 65536, 0}},
-		"idle_timeout_minutes": {[]int64{0, 20, 43200}, []int64{-1, 43201}},
-		"max_processes":        {[]int64{0, 1, 2147483647}, []int64{-1}},
-		"cpu_limit_percent":    {[]int64{0, 50, 100}, []int64{-1, 101}},
+		"queue_length":                       {[]int64{10, 1000, 65535}, []int64{9, 65536, 0}},
+		"idle_timeout_minutes":               {[]int64{0, 20, 43200}, []int64{-1, 43201}},
+		"recycling_periodic_restart_minutes": {[]int64{0, 1740, 432000}, []int64{-1, 432001, 525600}},
+		"max_processes":                      {[]int64{0, 1, 2147483647}, []int64{-1}},
+		"cpu_limit_percent":                  {[]int64{0, 50, 100}, []int64{-1, 101}},
 	}
 	for name, tc := range intCases {
 		a, ok := s.Attributes[name].(schema.Int64Attribute)

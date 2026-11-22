@@ -79,16 +79,17 @@ func (v iisAppPoolNameValidator) ValidateString(_ context.Context, req validator
 	}
 }
 
-// iisAppPoolScheduleRe matches a 24h HH:MM:SS entry.
-var iisAppPoolScheduleRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$`)
+// iisAppPoolScheduleRe matches a 24h HH:MM:00 entry (whole minutes only:
+// IIS requires a 60s granularity for recycling.periodicRestart.schedule).
+var iisAppPoolScheduleRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d:00$`)
 
 // iisAppPoolScheduleValidator validates every recycling_schedule entry as
-// HH:MM:SS (24h). Null and unknown sets are skipped; unknown elements defer
+// HH:MM:00 (24h, whole minutes). Null and unknown sets are skipped; unknown elements defer
 // to apply-time handling.
 type iisAppPoolScheduleValidator struct{}
 
 func (v iisAppPoolScheduleValidator) Description(_ context.Context) string {
-	return "Each recycling schedule entry must be HH:MM:SS (24h)."
+	return "Each recycling schedule entry must be HH:MM:00 (24h, whole minutes)."
 }
 
 func (v iisAppPoolScheduleValidator) MarkdownDescription(ctx context.Context) string {
@@ -113,7 +114,7 @@ func (v iisAppPoolScheduleValidator) ValidateSet(ctx context.Context, req valida
 			resp.Diagnostics.AddAttributeError(
 				req.Path,
 				"Invalid recycling schedule entry",
-				fmt.Sprintf("Recycling schedule entry %q must be HH:MM:SS (24h), e.g. \"03:00:00\".", e.ValueString()),
+				fmt.Sprintf("Recycling schedule entry %q must be HH:MM:00 (24h, whole minutes), e.g. \"03:00:00\".", e.ValueString()),
 			)
 		}
 	}
