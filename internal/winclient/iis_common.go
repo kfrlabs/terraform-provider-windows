@@ -207,6 +207,21 @@ func IISConfigChangedOnDisk(msg string) bool {
 		strings.Contains(lower, "file has changed on disk")
 }
 
+// IISConcurrentWriteNullReference reports whether a remote failure message is
+// the known applicationHost.config concurrent-writer NullReference flake
+// ("Object reference not set to an instance of an object") raised
+// transiently by the WebAdministration cmdlets when concurrent one-shot
+// powershell.exe writers race on the file (F08). The match is
+// case-insensitive; the IIS NullReference carries no second signature half,
+// so callers must additionally require the unknown error kind (a pool
+// literally named like the phrase surfaces as already_exists with the name
+// interpolated, never as unknown) and must only consult this on write paths,
+// so a genuine read-side null-ref still surfaces instead of being retried as
+// config_locked.
+func IISConcurrentWriteNullReference(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "object reference not set to an instance of an object")
+}
+
 // iisWriteMaxAttempts bounds the retry loop for IIS writes.
 const iisWriteMaxAttempts = 3
 

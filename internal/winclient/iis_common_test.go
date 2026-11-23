@@ -203,6 +203,22 @@ func TestIISConfigChangedOnDisk(t *testing.T) {
 	}
 }
 
+func TestIISConcurrentWriteNullReference(t *testing.T) {
+	if !IISConcurrentWriteNullReference("Object reference not set to an instance of an object.") {
+		t.Error("known concurrent-writer NullReference must be retryable")
+	}
+	if !IISConcurrentWriteNullReference("OBJECT REFERENCE NOT SET TO AN INSTANCE OF AN OBJECT") {
+		t.Error("NullReference match must be case-insensitive")
+	}
+	for _, other := range []string{"", "Access is denied", "Cannot read configuration file",
+		"Cannot commit configuration changes because the file has changed on disk.",
+		"Object reference not set"} {
+		if IISConcurrentWriteNullReference(other) {
+			t.Errorf("message %q must not match the NullReference flake", other)
+		}
+	}
+}
+
 func TestIISRetryBackoff_Short(t *testing.T) {
 	for attempt := 1; attempt <= 3; attempt++ {
 		if got := iisRetryBackoff(attempt); got <= 0 || got > 5*time.Second {

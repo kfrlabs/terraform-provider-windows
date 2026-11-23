@@ -315,10 +315,14 @@ func (a *IISAppPoolClient) runAppPoolEnvelopeWithInput(ctx context.Context, op, 
 }
 
 // runAppPoolWrite executes a mutating script with the concurrent-writer
-// retry: only the file-has-changed-on-disk flake is retried (up to
+// retry: the file-has-changed-on-disk flake and the transient
+// WebAdministration NullReference flake (F08, concurrent one-shot 5.1
+// writers racing on applicationHost.config) are retried (up to
 // iisWriteMaxAttempts attempts with backoff); transport errors and every
-// other remote failure surface immediately. When the flake persists past
+// other remote failure surface immediately. When a flake persists past
 // retries it surfaces as config_locked rather than an opaque host error.
+// Only write paths (create/update/delete) consult the retry predicate, so a
+// genuine read-side null-ref keeps surfacing as unknown via Read.
 // The backoff sleep honours ctx cancellation so a timed-out operation never
 // sleeps past its deadline.
 //
@@ -329,6 +333,20 @@ func (a *IISAppPoolClient) runAppPoolEnvelopeWithInput(ctx context.Context, op, 
 // "create" and already_exists follows an observed flake, the original flake
 // error is returned as config_locked (with its original message and context)
 // instead of the misleading already_exists.
+// isAppPoolWriteFlake reports whether err is a transient concurrent-writer
+// flake worth retrying: the file-has-changed-on-disk signature (any kind),
+// or the WebAdministration NullReference (F08) which the shared Classify-IIS
+// leaves as unknown. The NullReference match additionally requires the
+// unknown kind so a pool literally named like the phrase (already_exists
+// with the name interpolated into the message) is never mis-retried into
+// config_locked.
+func isAppPoolWriteFlake(ae *IISAppPoolError) bool {
+	if IISConfigChangedOnDisk(ae.Message) {
+		return true
+	}
+	return ae.Kind == IISAppPoolErrorUnknown && IISConcurrentWriteNullReference(ae.Message)
+}
+
 func (a *IISAppPoolClient) runAppPoolWrite(
 	ctx context.Context, op, name, script, stdin string,
 ) (*psResponse, error) {
@@ -348,7 +366,7 @@ func (a *IISAppPoolClient) runAppPoolWrite(
 		if !errors.As(err, &ae) {
 			return nil, err
 		}
-		if !IISConfigChangedOnDisk(ae.Message) {
+		if !isAppPoolWriteFlake(ae) {
 			if op == "create" && flakeErr != nil && ae.Kind == IISAppPoolErrorAlreadyExists {
 				flakeErr.Kind = IISAppPoolErrorConfigLocked
 				return nil, flakeErr

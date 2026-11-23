@@ -12,8 +12,8 @@
 //   - Scripts: Ensure-IIS gate, literal Where-Object lookups, no password in
 //     script text (password on stdin), partial-failure cleanup on create,
 //     in_use refusal on delete, already_exists import hint
-//   - Retry: file-has-changed-on-disk retried 3x then config_locked; other
-//     errors not retried
+//   - Retry: file-has-changed-on-disk and transient NullReference (F08)
+//     retried 3x then config_locked; other errors not retried
 //   - parseIISAppPoolState: null, happy path, bad JSON, schedule quirks
 //   - CRUD happy paths + validation short-circuit
 package winclient
@@ -558,6 +558,128 @@ func TestIISAppPoolWrite_OtherErrorsNotRetried(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("non-flake failures must not retry, got %d calls", calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Retry: transient WebAdministration NullReference (F08 concurrent-writer
+// race on applicationHost.config) retries like file-has-changed-on-disk
+// ---------------------------------------------------------------------------
+
+func TestIISAppPoolWrite_RetriesNullReferenceThenConfigLocked(t *testing.T) {
+	oldBackoff := iisRetryBackoff
+	iisRetryBackoff = func(int) time.Duration { return 0 }
+	defer func() { iisRetryBackoff = oldBackoff }()
+
+	calls := 0
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+		calls++
+		return iisErr(t, "unknown", "Object reference not set to an instance of an object."), "", nil
+	})
+	defer restore()
+
+	c := iisNewClient(t)
+	mode := "Classic"
+	_, err := c.Update(context.Background(), IISAppPoolInput{
+		Name: "api", Settings: IISAppPoolSettings{ManagedPipelineMode: &mode},
+	})
+	if !IsIISAppPoolError(err, IISAppPoolErrorConfigLocked) {
+		t.Errorf("persistent NullReference must surface as config_locked, got %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("NullReference must be retried up to 3 attempts, got %d calls", calls)
+	}
+}
+
+func TestIISAppPoolWrite_NullReferenceRecovers(t *testing.T) {
+	oldBackoff := iisRetryBackoff
+	iisRetryBackoff = func(int) time.Duration { return 0 }
+	defer func() { iisRetryBackoff = oldBackoff }()
+
+	calls := 0
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+		calls++
+		if calls == 1 {
+			return iisErr(t, "unknown", "Object reference not set to an instance of an object."), "", nil
+		}
+		return iisOK(t, testIISAppPoolState()), "", nil
+	})
+	defer restore()
+
+	c := iisNewClient(t)
+	mode := "Classic"
+	st, err := c.Update(context.Background(), IISAppPoolInput{
+		Name: "api", Settings: IISAppPoolSettings{ManagedPipelineMode: &mode},
+	})
+	if err != nil || st == nil {
+		t.Fatalf("recovered write should succeed, got (%+v, %v)", st, err)
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 calls (NullReference + success), got %d", calls)
+	}
+}
+
+func TestIISAppPoolCreate_NullReferenceThenAlreadyExistsIsConfigLocked(t *testing.T) {
+	oldBackoff := iisRetryBackoff
+	iisRetryBackoff = func(int) time.Duration { return 0 }
+	defer func() { iisRetryBackoff = oldBackoff }()
+
+	flakeMsg := "Object reference not set to an instance of an object."
+	restore := iisStubSequence([]frResponse{
+		{stdout: iisErr(t, "unknown", flakeMsg), stderr: "", err: nil},
+		{stdout: iisErr(t, "already_exists", "IIS application pool 'api' already exists on this host."), stderr: "", err: nil},
+	})
+	defer restore()
+
+	c := iisNewClient(t)
+	mode := "Classic"
+	_, err := c.Create(context.Background(), IISAppPoolInput{
+		Name: "api", Settings: IISAppPoolSettings{ManagedPipelineMode: &mode},
+	})
+	if !IsIISAppPoolError(err, IISAppPoolErrorConfigLocked) {
+		t.Fatalf("NullReference-then-already_exists on create must surface as config_locked, got %v", err)
+	}
+	if !strings.Contains(err.Error(), flakeMsg) {
+		t.Errorf("config_locked error must keep the original NullReference message, got %v", err)
+	}
+}
+
+func TestIISAppPoolWrite_NullReferencePhraseWithKnownKindNotRetried(t *testing.T) {
+	calls := 0
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+		calls++
+		return iisErr(t, "already_exists", "IIS application pool 'Object reference not set to an instance of an object' already exists on this host."), "", nil
+	})
+	defer restore()
+
+	c := iisNewClient(t)
+	mode := "Classic"
+	_, err := c.Create(context.Background(), IISAppPoolInput{
+		Name: "api", Settings: IISAppPoolSettings{ManagedPipelineMode: &mode},
+	})
+	if !IsIISAppPoolError(err, IISAppPoolErrorAlreadyExists) {
+		t.Errorf("already_exists carrying the phrase must stay already_exists, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("known-kind phrase match must not retry, got %d calls", calls)
+	}
+}
+
+func TestIISAppPoolRead_NullReferenceNotRetried(t *testing.T) {
+	calls := 0
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+		calls++
+		return iisErr(t, "unknown", "Object reference not set to an instance of an object."), "", nil
+	})
+	defer restore()
+
+	c := iisNewClient(t)
+	_, err := c.Read(context.Background(), "api")
+	if !IsIISAppPoolError(err, IISAppPoolErrorUnknown) {
+		t.Errorf("read-side NullReference must surface as unknown, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("read path must not retry, got %d calls", calls)
 	}
 }
 
