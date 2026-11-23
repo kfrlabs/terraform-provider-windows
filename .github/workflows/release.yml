@@ -205,7 +205,7 @@ jobs:
             echo "- mode: full (push-to-main/plain-dispatch run with acceptance jobs, no run-filter)"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -245,7 +245,7 @@ jobs:
           TAG: ${{ needs.gate.outputs.tag }}
         run: git checkout "$TAG"
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache: true
