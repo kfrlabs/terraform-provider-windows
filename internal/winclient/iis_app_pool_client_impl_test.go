@@ -301,6 +301,32 @@ func TestIISAppPoolScripts_ShipPreludeAndGate(t *testing.T) {
 	}
 }
 
+func TestIISAppPoolReadFragment_UsesWebConfigurationForRestart(t *testing.T) {
+	// F05/F06/F07: Get-ItemProperty on IIS: returns $null for
+	// periodicRestart.time (even at 60 min or the 29 h default) and for
+	// privateMemory, collapsing every non-zero value to 0 via [int64]$null.
+	// The read path must go through Get-WebConfiguration instead.
+	for _, want := range []string{
+		"Get-WebConfiguration",
+		"recycling/periodicRestart",
+		"$restartMinutes",
+		"$restartPrivateMemory",
+		"TotalMinutes",
+	} {
+		if !strings.Contains(iisAppPoolReadFragment, want) {
+			t.Errorf("read fragment missing %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"$p.'recycling.periodicRestart.time'",
+		"$p.'recycling.periodicRestart.privateMemory'",
+	} {
+		if strings.Contains(iisAppPoolReadFragment, stale) {
+			t.Errorf("read fragment must not use PSDrive path %q (returns $null)", stale)
+		}
+	}
+}
+
 func TestIISAppPoolCreate_ScriptContent(t *testing.T) {
 	var gotScript, gotStdin string
 	restoreInput := stubIISRun(func(_ context.Context, _ *Client, script, stdin string) (string, string, error) {

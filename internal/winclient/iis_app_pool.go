@@ -69,6 +69,23 @@ function Get-AppPoolData([string]$Name) {
       if ($null -ne $e.value) { $sched += ([string]$e.value) }
     }
   } catch {}
+  # recycling/periodicRestart is read via Get-WebConfiguration, not the
+  # IIS: PSDrive: Get-ItemProperty returns $null for periodicRestart.time
+  # (even at 60 min or the 29 h default) and for privateMemory, so
+  # [int64]$null collapsed every non-zero value to 0 (F05/F06/F07).
+  # Get-WebConfiguration returns .time as a TimeSpan (e.g. 300.00:00:00)
+  # and .privateMemory as an int, converted server-side like the other
+  # durations. The XPath filter quotes the pool name with double quotes
+  # (names cannot contain '"' per ValidateIISAppPoolName, while "'" is
+  # legal), mirroring the schedule write path.
+  $restartMinutes = 0
+  $restartPrivateMemory = 0
+  try {
+    $restartFilter = ('system.applicationHost/applicationPools/add[@name="' + $Name + '"]/recycling/periodicRestart')
+    $restart = Get-WebConfiguration -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $restartFilter -ErrorAction Stop
+    if ($null -ne $restart.time) { $restartMinutes = [int64][math]::Round($restart.time.TotalMinutes) }
+    if ($null -ne $restart.privateMemory) { $restartPrivateMemory = [int64]$restart.privateMemory }
+  } catch {}
   $state = 'Stopped'
   try { if ([string]$pool.State -eq 'Started') { $state = 'Started' } } catch {}
   return [ordered]@{
@@ -85,9 +102,9 @@ function Get-AppPoolData([string]$Name) {
     idle_timeout_minutes               = [int64]$p.processModel.idleTimeout.TotalMinutes
     idle_timeout_action                = [string]$p.processModel.idleTimeoutAction
     max_processes                      = [int64]$p.processModel.maxProcesses
-    recycling_periodic_restart_minutes = [int64]$p.'recycling.periodicRestart.time'.TotalMinutes
+    recycling_periodic_restart_minutes = $restartMinutes
     recycling_schedule                 = [array]$sched
-    recycling_private_memory_kb        = [int64]$p.'recycling.periodicRestart.privateMemory'
+    recycling_private_memory_kb        = $restartPrivateMemory
     rapid_fail_protection              = [bool]$p.failure.rapidFailProtection
     cpu_limit_percent                  = [int64]([int64]$p.cpu.limit / 1000)
     cpu_action                         = [string]$p.cpu.action
