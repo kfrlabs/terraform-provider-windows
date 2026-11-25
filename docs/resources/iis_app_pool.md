@@ -112,9 +112,9 @@ resource "windows_iis_app_pool" "svc" {
 - `max_processes` (Number) Maximum worker processes (`processModel.maxProcesses`, 0-2147483647; `0` is NUMA aware).
 - `queue_length` (Number) HTTP.sys request queue length (`queueLength`, 10-65535).
 - `rapid_fail_protection` (Boolean) Whether rapid-fail protection is enabled (`failure.rapidFailProtection`).
-- `recycling_periodic_restart_minutes` (Number) Periodic restart interval in minutes (`recycling.periodicRestart.time`; `0` disables the interval restart).
+- `recycling_periodic_restart_minutes` (Number) Periodic restart interval in minutes (`recycling.periodicRestart.time`, 0-432000; `0` disables the interval restart; IIS caps the interval at 300 days).
 - `recycling_private_memory_kb` (Number) Private-memory recycle threshold in kilobytes (`recycling.periodicRestart.privateMemory`).
-- `recycling_schedule` (Set of String) Daily recycle schedule (`recycling.periodicRestart.schedule`), each entry `HH:MM:SS` (24h). Null means unmanaged; an empty set clears the schedule (full replace of the collection).
+- `recycling_schedule` (Set of String) Daily recycle schedule (`recycling.periodicRestart.schedule`), each entry `HH:MM:00` (24h, whole minutes; IIS granularity 60s). Null means unmanaged; an empty set clears the schedule (full replace of the collection).
 - `start_mode` (String) Pool start mode. One of `OnDemand`, `AlwaysRunning`.
 - `state` (String) Runtime state of the pool. One of `Started`, `Stopped`. Enforced only when configured (`Start-WebAppPool` / `Stop-WebAppPool`).
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))

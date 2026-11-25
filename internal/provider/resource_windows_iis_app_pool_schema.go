@@ -279,9 +279,9 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
-				Description: "Periodic restart interval in minutes (`recycling.periodicRestart.time`; `0` disables the interval restart).",
+				Description: "Periodic restart interval in minutes (`recycling.periodicRestart.time`, 0-432000; `0` disables the interval restart; IIS caps the interval at 300 days).",
 				Validators: []validator.Int64{
-					int64validator.AtLeast(0),
+					int64validator.Between(0, 432000),
 				},
 			},
 
@@ -292,7 +292,7 @@ func windowsIISAppPoolSchemaDefinition(ctx context.Context) schema.Schema {
 				PlanModifiers: []planmodifier.Set{
 					setplanmodifier.UseStateForUnknown(),
 				},
-				Description: "Daily recycle schedule (`recycling.periodicRestart.schedule`), each entry `HH:MM:SS` (24h). Null means unmanaged; an empty set clears the schedule (full replace of the collection).",
+				Description: "Daily recycle schedule (`recycling.periodicRestart.schedule`), each entry `HH:MM:00` (24h, whole minutes; IIS granularity 60s). Null means unmanaged; an empty set clears the schedule (full replace of the collection).",
 				Validators: []validator.Set{
 					iisAppPoolScheduleValidator{},
 				},
