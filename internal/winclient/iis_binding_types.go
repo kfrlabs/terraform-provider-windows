@@ -302,12 +302,23 @@ func ParseIISBindingInformation(bindingInformation string) (ip string, port int6
 		}
 		rest = rest[1:]
 	} else {
-		parts := strings.SplitN(s, ":", 3)
-		if len(parts) != 3 {
+		// Host-native unbracketed IPv6 (e.g. "::1:443:example.com")
+		// carries colons inside the IP, so a left SplitN(':',3)
+		// mis-splits. Split from the right: the last ':' separates
+		// the host header, the one before it the port, and the
+		// remainder is the IP.
+		hIdx := strings.LastIndex(s, ":")
+		if hIdx < 0 {
 			return "", 0, "", fmt.Errorf("invalid IIS binding information %q: want \"IP:port:hostheader\"", bindingInformation)
 		}
-		ip = parts[0]
-		rest = parts[1] + ":" + parts[2]
+		hostPart := s[hIdx+1:]
+		head := s[:hIdx]
+		pIdx := strings.LastIndex(head, ":")
+		if pIdx < 0 {
+			return "", 0, "", fmt.Errorf("invalid IIS binding information %q: want \"IP:port:hostheader\"", bindingInformation)
+		}
+		ip = head[:pIdx]
+		rest = head[pIdx+1:] + ":" + hostPart
 	}
 	tail := strings.SplitN(rest, ":", 2)
 	if len(tail) != 2 {

@@ -78,10 +78,14 @@ var iisBindingManagementPath = func(ctx context.Context, c *Client) (*Management
 // string literal.
 const iisBindingWildcardEscape = "function Escape-BindingWildcard([string]$s) { return ($s -replace '([*?\\[\\]])', '`$1') }\n"
 
-// iisBindingReadFragment defines Get-BindingData, which returns the exact
-// binding match (site plus protocol plus bindingInformation, all literal
-// -eq comparisons) as an ordered hashtable, or $null when absent. The
-// bindingInformation is split bracket-aware into ip/port/host; the
+// iisBindingReadFragment defines Get-BindingParts (bracket-aware
+// IP:port:host split), Test-BindingIdentity (parsed-tuple comparison of
+// protocol plus IP/port/host so a host-enumerated bindingInformation
+// spelling that differs textually from the canonical form — e.g. the
+// unbracketed "::1:port:host" IIS stores natively vs the canonical
+// "[::1]:port:host" — still matches) and Get-BindingData, which returns
+// the exact binding match (site plus protocol plus binding identity) as an
+// ordered hashtable, or $null when absent. The
 // certificate pair comes from the binding object itself (certificateHash /
 // certificateStoreName), so no IIS:\SslBindings property guessing is
 // needed on the read path.
@@ -97,10 +101,22 @@ function Get-BindingParts([string]$BI) {
     if (-not $rest.StartsWith(':')) { return $null }
     $rest = $rest.Substring(1)
   } else {
-    $first = $rest.Split(':', 3)
-    if ($first.Count -ne 3) { return $null }
-    $ip = $first[0]
-    $rest = ($first[1] + ':' + $first[2])
+    # Host-native unbracketed IPv6 (e.g. "::1:443:example.com") carries
+    # colons inside the IP, so a left Split(':',3) mis-splits (ip="",
+    # port/host garbage). Split from the right instead: the last ':'
+    # separates the host header, the one before it the port, and the
+    # remainder is the IP (IPv4, '*', '' or unbracketed IPv6 alike).
+    $hIdx = $rest.LastIndexOf(':')
+    if ($hIdx -lt 0) { return $null }
+    $hostHeader = $rest.Substring($hIdx + 1)
+    $head = $rest.Substring(0, $hIdx)
+    $pIdx = $head.LastIndexOf(':')
+    if ($pIdx -lt 0) { return $null }
+    $ip = $head.Substring(0, $pIdx)
+    $portText = $head.Substring($pIdx + 1)
+    $port = 0
+    if (-not [int]::TryParse($portText, [ref]$port)) { return $null }
+    return [ordered]@{ ip = $ip; port = $port; host_header = $hostHeader }
   }
   $tail = $rest.Split(':', 2)
   if ($tail.Count -ne 2) { return $null }
@@ -109,33 +125,44 @@ function Get-BindingParts([string]$BI) {
   return [ordered]@{ ip = $ip; port = $port; host_header = $hostHeader }
 }
 
+function Test-BindingIdentity([object]$b, [string]$Protocol, [object]$Wanted) {
+  if ([string]$b.protocol -ne $Protocol) { return $false }
+  $parts = Get-BindingParts ([string]$b.bindingInformation)
+  if ($null -eq $parts) { return $false }
+  if ([string]$parts.ip -ne [string]$Wanted.ip) { return $false }
+  if ([int]$parts.port -ne [int]$Wanted.port) { return $false }
+  if ([string]$parts.host_header -ne [string]$Wanted.host_header) { return $false }
+  return $true
+}
+
 function Get-BindingData([string]$SiteName, [string]$Protocol, [string]$BindingInfo) {
   $escSite = Escape-BindingWildcard $SiteName
+  $wanted = Get-BindingParts $BindingInfo
+  if ($null -eq $wanted) { return $null }
   $bs = @(Get-WebBinding -Name $escSite -ErrorAction Stop)
   foreach ($b in $bs) {
     if ($null -eq $b) { continue }
-    if ([string]$b.protocol -eq $Protocol -and [string]$b.bindingInformation -eq $BindingInfo) {
-      $parts = Get-BindingParts ([string]$b.bindingInformation)
-      if ($null -eq $parts) { continue }
-      $flags = 0
-      try { $flags = [int]$b.sslFlags } catch {}
-      $certHash = ''
-      try { $certHash = [string]$b.certificateHash } catch {}
-      $certStore = ''
-      try { $certStore = [string]$b.certificateStoreName } catch {}
-      $sni = $false
-      if (($flags -band 1) -ne 0) { $sni = $true }
-      return [ordered]@{
-        protocol               = [string]$b.protocol
-        binding_information    = [string]$b.bindingInformation
-        ip_address             = [string]$parts.ip
-        port                   = [int]$parts.port
-        host_header            = [string]$parts.host_header
-        ssl_flags              = $flags
-        require_sni            = $sni
-        certificate_thumbprint = $certHash
-        certificate_store_name = $certStore
-      }
+    if (-not (Test-BindingIdentity $b $Protocol $wanted)) { continue }
+    $parts = Get-BindingParts ([string]$b.bindingInformation)
+    if ($null -eq $parts) { continue }
+    $flags = 0
+    try { $flags = [int]$b.sslFlags } catch {}
+    $certHash = ''
+    try { $certHash = [string]$b.certificateHash } catch {}
+    $certStore = ''
+    try { $certStore = [string]$b.certificateStoreName } catch {}
+    $sni = $false
+    if (($flags -band 1) -ne 0) { $sni = $true }
+    return [ordered]@{
+      protocol               = [string]$b.protocol
+      binding_information    = [string]$b.bindingInformation
+      ip_address             = [string]$parts.ip
+      port                   = [int]$parts.port
+      host_header            = [string]$parts.host_header
+      ssl_flags              = $flags
+      require_sni            = $sni
+      certificate_thumbprint = $certHash
+      certificate_store_name = $certStore
     }
   }
   return $null
@@ -201,7 +228,7 @@ if ($Thumb -ne '') {
     if ([string]$e.protocol -ne 'https') { continue }
     if ([int]$e.port -ne $Port) { continue }
     if ([string]$e.ip -ne $WantedIP) { continue }
-    if ($ExcludeSelf -and [string]$e.site -eq $Name -and [string]$e.binding_information -eq $BindingInfo) { continue }
+    if ($ExcludeSelf -and [string]$e.site -eq $Name -and [string]$e.protocol -eq $Protocol -and [string]$e.ip -eq $WantedIP -and [int]$e.port -eq $Port -and [string]$e.host_header -eq $WantedHost) { continue }
     $eSni = (([int]$e.ssl_flags -band 1) -ne 0)
     if ($sniWanted -and $eSni) {
       if ([string]$e.host_header -eq $WantedHost -and [string]$e.cert_hash -ne '' -and [string]$e.cert_hash -ne $Thumb) {
@@ -294,14 +321,43 @@ func (b *IISBindingClient) runBindingEnvelope(ctx context.Context, op, site, scr
 	return resp, NewIISBindingError(mapIISBindingKind(eerr.RemoteKind, eerr.Message), eerr.Message, nil, eerr.Context)
 }
 
+// isBindingWriteFlake reports whether err is a transient
+// concurrent-writer flake worth retrying: the file-has-changed-on-disk
+// signature (any kind), or the WebAdministration NullReference which the
+// shared Classify-IIS leaves as unknown. The NullReference match
+// additionally requires the unknown kind so a binding literally named like
+// the phrase (already_exists with the name interpolated into the message)
+// is never mis-retried.
+func isBindingWriteFlake(ae *IISBindingError) bool {
+	if IISConfigChangedOnDisk(ae.Message) {
+		return true
+	}
+	return ae.Kind == IISBindingErrorUnknown && IISConcurrentWriteNullReference(ae.Message)
+}
+
 // runBindingWrite executes a mutating script with the concurrent-writer
-// retry: only the file-has-changed-on-disk flake is retried (up to
-// iisWriteMaxAttempts attempts with backoff); transport errors and every
-// other remote failure surface immediately. The backoff sleep honours ctx
+// retry: the file-has-changed-on-disk flake and the transient
+// WebAdministration NullReference flake (concurrent one-shot 5.1 writers
+// racing on applicationHost.config: "Object reference not set to an
+// instance of an object") are retried (up to iisWriteMaxAttempts attempts
+// with backoff); transport errors and every other remote failure surface
+// immediately. The NullReference match additionally requires the unknown
+// kind (a binding literally named like the phrase surfaces as
+// already_exists with the name interpolated, never as unknown), and only
+// write paths go through this runner, so a genuine read-side null-ref
+// keeps surfacing as unknown via Read. The backoff sleep honours ctx
 // cancellation so a timed-out operation never sleeps past its deadline.
+//
+// Create is not idempotent across retries: a first attempt may pass
+// New-WebBinding and then fail on the read-back with the flake, so the
+// retry hits the $mine guard and returns already_exists instead of the
+// flake. When op is "create" and already_exists follows an observed flake,
+// the original flake error is returned instead of the misleading
+// already_exists.
 func (b *IISBindingClient) runBindingWrite(
 	ctx context.Context, op, site, script string,
 ) (*psResponse, error) {
+	var flakeErr *IISBindingError
 	for attempt := 1; ; attempt++ {
 		resp, err := b.runBindingEnvelope(ctx, op, site, script)
 		if err == nil {
@@ -311,8 +367,15 @@ func (b *IISBindingClient) runBindingWrite(
 		if !errors.As(err, &ae) {
 			return nil, err
 		}
-		if !IISConfigChangedOnDisk(ae.Message) {
+		if !isBindingWriteFlake(ae) {
+			if op == "create" && flakeErr != nil && ae.Kind == IISBindingErrorAlreadyExists {
+				return nil, flakeErr
+			}
 			return nil, err
+		}
+		if flakeErr == nil {
+			flakeCopy := *ae
+			flakeErr = &flakeCopy
 		}
 		if attempt >= iisWriteMaxAttempts {
 			return nil, err
@@ -514,22 +577,23 @@ if (-not ($siteNames -contains $Name)) {
   Emit-Err 'site_not_found' ('IIS site ''' + $Name + ''' was not found on this host (manage it with the windows_iis_site resource; it is never created implicitly).') @{ site_name = $Name }
   return
 }
-$mine = $allBound | Where-Object { $_.site -eq $Name -and $_.protocol -eq $Protocol -and $_.binding_information -eq $BindingInfo }
+$mine = $allBound | Where-Object { $_.site -eq $Name -and $_.protocol -eq $Protocol -and $_.ip -eq $WantedIP -and [int]$_.port -eq $Port -and $_.host_header -eq $WantedHost }
 if ($mine) {
   Emit-Err 'already_exists' ('IIS binding ''' + $BindingInfo + ''' (' + $Protocol + ') already exists on site ''' + $Name + ''' on this host (use ''terraform import'' to bring it under management instead of creating a duplicate).') @{ site_name = $Name; protocol = $Protocol; binding_information = $BindingInfo }
   return
 }
-$other = $allBound | Where-Object { $_.site -ne $Name -and $_.protocol -eq $Protocol -and $_.binding_information -eq $BindingInfo } | Select-Object -First 1
+$other = $allBound | Where-Object { $_.site -ne $Name -and $_.protocol -eq $Protocol -and $_.ip -eq $WantedIP -and [int]$_.port -eq $Port -and $_.host_header -eq $WantedHost } | Select-Object -First 1
 if ($other) {
   Emit-Err 'conflict' ('IIS binding ''' + $BindingInfo + ''' (' + $Protocol + ') already exists on site ''' + [string]$other.site + ''' on this host: one listener cannot serve two sites. Use a different IP, port or host header.') @{ site_name = $Name; protocol = $Protocol; binding_information = $BindingInfo; conflicting_site = [string]$other.site }
   return
 }
 ` + iisBindingCertCheckFragment + "\n" + iisBindingSSLCheckFragment + fmt.Sprintf(`
+$wantedBI = Get-BindingParts $BindingInfo
 try {
   New-WebBinding -Name %s -Protocol $Protocol -IPAddress $WantedIP -Port $Port -HostHeader $WantedHost -SslFlags $SslFlags -ErrorAction Stop
   try {
     if ($Thumb -ne '') {
-      $fresh = Get-WebBinding -Name %s -ErrorAction Stop | Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo }
+      $fresh = Get-WebBinding -Name %s -ErrorAction Stop | Where-Object { Test-BindingIdentity $_ $Protocol $wantedBI }
       if (-not $fresh) { throw 'the new binding was not found after New-WebBinding' }
       try {
         $fresh.AddSslCertificate($Thumb, $Store)
@@ -644,7 +708,7 @@ if (-not ($siteNames -contains $Name)) {
   Emit-Err 'site_not_found' ('IIS site ''' + $Name + ''' was not found on this host.') @{ site_name = $Name }
   return
 }
-$mine = $allBound | Where-Object { $_.site -eq $Name -and $_.protocol -eq $Protocol -and $_.binding_information -eq $BindingInfo }
+$mine = $allBound | Where-Object { $_.site -eq $Name -and $_.protocol -eq $Protocol -and $_.ip -eq $WantedIP -and [int]$_.port -eq $Port -and $_.host_header -eq $WantedHost }
 if (-not $mine) {
   Emit-Err 'not_found' ('IIS binding ''' + $BindingInfo + ''' (' + $Protocol + ') was not found on site ''' + $Name + ''' on this host.') @{ site_name = $Name; protocol = $Protocol; binding_information = $BindingInfo }
   return
@@ -660,12 +724,13 @@ if ($OldStore -eq '') { $OldStore = 'My' }
 	// Update when it does. An empty $Thumb here therefore means "remove
 	// the certificate".
 	script += iisBindingCertCheckFragment + "\n" + iisBindingSSLCheckFragment + fmt.Sprintf(`
+$wantedBI = Get-BindingParts $BindingInfo
 try {
   Remove-WebBinding -Name %s -Protocol $Protocol -IPAddress $WantedIP -Port $Port -HostHeader $WantedHost -ErrorAction Stop
   try {
     New-WebBinding -Name %s -Protocol $Protocol -IPAddress $WantedIP -Port $Port -HostHeader $WantedHost -SslFlags $SslFlags -ErrorAction Stop
     if ($Thumb -ne '') {
-      $fresh = Get-WebBinding -Name %s -ErrorAction Stop | Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo }
+      $fresh = Get-WebBinding -Name %s -ErrorAction Stop | Where-Object { Test-BindingIdentity $_ $Protocol $wantedBI }
       if (-not $fresh) { throw 'the re-added binding was not found after New-WebBinding' }
       $fresh.AddSslCertificate($Thumb, $Store)
     }
@@ -676,7 +741,7 @@ try {
     try {
       New-WebBinding -Name %s -Protocol $Protocol -IPAddress $WantedIP -Port $Port -HostHeader $WantedHost -SslFlags $OldFlags -ErrorAction SilentlyContinue | Out-Null
       if ($OldThumb -ne '') {
-        $restored = Get-WebBinding -Name %s -ErrorAction SilentlyContinue | Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo }
+        $restored = Get-WebBinding -Name %s -ErrorAction SilentlyContinue | Where-Object { Test-BindingIdentity $_ $Protocol $wantedBI }
         if ($restored) { $restored.AddSslCertificate($OldThumb, $OldStore) }
       }
     } catch {
@@ -735,7 +800,8 @@ if (-not $found) {
 }
 try {
   $escSite = Escape-BindingWildcard $Name
-  $target = @(Get-WebBinding -Name $escSite -ErrorAction Stop) | Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo } | Select-Object -First 1
+  $wantedBI = Get-BindingParts $BindingInfo
+  $target = @(Get-WebBinding -Name $escSite -ErrorAction Stop) | Where-Object { Test-BindingIdentity $_ $Protocol $wantedBI } | Select-Object -First 1
   if (-not $target) {
     Emit-OK ([ordered]@{ deleted = $true; note = 'already_absent' })
     return
@@ -758,7 +824,7 @@ try {
     $siteGone = -not (Get-ChildItem 'IIS:\Sites' -ErrorAction Stop | Where-Object { $_.Name -eq $Name })
     $bindingGone = $true
     if (-not $siteGone) {
-      $still = @(Get-WebBinding -Name $escSite -ErrorAction Stop) | Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo } | Select-Object -First 1
+      $still = @(Get-WebBinding -Name $escSite -ErrorAction Stop) | Where-Object { Test-BindingIdentity $_ $Protocol $wantedBI } | Select-Object -First 1
       if ($still) { $bindingGone = $false }
     }
     if ($siteGone -or $bindingGone) {

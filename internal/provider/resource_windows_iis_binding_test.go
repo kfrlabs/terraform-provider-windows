@@ -298,6 +298,28 @@ func TestIISBindingIPAddressValidator(t *testing.T) {
 	}
 }
 
+func TestIISBindingIPAddressValidator_BracketHint(t *testing.T) {
+	v := iisBindingIPAddressValidator{}
+	req := validator.StringRequest{
+		Path:        path.Root("ip_address"),
+		ConfigValue: types.StringValue("[::1]"),
+	}
+	resp := &validator.StringResponse{}
+	v.ValidateString(context.Background(), req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("bracketed ip must fail")
+	}
+	found := false
+	for _, d := range resp.Diagnostics {
+		if strings.Contains(strings.ToLower(d.Detail()), "bracket") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("bracketed ip rejection must mention brackets, got %v", bindingDiagSummaries(resp.Diagnostics))
+	}
+}
+
 func TestIISBindingHostHeaderValidator(t *testing.T) {
 	v := iisBindingHostHeaderValidator{}
 	run := func(raw string) diag.Diagnostics {
@@ -477,6 +499,42 @@ func TestIISBindingStateToModel_PreservesSpelling(t *testing.T) {
 			t.Errorf("host_header = %q, want observed", m.HostHeader.ValueString())
 		}
 	})
+}
+
+// TestIISBindingStateToModel_PreservesPlannedStoreWithoutCertificate locks
+// the F03 fix: a warning-only plan (certificate_store_name without a
+// thumbprint) binds nothing certificate-related host-side, so the
+// meaningless observed store must not overwrite the planned spelling —
+// otherwise apply fails with "Provider produced inconsistent result after
+// apply".
+func TestIISBindingStateToModel_PreservesPlannedStoreWithoutCertificate(t *testing.T) {
+	plan := windowsIISBindingModel{
+		SiteName:              types.StringValue("web"),
+		Protocol:              types.StringValue("https"),
+		IPAddress:             types.StringValue("*"),
+		Port:                  types.Int64Value(18134),
+		HostHeader:            types.StringValue(""),
+		RequireSNI:            types.BoolValue(false),
+		CertificateThumbprint: types.StringNull(),
+		CertificateStoreName:  types.StringValue("WebHosting"),
+		Timeouts:              iisBindingNullTimeouts(),
+		BindingInformation:    types.StringNull(),
+		ID:                    types.StringNull(),
+	}
+	observed := &winclient.IISBindingState{
+		SiteName: "web", Protocol: "https", IPAddress: "*",
+		Port: 18134, HostHeader: "", RequireSNI: false,
+		CertificateThumbprint: "",
+		CertificateStoreName:  "",
+		BindingInformation:    "*:18134:",
+	}
+	m := iisBindingStateToModel(plan, observed)
+	if m.CertificateStoreName.ValueString() != "WebHosting" {
+		t.Errorf("certificate_store_name = %q, want planned spelling preserved", m.CertificateStoreName.ValueString())
+	}
+	if !m.CertificateThumbprint.IsNull() {
+		t.Errorf("thumbprint must stay null, got %q", m.CertificateThumbprint.ValueString())
+	}
 }
 
 func TestIISBindingConfigValidator(t *testing.T) {

@@ -271,10 +271,19 @@ func (v iisBindingIPAddressValidator) ValidateString(_ context.Context, req vali
 		return
 	}
 	raw := req.ConfigValue.ValueString()
-	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "*" {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "*" {
 		return
 	}
-	addr, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if strings.Contains(trimmed, "[") || strings.Contains(trimmed, "]") {
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"Invalid IP address",
+			fmt.Sprintf("ip_address must be \"*\" or a bare IP address without brackets (remove \"[\" and \"]\"); got %q.", raw),
+		)
+		return
+	}
+	addr, err := netip.ParseAddr(trimmed)
 	if err != nil {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
@@ -711,7 +720,18 @@ func iisBindingStateToModel(plan windowsIISBindingModel, s *winclient.IISBinding
 		Timeouts:           plan.Timeouts,
 	}
 	m.CertificateThumbprint = iisBindingProjectThumbprint(plan.CertificateThumbprint, s.CertificateThumbprint)
-	if strings.TrimSpace(s.CertificateStoreName) == "" {
+	if strings.TrimSpace(s.CertificateThumbprint) == "" {
+		// No certificate is bound: the store carries no host meaning (the
+		// config validator warns as much), so the planned spelling is
+		// preserved instead of defaulting to "My" — otherwise a
+		// warning-only plan (e.g. WebHosting with no thumbprint) fails
+		// with "Provider produced inconsistent result after apply".
+		if !plan.CertificateStoreName.IsNull() && !plan.CertificateStoreName.IsUnknown() {
+			m.CertificateStoreName = plan.CertificateStoreName
+		} else {
+			m.CertificateStoreName = types.StringValue(winclient.IISBindingStoreMy)
+		}
+	} else if strings.TrimSpace(s.CertificateStoreName) == "" {
 		m.CertificateStoreName = types.StringValue(winclient.IISBindingStoreMy)
 	} else {
 		m.CertificateStoreName = types.StringValue(strings.TrimSpace(s.CertificateStoreName))

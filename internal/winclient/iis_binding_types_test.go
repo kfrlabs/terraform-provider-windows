@@ -91,6 +91,35 @@ func TestParseIISBindingInformation_Canonical(t *testing.T) {
 	}
 }
 
+func TestParseIISBindingInformation_UnbracketedIPv6(t *testing.T) {
+	// IIS stores the host-native unbracketed form ("::1:443:example.com")
+	// while BuildIISBindingInformation renders the canonical bracketed
+	// form ("[::1]:443:example.com"): both must parse to the same tuple.
+	bracketedIP, bracketedPort, bracketedHost, err := ParseIISBindingInformation("[::1]:443:example.com")
+	if err != nil {
+		t.Fatalf("bracketed IPv6 unexpected error: %v", err)
+	}
+	rawIP, rawPort, rawHost, err := ParseIISBindingInformation("::1:443:example.com")
+	if err != nil {
+		t.Fatalf("unbracketed IPv6 unexpected error: %v", err)
+	}
+	if rawIP != bracketedIP || rawPort != bracketedPort || rawHost != bracketedHost {
+		t.Errorf("unbracketed got (%q, %d, %q), want (%q, %d, %q)",
+			rawIP, rawPort, rawHost, bracketedIP, bracketedPort, bracketedHost)
+	}
+	if rawIP != "::1" || rawPort != 443 || rawHost != "example.com" {
+		t.Errorf("unbracketed tuple = (%q, %d, %q), want (::1, 443, example.com)", rawIP, rawPort, rawHost)
+	}
+	// Longer unbracketed address with an empty host header.
+	ip, port, host, err := ParseIISBindingInformation("2001:db8::1:80:")
+	if err != nil {
+		t.Fatalf("unbracketed 2001:db8::1 unexpected error: %v", err)
+	}
+	if ip != "2001:db8::1" || port != 80 || host != "" {
+		t.Errorf("got (%q, %d, %q), want (2001:db8::1, 80, \"\")", ip, port, host)
+	}
+}
+
 func TestParseIISBindingInformation_Bad(t *testing.T) {
 	for _, bad := range []string{
 		"", "*:80", "*:notaport:x", "*:80abc:x", "*:0x50:x", "*: 80:x", "*:0:x", "*:65536:x",

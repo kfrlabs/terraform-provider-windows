@@ -132,7 +132,10 @@ func TestIISBindingScripts_ShipPreludeAndGate(t *testing.T) {
 		"function Escape-BindingWildcard",
 		"$siteNames -contains $Name", // literal site check (no -Name wildcard lookup)
 		"Where-Object { $_.site -eq $Name",
-		"Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo }",
+		"function Test-BindingIdentity", // parsed-tuple match (IPv6 unbracketed host form equals canonical)
+		"$wantedBI = Get-BindingParts $BindingInfo",
+		"Test-BindingIdentity $_ $Protocol $wantedBI",
+		"Where-Object { $_.site -eq $Name -and $_.protocol -eq $Protocol -and $_.ip -eq $WantedIP",
 		"$Name = 'web'",
 		"Get-WebBinding -Name $escSn",
 		"Get-ChildItem 'IIS:\\SslBindings'",
@@ -292,7 +295,7 @@ func TestIISBindingDelete_ScriptContent(t *testing.T) {
 		"Remove-WebBinding",
 		"already_absent",
 		"Escape-BindingWildcard $Name",
-		"Where-Object { $_.protocol -eq $Protocol -and $_.bindingInformation -eq $BindingInfo }",
+		"Where-Object { Test-BindingIdentity $_ $Protocol $wantedBI }",
 		// Concurrent-destroy tolerance (aggressive CLI campaign,
 		// 2026-11-17): a failed removal re-checks the target and
 		// converges to already_absent when it is verifiably gone.
@@ -491,6 +494,42 @@ func TestIISBindingCreate_RetryOnFlake(t *testing.T) {
 	}
 }
 
+func TestIISBindingCreate_RetryOnNullReferenceFlake(t *testing.T) {
+	defer stubIISBindingManagementPath(22)()
+	oldBackoff := iisRetryBackoff
+	iisRetryBackoff = func(int) time.Duration { return 0 }
+	defer func() { iisRetryBackoff = oldBackoff }()
+
+	restore := iisBindingStubSequence([]frResponse{
+		{stdout: iisBindingErr(t, "unknown", "Object reference not set to an instance of an object."), stderr: "", err: nil},
+		{stdout: iisBindingOK(t, testIISBindingState()), stderr: "", err: nil},
+	})
+	defer restore()
+
+	c := iisBindingNewClient(t)
+	if _, err := c.Create(context.Background(), iisBindingCreateInput()); err != nil {
+		t.Fatalf("null-reference flake then success must succeed, got %v", err)
+	}
+}
+
+func TestIISBindingCreate_NoRetryOnNamedNullReference(t *testing.T) {
+	defer stubIISBindingManagementPath(22)()
+	calls := 0
+	restore := stubIISRun(func(_ context.Context, _ *Client, _, _ string) (string, string, error) {
+		calls++
+		return iisBindingErr(t, "already_exists", "Object reference not set to an instance of an object 'web'"), "", nil
+	})
+	defer restore()
+
+	c := iisBindingNewClient(t)
+	if _, err := c.Create(context.Background(), iisBindingCreateInput()); !IsIISBindingError(err, IISBindingErrorAlreadyExists) {
+		t.Fatalf("expected already_exists, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("named already_exists carrying the null-reference phrase must not be retried, got %d calls", calls)
+	}
+}
+
 func TestIISBindingCreate_NoRetryOnConflict(t *testing.T) {
 	defer stubIISBindingManagementPath(22)()
 	calls := 0
@@ -543,5 +582,47 @@ func TestIISBindingDelete_MissingIsAbsent(t *testing.T) {
 	c := iisBindingNewClient(t)
 	if err := c.Delete(context.Background(), "web", "https", "*:443:example.com"); err != nil {
 		t.Fatalf("missing binding delete must succeed, got %v", err)
+	}
+}
+
+func TestIISBindingScripts_IPv6BindingPartsParsesFromRight(t *testing.T) {
+	// Regression guard for the host-native unbracketed IPv6 form
+	// ("::1:443:example.com", which IIS stores natively) vs the canonical
+	// bracketed form ("[::1]:443:example.com"). Get-BindingParts must split
+	// the unbracketed branch from the right (LastIndexOf for host, then
+	// port, remainder is the IP) so Test-BindingIdentity matches both
+	// spellings on every tuple lookup path (Read, Create $mine guard,
+	// Update $mine guard, Delete $target/$still recheck).
+	for _, want := range []string{
+		"function Get-BindingParts",
+		"function Test-BindingIdentity",
+		"$rest.LastIndexOf(':')",
+		"$head.LastIndexOf(':')",
+		"[int]::TryParse($portText",
+	} {
+		if !strings.Contains(iisBindingReadFragment, want) {
+			t.Errorf("read fragment missing %q (unbracketed-IPv6 right-split)", want)
+		}
+	}
+	if strings.Contains(iisBindingReadFragment, "$first = $rest.Split(':', 3)") {
+		t.Error("read fragment must not use the left Split(':', 3) in the unbracketed branch (mis-splits ::1)")
+	}
+	// The SSL pre-check exclusion must stay scoped to the caller's own
+	// tuple, including the protocol.
+	if !strings.Contains(iisBindingSSLCheckFragment, "[string]$e.protocol -eq $Protocol") {
+		t.Error("SSL check fragment must scope $ExcludeSelf by protocol")
+	}
+	// Go-side mirror: both spellings parse to the same tuple.
+	bIP, bPort, bHost, err := ParseIISBindingInformation("[::1]:443:example.com")
+	if err != nil {
+		t.Fatalf("bracketed IPv6 unexpected error: %v", err)
+	}
+	rIP, rPort, rHost, err := ParseIISBindingInformation("::1:443:example.com")
+	if err != nil {
+		t.Fatalf("unbracketed IPv6 unexpected error: %v", err)
+	}
+	if rIP != bIP || rPort != bPort || rHost != bHost {
+		t.Errorf("unbracketed tuple (%q, %d, %q) != bracketed tuple (%q, %d, %q)",
+			rIP, rPort, rHost, bIP, bPort, bHost)
 	}
 }
